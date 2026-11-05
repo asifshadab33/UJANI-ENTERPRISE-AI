@@ -1,0 +1,9 @@
+[package]
+name = "ujani-enterprise-policy"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-only"
+description = "Illustrative admission policy types for UJANI Enterprise AI"
+
+[lib]
+path = "src/lib.rs"
