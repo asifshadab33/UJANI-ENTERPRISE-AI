@@ -3,6 +3,7 @@
 
 #![forbid(unsafe_code)]
 use ed25519_dalek::{Signature, VerifyingKey};
+use serde::Deserialize;
 
 pub const LEASE_MS: u64 = 5 * 60 * 1000;
 const APPROVAL_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-ADMIN-APPROVAL-V1\0";
@@ -99,6 +100,71 @@ pub struct Device {
     pub allowed_workload_classes: Vec<String>,
     pub remaining_cpu_millis: u32,
     pub remaining_memory_mb: u64,
+}
+
+/// Strict, versioned input contract for a requested workload.
+/// Deserializing this type rejects unknown fields; validation is still required
+/// and does not itself authorize admission or execution.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct WorkloadManifest {
+    pub schema_version: u16,
+    pub workload_id: String,
+    pub class: String,
+    pub model: String,
+    pub requested_cpu_millis: u32,
+    pub requested_memory_mb: u64,
+    pub max_runtime_ms: u64,
+    pub data_classification: DataClassification,
+    pub network_access: bool,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DataClassification {
+    Public,
+    Internal,
+    Confidential,
+    Restricted,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ManifestError {
+    UnsupportedVersion,
+    InvalidWorkloadId,
+    InvalidClass,
+    InvalidModel,
+    InvalidCpuLimit,
+    InvalidMemoryLimit,
+    InvalidRuntimeLimit,
+}
+
+pub fn validate_workload_manifest(manifest: &WorkloadManifest) -> Result<(), ManifestError> {
+    if manifest.schema_version != 1 {
+        return Err(ManifestError::UnsupportedVersion);
+    }
+    if !valid_identifier(&manifest.workload_id, 128) {
+        return Err(ManifestError::InvalidWorkloadId);
+    }
+    if !valid_identifier(&manifest.class, 64) {
+        return Err(ManifestError::InvalidClass);
+    }
+    if manifest.model.trim().is_empty()
+        || manifest.model.len() > 128
+        || manifest.model.chars().any(char::is_control)
+    {
+        return Err(ManifestError::InvalidModel);
+    }
+    if manifest.requested_cpu_millis == 0 || manifest.requested_cpu_millis > 1_000_000 {
+        return Err(ManifestError::InvalidCpuLimit);
+    }
+    if manifest.requested_memory_mb == 0 || manifest.requested_memory_mb > 4 * 1024 * 1024 {
+        return Err(ManifestError::InvalidMemoryLimit);
+    }
+    if manifest.max_runtime_ms == 0 || manifest.max_runtime_ms > 7 * 24 * 60 * 60 * 1000 {
+        return Err(ManifestError::InvalidRuntimeLimit);
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -495,6 +561,54 @@ mod tests {
             max_cpu_millis: 4000,
             max_memory_mb: 8192,
         }]
+    }
+
+    fn manifest() -> WorkloadManifest {
+        WorkloadManifest {
+            schema_version: 1,
+            workload_id: "job-001".into(),
+            class: "inference".into(),
+            model: "qwen2.5:7b".into(),
+            requested_cpu_millis: 2000,
+            requested_memory_mb: 4096,
+            max_runtime_ms: 60_000,
+            data_classification: DataClassification::Internal,
+            network_access: false,
+        }
+    }
+
+    #[test]
+    fn workload_manifest_accepts_bounded_versioned_input() {
+        assert_eq!(validate_workload_manifest(&manifest()), Ok(()));
+    }
+
+    #[test]
+    fn workload_manifest_rejects_unknown_versions_and_invalid_limits() {
+        let mut value = manifest();
+        value.schema_version = 2;
+        assert_eq!(validate_workload_manifest(&value), Err(ManifestError::UnsupportedVersion));
+        let mut value = manifest();
+        value.requested_cpu_millis = 0;
+        assert_eq!(validate_workload_manifest(&value), Err(ManifestError::InvalidCpuLimit));
+        let mut value = manifest();
+        value.requested_memory_mb = 4 * 1024 * 1024 + 1;
+        assert_eq!(validate_workload_manifest(&value), Err(ManifestError::InvalidMemoryLimit));
+        let mut value = manifest();
+        value.max_runtime_ms = 7 * 24 * 60 * 60 * 1000 + 1;
+        assert_eq!(validate_workload_manifest(&value), Err(ManifestError::InvalidRuntimeLimit));
+    }
+
+    #[test]
+    fn workload_manifest_rejects_malformed_identifiers_and_model_names() {
+        let mut value = manifest();
+        value.workload_id = "../job".into();
+        assert_eq!(validate_workload_manifest(&value), Err(ManifestError::InvalidWorkloadId));
+        let mut value = manifest();
+        value.class = "inference\nadmin".into();
+        assert_eq!(validate_workload_manifest(&value), Err(ManifestError::InvalidClass));
+        let mut value = manifest();
+        value.model = "model\nignore policy".into();
+        assert_eq!(validate_workload_manifest(&value), Err(ManifestError::InvalidModel));
     }
 
     #[test]
