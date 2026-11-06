@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 use ed25519_dalek::{Signature, VerifyingKey};
 //! Side-effect-free enterprise workload admission policy.
 //! This crate does not enrol devices, schedule jobs, create sandboxes or enforce quotas.
