@@ -487,22 +487,13 @@ impl Ledger {
         }
     }
 
-    fn renew(&mut self, workload_id: &str, now_unix_ms: u64) -> bool {
-        self.expire(now_unix_ms);
-        if let Some(job) = self.jobs.get_mut(workload_id) {
-            job.3 = now_unix_ms.saturating_add(LEASE_MS);
-            true
-        } else {
-            false
-        }
-    }
 }
 
 /// Hash lease capabilities with a domain separator so they cannot be confused
 /// with other SHA-256 values stored by this crate.
 fn lease_token_hash(token: &[u8; 32]) -> [u8; 32] {
     let mut hasher = Sha256::new();
-    hasher.update(b"UJANI-ENTERPRISE-LEASE-CAPABILITY-V1\\0");
+    hasher.update(b"UJANI-ENTERPRISE-LEASE-CAPABILITY-V1\0");
     hasher.update(token);
     hasher.finalize().into()
 }
@@ -1176,7 +1167,7 @@ mod tests {
         let d = device();
         let w = workload();
         assert!(ledger.try_reserve(&d, &w, 1_000, None).is_ok());
-        assert!(!ledger.renew("job-001", 1_000 + LEASE_MS));
+        assert!(!ledger.renew_lease("job-001", &token, 1_000 + LEASE_MS));
         ledger.expire(1_000 + LEASE_MS);
         let mut next = workload();
         next.workload_id = "job-002".into();
