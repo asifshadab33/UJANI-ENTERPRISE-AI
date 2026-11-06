@@ -34,7 +34,9 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/SECURITY.md](docs/SECURI
 
 ## Initial prototype
 
-The Rust crate in `crates/ujani-enterprise-policy` contains basic device/workload policy types and a conservative admission decision. It does not communicate with devices, schedule real jobs, create sandboxes or enforce operating-system security controls.
+The Rust crate in `crates/ujani-enterprise-policy` contains device/workload policy types, a conservative admission decision, signed administrator approvals, in-memory reservation semantics and a strict versioned workload-manifest contract. The manifest is a library-level validation foundation; it is not yet wired to a control-plane API. The project does not communicate with devices, schedule real jobs, create sandboxes or enforce operating-system security controls.
+
+See [the workload manifest contract](docs/WORKLOAD-MANIFEST.md) and [the Personal-to-Enterprise integration draft](docs/INTEGRATION_CONTRACT_DRAFT.md).
 
 Run tests:
 
