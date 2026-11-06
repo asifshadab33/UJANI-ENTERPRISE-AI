@@ -177,19 +177,45 @@ pub fn validate_workload_manifest(manifest: &WorkloadManifest) -> Result<(), Man
 
 /// Model identifiers are library names, never URLs, local paths or registry endpoints.
 fn valid_model_identifier(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= 128
-        && !value.starts_with('/')
-        && !value.ends_with('/')
-        && !value.contains("..")
-        && value.split('/').all(|part| {
-            !part.is_empty()
-                && part.bytes().all(|b| {
-                    b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'.' || b == b'_' || b == b'-' || b == b':'
+    if value.is_empty()
+        || value.len() > 128
+        || value.starts_with('/')
+        || value.ends_with('/')
+        || value.contains("..")
+    {
+        return false;
+    }
+    let segments: Vec<&str> = value.split('/').collect();
+    if segments.iter().any(|segment| segment.is_empty())
+        || (segments.len() > 1 && segments[0].contains('.'))
+    {
+        return false;
+    }
+    for (index, segment) in segments.iter().enumerate() {
+        let mut parts = segment.split(':');
+        let name = parts.next().unwrap_or_default();
+        let tag = parts.next();
+        if parts.next().is_some()
+            || name.is_empty()
+            || name.bytes().any(|b| {
+                !(b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'.' || b == b'_' || b == b'-')
+            })
+        {
+            return false;
+        }
+        if let Some(tag) = tag {
+            if index + 1 != segments.len()
+                || tag.is_empty()
+                || !tag.bytes().all(|b| {
+                    b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'.' || b == b'_' || b == b'-'
                 })
-        })
+            {
+                return false;
+            }
+        }
+    }
+    true
 }
-
 /// Stable, domain-separated digest over every field that affects workload admission.
 pub fn workload_manifest_sha256(manifest: &WorkloadManifest) -> Result<[u8; 32], ManifestError> {
     validate_workload_manifest(manifest)?;
