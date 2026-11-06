@@ -18,15 +18,27 @@ pub struct Workload {
     pub class: String,
     pub requested_cpu_millis: u32,
     pub requested_memory_mb: u64,
-    pub requires_admin_approval: bool,
     pub admin_approved: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Admission {
-    Accept,
-    Reject(&'static str),
+pub struct ClassPolicy { pub class: String, pub requires_admin_approval: bool, pub max_cpu_millis: u32, pub max_memory_mb: u64 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RejectReason { InvalidIdentifier, ZeroBudget, DeviceNotApproved, DeviceUnavailable, ClassNotAllowedOnDevice, UnknownClassPolicy, ApprovalRequired, ExceedsClassLimit, CpuBudget, MemoryBudget }
+impl RejectReason {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::InvalidIdentifier => "invalid bounded identifier", Self::ZeroBudget => "positive CPU and memory budgets required",
+            Self::DeviceNotApproved => "device is not enrolled and approved", Self::DeviceUnavailable => "device unavailable",
+            Self::ClassNotAllowedOnDevice => "class not allowed on device", Self::UnknownClassPolicy => "unknown class policy",
+            Self::ApprovalRequired => "verified administrator approval required", Self::ExceedsClassLimit => "class resource limit exceeded",
+            Self::CpuBudget => "CPU budget exceeded", Self::MemoryBudget => "memory budget exceeded",
+        }
+    }
 }
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Admission { Accept, Reject(RejectReason) }
 
 /// Conservative pre-scheduling check. Real enforcement must occur on the worker OS.
 fn valid_identifier(value: &str, max_len: usize) -> bool {
@@ -37,43 +49,31 @@ fn valid_identifier(value: &str, max_len: usize) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || "._:-".contains(c))
 }
 
-pub fn admit(device: &Device, workload: &Workload) -> Admission {
-    if !valid_identifier(&device.device_id, 128)
-        || !valid_identifier(&workload.workload_id, 128)
-        || !valid_identifier(&workload.class, 64)
-    {
-        return Admission::Reject(
-            "device ID, workload ID, and workload class must be valid bounded identifiers",
-        );
-    }
+pub fn admit(device: &Device, workload: &Workload, policies: &[ClassPolicy], verified_admin_approvals: &[String]) -> Admission {
+    use RejectReason::*;
+    if !valid_identifier(&device.device_id, 128) || !valid_identifier(&workload.workload_id, 128)
+        || !valid_identifier(&workload.class, 64) { return Admission::Reject(InvalidIdentifier); }
     if workload.requested_cpu_millis == 0 || workload.requested_memory_mb == 0 {
-        return Admission::Reject("workload must request a positive CPU and memory budget");
+        return Admission::Reject(ZeroBudget);
     }
-    if !device.enrolled || !device.admin_approved {
-        return Admission::Reject("device is not explicitly enrolled and approved");
+    if !device.enrolled || !device.admin_approved { return Admission::Reject(DeviceNotApproved); }
+    if !device.available { return Admission::Reject(DeviceUnavailable); }
+    if !device.allowed_workload_classes.iter().any(|c| c == &workload.class) {
+        return Admission::Reject(ClassNotAllowedOnDevice);
     }
-    if !device.available {
-        return Admission::Reject("device is not currently available");
+    let Some(policy) = policies.iter().find(|p| p.class == workload.class) else {
+        return Admission::Reject(UnknownClassPolicy);
+    };
+    if policy.requires_admin_approval && !verified_admin_approvals.iter().any(|id| id == &workload.workload_id) {
+        return Admission::Reject(ApprovalRequired);
     }
-    if !device
-        .allowed_workload_classes
-        .iter()
-        .any(|c| c == &workload.class)
-    {
-        return Admission::Reject("workload class is not allowed on this device");
+    if workload.requested_cpu_millis > policy.max_cpu_millis || workload.requested_memory_mb > policy.max_memory_mb {
+        return Admission::Reject(ExceedsClassLimit);
     }
-    if workload.requires_admin_approval && !workload.admin_approved {
-        return Admission::Reject("workload requires administrator approval");
-    }
-    if workload.requested_cpu_millis > device.remaining_cpu_millis {
-        return Admission::Reject("CPU budget would be exceeded");
-    }
-    if workload.requested_memory_mb > device.remaining_memory_mb {
-        return Admission::Reject("memory budget would be exceeded");
-    }
+    if workload.requested_cpu_millis > device.remaining_cpu_millis { return Admission::Reject(CpuBudget); }
+    if workload.requested_memory_mb > device.remaining_memory_mb { return Admission::Reject(MemoryBudget); }
     Admission::Accept
 }
-
 /// Runtime facts required by the stricter scheduling gate. Missing or stale evidence must fail closed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SchedulingContext {
@@ -95,8 +95,10 @@ pub fn admit_with_context(
     device: &Device,
     workload: &Workload,
     context: &SchedulingContext,
+    policies: &[ClassPolicy],
+    verified_admin_approvals: &[String],
 ) -> Admission {
-    match admit(device, workload) {
+    match admit(device, workload, policies, verified_admin_approvals) {
         Admission::Accept => {}
         rejection => return rejection,
     }
@@ -152,7 +154,6 @@ mod tests {
             class: "inference".into(),
             requested_cpu_millis: 2000,
             requested_memory_mb: 4096,
-            requires_admin_approval: false,
             admin_approved: false,
         }
     }
@@ -171,10 +172,14 @@ mod tests {
         }
     }
 
+    fn policies() -> Vec<ClassPolicy> {
+        vec![ClassPolicy { class: "inference".into(), requires_admin_approval: false, max_cpu_millis: 4000, max_memory_mb: 8192 }]
+    }
+
     #[test]
     fn strict_gate_accepts_only_when_all_scheduling_conditions_are_safe() {
         assert_eq!(
-            admit_with_context(&device(), &workload(), &safe_context()),
+            admit_with_context(&device(), &workload(), &safe_context(), &policies(), &[]),
             Admission::Accept
         );
     }
@@ -184,13 +189,13 @@ mod tests {
         let mut c = safe_context();
         c.owner_opted_in = false;
         assert!(matches!(
-            admit_with_context(&device(), &workload(), &c),
+            admit_with_context(&device(), &workload(), &c, &policies(), &[]),
             Admission::Reject(_)
         ));
         let mut c = safe_context();
         c.within_admin_schedule = false;
         assert!(matches!(
-            admit_with_context(&device(), &workload(), &c),
+            admit_with_context(&device(), &workload(), &c, &policies(), &[]),
             Admission::Reject(_)
         ));
     }
@@ -200,19 +205,19 @@ mod tests {
         let mut c = safe_context();
         c.interactive_user_present = true;
         assert!(matches!(
-            admit_with_context(&device(), &workload(), &c),
+            admit_with_context(&device(), &workload(), &c, &policies(), &[]),
             Admission::Reject(_)
         ));
         let mut c = safe_context();
         c.device_on_battery = true;
         assert!(matches!(
-            admit_with_context(&device(), &workload(), &c),
+            admit_with_context(&device(), &workload(), &c, &policies(), &[]),
             Admission::Reject(_)
         ));
         let mut c = safe_context();
         c.thermal_state_safe = false;
         assert!(matches!(
-            admit_with_context(&device(), &workload(), &c),
+            admit_with_context(&device(), &workload(), &c, &policies(), &[]),
             Admission::Reject(_)
         ));
     }
@@ -222,7 +227,7 @@ mod tests {
         let mut context = safe_context();
         context.device_already_running = false;
         assert!(matches!(
-            admit_with_context(&device(), &workload(), &context),
+            admit_with_context(&device(), &workload(), &context, &policies(), &[]),
             Admission::Reject(_)
         ));
     }
@@ -232,87 +237,87 @@ mod tests {
         let mut c = safe_context();
         c.telemetry_fresh = false;
         assert!(matches!(
-            admit_with_context(&device(), &workload(), &c),
+            admit_with_context(&device(), &workload(), &c, &policies(), &[]),
             Admission::Reject(_)
         ));
         let mut c = safe_context();
         c.network_policy_allows = false;
         assert!(matches!(
-            admit_with_context(&device(), &workload(), &c),
+            admit_with_context(&device(), &workload(), &c, &policies(), &[]),
             Admission::Reject(_)
         ));
         let mut c = safe_context();
         c.data_classification_allows = false;
         assert!(matches!(
-            admit_with_context(&device(), &workload(), &c),
+            admit_with_context(&device(), &workload(), &c, &policies(), &[]),
             Admission::Reject(_)
         ));
     }
 
     #[test]
     fn approved_available_device_accepts_within_budget() {
-        assert_eq!(admit(&device(), &workload()), Admission::Accept);
+        assert_eq!(admit(&device(), &workload(), &policies(), &[]), Admission::Accept);
     }
 
     #[test]
     fn unapproved_device_is_rejected() {
         let mut d = device();
         d.admin_approved = false;
-        assert!(matches!(admit(&d, &workload()), Admission::Reject(_)));
+        assert!(matches!(admit(&d, &workload(), &policies(), &[]), Admission::Reject(_)));
     }
 
     #[test]
     fn unavailable_device_is_rejected() {
         let mut d = device();
         d.available = false;
-        assert!(matches!(admit(&d, &workload()), Admission::Reject(_)));
+        assert!(matches!(admit(&d, &workload(), &policies(), &[]), Admission::Reject(_)));
     }
 
     #[test]
     fn disallowed_class_is_rejected() {
         let mut w = workload();
         w.class = "arbitrary-shell".into();
-        assert!(matches!(admit(&device(), &w), Admission::Reject(_)));
+        assert!(matches!(admit(&device(), &w, &policies(), &[]), Admission::Reject(_)));
     }
 
     #[test]
     fn quota_overrun_is_rejected() {
         let mut w = workload();
         w.requested_memory_mb = 9000;
-        assert!(matches!(admit(&device(), &w), Admission::Reject(_)));
+        assert!(matches!(admit(&device(), &w, &policies(), &[]), Admission::Reject(_)));
     }
 
     #[test]
     fn rejects_empty_or_malformed_identifiers_and_classes() {
         let mut d = device();
         d.device_id = "   ".into();
-        assert!(matches!(admit(&d, &workload()), Admission::Reject(_)));
+        assert!(matches!(admit(&d, &workload(), &policies(), &[]), Admission::Reject(_)));
 
         let mut w = workload();
         w.workload_id = "job/../../escape".into();
-        assert!(matches!(admit(&device(), &w), Admission::Reject(_)));
+        assert!(matches!(admit(&device(), &w, &policies(), &[]), Admission::Reject(_)));
 
         let mut w = workload();
         w.class = "inference\\nadmin".into();
-        assert!(matches!(admit(&device(), &w), Admission::Reject(_)));
+        assert!(matches!(admit(&device(), &w, &policies(), &[]), Admission::Reject(_)));
     }
 
     #[test]
     fn rejects_zero_resource_requests() {
         let mut w = workload();
         w.requested_cpu_millis = 0;
-        assert!(matches!(admit(&device(), &w), Admission::Reject(_)));
+        assert!(matches!(admit(&device(), &w, &policies(), &[]), Admission::Reject(_)));
 
         let mut w = workload();
         w.requested_memory_mb = 0;
-        assert!(matches!(admit(&device(), &w), Admission::Reject(_)));
+        assert!(matches!(admit(&device(), &w, &policies(), &[]), Admission::Reject(_)));
     }
 
     #[test]
     fn approval_gate_is_enforced() {
         let mut w = workload();
-        w.requires_admin_approval = true;
-        assert!(matches!(admit(&device(), &w), Admission::Reject(_)));
+        let policy = ClassPolicy { class: "inference".into(), requires_admin_approval: true, max_cpu_millis: 4000, max_memory_mb: 8192 };
+        assert_eq!(admit(&device(), &w, &[policy], &[]), Admission::Reject(RejectReason::ApprovalRequired));
     }
 }
 
