@@ -234,6 +234,7 @@ impl Ledger {
     }
 
     pub fn renew(&mut self, workload_id: &str, now_unix_ms: u64) -> bool {
+        self.expire(now_unix_ms);
         if let Some(job) = self.jobs.get_mut(workload_id) {
             job.3 = now_unix_ms.saturating_add(LEASE_MS);
             true
@@ -264,6 +265,7 @@ pub fn validate_policies(policies: &[ClassPolicy]) -> Result<(), &'static str> {
     Ok(())
 }
 
+/// Pure policy evaluation only. Acceptance is not a reservation or execution grant.
 pub fn admit(
     device: &Device,
     workload: &Workload,
