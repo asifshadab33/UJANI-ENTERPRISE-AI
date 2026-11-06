@@ -631,20 +631,6 @@ mod tests {
         }]
     }
 
-    fn manifest() -> WorkloadManifest {
-        WorkloadManifest {
-            schema_version: 1,
-            workload_id: "job-001".into(),
-            class: "inference".into(),
-            model: "qwen2.5:7b".into(),
-            requested_cpu_millis: 2000,
-            requested_memory_mb: 4096,
-            max_runtime_ms: 60_000,
-            data_classification: DataClassification::Internal,
-            network_access: false,
-        }
-    }
-
     #[test]
     fn workload_manifest_accepts_bounded_versioned_input() {
         assert_eq!(validate_workload_manifest(&manifest()), Ok(()));
