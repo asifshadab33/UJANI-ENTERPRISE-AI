@@ -22,28 +22,67 @@ pub struct Workload {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ClassPolicy { pub class: String, pub requires_admin_approval: bool, pub max_cpu_millis: u32, pub max_memory_mb: u64 }
+pub struct ClassPolicy {
+    pub class: String,
+    pub requires_admin_approval: bool,
+    pub max_cpu_millis: u32,
+    pub max_memory_mb: u64,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RejectReason { InvalidIdentifier, ZeroBudget, DeviceNotApproved, DeviceUnavailable, ClassNotAllowedOnDevice, UnknownClassPolicy, ApprovalRequired, ExceedsClassLimit, CpuBudget, MemoryBudget, DuplicateWorkload, TelemetryStale, OwnerOptInMissing, OutsideAdminSchedule, InteractiveUserPresent, DeviceNotRunning, OnBattery, ThermalUnsafe, NetworkPolicyDenied, DataClassificationDenied }
+pub enum RejectReason {
+    InvalidIdentifier,
+    ZeroBudget,
+    DeviceNotApproved,
+    DeviceUnavailable,
+    ClassNotAllowedOnDevice,
+    UnknownClassPolicy,
+    ApprovalRequired,
+    ExceedsClassLimit,
+    CpuBudget,
+    MemoryBudget,
+    DuplicateWorkload,
+    TelemetryStale,
+    OwnerOptInMissing,
+    OutsideAdminSchedule,
+    InteractiveUserPresent,
+    DeviceNotRunning,
+    OnBattery,
+    ThermalUnsafe,
+    NetworkPolicyDenied,
+    DataClassificationDenied,
+}
 impl RejectReason {
     pub fn as_str(&self) -> &'static str {
         match self {
-            Self::InvalidIdentifier => "invalid bounded identifier", Self::ZeroBudget => "positive CPU and memory budgets required",
-            Self::DeviceNotApproved => "device is not enrolled and approved", Self::DeviceUnavailable => "device unavailable",
-            Self::ClassNotAllowedOnDevice => "class not allowed on device", Self::UnknownClassPolicy => "unknown class policy",
-            Self::ApprovalRequired => "verified administrator approval required", Self::ExceedsClassLimit => "class resource limit exceeded",
-            Self::CpuBudget => "CPU budget exceeded", Self::MemoryBudget => "memory budget exceeded",
-            Self::DuplicateWorkload => "workload identifier is already reserved", Self::TelemetryStale => "worker telemetry is missing or stale",
-            Self::OwnerOptInMissing => "device owner has not explicitly opted in", Self::OutsideAdminSchedule => "outside administrator-approved scheduling window",
-            Self::InteractiveUserPresent => "interactive user activity takes priority", Self::DeviceNotRunning => "device is sleeping or powered off; UJANI never wakes devices",
-            Self::OnBattery => "device is on battery power", Self::ThermalUnsafe => "device thermal state is not safe for background work",
-            Self::NetworkPolicyDenied => "network or data-egress policy blocks this workload", Self::DataClassificationDenied => "workload data classification is not approved for this worker",
+            Self::InvalidIdentifier => "invalid bounded identifier",
+            Self::ZeroBudget => "positive CPU and memory budgets required",
+            Self::DeviceNotApproved => "device is not enrolled and approved",
+            Self::DeviceUnavailable => "device unavailable",
+            Self::ClassNotAllowedOnDevice => "class not allowed on device",
+            Self::UnknownClassPolicy => "unknown class policy",
+            Self::ApprovalRequired => "verified administrator approval required",
+            Self::ExceedsClassLimit => "class resource limit exceeded",
+            Self::CpuBudget => "CPU budget exceeded",
+            Self::MemoryBudget => "memory budget exceeded",
+            Self::DuplicateWorkload => "workload identifier is already reserved",
+            Self::TelemetryStale => "worker telemetry is missing or stale",
+            Self::OwnerOptInMissing => "device owner has not explicitly opted in",
+            Self::OutsideAdminSchedule => "outside administrator-approved scheduling window",
+            Self::InteractiveUserPresent => "interactive user activity takes priority",
+            Self::DeviceNotRunning => "device is sleeping or powered off; UJANI never wakes devices",
+            Self::OnBattery => "device is on battery power",
+            Self::ThermalUnsafe => "device thermal state is not safe for background work",
+            Self::NetworkPolicyDenied => "network or data-egress policy blocks this workload",
+            Self::DataClassificationDenied => "workload data classification is not approved for this worker",
         }
     }
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Admission { Accept, Reject(RejectReason) }
+pub enum Admission {
+    Accept,
+    Reject(RejectReason),
+}
 
 /// In-memory reservation semantics for tests and single-process prototypes only.
 /// Production scheduling must use an atomic transactional ledger in durable storage.
@@ -52,9 +91,16 @@ pub struct Ledger {
     used: std::collections::HashMap<String, (u32, u64)>,
     jobs: std::collections::HashMap<String, (String, u32, u64)>,
 }
+
 impl Ledger {
-    pub fn try_reserve(&mut self, device: &Device, workload: &Workload) -> Result<(), RejectReason> {
-        if self.jobs.contains_key(&workload.workload_id) { return Err(RejectReason::DuplicateWorkload); }
+    pub fn try_reserve(
+        &mut self,
+        device: &Device,
+        workload: &Workload,
+    ) -> Result<(), RejectReason> {
+        if self.jobs.contains_key(&workload.workload_id) {
+            return Err(RejectReason::DuplicateWorkload);
+        }
         let (cpu, memory) = self.used.get(&device.device_id).copied().unwrap_or((0, 0));
         if cpu.saturating_add(workload.requested_cpu_millis) > device.remaining_cpu_millis {
             return Err(RejectReason::CpuBudget);
@@ -62,8 +108,21 @@ impl Ledger {
         if memory.saturating_add(workload.requested_memory_mb) > device.remaining_memory_mb {
             return Err(RejectReason::MemoryBudget);
         }
-        self.used.insert(device.device_id.clone(), (cpu + workload.requested_cpu_millis, memory + workload.requested_memory_mb));
-        self.jobs.insert(workload.workload_id.clone(), (device.device_id.clone(), workload.requested_cpu_millis, workload.requested_memory_mb));
+        self.used.insert(
+            device.device_id.clone(),
+            (
+                cpu + workload.requested_cpu_millis,
+                memory + workload.requested_memory_mb,
+            ),
+        );
+        self.jobs.insert(
+            workload.workload_id.clone(),
+            (
+                device.device_id.clone(),
+                workload.requested_cpu_millis,
+                workload.requested_memory_mb,
+            ),
+        );
         Ok(())
     }
     pub fn release(&mut self, workload_id: &str) {
@@ -86,29 +145,56 @@ fn valid_identifier(value: &str, max_len: usize) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || "._:-".contains(c))
 }
 
-pub fn admit(device: &Device, workload: &Workload, policies: &[ClassPolicy], verified_admin_approvals: &[String]) -> Admission {
+pub fn admit(
+    device: &Device,
+    workload: &Workload,
+    policies: &[ClassPolicy],
+    verified_admin_approvals: &[String],
+) -> Admission {
     use RejectReason::*;
-    if !valid_identifier(&device.device_id, 128) || !valid_identifier(&workload.workload_id, 128)
-        || !valid_identifier(&workload.class, 64) { return Admission::Reject(InvalidIdentifier); }
+    if !valid_identifier(&device.device_id, 128)
+        || !valid_identifier(&workload.workload_id, 128)
+        || !valid_identifier(&workload.class, 64)
+    {
+        return Admission::Reject(InvalidIdentifier);
+    }
     if workload.requested_cpu_millis == 0 || workload.requested_memory_mb == 0 {
         return Admission::Reject(ZeroBudget);
     }
-    if !device.enrolled || !device.admin_approved { return Admission::Reject(DeviceNotApproved); }
-    if !device.available { return Admission::Reject(DeviceUnavailable); }
-    if !device.allowed_workload_classes.iter().any(|c| c == &workload.class) {
+    if !device.enrolled || !device.admin_approved {
+        return Admission::Reject(DeviceNotApproved);
+    }
+    if !device.available {
+        return Admission::Reject(DeviceUnavailable);
+    }
+    if !device
+        .allowed_workload_classes
+        .iter()
+        .any(|c| c == &workload.class)
+    {
         return Admission::Reject(ClassNotAllowedOnDevice);
     }
     let Some(policy) = policies.iter().find(|p| p.class == workload.class) else {
         return Admission::Reject(UnknownClassPolicy);
     };
-    if policy.requires_admin_approval && !verified_admin_approvals.iter().any(|id| id == &workload.workload_id) {
+    if policy.requires_admin_approval
+        && !verified_admin_approvals
+            .iter()
+            .any(|id| id == &workload.workload_id)
+    {
         return Admission::Reject(ApprovalRequired);
     }
-    if workload.requested_cpu_millis > policy.max_cpu_millis || workload.requested_memory_mb > policy.max_memory_mb {
+    if workload.requested_cpu_millis > policy.max_cpu_millis
+        || workload.requested_memory_mb > policy.max_memory_mb
+    {
         return Admission::Reject(ExceedsClassLimit);
     }
-    if workload.requested_cpu_millis > device.remaining_cpu_millis { return Admission::Reject(CpuBudget); }
-    if workload.requested_memory_mb > device.remaining_memory_mb { return Admission::Reject(MemoryBudget); }
+    if workload.requested_cpu_millis > device.remaining_cpu_millis {
+        return Admission::Reject(CpuBudget);
+    }
+    if workload.requested_memory_mb > device.remaining_memory_mb {
+        return Admission::Reject(MemoryBudget);
+    }
     Admission::Accept
 }
 /// Runtime facts required by the stricter scheduling gate. Missing or stale evidence must fail closed.
@@ -210,7 +296,12 @@ mod tests {
     }
 
     fn policies() -> Vec<ClassPolicy> {
-        vec![ClassPolicy { class: "inference".into(), requires_admin_approval: false, max_cpu_millis: 4000, max_memory_mb: 8192 }]
+        vec![ClassPolicy {
+            class: "inference".into(),
+            requires_admin_approval: false,
+            max_cpu_millis: 4000,
+            max_memory_mb: 8192,
+        }]
     }
 
     #[test]
