@@ -218,6 +218,16 @@ mod tests {
     }
 
     #[test]
+    fn strict_gate_never_wakes_sleeping_or_powered_off_devices() {
+        let mut context = safe_context();
+        context.device_already_running = false;
+        assert!(matches!(
+            admit_with_context(&device(), &workload(), &context),
+            Admission::Reject(_)
+        ));
+    }
+
+    #[test]
     fn strict_gate_rejects_stale_telemetry_and_data_policy_violations() {
         let mut c = safe_context();
         c.telemetry_fresh = false;
