@@ -4,7 +4,6 @@
 #![forbid(unsafe_code)]
 use ed25519_dalek::{Signature, VerifyingKey};
 
-
 pub const LEASE_MS: u64 = 5 * 60 * 1000;
 const APPROVAL_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-ADMIN-APPROVAL-V1\0";
 
@@ -32,7 +31,13 @@ pub struct VerifiedAdminApproval(AdminApprovalClaims);
 
 fn admin_approval_bytes(claims: &AdminApprovalClaims) -> Vec<u8> {
     let mut bytes = APPROVAL_DOMAIN.to_vec();
-    for value in [&claims.approval_id, &claims.workload_id, &claims.device_id, &claims.class, &claims.approver_key_id] {
+    for value in [
+        &claims.approval_id,
+        &claims.workload_id,
+        &claims.device_id,
+        &claims.class,
+        &claims.approver_key_id,
+    ] {
         bytes.extend_from_slice(&(value.len() as u32).to_be_bytes());
         bytes.extend_from_slice(value.as_bytes());
     }
@@ -59,7 +64,8 @@ pub fn verify_admin_approval(
     {
         return Err("invalid or expired administrator approval");
     }
-    let key = enrolled_admin_keys.iter()
+    let key = enrolled_admin_keys
+        .iter()
         .find(|(key_id, _)| key_id == &claims.approver_key_id)
         .map(|(_, key)| key)
         .ok_or("unknown administrator signing key")?;
@@ -193,19 +199,26 @@ impl Ledger {
         if self.jobs.contains_key(&workload.workload_id) {
             return Err(RejectReason::DuplicateWorkload);
         }
-        if let Some(id) = approval_id { if self.consumed_approvals.contains(id) { return Err(RejectReason::ApprovalRequired); } }
+        if let Some(id) = approval_id {
+            if self.consumed_approvals.contains(id) {
+                return Err(RejectReason::ApprovalRequired);
+            }
+        }
         let (cpu, memory) = self.used.get(&device.device_id).copied().unwrap_or((0, 0));
-        let next_cpu = cpu.checked_add(workload.requested_cpu_millis).ok_or(RejectReason::CpuBudget)?;
-        let next_memory = memory.checked_add(workload.requested_memory_mb).ok_or(RejectReason::MemoryBudget)?;
-        if next_cpu > device.remaining_cpu_millis { return Err(RejectReason::CpuBudget); }
-        if next_memory > device.remaining_memory_mb { return Err(RejectReason::MemoryBudget); }
-        self.used.insert(
-            device.device_id.clone(),
-            (
-                next_cpu,
-                next_memory,
-            ),
-        );
+        let next_cpu = cpu
+            .checked_add(workload.requested_cpu_millis)
+            .ok_or(RejectReason::CpuBudget)?;
+        let next_memory = memory
+            .checked_add(workload.requested_memory_mb)
+            .ok_or(RejectReason::MemoryBudget)?;
+        if next_cpu > device.remaining_cpu_millis {
+            return Err(RejectReason::CpuBudget);
+        }
+        if next_memory > device.remaining_memory_mb {
+            return Err(RejectReason::MemoryBudget);
+        }
+        self.used
+            .insert(device.device_id.clone(), (next_cpu, next_memory));
         self.jobs.insert(
             workload.workload_id.clone(),
             (
@@ -216,11 +229,15 @@ impl Ledger {
                 approval_id.map(str::to_owned),
             ),
         );
-        if let Some(id) = approval_id { self.consumed_approvals.insert(id.to_owned()); }
+        if let Some(id) = approval_id {
+            self.consumed_approvals.insert(id.to_owned());
+        }
         Ok(())
     }
     pub(crate) fn release(&mut self, workload_id: &str) {
-        if let Some((device_id, cpu, memory, _expires, _approval_id)) = self.jobs.remove(workload_id) {
+        if let Some((device_id, cpu, memory, _expires, _approval_id)) =
+            self.jobs.remove(workload_id)
+        {
             if let Some(used) = self.used.get_mut(&device_id) {
                 used.0 = used.0.saturating_sub(cpu);
                 used.1 = used.1.saturating_sub(memory);
@@ -229,8 +246,15 @@ impl Ledger {
     }
 
     pub fn expire(&mut self, now_unix_ms: u64) {
-        let expired: Vec<String> = self.jobs.iter().filter(|(_, job)| job.3 <= now_unix_ms).map(|(id, _)| id.clone()).collect();
-        for id in expired { self.release(&id); }
+        let expired: Vec<String> = self
+            .jobs
+            .iter()
+            .filter(|(_, job)| job.3 <= now_unix_ms)
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in expired {
+            self.release(&id);
+        }
     }
 
     pub fn renew(&mut self, workload_id: &str, now_unix_ms: u64) -> bool {
@@ -238,7 +262,9 @@ impl Ledger {
         if let Some(job) = self.jobs.get_mut(workload_id) {
             job.3 = now_unix_ms.saturating_add(LEASE_MS);
             true
-        } else { false }
+        } else {
+            false
+        }
     }
 }
 
@@ -251,16 +277,20 @@ fn valid_identifier(value: &str, max_len: usize) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || "._:-".contains(c))
 }
 
-
 /// Validate administrator policy before using it for admission. Duplicate class
 /// entries are ambiguous and therefore rejected rather than silently taking the first.
 pub fn validate_policies(policies: &[ClassPolicy]) -> Result<(), &'static str> {
     let mut seen = std::collections::HashSet::new();
     for policy in policies {
-        if !valid_identifier(&policy.class, 64) || policy.max_cpu_millis == 0 || policy.max_memory_mb == 0 {
+        if !valid_identifier(&policy.class, 64)
+            || policy.max_cpu_millis == 0
+            || policy.max_memory_mb == 0
+        {
             return Err("invalid class policy");
         }
-        if !seen.insert(policy.class.as_str()) { return Err("duplicate class policy"); }
+        if !seen.insert(policy.class.as_str()) {
+            return Err("duplicate class policy");
+        }
     }
     Ok(())
 }
@@ -296,12 +326,16 @@ pub fn admit(
     {
         return Admission::Reject(ClassNotAllowedOnDevice);
     }
-    if validate_policies(policies).is_err() { return Admission::Reject(InvalidClassPolicy); }
+    if validate_policies(policies).is_err() {
+        return Admission::Reject(InvalidClassPolicy);
+    }
     let Some(policy) = policies.iter().find(|p| p.class == workload.class) else {
         return Admission::Reject(UnknownClassPolicy);
     };
     if policy.requires_admin_approval
-        && !verified_admin_approvals.iter().any(|approval| approval_covers(approval, device, workload, now_unix_ms))
+        && !verified_admin_approvals
+            .iter()
+            .any(|approval| approval_covers(approval, device, workload, now_unix_ms))
     {
         return Admission::Reject(ApprovalRequired);
     }
@@ -343,7 +377,13 @@ pub fn admit_with_context(
     verified_admin_approvals: &[VerifiedAdminApproval],
     now_unix_ms: u64,
 ) -> Admission {
-    match admit(device, workload, policies, verified_admin_approvals, now_unix_ms) {
+    match admit(
+        device,
+        workload,
+        policies,
+        verified_admin_approvals,
+        now_unix_ms,
+    ) {
         Admission::Accept => {}
         rejection => return rejection,
     }
@@ -377,7 +417,6 @@ pub fn admit_with_context(
     Admission::Accept
 }
 
-
 /// Atomically apply all admission gates and reserve capacity in the in-memory
 /// prototype ledger. Production must perform the same operation in one DB transaction.
 pub fn admit_and_reserve(
@@ -391,10 +430,17 @@ pub fn admit_and_reserve(
 ) -> Admission {
     ledger.expire(now_unix_ms);
     let decision = admit_with_context(device, workload, context, policies, approvals, now_unix_ms);
-    if decision != Admission::Accept { return decision; }
-    let approval_id = policies.iter()
+    if decision != Admission::Accept {
+        return decision;
+    }
+    let approval_id = policies
+        .iter()
         .find(|p| p.class == workload.class && p.requires_admin_approval)
-        .and_then(|_| approvals.iter().find(|a| approval_covers(a, device, workload, now_unix_ms)))
+        .and_then(|_| {
+            approvals
+                .iter()
+                .find(|a| approval_covers(a, device, workload, now_unix_ms))
+        })
         .map(|a| a.0.approval_id.as_str());
     match ledger.try_reserve(device, workload, now_unix_ms, approval_id) {
         Ok(()) => Admission::Accept,
@@ -454,7 +500,14 @@ mod tests {
     #[test]
     fn strict_gate_accepts_only_when_all_scheduling_conditions_are_safe() {
         assert_eq!(
-            admit_with_context(&device(), &workload(), &safe_context(), &policies(), &[], 1_000),
+            admit_with_context(
+                &device(),
+                &workload(),
+                &safe_context(),
+                &policies(),
+                &[],
+                1_000
+            ),
             Admission::Accept
         );
     }
@@ -641,7 +694,8 @@ mod tests {
                     max_cpu_millis: 4000,
                     max_memory_mb: 8192,
                 }],
-                &[], 1_000
+                &[],
+                1_000
             ),
             Admission::Reject(RejectReason::ApprovalRequired)
         );
@@ -658,13 +712,13 @@ mod tests {
         third.workload_id = "job-003".into();
         assert!(ledger.try_reserve(&d, &first, 1_000, None).is_ok());
         assert!(ledger.try_reserve(&d, &second, 1_000, None).is_ok());
-        assert_eq!(ledger.try_reserve(&d, &third, 1_000, None), Err(RejectReason::CpuBudget));
+        assert_eq!(
+            ledger.try_reserve(&d, &third, 1_000, None),
+            Err(RejectReason::CpuBudget)
+        );
         ledger.release("job-001");
         assert!(ledger.try_reserve(&d, &third, 1_000, None).is_ok());
     }
-
-
-
 
     #[test]
     fn atomic_admission_reserves_once_and_rejects_replay_after_release() {
@@ -672,10 +726,19 @@ mod tests {
         let d = device();
         let w = workload();
         let context = safe_context();
-        assert_eq!(admit_and_reserve(&mut ledger, &d, &w, &context, &policies(), &[], 1_000), Admission::Accept);
-        assert_eq!(admit_and_reserve(&mut ledger, &d, &w, &context, &policies(), &[], 1_000), Admission::Reject(RejectReason::DuplicateWorkload));
+        assert_eq!(
+            admit_and_reserve(&mut ledger, &d, &w, &context, &policies(), &[], 1_000),
+            Admission::Accept
+        );
+        assert_eq!(
+            admit_and_reserve(&mut ledger, &d, &w, &context, &policies(), &[], 1_000),
+            Admission::Reject(RejectReason::DuplicateWorkload)
+        );
         ledger.release("job-001");
-        assert_eq!(admit_and_reserve(&mut ledger, &d, &w, &context, &policies(), &[], 1_001), Admission::Accept);
+        assert_eq!(
+            admit_and_reserve(&mut ledger, &d, &w, &context, &policies(), &[], 1_001),
+            Admission::Accept
+        );
     }
 
     #[test]
@@ -688,17 +751,26 @@ mod tests {
         ledger.expire(1_000 + LEASE_MS);
         let mut next = workload();
         next.workload_id = "job-002".into();
-        assert!(ledger.try_reserve(&d, &next, 1_000 + LEASE_MS, None).is_ok());
+        assert!(ledger
+            .try_reserve(&d, &next, 1_000 + LEASE_MS, None)
+            .is_ok());
     }
 
     #[test]
     fn duplicate_or_zero_limit_class_policies_are_rejected() {
         let duplicate = vec![policies()[0].clone(), policies()[0].clone()];
-        assert_eq!(admit(&device(), &workload(), &duplicate, &[], 1_000), Admission::Reject(RejectReason::InvalidClassPolicy));
-        let invalid = vec![ClassPolicy { class: "inference".into(), requires_admin_approval: false, max_cpu_millis: 0, max_memory_mb: 1024 }];
+        assert_eq!(
+            admit(&device(), &workload(), &duplicate, &[], 1_000),
+            Admission::Reject(RejectReason::InvalidClassPolicy)
+        );
+        let invalid = vec![ClassPolicy {
+            class: "inference".into(),
+            requires_admin_approval: false,
+            max_cpu_millis: 0,
+            max_memory_mb: 1024,
+        }];
         assert_eq!(validate_policies(&invalid), Err("invalid class policy"));
     }
-
 
     #[test]
     fn signed_approval_is_bound_to_device_class_limits_and_expiry() {
@@ -717,20 +789,55 @@ mod tests {
         let signed = SignedAdminApproval { claims, signature };
         let keys = vec![("admin-key-1".into(), signing.verifying_key())];
         let verified = verify_admin_approval(&signed, &keys, 1_000).unwrap();
-        let approval_policy = [ClassPolicy { class: "inference".into(), requires_admin_approval: true, max_cpu_millis: 4000, max_memory_mb: 8192 }];
-        assert_eq!(admit(&device(), &workload(), &approval_policy, &[verified.clone()], 1_000), Admission::Accept);
+        let approval_policy = [ClassPolicy {
+            class: "inference".into(),
+            requires_admin_approval: true,
+            max_cpu_millis: 4000,
+            max_memory_mb: 8192,
+        }];
+        assert_eq!(
+            admit(
+                &device(),
+                &workload(),
+                &approval_policy,
+                &[verified.clone()],
+                1_000
+            ),
+            Admission::Accept
+        );
 
         let mut other_device = device();
         other_device.device_id = "lab-gpu-02".into();
-        assert_eq!(admit(&other_device, &workload(), &approval_policy, &[verified.clone()], 1_000), Admission::Reject(RejectReason::ApprovalRequired));
+        assert_eq!(
+            admit(
+                &other_device,
+                &workload(),
+                &approval_policy,
+                &[verified.clone()],
+                1_000
+            ),
+            Admission::Reject(RejectReason::ApprovalRequired)
+        );
 
         let mut other_class = workload();
         other_class.class = "batch".into();
-        assert_eq!(admit(&device(), &other_class, &approval_policy, &[verified.clone()], 1_000), Admission::Reject(RejectReason::ClassNotAllowedOnDevice));
+        assert_eq!(
+            admit(
+                &device(),
+                &other_class,
+                &approval_policy,
+                &[verified.clone()],
+                1_000
+            ),
+            Admission::Reject(RejectReason::ClassNotAllowedOnDevice)
+        );
 
         let mut excessive = workload();
         excessive.requested_cpu_millis = 2500;
-        assert_eq!(admit(&device(), &excessive, &approval_policy, &[verified], 1_000), Admission::Reject(RejectReason::ApprovalRequired));
+        assert_eq!(
+            admit(&device(), &excessive, &approval_policy, &[verified], 1_000),
+            Admission::Reject(RejectReason::ApprovalRequired)
+        );
 
         assert!(verify_admin_approval(&signed, &keys, 2_000).is_err());
         let mut tampered = signed.clone();
