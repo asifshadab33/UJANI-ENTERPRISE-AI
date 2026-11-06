@@ -32,7 +32,9 @@ pub enum Admission {
 fn valid_identifier(value: &str, max_len: usize) -> bool {
     !value.trim().is_empty()
         && value.len() <= max_len
-        && value.chars().all(|c| c.is_ascii_alphanumeric() || "._:-".contains(c))
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "._:-".contains(c))
 }
 
 pub fn admit(device: &Device, workload: &Workload) -> Admission {
@@ -40,7 +42,9 @@ pub fn admit(device: &Device, workload: &Workload) -> Admission {
         || !valid_identifier(&workload.workload_id, 128)
         || !valid_identifier(&workload.class, 64)
     {
-        return Admission::Reject("device ID, workload ID, and workload class must be valid bounded identifiers");
+        return Admission::Reject(
+            "device ID, workload ID, and workload class must be valid bounded identifiers",
+        );
     }
     if workload.requested_cpu_millis == 0 || workload.requested_memory_mb == 0 {
         return Admission::Reject("workload must request a positive CPU and memory budget");
@@ -51,7 +55,11 @@ pub fn admit(device: &Device, workload: &Workload) -> Admission {
     if !device.available {
         return Admission::Reject("device is not currently available");
     }
-    if !device.allowed_workload_classes.iter().any(|c| c == &workload.class) {
+    if !device
+        .allowed_workload_classes
+        .iter()
+        .any(|c| c == &workload.class)
+    {
         return Admission::Reject("workload class is not allowed on this device");
     }
     if workload.requires_admin_approval && !workload.admin_approved {
