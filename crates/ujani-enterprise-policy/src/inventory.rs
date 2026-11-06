@@ -78,8 +78,10 @@ pub fn validate_inventory_record(
     {
         return Err(InventoryError::MissingTelemetryProvenance);
     }
-    if now_unix_ms < record.telemetry_collected_unix_ms
-        || now_unix_ms - record.telemetry_collected_unix_ms > max_age_ms
+    const CLOCK_SKEW_TOLERANCE_MS: u64 = 30_000;
+    if now_unix_ms.saturating_add(CLOCK_SKEW_TOLERANCE_MS) < record.telemetry_collected_unix_ms
+        || now_unix_ms.saturating_sub(record.telemetry_collected_unix_ms) > max_age_ms
+        || now_unix_ms.saturating_sub(record.last_seen_unix_ms) > max_age_ms
     {
         return Err(InventoryError::StaleTelemetry);
     }
@@ -217,6 +219,18 @@ mod tests {
             validate_inventory_record(&record(), 5000, 100),
             Err(InventoryError::StaleTelemetry)
         );
+    }
+
+    #[test]
+    fn last_seen_is_age_checked_and_small_clock_skew_is_tolerated() {
+        let mut device = record();
+        device.telemetry_collected_unix_ms = 120;
+        device.last_seen_unix_ms = 120;
+        assert_eq!(validate_inventory_record(&device, 110, 1000), Ok(()));
+        assert_eq!(validate_inventory_record(&device, 40_200, 1000), Err(InventoryError::StaleTelemetry));
+        device.last_seen_unix_ms = 1;
+        device.telemetry_collected_unix_ms = 100;
+        assert_eq!(validate_inventory_record(&device, 2000, 1000), Err(InventoryError::StaleTelemetry));
     }
 
     #[test]
