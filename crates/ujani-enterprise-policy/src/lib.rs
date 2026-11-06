@@ -70,7 +70,10 @@ pub fn verify_admin_approval(
         || claims.max_memory_mb == 0
         || claims.issued_at_unix_ms > now_unix_ms.saturating_add(30_000)
         || claims.expires_unix_ms <= claims.issued_at_unix_ms
-        || claims.expires_unix_ms.saturating_sub(claims.issued_at_unix_ms) > MAX_ADMIN_APPROVAL_TTL_MS
+        || claims
+            .expires_unix_ms
+            .saturating_sub(claims.issued_at_unix_ms)
+            > MAX_ADMIN_APPROVAL_TTL_MS
         || claims.expires_unix_ms <= now_unix_ms
     {
         return Err("invalid or expired administrator approval");
@@ -198,7 +201,11 @@ fn valid_model_identifier(value: &str) -> bool {
         if parts.next().is_some()
             || name.is_empty()
             || name.bytes().any(|b| {
-                !(b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'.' || b == b'_' || b == b'-')
+                !(b.is_ascii_lowercase()
+                    || b.is_ascii_digit()
+                    || b == b'.'
+                    || b == b'_'
+                    || b == b'-')
             })
         {
             return false;
@@ -207,7 +214,11 @@ fn valid_model_identifier(value: &str) -> bool {
             if index + 1 != segments.len()
                 || tag.is_empty()
                 || !tag.bytes().all(|b| {
-                    b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'.' || b == b'_' || b == b'-'
+                    b.is_ascii_lowercase()
+                        || b.is_ascii_digit()
+                        || b == b'.'
+                        || b == b'_'
+                        || b == b'-'
                 })
             {
                 return false;
@@ -682,10 +693,19 @@ mod tests {
 
     #[test]
     fn manifest_rejects_urls_paths_and_untrusted_registry_endpoints_as_models() {
-        for model in ["https://example.com/model", "../local/model", "/absolute/model", "localhost:5000/model", "hf.co/org/model"] {
+        for model in [
+            "https://example.com/model",
+            "../local/model",
+            "/absolute/model",
+            "localhost:5000/model",
+            "hf.co/org/model",
+        ] {
             let mut value = manifest();
             value.model = model.into();
-            assert_eq!(validate_workload_manifest(&value), Err(ManifestError::InvalidModel));
+            assert_eq!(
+                validate_workload_manifest(&value),
+                Err(ManifestError::InvalidModel)
+            );
         }
         let mut library_model = manifest();
         library_model.model = "library/llama3.2".into();
@@ -709,11 +729,17 @@ mod tests {
         };
         let keys = vec![("admin-key-1".into(), signing.verifying_key())];
         claims.issued_at_unix_ms = 40_000;
-        let signed = SignedAdminApproval { signature: signing.sign(&admin_approval_bytes(&claims)).to_bytes(), claims: claims.clone() };
+        let signed = SignedAdminApproval {
+            signature: signing.sign(&admin_approval_bytes(&claims)).to_bytes(),
+            claims: claims.clone(),
+        };
         assert!(verify_admin_approval(&signed, &keys, 1_000).is_err());
         claims.issued_at_unix_ms = 1_000;
         claims.expires_unix_ms = 1_000 + MAX_ADMIN_APPROVAL_TTL_MS + 1;
-        let signed = SignedAdminApproval { signature: signing.sign(&admin_approval_bytes(&claims)).to_bytes(), claims };
+        let signed = SignedAdminApproval {
+            signature: signing.sign(&admin_approval_bytes(&claims)).to_bytes(),
+            claims,
+        };
         assert!(verify_admin_approval(&signed, &keys, 1_000).is_err());
     }
 
