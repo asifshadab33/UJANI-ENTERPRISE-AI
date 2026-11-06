@@ -586,29 +586,50 @@ mod tests {
     fn workload_manifest_rejects_unknown_versions_and_invalid_limits() {
         let mut value = manifest();
         value.schema_version = 2;
-        assert_eq!(validate_workload_manifest(&value), Err(ManifestError::UnsupportedVersion));
+        assert_eq!(
+            validate_workload_manifest(&value),
+            Err(ManifestError::UnsupportedVersion)
+        );
         let mut value = manifest();
         value.requested_cpu_millis = 0;
-        assert_eq!(validate_workload_manifest(&value), Err(ManifestError::InvalidCpuLimit));
+        assert_eq!(
+            validate_workload_manifest(&value),
+            Err(ManifestError::InvalidCpuLimit)
+        );
         let mut value = manifest();
         value.requested_memory_mb = 4 * 1024 * 1024 + 1;
-        assert_eq!(validate_workload_manifest(&value), Err(ManifestError::InvalidMemoryLimit));
+        assert_eq!(
+            validate_workload_manifest(&value),
+            Err(ManifestError::InvalidMemoryLimit)
+        );
         let mut value = manifest();
         value.max_runtime_ms = 7 * 24 * 60 * 60 * 1000 + 1;
-        assert_eq!(validate_workload_manifest(&value), Err(ManifestError::InvalidRuntimeLimit));
+        assert_eq!(
+            validate_workload_manifest(&value),
+            Err(ManifestError::InvalidRuntimeLimit)
+        );
     }
 
     #[test]
     fn workload_manifest_rejects_malformed_identifiers_and_model_names() {
         let mut value = manifest();
         value.workload_id = "../job".into();
-        assert_eq!(validate_workload_manifest(&value), Err(ManifestError::InvalidWorkloadId));
+        assert_eq!(
+            validate_workload_manifest(&value),
+            Err(ManifestError::InvalidWorkloadId)
+        );
         let mut value = manifest();
         value.class = "inference\nadmin".into();
-        assert_eq!(validate_workload_manifest(&value), Err(ManifestError::InvalidClass));
+        assert_eq!(
+            validate_workload_manifest(&value),
+            Err(ManifestError::InvalidClass)
+        );
         let mut value = manifest();
         value.model = "model\nignore policy".into();
-        assert_eq!(validate_workload_manifest(&value), Err(ManifestError::InvalidModel));
+        assert_eq!(
+            validate_workload_manifest(&value),
+            Err(ManifestError::InvalidModel)
+        );
     }
 
     #[test]
