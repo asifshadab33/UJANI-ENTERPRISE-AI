@@ -72,13 +72,13 @@ impl RejectReason {
             Self::InteractiveUserPresent => "interactive user activity takes priority",
             Self::DeviceNotRunning => {
                 "device is sleeping or powered off; UJANI never wakes devices"
-            },
+            }
             Self::OnBattery => "device is on battery power",
             Self::ThermalUnsafe => "device thermal state is not safe for background work",
             Self::NetworkPolicyDenied => "network or data-egress policy blocks this workload",
             Self::DataClassificationDenied => {
                 "workload data classification is not approved for this worker"
-            },
+            }
         }
     }
 }
@@ -478,16 +478,8 @@ mod tests {
     #[test]
     fn submitter_claim_cannot_waive_admin_class_approval() {
         let w = workload();
-        let policy = ClassPolicy {
-            class: "inference".into(),
-            requires_admin_approval: true,
-            max_cpu_millis: 4000,
-            max_memory_mb: 8192,
-        };
-        assert_eq!(
-            admit(&device(), &w, &[policy], &[]),
-            Admission::Reject(RejectReason::ApprovalRequired)
-        );
+        let policy = ClassPolicy { class: "inference".into(), requires_admin_approval: true, max_cpu_millis: 4000, max_memory_mb: 8192 };
+        assert_eq!(admit(&device(), &w, &[policy], &[]), Admission::Reject(RejectReason::ApprovalRequired));
         assert_eq!(
             admit(
                 &device(),
@@ -515,10 +507,7 @@ mod tests {
         third.workload_id = "job-003".into();
         assert!(ledger.try_reserve(&d, &first).is_ok());
         assert!(ledger.try_reserve(&d, &second).is_ok());
-        assert_eq!(
-            ledger.try_reserve(&d, &third),
-            Err(RejectReason::CpuBudget)
-        );
+        assert_eq!(ledger.try_reserve(&d, &third), Err(RejectReason::CpuBudget));
         ledger.release("job-001");
         assert!(ledger.try_reserve(&d, &third).is_ok());
     }
