@@ -315,3 +315,6 @@ mod tests {
         assert!(matches!(admit(&device(), &w), Admission::Reject(_)));
     }
 }
+
+pub mod inventory;
+pub use inventory::{summarize_inventory, validate_inventory_record, DeviceInventoryRecord, DevicePowerState, InventoryError, InventorySummary, InventoryTrust};
