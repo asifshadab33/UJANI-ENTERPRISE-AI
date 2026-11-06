@@ -1,0 +1,29 @@
+name: UJANI Enterprise AI CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: enterprise-policy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  policy-tests:
+    name: Enterprise policy tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run workspace tests
+        run: cargo test --workspace
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Check lint warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
