@@ -57,3 +57,10 @@ This file defines minimum gates before enabling remote work on enrolled devices.
 The policy crate exposes `admit_with_context`, layering these mandatory conditions on top of device enrolment and resource quotas: fresh telemetry, explicit owner opt-in, administrator-approved schedule, no interactive user activity, AC power, safe thermal state, network/egress approval and workload data-classification approval.
 
 This is side-effect-free policy logic. It does not read telemetry, authenticate devices, schedule or execute work. A production worker must independently revalidate the conditions immediately before launch using OS-enforced resource and isolation controls. Missing evidence fails closed.
+
+
+## No-wake scheduling and workload safety
+
+A worker is eligible only if already powered on. Sleeping and powered-off devices are never awakened for UJANI jobs. In addition to owner opt-in, administrator schedule, no interactive use, AC power, thermal safety, fresh telemetry and data-egress approval, a future scheduler must compare equivalent completed workloads and include incremental worker, network and retry energy. If no defensible net energy advantage exists, retain central execution.
+
+All local and remote AI routes must use a shared abuse policy. Deny malware, credential theft, unauthorized access, evasion/persistence and botnet/abuse automation; require review for bulk messaging, unknown intent and unverified security testing. These policy declarations are not a complete classifier: production requires layered abuse detection, signed workloads, sandboxing, rate limits, output validation and audit logs.

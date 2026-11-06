@@ -80,7 +80,7 @@ pub struct SchedulingContext {
     pub owner_opted_in: bool,
     pub within_admin_schedule: bool,
     pub interactive_user_present: bool,
-    pub device_on_battery: bool,
+    pub device_on_battery: bool,\n    /// True only when already powered on; UJANI must never wake devices.\n    pub device_already_running: bool,
     pub thermal_state_safe: bool,
     pub network_policy_allows: bool,
     pub data_classification_allows: bool,
@@ -110,7 +110,7 @@ pub fn admit_with_context(
     if context.interactive_user_present {
         return Admission::Reject("interactive user activity takes priority");
     }
-    if context.device_on_battery {
+    if !context.device_already_running {\n        return Admission::Reject("device is sleeping or powered off; UJANI never wakes devices");\n    }\n    if context.device_on_battery {
         return Admission::Reject("device is on battery power");
     }
     if !context.thermal_state_safe {
@@ -157,7 +157,7 @@ mod tests {
             owner_opted_in: true,
             within_admin_schedule: true,
             interactive_user_present: false,
-            device_on_battery: false,
+            device_on_battery: false,\n            device_already_running: true,
             thermal_state_safe: true,
             network_policy_allows: true,
             data_classification_allows: true,
