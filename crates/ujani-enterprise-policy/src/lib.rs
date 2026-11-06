@@ -1166,6 +1166,7 @@ mod tests {
         let mut ledger = Ledger::default();
         let d = device();
         let w = workload();
+        let token = [0x5au8; 32];
         assert!(ledger.try_reserve(&d, &w, 1_000, None).is_ok());
         assert!(!ledger.renew_lease("job-001", &token, 1_000 + LEASE_MS));
         ledger.expire(1_000 + LEASE_MS);
