@@ -429,14 +429,25 @@ impl Ledger {
             return Admission::Reject(RejectReason::InvalidLeaseToken);
         }
         let token_hash = lease_token_hash(lease_token);
-        if self.lease_token_hashes.values().any(|stored| constant_time_eq(stored, &token_hash)) {
+        if self
+            .lease_token_hashes
+            .values()
+            .any(|stored| constant_time_eq(stored, &token_hash))
+        {
             return Admission::Reject(RejectReason::InvalidLeaseToken);
         }
         let decision = admit_and_reserve(
-            self, device, workload, context, policies, approvals, now_unix_ms,
+            self,
+            device,
+            workload,
+            context,
+            policies,
+            approvals,
+            now_unix_ms,
         );
         if decision == Admission::Accept {
-            self.lease_token_hashes.insert(workload.workload_id.clone(), token_hash);
+            self.lease_token_hashes
+                .insert(workload.workload_id.clone(), token_hash);
         }
         decision
     }
@@ -486,7 +497,6 @@ impl Ledger {
             self.release(&id);
         }
     }
-
 }
 
 /// Hash lease capabilities with a domain separator so they cannot be confused
@@ -1121,7 +1131,13 @@ mod tests {
         let token = [0x5au8; 32];
         assert_eq!(
             ledger.admit_and_reserve_with_lease(
-                &d, &w, &safe_context(), &policies(), &[], 1_000, &token
+                &d,
+                &w,
+                &safe_context(),
+                &policies(),
+                &[],
+                1_000,
+                &token
             ),
             Admission::Accept
         );
@@ -1141,13 +1157,25 @@ mod tests {
         let zero = [0u8; 32];
         assert_eq!(
             ledger.admit_and_reserve_with_lease(
-                &d, &workload(), &safe_context(), &policies(), &[], 1_000, &zero
+                &d,
+                &workload(),
+                &safe_context(),
+                &policies(),
+                &[],
+                1_000,
+                &zero
             ),
             Admission::Reject(RejectReason::InvalidLeaseToken)
         );
         assert_eq!(
             ledger.admit_and_reserve_with_lease(
-                &d, &workload(), &safe_context(), &policies(), &[], 1_000, &token
+                &d,
+                &workload(),
+                &safe_context(),
+                &policies(),
+                &[],
+                1_000,
+                &token
             ),
             Admission::Accept
         );
@@ -1155,7 +1183,13 @@ mod tests {
         next.workload_id = "job-002".into();
         assert_eq!(
             ledger.admit_and_reserve_with_lease(
-                &d, &next, &safe_context(), &policies(), &[], 1_001, &token
+                &d,
+                &next,
+                &safe_context(),
+                &policies(),
+                &[],
+                1_001,
+                &token
             ),
             Admission::Reject(RejectReason::InvalidLeaseToken)
         );
