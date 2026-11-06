@@ -74,6 +74,62 @@ pub fn admit(device: &Device, workload: &Workload) -> Admission {
     Admission::Accept
 }
 
+/// Runtime facts required by the stricter scheduling gate. Missing or stale evidence must fail closed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SchedulingContext {
+    pub owner_opted_in: bool,
+    pub within_admin_schedule: bool,
+    pub interactive_user_present: bool,
+    pub device_on_battery: bool,
+    /// True only when already powered on; UJANI must never wake devices.
+    pub device_already_running: bool,
+    pub thermal_state_safe: bool,
+    pub network_policy_allows: bool,
+    pub data_classification_allows: bool,
+    pub telemetry_fresh: bool,
+}
+
+/// Stronger admission gate for future scheduled workloads.
+/// Production workers must independently enforce these conditions immediately before launch.
+pub fn admit_with_context(
+    device: &Device,
+    workload: &Workload,
+    context: &SchedulingContext,
+) -> Admission {
+    match admit(device, workload) {
+        Admission::Accept => {}
+        rejection => return rejection,
+    }
+    if !context.telemetry_fresh {
+        return Admission::Reject("worker telemetry is missing or stale");
+    }
+    if !context.owner_opted_in {
+        return Admission::Reject("device owner has not explicitly opted in");
+    }
+    if !context.within_admin_schedule {
+        return Admission::Reject("outside administrator-approved scheduling window");
+    }
+    if context.interactive_user_present {
+        return Admission::Reject("interactive user activity takes priority");
+    }
+    if !context.device_already_running {
+        return Admission::Reject("device is sleeping or powered off; UJANI never wakes devices");
+    }
+    if context.device_on_battery {
+        return Admission::Reject("device is on battery power");
+    }
+    if !context.thermal_state_safe {
+        return Admission::Reject("device thermal state is not safe for background work");
+    }
+    if !context.network_policy_allows {
+        return Admission::Reject("network or data-egress policy blocks this workload");
+    }
+    if !context.data_classification_allows {
+        return Admission::Reject("workload data classification is not approved for this worker");
+    }
+    Admission::Accept
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -99,6 +155,98 @@ mod tests {
             requires_admin_approval: false,
             admin_approved: false,
         }
+    }
+
+    fn safe_context() -> SchedulingContext {
+        SchedulingContext {
+            owner_opted_in: true,
+            within_admin_schedule: true,
+            interactive_user_present: false,
+            device_on_battery: false,
+            device_already_running: true,
+            thermal_state_safe: true,
+            network_policy_allows: true,
+            data_classification_allows: true,
+            telemetry_fresh: true,
+        }
+    }
+
+    #[test]
+    fn strict_gate_accepts_only_when_all_scheduling_conditions_are_safe() {
+        assert_eq!(
+            admit_with_context(&device(), &workload(), &safe_context()),
+            Admission::Accept
+        );
+    }
+
+    #[test]
+    fn strict_gate_rejects_missing_opt_in_or_outside_schedule() {
+        let mut c = safe_context();
+        c.owner_opted_in = false;
+        assert!(matches!(
+            admit_with_context(&device(), &workload(), &c),
+            Admission::Reject(_)
+        ));
+        let mut c = safe_context();
+        c.within_admin_schedule = false;
+        assert!(matches!(
+            admit_with_context(&device(), &workload(), &c),
+            Admission::Reject(_)
+        ));
+    }
+
+    #[test]
+    fn strict_gate_prioritizes_interactive_use_and_power_safety() {
+        let mut c = safe_context();
+        c.interactive_user_present = true;
+        assert!(matches!(
+            admit_with_context(&device(), &workload(), &c),
+            Admission::Reject(_)
+        ));
+        let mut c = safe_context();
+        c.device_on_battery = true;
+        assert!(matches!(
+            admit_with_context(&device(), &workload(), &c),
+            Admission::Reject(_)
+        ));
+        let mut c = safe_context();
+        c.thermal_state_safe = false;
+        assert!(matches!(
+            admit_with_context(&device(), &workload(), &c),
+            Admission::Reject(_)
+        ));
+    }
+
+    #[test]
+    fn strict_gate_never_wakes_sleeping_or_powered_off_devices() {
+        let mut context = safe_context();
+        context.device_already_running = false;
+        assert!(matches!(
+            admit_with_context(&device(), &workload(), &context),
+            Admission::Reject(_)
+        ));
+    }
+
+    #[test]
+    fn strict_gate_rejects_stale_telemetry_and_data_policy_violations() {
+        let mut c = safe_context();
+        c.telemetry_fresh = false;
+        assert!(matches!(
+            admit_with_context(&device(), &workload(), &c),
+            Admission::Reject(_)
+        ));
+        let mut c = safe_context();
+        c.network_policy_allows = false;
+        assert!(matches!(
+            admit_with_context(&device(), &workload(), &c),
+            Admission::Reject(_)
+        ));
+        let mut c = safe_context();
+        c.data_classification_allows = false;
+        assert!(matches!(
+            admit_with_context(&device(), &workload(), &c),
+            Admission::Reject(_)
+        ));
     }
 
     #[test]
@@ -167,3 +315,9 @@ mod tests {
         assert!(matches!(admit(&device(), &w), Admission::Reject(_)));
     }
 }
+
+pub mod inventory;
+pub use inventory::{
+    summarize_inventory, validate_inventory_record, DeviceInventoryRecord, DevicePowerState,
+    InventoryError, InventorySummary, InventoryTrust,
+};
