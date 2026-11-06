@@ -70,11 +70,15 @@ impl RejectReason {
             Self::OwnerOptInMissing => "device owner has not explicitly opted in",
             Self::OutsideAdminSchedule => "outside administrator-approved scheduling window",
             Self::InteractiveUserPresent => "interactive user activity takes priority",
-            Self::DeviceNotRunning => "device is sleeping or powered off; UJANI never wakes devices",
+            Self::DeviceNotRunning => {
+                "device is sleeping or powered off; UJANI never wakes devices"
+            },
             Self::OnBattery => "device is on battery power",
             Self::ThermalUnsafe => "device thermal state is not safe for background work",
             Self::NetworkPolicyDenied => "network or data-egress policy blocks this workload",
-            Self::DataClassificationDenied => "workload data classification is not approved for this worker",
+            Self::DataClassificationDenied => {
+                "workload data classification is not approved for this worker"
+            },
         }
     }
 }
@@ -384,69 +388,120 @@ mod tests {
 
     #[test]
     fn approved_available_device_accepts_within_budget() {
-        assert_eq!(admit(&device(), &workload(), &policies(), &[]), Admission::Accept);
+        assert_eq!(
+            admit(&device(), &workload(), &policies(), &[]),
+            Admission::Accept
+        );
     }
 
     #[test]
     fn unapproved_device_is_rejected() {
         let mut d = device();
         d.admin_approved = false;
-        assert!(matches!(admit(&d, &workload(), &policies(), &[]), Admission::Reject(_)));
+        assert!(matches!(
+            admit(&d, &workload(), &policies(), &[]),
+            Admission::Reject(_)
+        ));
     }
 
     #[test]
     fn unavailable_device_is_rejected() {
         let mut d = device();
         d.available = false;
-        assert!(matches!(admit(&d, &workload(), &policies(), &[]), Admission::Reject(_)));
+        assert!(matches!(
+            admit(&d, &workload(), &policies(), &[]),
+            Admission::Reject(_)
+        ));
     }
 
     #[test]
     fn disallowed_class_is_rejected() {
         let mut w = workload();
         w.class = "arbitrary-shell".into();
-        assert!(matches!(admit(&device(), &w, &policies(), &[]), Admission::Reject(_)));
+        assert!(matches!(
+            admit(&device(), &w, &policies(), &[]),
+            Admission::Reject(_)
+        ));
     }
 
     #[test]
     fn quota_overrun_is_rejected() {
         let mut w = workload();
         w.requested_memory_mb = 9000;
-        assert!(matches!(admit(&device(), &w, &policies(), &[]), Admission::Reject(_)));
+        assert!(matches!(
+            admit(&device(), &w, &policies(), &[]),
+            Admission::Reject(_)
+        ));
     }
 
     #[test]
     fn rejects_empty_or_malformed_identifiers_and_classes() {
         let mut d = device();
         d.device_id = "   ".into();
-        assert!(matches!(admit(&d, &workload(), &policies(), &[]), Admission::Reject(_)));
+        assert!(matches!(
+            admit(&d, &workload(), &policies(), &[]),
+            Admission::Reject(_)
+        ));
 
         let mut w = workload();
         w.workload_id = "job/../../escape".into();
-        assert!(matches!(admit(&device(), &w, &policies(), &[]), Admission::Reject(_)));
+        assert!(matches!(
+            admit(&device(), &w, &policies(), &[]),
+            Admission::Reject(_)
+        ));
 
         let mut w = workload();
         w.class = "inference\\nadmin".into();
-        assert!(matches!(admit(&device(), &w, &policies(), &[]), Admission::Reject(_)));
+        assert!(matches!(
+            admit(&device(), &w, &policies(), &[]),
+            Admission::Reject(_)
+        ));
     }
 
     #[test]
     fn rejects_zero_resource_requests() {
         let mut w = workload();
         w.requested_cpu_millis = 0;
-        assert!(matches!(admit(&device(), &w, &policies(), &[]), Admission::Reject(_)));
+        assert!(matches!(
+            admit(&device(), &w, &policies(), &[]),
+            Admission::Reject(_)
+        ));
 
         let mut w = workload();
         w.requested_memory_mb = 0;
-        assert!(matches!(admit(&device(), &w, &policies(), &[]), Admission::Reject(_)));
+        assert!(matches!(
+            admit(&device(), &w, &policies(), &[]),
+            Admission::Reject(_)
+        ));
     }
 
     #[test]
     fn submitter_claim_cannot_waive_admin_class_approval() {
         let w = workload();
-        let policy = ClassPolicy { class: "inference".into(), requires_admin_approval: true, max_cpu_millis: 4000, max_memory_mb: 8192 };
-        assert_eq!(admit(&device(), &w, &[policy], &[]), Admission::Reject(RejectReason::ApprovalRequired));
-        assert_eq!(admit(&device(), &w, &[ClassPolicy { class: "inference".into(), requires_admin_approval: true, max_cpu_millis: 4000, max_memory_mb: 8192 }], &["job-001".into()]), Admission::Accept);
+        let policy = ClassPolicy {
+            class: "inference".into(),
+            requires_admin_approval: true,
+            max_cpu_millis: 4000,
+            max_memory_mb: 8192,
+        };
+        assert_eq!(
+            admit(&device(), &w, &[policy], &[]),
+            Admission::Reject(RejectReason::ApprovalRequired)
+        );
+        assert_eq!(
+            admit(
+                &device(),
+                &w,
+                &[ClassPolicy {
+                    class: "inference".into(),
+                    requires_admin_approval: true,
+                    max_cpu_millis: 4000,
+                    max_memory_mb: 8192,
+                }],
+                &["job-001".into()]
+            ),
+            Admission::Accept
+        );
     }
 
     #[test]
@@ -454,11 +509,16 @@ mod tests {
         let mut ledger = Ledger::default();
         let d = device();
         let first = workload();
-        let mut second = workload(); second.workload_id = "job-002".into();
-        let mut third = workload(); third.workload_id = "job-003".into();
+        let mut second = workload();
+        second.workload_id = "job-002".into();
+        let mut third = workload();
+        third.workload_id = "job-003".into();
         assert!(ledger.try_reserve(&d, &first).is_ok());
         assert!(ledger.try_reserve(&d, &second).is_ok());
-        assert_eq!(ledger.try_reserve(&d, &third), Err(RejectReason::CpuBudget));
+        assert_eq!(
+            ledger.try_reserve(&d, &third),
+            Err(RejectReason::CpuBudget)
+        );
         ledger.release("job-001");
         assert!(ledger.try_reserve(&d, &third).is_ok());
     }
