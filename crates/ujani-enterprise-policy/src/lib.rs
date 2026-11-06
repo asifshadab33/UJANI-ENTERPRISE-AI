@@ -651,6 +651,61 @@ mod tests {
     }
 
     #[test]
+    fn manifest_digest_changes_when_any_execution_field_changes() {
+        let original = manifest();
+        let digest = workload_manifest_sha256(&original).unwrap();
+        let mut changed = original.clone();
+        changed.model = "qwen2.5:14b".into();
+        assert_ne!(digest, workload_manifest_sha256(&changed).unwrap());
+        let mut changed = original.clone();
+        changed.network_access = true;
+        assert_ne!(digest, workload_manifest_sha256(&changed).unwrap());
+        let mut changed = original.clone();
+        changed.data_classification = DataClassification::Restricted;
+        assert_ne!(digest, workload_manifest_sha256(&changed).unwrap());
+        let mut changed = original;
+        changed.max_runtime_ms += 1;
+        assert_ne!(digest, workload_manifest_sha256(&changed).unwrap());
+    }
+
+    #[test]
+    fn manifest_rejects_urls_paths_and_untrusted_registry_endpoints_as_models() {
+        for model in ["https://example.com/model", "../local/model", "/absolute/model", "localhost:5000/model", "hf.co/org/model"] {
+            let mut value = manifest();
+            value.model = model.into();
+            assert_eq!(validate_workload_manifest(&value), Err(ManifestError::InvalidModel));
+        }
+        let mut library_model = manifest();
+        library_model.model = "library/llama3.2".into();
+        assert_eq!(validate_workload_manifest(&library_model), Ok(()));
+    }
+
+    #[test]
+    fn administrator_approval_has_bounded_issue_time_and_lifetime() {
+        let signing = SigningKey::from_bytes(&[9u8; 32]);
+        let mut claims = AdminApprovalClaims {
+            approval_id: "approval-time".into(),
+            workload_id: "job-001".into(),
+            device_id: "lab-gpu-01".into(),
+            class: "inference".into(),
+            max_cpu_millis: 2000,
+            max_memory_mb: 4096,
+            approver_key_id: "admin-key-1".into(),
+            manifest_sha256: workload_manifest_sha256(&manifest()).unwrap(),
+            issued_at_unix_ms: 1_000,
+            expires_unix_ms: 2_000,
+        };
+        let keys = vec![("admin-key-1".into(), signing.verifying_key())];
+        claims.issued_at_unix_ms = 40_000;
+        let signed = SignedAdminApproval { signature: signing.sign(&admin_approval_bytes(&claims)).to_bytes(), claims: claims.clone() };
+        assert!(verify_admin_approval(&signed, &keys, 1_000).is_err());
+        claims.issued_at_unix_ms = 1_000;
+        claims.expires_unix_ms = 1_000 + MAX_ADMIN_APPROVAL_TTL_MS + 1;
+        let signed = SignedAdminApproval { signature: signing.sign(&admin_approval_bytes(&claims)).to_bytes(), claims };
+        assert!(verify_admin_approval(&signed, &keys, 1_000).is_err());
+    }
+
+    #[test]
     fn workload_manifest_rejects_unknown_versions_and_invalid_limits() {
         let mut value = manifest();
         value.schema_version = 2;
@@ -1009,6 +1064,20 @@ mod tests {
                 1_000
             ),
             Admission::Accept
+        );
+
+        let mut changed_manifest = manifest();
+        changed_manifest.model = "qwen2.5:7b".into();
+        let changed_workload = workload_from_manifest(&changed_manifest).unwrap();
+        assert_eq!(
+            admit(
+                &device(),
+                &changed_workload,
+                &approval_policy,
+                std::slice::from_ref(&verified),
+                1_000
+            ),
+            Admission::Reject(RejectReason::ApprovalRequired)
         );
 
         let mut other_device = device();
