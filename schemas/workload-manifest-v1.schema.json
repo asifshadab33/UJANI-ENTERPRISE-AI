@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ujani.org/schemas/workload-manifest-v1.schema.json",
+  "title": "UJANI Enterprise Workload Manifest",
+  "description": "Strict input contract only; validation does not authorize or execute a workload.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "workload_id",
+    "class",
+    "model",
+    "requested_cpu_millis",
+    "requested_memory_mb",
+    "max_runtime_ms",
+    "data_classification",
+    "network_access"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "workload_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "class": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "model": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[^\\u0000-\\u001F\\u007F]+$"
+    },
+    "requested_cpu_millis": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1000000
+    },
+    "requested_memory_mb": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4194304
+    },
+    "max_runtime_ms": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 604800000
+    },
+    "data_classification": {
+      "type": "string",
+      "enum": ["public", "internal", "confidential", "restricted"]
+    },
+    "network_access": { "type": "boolean" }
+  }
+}
