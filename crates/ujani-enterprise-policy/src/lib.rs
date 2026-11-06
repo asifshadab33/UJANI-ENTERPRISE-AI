@@ -193,17 +193,15 @@ impl Ledger {
         }
         if let Some(id) = approval_id { if self.consumed_approvals.contains(id) { return Err(RejectReason::ApprovalRequired); } }
         let (cpu, memory) = self.used.get(&device.device_id).copied().unwrap_or((0, 0));
-        if cpu.saturating_add(workload.requested_cpu_millis) > device.remaining_cpu_millis {
-            return Err(RejectReason::CpuBudget);
-        }
-        if memory.saturating_add(workload.requested_memory_mb) > device.remaining_memory_mb {
-            return Err(RejectReason::MemoryBudget);
-        }
+        let next_cpu = cpu.checked_add(workload.requested_cpu_millis).ok_or(RejectReason::CpuBudget)?;
+        let next_memory = memory.checked_add(workload.requested_memory_mb).ok_or(RejectReason::MemoryBudget)?;
+        if next_cpu > device.remaining_cpu_millis { return Err(RejectReason::CpuBudget); }
+        if next_memory > device.remaining_memory_mb { return Err(RejectReason::MemoryBudget); }
         self.used.insert(
             device.device_id.clone(),
             (
-                cpu + workload.requested_cpu_millis,
-                memory + workload.requested_memory_mb,
+                next_cpu,
+                next_memory,
             ),
         );
         self.jobs.insert(
