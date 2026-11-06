@@ -1,9 +1,10 @@
-use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
+use ed25519_dalek::{Signature, VerifyingKey};
 //! Side-effect-free enterprise workload admission policy.
 //! This crate does not enrol devices, schedule jobs, create sandboxes or enforce quotas.
 
 
-const APPROVAL_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-ADMIN-APPROVAL-V1\\0";
+pub const LEASE_MS: u64 = 5 * 60 * 1000;
+const APPROVAL_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-ADMIN-APPROVAL-V1\0";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AdminApprovalClaims {
@@ -174,18 +175,23 @@ pub enum Admission {
 #[derive(Debug, Default)]
 pub struct Ledger {
     used: std::collections::HashMap<String, (u32, u64)>,
-    jobs: std::collections::HashMap<String, (String, u32, u64)>,
+    jobs: std::collections::HashMap<String, (String, u32, u64, u64, Option<String>)>,
+    consumed_approvals: std::collections::HashSet<String>,
 }
 
 impl Ledger {
-    pub fn try_reserve(
+    pub(crate) fn try_reserve(
         &mut self,
         device: &Device,
         workload: &Workload,
+        now_unix_ms: u64,
+        approval_id: Option<&str>,
     ) -> Result<(), RejectReason> {
+        self.expire(now_unix_ms);
         if self.jobs.contains_key(&workload.workload_id) {
             return Err(RejectReason::DuplicateWorkload);
         }
+        if let Some(id) = approval_id { if self.consumed_approvals.contains(id) { return Err(RejectReason::ApprovalRequired); } }
         let (cpu, memory) = self.used.get(&device.device_id).copied().unwrap_or((0, 0));
         if cpu.saturating_add(workload.requested_cpu_millis) > device.remaining_cpu_millis {
             return Err(RejectReason::CpuBudget);
@@ -206,17 +212,32 @@ impl Ledger {
                 device.device_id.clone(),
                 workload.requested_cpu_millis,
                 workload.requested_memory_mb,
+                now_unix_ms.saturating_add(LEASE_MS),
+                approval_id.map(str::to_owned),
             ),
         );
+        if let Some(id) = approval_id { self.consumed_approvals.insert(id.to_owned()); }
         Ok(())
     }
-    pub fn release(&mut self, workload_id: &str) {
-        if let Some((device_id, cpu, memory)) = self.jobs.remove(workload_id) {
+    pub(crate) fn release(&mut self, workload_id: &str) {
+        if let Some((device_id, cpu, memory, _expires, _approval_id)) = self.jobs.remove(workload_id) {
             if let Some(used) = self.used.get_mut(&device_id) {
                 used.0 = used.0.saturating_sub(cpu);
                 used.1 = used.1.saturating_sub(memory);
             }
         }
+    }
+
+    pub fn expire(&mut self, now_unix_ms: u64) {
+        let expired: Vec<String> = self.jobs.iter().filter(|(_, job)| job.3 <= now_unix_ms).map(|(id, _)| id.clone()).collect();
+        for id in expired { self.release(&id); }
+    }
+
+    pub fn renew(&mut self, workload_id: &str, now_unix_ms: u64) -> bool {
+        if let Some(job) = self.jobs.get_mut(workload_id) {
+            job.3 = now_unix_ms.saturating_add(LEASE_MS);
+            true
+        } else { false }
     }
 }
 
@@ -354,9 +375,35 @@ pub fn admit_with_context(
     Admission::Accept
 }
 
+
+/// Atomically apply all admission gates and reserve capacity in the in-memory
+/// prototype ledger. Production must perform the same operation in one DB transaction.
+pub fn admit_and_reserve(
+    ledger: &mut Ledger,
+    device: &Device,
+    workload: &Workload,
+    context: &SchedulingContext,
+    policies: &[ClassPolicy],
+    approvals: &[VerifiedAdminApproval],
+    now_unix_ms: u64,
+) -> Admission {
+    ledger.expire(now_unix_ms);
+    let decision = admit_with_context(device, workload, context, policies, approvals, now_unix_ms);
+    if decision != Admission::Accept { return decision; }
+    let approval_id = policies.iter()
+        .find(|p| p.class == workload.class && p.requires_admin_approval)
+        .and_then(|_| approvals.iter().find(|a| approval_covers(a, device, workload, now_unix_ms)))
+        .map(|a| a.0.approval_id.as_str());
+    match ledger.try_reserve(device, workload, now_unix_ms, approval_id) {
+        Ok(()) => Admission::Accept,
+        Err(reason) => Admission::Reject(reason),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ed25519_dalek::{Signer, SigningKey};
 
     fn device() -> Device {
         Device {
@@ -607,18 +654,32 @@ mod tests {
         second.workload_id = "job-002".into();
         let mut third = workload();
         third.workload_id = "job-003".into();
-        assert!(ledger.try_reserve(&d, &first).is_ok());
-        assert!(ledger.try_reserve(&d, &second).is_ok());
-        assert_eq!(ledger.try_reserve(&d, &third), Err(RejectReason::CpuBudget));
+        assert!(ledger.try_reserve(&d, &first, 1_000, None).is_ok());
+        assert!(ledger.try_reserve(&d, &second, 1_000, None).is_ok());
+        assert_eq!(ledger.try_reserve(&d, &third, 1_000, None), Err(RejectReason::CpuBudget));
         ledger.release("job-001");
-        assert!(ledger.try_reserve(&d, &third).is_ok());
+        assert!(ledger.try_reserve(&d, &third, 1_000, None).is_ok());
     }
 
+
+
+    #[test]
+    fn ledger_leases_expire_and_release_capacity() {
+        let mut ledger = Ledger::default();
+        let d = device();
+        let w = workload();
+        assert!(ledger.try_reserve(&d, &w, 1_000, None).is_ok());
+        assert!(!ledger.renew("job-001", 1_000 + LEASE_MS));
+        ledger.expire(1_000 + LEASE_MS);
+        let mut next = workload();
+        next.workload_id = "job-002".into();
+        assert!(ledger.try_reserve(&d, &next, 1_000 + LEASE_MS, None).is_ok());
+    }
 
     #[test]
     fn duplicate_or_zero_limit_class_policies_are_rejected() {
         let duplicate = vec![policies()[0].clone(), policies()[0].clone()];
-        assert_eq!(admit(&device(), &workload(), &duplicate, &[]), Admission::Reject(RejectReason::InvalidClassPolicy));
+        assert_eq!(admit(&device(), &workload(), &duplicate, &[], 1_000), Admission::Reject(RejectReason::InvalidClassPolicy));
         let invalid = vec![ClassPolicy { class: "inference".into(), requires_admin_approval: false, max_cpu_millis: 0, max_memory_mb: 1024 }];
         assert_eq!(validate_policies(&invalid), Err("invalid class policy"));
     }
