@@ -800,7 +800,7 @@ mod tests {
                 &device(),
                 &workload(),
                 &approval_policy,
-                &[verified.clone()],
+                std::slice::from_ref(&verified),
                 1_000
             ),
             Admission::Accept
@@ -813,7 +813,7 @@ mod tests {
                 &other_device,
                 &workload(),
                 &approval_policy,
-                &[verified.clone()],
+                std::slice::from_ref(&verified),
                 1_000
             ),
             Admission::Reject(RejectReason::ApprovalRequired)
@@ -826,7 +826,7 @@ mod tests {
                 &device(),
                 &other_class,
                 &approval_policy,
-                &[verified.clone()],
+                std::slice::from_ref(&verified),
                 1_000
             ),
             Admission::Reject(RejectReason::ClassNotAllowedOnDevice)
