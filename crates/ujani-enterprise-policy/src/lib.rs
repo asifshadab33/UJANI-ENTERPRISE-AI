@@ -1,5 +1,85 @@
+use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 //! Side-effect-free enterprise workload admission policy.
 //! This crate does not enrol devices, schedule jobs, create sandboxes or enforce quotas.
+
+
+const APPROVAL_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-ADMIN-APPROVAL-V1\\0";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdminApprovalClaims {
+    pub approval_id: String,
+    pub workload_id: String,
+    pub device_id: String,
+    pub class: String,
+    pub max_cpu_millis: u32,
+    pub max_memory_mb: u64,
+    pub approver_key_id: String,
+    pub expires_unix_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignedAdminApproval {
+    pub claims: AdminApprovalClaims,
+    pub signature: [u8; 64],
+}
+
+/// The private payload prevents callers from manufacturing a verified approval.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedAdminApproval(AdminApprovalClaims);
+
+fn admin_approval_bytes(claims: &AdminApprovalClaims) -> Vec<u8> {
+    let mut bytes = APPROVAL_DOMAIN.to_vec();
+    for value in [&claims.approval_id, &claims.workload_id, &claims.device_id, &claims.class, &claims.approver_key_id] {
+        bytes.extend_from_slice(&(value.len() as u32).to_be_bytes());
+        bytes.extend_from_slice(value.as_bytes());
+    }
+    bytes.extend_from_slice(&claims.max_cpu_millis.to_be_bytes());
+    bytes.extend_from_slice(&claims.max_memory_mb.to_be_bytes());
+    bytes.extend_from_slice(&claims.expires_unix_ms.to_be_bytes());
+    bytes
+}
+
+pub fn verify_admin_approval(
+    signed: &SignedAdminApproval,
+    enrolled_admin_keys: &[(String, VerifyingKey)],
+    now_unix_ms: u64,
+) -> Result<VerifiedAdminApproval, &'static str> {
+    let claims = &signed.claims;
+    if !valid_identifier(&claims.approval_id, 128)
+        || !valid_identifier(&claims.workload_id, 128)
+        || !valid_identifier(&claims.device_id, 128)
+        || !valid_identifier(&claims.class, 64)
+        || !valid_identifier(&claims.approver_key_id, 128)
+        || claims.max_cpu_millis == 0
+        || claims.max_memory_mb == 0
+        || claims.expires_unix_ms <= now_unix_ms
+    {
+        return Err("invalid or expired administrator approval");
+    }
+    let key = enrolled_admin_keys.iter()
+        .find(|(key_id, _)| key_id == &claims.approver_key_id)
+        .map(|(_, key)| key)
+        .ok_or("unknown administrator signing key")?;
+    let signature = Signature::from_bytes(&signed.signature);
+    key.verify_strict(&admin_approval_bytes(claims), &signature)
+        .map_err(|_| "administrator approval signature is invalid")?;
+    Ok(VerifiedAdminApproval(claims.clone()))
+}
+
+fn approval_covers(
+    approval: &VerifiedAdminApproval,
+    device: &Device,
+    workload: &Workload,
+    now_unix_ms: u64,
+) -> bool {
+    let a = &approval.0;
+    a.workload_id == workload.workload_id
+        && a.device_id == device.device_id
+        && a.class == workload.class
+        && workload.requested_cpu_millis <= a.max_cpu_millis
+        && workload.requested_memory_mb <= a.max_memory_mb
+        && now_unix_ms < a.expires_unix_ms
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Device {
@@ -167,7 +247,8 @@ pub fn admit(
     device: &Device,
     workload: &Workload,
     policies: &[ClassPolicy],
-    verified_admin_approvals: &[String],
+    verified_admin_approvals: &[VerifiedAdminApproval],
+    now_unix_ms: u64,
 ) -> Admission {
     use RejectReason::*;
     if !valid_identifier(&device.device_id, 128)
@@ -197,9 +278,7 @@ pub fn admit(
         return Admission::Reject(UnknownClassPolicy);
     };
     if policy.requires_admin_approval
-        && !verified_admin_approvals
-            .iter()
-            .any(|id| id == &workload.workload_id)
+        && !verified_admin_approvals.iter().any(|approval| approval_covers(approval, device, workload, now_unix_ms))
     {
         return Admission::Reject(ApprovalRequired);
     }
@@ -238,9 +317,10 @@ pub fn admit_with_context(
     workload: &Workload,
     context: &SchedulingContext,
     policies: &[ClassPolicy],
-    verified_admin_approvals: &[String],
+    verified_admin_approvals: &[VerifiedAdminApproval],
+    now_unix_ms: u64,
 ) -> Admission {
-    match admit(device, workload, policies, verified_admin_approvals) {
+    match admit(device, workload, policies, verified_admin_approvals, now_unix_ms) {
         Admission::Accept => {}
         rejection => return rejection,
     }
@@ -325,7 +405,7 @@ mod tests {
     #[test]
     fn strict_gate_accepts_only_when_all_scheduling_conditions_are_safe() {
         assert_eq!(
-            admit_with_context(&device(), &workload(), &safe_context(), &policies(), &[]),
+            admit_with_context(&device(), &workload(), &safe_context(), &policies(), &[], 1_000),
             Admission::Accept
         );
     }
@@ -335,13 +415,13 @@ mod tests {
         let mut c = safe_context();
         c.owner_opted_in = false;
         assert!(matches!(
-            admit_with_context(&device(), &workload(), &c, &policies(), &[]),
+            admit_with_context(&device(), &workload(), &c, &policies(), &[], 1_000),
             Admission::Reject(_)
         ));
         let mut c = safe_context();
         c.within_admin_schedule = false;
         assert!(matches!(
-            admit_with_context(&device(), &workload(), &c, &policies(), &[]),
+            admit_with_context(&device(), &workload(), &c, &policies(), &[], 1_000),
             Admission::Reject(_)
         ));
     }
@@ -351,19 +431,19 @@ mod tests {
         let mut c = safe_context();
         c.interactive_user_present = true;
         assert!(matches!(
-            admit_with_context(&device(), &workload(), &c, &policies(), &[]),
+            admit_with_context(&device(), &workload(), &c, &policies(), &[], 1_000),
             Admission::Reject(_)
         ));
         let mut c = safe_context();
         c.on_ac_power = false;
         assert!(matches!(
-            admit_with_context(&device(), &workload(), &c, &policies(), &[]),
+            admit_with_context(&device(), &workload(), &c, &policies(), &[], 1_000),
             Admission::Reject(_)
         ));
         let mut c = safe_context();
         c.thermal_state_safe = false;
         assert!(matches!(
-            admit_with_context(&device(), &workload(), &c, &policies(), &[]),
+            admit_with_context(&device(), &workload(), &c, &policies(), &[], 1_000),
             Admission::Reject(_)
         ));
     }
@@ -373,7 +453,7 @@ mod tests {
         let mut context = safe_context();
         context.device_already_running = false;
         assert!(matches!(
-            admit_with_context(&device(), &workload(), &context, &policies(), &[]),
+            admit_with_context(&device(), &workload(), &context, &policies(), &[], 1_000),
             Admission::Reject(_)
         ));
     }
@@ -383,19 +463,19 @@ mod tests {
         let mut c = safe_context();
         c.telemetry_fresh = false;
         assert!(matches!(
-            admit_with_context(&device(), &workload(), &c, &policies(), &[]),
+            admit_with_context(&device(), &workload(), &c, &policies(), &[], 1_000),
             Admission::Reject(_)
         ));
         let mut c = safe_context();
         c.network_policy_allows = false;
         assert!(matches!(
-            admit_with_context(&device(), &workload(), &c, &policies(), &[]),
+            admit_with_context(&device(), &workload(), &c, &policies(), &[], 1_000),
             Admission::Reject(_)
         ));
         let mut c = safe_context();
         c.data_classification_allows = false;
         assert!(matches!(
-            admit_with_context(&device(), &workload(), &c, &policies(), &[]),
+            admit_with_context(&device(), &workload(), &c, &policies(), &[], 1_000),
             Admission::Reject(_)
         ));
     }
@@ -403,7 +483,7 @@ mod tests {
     #[test]
     fn approved_available_device_accepts_within_budget() {
         assert_eq!(
-            admit(&device(), &workload(), &policies(), &[]),
+            admit(&device(), &workload(), &policies(), &[], 1_000),
             Admission::Accept
         );
     }
@@ -413,7 +493,7 @@ mod tests {
         let mut d = device();
         d.admin_approved = false;
         assert!(matches!(
-            admit(&d, &workload(), &policies(), &[]),
+            admit(&d, &workload(), &policies(), &[], 1_000),
             Admission::Reject(_)
         ));
     }
@@ -423,7 +503,7 @@ mod tests {
         let mut d = device();
         d.available = false;
         assert!(matches!(
-            admit(&d, &workload(), &policies(), &[]),
+            admit(&d, &workload(), &policies(), &[], 1_000),
             Admission::Reject(_)
         ));
     }
@@ -433,7 +513,7 @@ mod tests {
         let mut w = workload();
         w.class = "arbitrary-shell".into();
         assert!(matches!(
-            admit(&device(), &w, &policies(), &[]),
+            admit(&device(), &w, &policies(), &[], 1_000),
             Admission::Reject(_)
         ));
     }
@@ -443,7 +523,7 @@ mod tests {
         let mut w = workload();
         w.requested_memory_mb = 9000;
         assert!(matches!(
-            admit(&device(), &w, &policies(), &[]),
+            admit(&device(), &w, &policies(), &[], 1_000),
             Admission::Reject(_)
         ));
     }
@@ -453,21 +533,21 @@ mod tests {
         let mut d = device();
         d.device_id = "   ".into();
         assert!(matches!(
-            admit(&d, &workload(), &policies(), &[]),
+            admit(&d, &workload(), &policies(), &[], 1_000),
             Admission::Reject(_)
         ));
 
         let mut w = workload();
         w.workload_id = "job/../../escape".into();
         assert!(matches!(
-            admit(&device(), &w, &policies(), &[]),
+            admit(&device(), &w, &policies(), &[], 1_000),
             Admission::Reject(_)
         ));
 
         let mut w = workload();
         w.class = "inference\nadmin".into();
         assert!(matches!(
-            admit(&device(), &w, &policies(), &[]),
+            admit(&device(), &w, &policies(), &[], 1_000),
             Admission::Reject(_)
         ));
     }
@@ -477,14 +557,14 @@ mod tests {
         let mut w = workload();
         w.requested_cpu_millis = 0;
         assert!(matches!(
-            admit(&device(), &w, &policies(), &[]),
+            admit(&device(), &w, &policies(), &[], 1_000),
             Admission::Reject(_)
         ));
 
         let mut w = workload();
         w.requested_memory_mb = 0;
         assert!(matches!(
-            admit(&device(), &w, &policies(), &[]),
+            admit(&device(), &w, &policies(), &[], 1_000),
             Admission::Reject(_)
         ));
     }
@@ -499,7 +579,7 @@ mod tests {
             max_memory_mb: 8192,
         };
         assert_eq!(
-            admit(&device(), &w, &[policy], &[]),
+            admit(&device(), &w, &[policy], &[], 1_000),
             Admission::Reject(RejectReason::ApprovalRequired)
         );
         assert_eq!(
@@ -512,9 +592,9 @@ mod tests {
                     max_cpu_millis: 4000,
                     max_memory_mb: 8192,
                 }],
-                &["job-001".into()]
+                &[], 1_000
             ),
-            Admission::Accept
+            Admission::Reject(RejectReason::ApprovalRequired)
         );
     }
 
@@ -543,6 +623,45 @@ mod tests {
         assert_eq!(validate_policies(&invalid), Err("invalid class policy"));
     }
 
+
+    #[test]
+    fn signed_approval_is_bound_to_device_class_limits_and_expiry() {
+        let signing = SigningKey::from_bytes(&[7u8; 32]);
+        let claims = AdminApprovalClaims {
+            approval_id: "approval-001".into(),
+            workload_id: "job-001".into(),
+            device_id: "lab-gpu-01".into(),
+            class: "inference".into(),
+            max_cpu_millis: 2000,
+            max_memory_mb: 4096,
+            approver_key_id: "admin-key-1".into(),
+            expires_unix_ms: 2_000,
+        };
+        let signature = signing.sign(&admin_approval_bytes(&claims)).to_bytes();
+        let signed = SignedAdminApproval { claims, signature };
+        let keys = vec![("admin-key-1".into(), signing.verifying_key())];
+        let verified = verify_admin_approval(&signed, &keys, 1_000).unwrap();
+        let approval_policy = [ClassPolicy { class: "inference".into(), requires_admin_approval: true, max_cpu_millis: 4000, max_memory_mb: 8192 }];
+        assert_eq!(admit(&device(), &workload(), &approval_policy, &[verified.clone()], 1_000), Admission::Accept);
+
+        let mut other_device = device();
+        other_device.device_id = "lab-gpu-02".into();
+        assert_eq!(admit(&other_device, &workload(), &approval_policy, &[verified.clone()], 1_000), Admission::Reject(RejectReason::ApprovalRequired));
+
+        let mut other_class = workload();
+        other_class.class = "batch".into();
+        assert_eq!(admit(&device(), &other_class, &approval_policy, &[verified.clone()], 1_000), Admission::Reject(RejectReason::ClassNotAllowedOnDevice));
+
+        let mut excessive = workload();
+        excessive.requested_cpu_millis = 2500;
+        assert_eq!(admit(&device(), &excessive, &approval_policy, &[verified], 1_000), Admission::Reject(RejectReason::ApprovalRequired));
+
+        assert!(verify_admin_approval(&signed, &keys, 2_000).is_err());
+        let mut tampered = signed.clone();
+        tampered.claims.class = "batch".into();
+        assert!(verify_admin_approval(&tampered, &keys, 1_000).is_err());
+    }
+
     #[test]
     fn approval_gate_is_enforced() {
         let w = workload();
@@ -553,7 +672,7 @@ mod tests {
             max_memory_mb: 8192,
         };
         assert_eq!(
-            admit(&device(), &w, &[policy], &[]),
+            admit(&device(), &w, &[policy], &[], 1_000),
             Admission::Reject(RejectReason::ApprovalRequired)
         );
     }
