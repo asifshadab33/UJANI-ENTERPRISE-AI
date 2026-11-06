@@ -663,6 +663,19 @@ mod tests {
 
 
 
+
+    #[test]
+    fn atomic_admission_reserves_once_and_rejects_replay_after_release() {
+        let mut ledger = Ledger::default();
+        let d = device();
+        let w = workload();
+        let context = safe_context();
+        assert_eq!(admit_and_reserve(&mut ledger, &d, &w, &context, &policies(), &[], 1_000), Admission::Accept);
+        assert_eq!(admit_and_reserve(&mut ledger, &d, &w, &context, &policies(), &[], 1_000), Admission::Reject(RejectReason::DuplicateWorkload));
+        ledger.release("job-001");
+        assert_eq!(admit_and_reserve(&mut ledger, &d, &w, &context, &policies(), &[], 1_001), Admission::Accept);
+    }
+
     #[test]
     fn ledger_leases_expire_and_release_capacity() {
         let mut ledger = Ledger::default();
