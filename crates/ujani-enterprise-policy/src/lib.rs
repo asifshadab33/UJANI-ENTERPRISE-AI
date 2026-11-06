@@ -4,8 +4,11 @@
 #![forbid(unsafe_code)]
 use ed25519_dalek::{Signature, VerifyingKey};
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 
 pub const LEASE_MS: u64 = 5 * 60 * 1000;
+pub const MAX_ADMIN_APPROVAL_TTL_MS: u64 = 15 * 60 * 1000;
+const MANIFEST_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-WORKLOAD-MANIFEST-V1\0";
 const APPROVAL_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-ADMIN-APPROVAL-V1\0";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -17,6 +20,8 @@ pub struct AdminApprovalClaims {
     pub max_cpu_millis: u32,
     pub max_memory_mb: u64,
     pub approver_key_id: String,
+    pub manifest_sha256: [u8; 32],
+    pub issued_at_unix_ms: u64,
     pub expires_unix_ms: u64,
 }
 
@@ -44,6 +49,8 @@ fn admin_approval_bytes(claims: &AdminApprovalClaims) -> Vec<u8> {
     }
     bytes.extend_from_slice(&claims.max_cpu_millis.to_be_bytes());
     bytes.extend_from_slice(&claims.max_memory_mb.to_be_bytes());
+    bytes.extend_from_slice(&claims.manifest_sha256);
+    bytes.extend_from_slice(&claims.issued_at_unix_ms.to_be_bytes());
     bytes.extend_from_slice(&claims.expires_unix_ms.to_be_bytes());
     bytes
 }
@@ -61,6 +68,12 @@ pub fn verify_admin_approval(
         || !valid_identifier(&claims.approver_key_id, 128)
         || claims.max_cpu_millis == 0
         || claims.max_memory_mb == 0
+        || claims.issued_at_unix_ms > now_unix_ms.saturating_add(30_000)
+        || claims.expires_unix_ms <= claims.issued_at_unix_ms
+        || claims
+            .expires_unix_ms
+            .saturating_sub(claims.issued_at_unix_ms)
+            > MAX_ADMIN_APPROVAL_TTL_MS
         || claims.expires_unix_ms <= now_unix_ms
     {
         return Err("invalid or expired administrator approval");
@@ -86,6 +99,7 @@ fn approval_covers(
     a.workload_id == workload.workload_id
         && a.device_id == device.device_id
         && a.class == workload.class
+        && a.manifest_sha256 == workload.manifest_sha256
         && workload.requested_cpu_millis <= a.max_cpu_millis
         && workload.requested_memory_mb <= a.max_memory_mb
         && now_unix_ms < a.expires_unix_ms
@@ -149,10 +163,7 @@ pub fn validate_workload_manifest(manifest: &WorkloadManifest) -> Result<(), Man
     if !valid_identifier(&manifest.class, 64) {
         return Err(ManifestError::InvalidClass);
     }
-    if manifest.model.trim().is_empty()
-        || manifest.model.len() > 128
-        || manifest.model.chars().any(char::is_control)
-    {
+    if !valid_model_identifier(&manifest.model) {
         return Err(ManifestError::InvalidModel);
     }
     if manifest.requested_cpu_millis == 0 || manifest.requested_cpu_millis > 1_000_000 {
@@ -167,12 +178,97 @@ pub fn validate_workload_manifest(manifest: &WorkloadManifest) -> Result<(), Man
     Ok(())
 }
 
+/// Model identifiers are library names, never URLs, local paths or registry endpoints.
+fn valid_model_identifier(value: &str) -> bool {
+    if value.is_empty()
+        || value.len() > 128
+        || value.starts_with('/')
+        || value.ends_with('/')
+        || value.contains("..")
+    {
+        return false;
+    }
+    let segments: Vec<&str> = value.split('/').collect();
+    if segments.iter().any(|segment| segment.is_empty())
+        || (segments.len() > 1 && segments[0].contains('.'))
+    {
+        return false;
+    }
+    for (index, segment) in segments.iter().enumerate() {
+        let mut parts = segment.split(':');
+        let name = parts.next().unwrap_or_default();
+        let tag = parts.next();
+        if parts.next().is_some()
+            || name.is_empty()
+            || name.bytes().any(|b| {
+                !(b.is_ascii_lowercase()
+                    || b.is_ascii_digit()
+                    || b == b'.'
+                    || b == b'_'
+                    || b == b'-')
+            })
+        {
+            return false;
+        }
+        if let Some(tag) = tag {
+            if index + 1 != segments.len()
+                || tag.is_empty()
+                || !tag.bytes().all(|b| {
+                    b.is_ascii_lowercase()
+                        || b.is_ascii_digit()
+                        || b == b'.'
+                        || b == b'_'
+                        || b == b'-'
+                })
+            {
+                return false;
+            }
+        }
+    }
+    true
+}
+/// Stable, domain-separated digest over every field that affects workload admission.
+pub fn workload_manifest_sha256(manifest: &WorkloadManifest) -> Result<[u8; 32], ManifestError> {
+    validate_workload_manifest(manifest)?;
+    let mut bytes = MANIFEST_DOMAIN.to_vec();
+    bytes.extend_from_slice(&manifest.schema_version.to_be_bytes());
+    for value in [&manifest.workload_id, &manifest.class, &manifest.model] {
+        let len = u32::try_from(value.len()).map_err(|_| ManifestError::InvalidModel)?;
+        bytes.extend_from_slice(&len.to_be_bytes());
+        bytes.extend_from_slice(value.as_bytes());
+    }
+    bytes.extend_from_slice(&manifest.requested_cpu_millis.to_be_bytes());
+    bytes.extend_from_slice(&manifest.requested_memory_mb.to_be_bytes());
+    bytes.extend_from_slice(&manifest.max_runtime_ms.to_be_bytes());
+    bytes.push(match manifest.data_classification {
+        DataClassification::Public => 0,
+        DataClassification::Internal => 1,
+        DataClassification::Confidential => 2,
+        DataClassification::Restricted => 3,
+    });
+    bytes.push(u8::from(manifest.network_access));
+    Ok(Sha256::digest(bytes).into())
+}
+
+/// Create the only supported Workload value from a fully validated manifest.
+pub fn workload_from_manifest(manifest: &WorkloadManifest) -> Result<Workload, ManifestError> {
+    let digest = workload_manifest_sha256(manifest)?;
+    Ok(Workload {
+        workload_id: manifest.workload_id.clone(),
+        class: manifest.class.clone(),
+        requested_cpu_millis: manifest.requested_cpu_millis,
+        requested_memory_mb: manifest.requested_memory_mb,
+        manifest_sha256: digest,
+    })
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Workload {
     pub workload_id: String,
     pub class: String,
     pub requested_cpu_millis: u32,
     pub requested_memory_mb: u64,
+    manifest_sha256: [u8; 32],
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -531,13 +627,22 @@ mod tests {
         }
     }
 
-    fn workload() -> Workload {
-        Workload {
+    fn manifest() -> WorkloadManifest {
+        WorkloadManifest {
+            schema_version: 1,
             workload_id: "job-001".into(),
             class: "inference".into(),
+            model: "qwen2.5:3b".into(),
             requested_cpu_millis: 2000,
             requested_memory_mb: 4096,
+            max_runtime_ms: 60_000,
+            data_classification: DataClassification::Internal,
+            network_access: false,
         }
+    }
+
+    fn workload() -> Workload {
+        workload_from_manifest(&manifest()).unwrap()
     }
 
     fn safe_context() -> SchedulingContext {
@@ -563,23 +668,79 @@ mod tests {
         }]
     }
 
-    fn manifest() -> WorkloadManifest {
-        WorkloadManifest {
-            schema_version: 1,
-            workload_id: "job-001".into(),
-            class: "inference".into(),
-            model: "qwen2.5:7b".into(),
-            requested_cpu_millis: 2000,
-            requested_memory_mb: 4096,
-            max_runtime_ms: 60_000,
-            data_classification: DataClassification::Internal,
-            network_access: false,
-        }
-    }
-
     #[test]
     fn workload_manifest_accepts_bounded_versioned_input() {
         assert_eq!(validate_workload_manifest(&manifest()), Ok(()));
+    }
+
+    #[test]
+    fn manifest_digest_changes_when_any_execution_field_changes() {
+        let original = manifest();
+        let digest = workload_manifest_sha256(&original).unwrap();
+        let mut changed = original.clone();
+        changed.model = "qwen2.5:14b".into();
+        assert_ne!(digest, workload_manifest_sha256(&changed).unwrap());
+        let mut changed = original.clone();
+        changed.network_access = true;
+        assert_ne!(digest, workload_manifest_sha256(&changed).unwrap());
+        let mut changed = original.clone();
+        changed.data_classification = DataClassification::Restricted;
+        assert_ne!(digest, workload_manifest_sha256(&changed).unwrap());
+        let mut changed = original;
+        changed.max_runtime_ms += 1;
+        assert_ne!(digest, workload_manifest_sha256(&changed).unwrap());
+    }
+
+    #[test]
+    fn manifest_rejects_urls_paths_and_untrusted_registry_endpoints_as_models() {
+        for model in [
+            "https://example.com/model",
+            "../local/model",
+            "/absolute/model",
+            "localhost:5000/model",
+            "hf.co/org/model",
+        ] {
+            let mut value = manifest();
+            value.model = model.into();
+            assert_eq!(
+                validate_workload_manifest(&value),
+                Err(ManifestError::InvalidModel)
+            );
+        }
+        let mut library_model = manifest();
+        library_model.model = "library/llama3.2".into();
+        assert_eq!(validate_workload_manifest(&library_model), Ok(()));
+    }
+
+    #[test]
+    fn administrator_approval_has_bounded_issue_time_and_lifetime() {
+        let signing = SigningKey::from_bytes(&[9u8; 32]);
+        let mut claims = AdminApprovalClaims {
+            approval_id: "approval-time".into(),
+            workload_id: "job-001".into(),
+            device_id: "lab-gpu-01".into(),
+            class: "inference".into(),
+            max_cpu_millis: 2000,
+            max_memory_mb: 4096,
+            approver_key_id: "admin-key-1".into(),
+            manifest_sha256: workload_manifest_sha256(&manifest()).unwrap(),
+            issued_at_unix_ms: 1_000,
+            expires_unix_ms: 2_000,
+        };
+        let keys = vec![("admin-key-1".into(), signing.verifying_key())];
+        claims.issued_at_unix_ms = 40_000;
+        let signed = SignedAdminApproval {
+            signature: signing.sign(&admin_approval_bytes(&claims)).to_bytes(),
+            claims: claims.clone(),
+        };
+        assert!(verify_admin_approval(&signed, &keys, 1_000).is_err());
+        claims.issued_at_unix_ms = 1_000;
+        claims.expires_unix_ms = 1_000 + MAX_ADMIN_APPROVAL_TTL_MS + 1;
+        let signed = SignedAdminApproval {
+            signature: signing.sign(&admin_approval_bytes(&claims)).to_bytes(),
+            claims,
+        };
+        assert!(verify_admin_approval(&signed, &keys, 1_000).is_err());
     }
 
     #[test]
@@ -918,6 +1079,8 @@ mod tests {
             max_cpu_millis: 2000,
             max_memory_mb: 4096,
             approver_key_id: "admin-key-1".into(),
+            manifest_sha256: workload_manifest_sha256(&manifest()).unwrap(),
+            issued_at_unix_ms: 1_000,
             expires_unix_ms: 2_000,
         };
         let signature = signing.sign(&admin_approval_bytes(&claims)).to_bytes();
@@ -939,6 +1102,20 @@ mod tests {
                 1_000
             ),
             Admission::Accept
+        );
+
+        let mut changed_manifest = manifest();
+        changed_manifest.model = "qwen2.5:7b".into();
+        let changed_workload = workload_from_manifest(&changed_manifest).unwrap();
+        assert_eq!(
+            admit(
+                &device(),
+                &changed_workload,
+                &approval_policy,
+                std::slice::from_ref(&verified),
+                1_000
+            ),
+            Admission::Reject(RejectReason::ApprovalRequired)
         );
 
         let mut other_device = device();
