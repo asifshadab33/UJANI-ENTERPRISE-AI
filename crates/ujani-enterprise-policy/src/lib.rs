@@ -139,7 +139,6 @@ impl Ledger {
     }
 }
 
-
 /// Conservative pre-scheduling check. Real enforcement must occur on the worker OS.
 fn valid_identifier(value: &str, max_len: usize) -> bool {
     !value.trim().is_empty()
@@ -523,8 +522,16 @@ mod tests {
     #[test]
     fn approval_gate_is_enforced() {
         let w = workload();
-        let policy = ClassPolicy { class: "inference".into(), requires_admin_approval: true, max_cpu_millis: 4000, max_memory_mb: 8192 };
-        assert_eq!(admit(&device(), &w, &[policy], &[]), Admission::Reject(RejectReason::ApprovalRequired));
+        let policy = ClassPolicy {
+            class: "inference".into(),
+            requires_admin_approval: true,
+            max_cpu_millis: 4000,
+            max_memory_mb: 8192,
+        };
+        assert_eq!(
+            admit(&device(), &w, &[policy], &[]),
+            Admission::Reject(RejectReason::ApprovalRequired)
+        );
     }
 }
 
