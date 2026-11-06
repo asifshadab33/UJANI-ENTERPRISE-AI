@@ -413,6 +413,7 @@ impl Ledger {
     }
 
     /// Reserve capacity and bind it to a caller-generated 256-bit CSPRNG capability.
+    #[allow(clippy::too_many_arguments)] // The explicit policy inputs keep authorization dependencies visible.
     /// The raw token is never persisted by this policy crate; only a domain-separated
     /// digest is retained. The control plane must protect the raw token from workloads.
     pub fn admit_and_reserve_with_lease(
