@@ -19,8 +19,10 @@ or authorization grant.
 | network_access | bool | Explicitly declares whether network access is requested |
 
 Unknown fields are rejected by Serde deserialization (`deny_unknown_fields`).
-The Rust validation function rejects unsupported schema versions, malformed
-identifiers/model names and out-of-range resource/time limits.
+The language-neutral JSON Schema is published at
+`schemas/workload-manifest-v1.schema.json`. The Rust validation function rejects
+unsupported schema versions, malformed identifiers/model names and out-of-range
+resource/time limits. Keep the JSON Schema and Rust contract synchronized.
 
 ## Example
 
