@@ -302,6 +302,7 @@ pub enum RejectReason {
     ThermalUnsafe,
     NetworkPolicyDenied,
     DataClassificationDenied,
+    InvalidLeaseToken,
 }
 impl RejectReason {
     pub fn as_str(&self) -> &'static str {
@@ -331,6 +332,7 @@ impl RejectReason {
             Self::DataClassificationDenied => {
                 "workload data classification is not approved for this worker"
             }
+            Self::InvalidLeaseToken => "lease capability is invalid or already in use",
         }
     }
 }
@@ -347,6 +349,8 @@ pub struct Ledger {
     used: std::collections::HashMap<String, (u32, u64)>,
     jobs: std::collections::HashMap<String, (String, u32, u64, u64, Option<String>)>,
     consumed_approvals: std::collections::HashSet<String>,
+    /// Domain-separated SHA-256 digests of caller-generated 256-bit lease capabilities.
+    lease_token_hashes: std::collections::HashMap<String, [u8; 32]>,
 }
 
 impl Ledger {
@@ -397,6 +401,7 @@ impl Ledger {
         Ok(())
     }
     pub(crate) fn release(&mut self, workload_id: &str) {
+        self.lease_token_hashes.remove(workload_id);
         if let Some((device_id, cpu, memory, _expires, _approval_id)) =
             self.jobs.remove(workload_id)
         {
@@ -405,6 +410,69 @@ impl Ledger {
                 used.1 = used.1.saturating_sub(memory);
             }
         }
+    }
+
+    /// Reserve capacity and bind it to a caller-generated 256-bit CSPRNG capability.
+    /// The raw token is never persisted by this policy crate; only a domain-separated
+    /// digest is retained. The control plane must protect the raw token from workloads.
+    pub fn admit_and_reserve_with_lease(
+        &mut self,
+        device: &Device,
+        workload: &Workload,
+        context: &SchedulingContext,
+        policies: &[ClassPolicy],
+        approvals: &[VerifiedAdminApproval],
+        now_unix_ms: u64,
+        lease_token: &[u8; 32],
+    ) -> Admission {
+        if lease_token.iter().all(|byte| *byte == 0) {
+            return Admission::Reject(RejectReason::InvalidLeaseToken);
+        }
+        let token_hash = lease_token_hash(lease_token);
+        if self.lease_token_hashes.values().any(|stored| constant_time_eq(stored, &token_hash)) {
+            return Admission::Reject(RejectReason::InvalidLeaseToken);
+        }
+        let decision = admit_and_reserve(
+            self, device, workload, context, policies, approvals, now_unix_ms,
+        );
+        if decision == Admission::Accept {
+            self.lease_token_hashes.insert(workload.workload_id.clone(), token_hash);
+        }
+        decision
+    }
+
+    /// Renew only when the caller proves possession of the lease capability.
+    pub fn renew_lease(
+        &mut self,
+        workload_id: &str,
+        lease_token: &[u8; 32],
+        now_unix_ms: u64,
+    ) -> bool {
+        self.expire(now_unix_ms);
+        let Some(expected) = self.lease_token_hashes.get(workload_id) else {
+            return false;
+        };
+        if !constant_time_eq(expected, &lease_token_hash(lease_token)) {
+            return false;
+        }
+        if let Some(job) = self.jobs.get_mut(workload_id) {
+            job.3 = now_unix_ms.saturating_add(LEASE_MS);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Release only when the caller proves possession of the lease capability.
+    pub fn release_lease(&mut self, workload_id: &str, lease_token: &[u8; 32]) -> bool {
+        let Some(expected) = self.lease_token_hashes.get(workload_id) else {
+            return false;
+        };
+        if !constant_time_eq(expected, &lease_token_hash(lease_token)) {
+            return false;
+        }
+        self.release(workload_id);
+        true
     }
 
     pub fn expire(&mut self, now_unix_ms: u64) {
@@ -419,7 +487,7 @@ impl Ledger {
         }
     }
 
-    pub fn renew(&mut self, workload_id: &str, now_unix_ms: u64) -> bool {
+    fn renew(&mut self, workload_id: &str, now_unix_ms: u64) -> bool {
         self.expire(now_unix_ms);
         if let Some(job) = self.jobs.get_mut(workload_id) {
             job.3 = now_unix_ms.saturating_add(LEASE_MS);
@@ -428,6 +496,23 @@ impl Ledger {
             false
         }
     }
+}
+
+/// Hash lease capabilities with a domain separator so they cannot be confused
+/// with other SHA-256 values stored by this crate.
+fn lease_token_hash(token: &[u8; 32]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"UJANI-ENTERPRISE-LEASE-CAPABILITY-V1\\0");
+    hasher.update(token);
+    hasher.finalize().into()
+}
+
+/// Compare secret-derived digests without an early-exit byte comparison.
+fn constant_time_eq(left: &[u8; 32], right: &[u8; 32]) -> bool {
+    left.iter()
+        .zip(right.iter())
+        .fold(0u8, |difference, (a, b)| difference | (a ^ b))
+        == 0
 }
 
 /// Conservative pre-scheduling check. Real enforcement must occur on the worker OS.
@@ -1034,6 +1119,54 @@ mod tests {
         assert_eq!(
             admit_and_reserve(&mut ledger, &d, &w, &context, &policies(), &[], 1_001),
             Admission::Accept
+        );
+    }
+
+    #[test]
+    fn lease_capability_is_required_for_renewal_and_release() {
+        let mut ledger = Ledger::default();
+        let d = device();
+        let w = workload();
+        let token = [0x5au8; 32];
+        assert_eq!(
+            ledger.admit_and_reserve_with_lease(
+                &d, &w, &safe_context(), &policies(), &[], 1_000, &token
+            ),
+            Admission::Accept
+        );
+        let wrong = [0x33u8; 32];
+        assert!(!ledger.renew_lease("job-001", &wrong, 2_000));
+        assert!(!ledger.release_lease("job-001", &wrong));
+        assert!(ledger.renew_lease("job-001", &token, 2_000));
+        assert!(ledger.release_lease("job-001", &token));
+        assert!(!ledger.renew_lease("job-001", &token, 2_001));
+    }
+
+    #[test]
+    fn lease_capabilities_cannot_be_zero_or_reused_for_another_workload() {
+        let mut ledger = Ledger::default();
+        let d = device();
+        let token = [0x5au8; 32];
+        let zero = [0u8; 32];
+        assert_eq!(
+            ledger.admit_and_reserve_with_lease(
+                &d, &workload(), &safe_context(), &policies(), &[], 1_000, &zero
+            ),
+            Admission::Reject(RejectReason::InvalidLeaseToken)
+        );
+        assert_eq!(
+            ledger.admit_and_reserve_with_lease(
+                &d, &workload(), &safe_context(), &policies(), &[], 1_000, &token
+            ),
+            Admission::Accept
+        );
+        let mut next = workload();
+        next.workload_id = "job-002".into();
+        assert_eq!(
+            ledger.admit_and_reserve_with_lease(
+                &d, &next, &safe_context(), &policies(), &[], 1_001, &token
+            ),
+            Admission::Reject(RejectReason::InvalidLeaseToken)
         );
     }
 
