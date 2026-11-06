@@ -478,8 +478,16 @@ mod tests {
     #[test]
     fn submitter_claim_cannot_waive_admin_class_approval() {
         let w = workload();
-        let policy = ClassPolicy { class: "inference".into(), requires_admin_approval: true, max_cpu_millis: 4000, max_memory_mb: 8192 };
-        assert_eq!(admit(&device(), &w, &[policy], &[]), Admission::Reject(RejectReason::ApprovalRequired));
+        let policy = ClassPolicy {
+            class: "inference".into(),
+            requires_admin_approval: true,
+            max_cpu_millis: 4000,
+            max_memory_mb: 8192,
+        };
+        assert_eq!(
+            admit(&device(), &w, &[policy], &[]),
+            Admission::Reject(RejectReason::ApprovalRequired)
+        );
         assert_eq!(
             admit(
                 &device(),
