@@ -51,3 +51,8 @@ Start with a trusted internal lab and explicitly enrolled test machines. Do not 
 ## Relationship to UJANI Public AI
 
 [UJANI Public AI](https://github.com/asifshadab33/UJANI-PUBLIC-AI-) is the personal local-first AI project. Enterprise AI adds organisation-controlled fleet management and scheduling. Shared task/capability contracts should be versioned and reused; enterprise policy and fleet control remain separate.
+
+
+## Inventory timestamp validation update
+
+The read-only inventory contract now rejects heartbeat and telemetry timestamps more than 30 seconds in the future, and rejects telemetry timestamps that are materially newer than the associated device heartbeat. A small clock skew remains tolerated; stale records continue to fail closed. This is a policy-library validation only: it does not establish an authenticated live agent heartbeat or server-side clock synchronisation.

@@ -79,7 +79,16 @@ pub fn validate_inventory_record(
         return Err(InventoryError::MissingTelemetryProvenance);
     }
     const CLOCK_SKEW_TOLERANCE_MS: u64 = 30_000;
-    if now_unix_ms.saturating_add(CLOCK_SKEW_TOLERANCE_MS) < record.telemetry_collected_unix_ms
+    let latest_allowed_timestamp = now_unix_ms.saturating_add(CLOCK_SKEW_TOLERANCE_MS);
+    // A small clock difference is tolerated, but future timestamps must not be
+    // treated as fresh indefinitely by saturating_sub( future_timestamp ).
+    // The heartbeat must also be at least as recent as the telemetry it reports.
+    if record.telemetry_collected_unix_ms > latest_allowed_timestamp
+        || record.last_seen_unix_ms > latest_allowed_timestamp
+        || record.telemetry_collected_unix_ms
+            > record
+                .last_seen_unix_ms
+                .saturating_add(CLOCK_SKEW_TOLERANCE_MS)
         || now_unix_ms.saturating_sub(record.telemetry_collected_unix_ms) > max_age_ms
         || now_unix_ms.saturating_sub(record.last_seen_unix_ms) > max_age_ms
     {
@@ -235,6 +244,24 @@ mod tests {
         device.telemetry_collected_unix_ms = 100;
         assert_eq!(
             validate_inventory_record(&device, 2000, 1000),
+            Err(InventoryError::StaleTelemetry)
+        );
+    }
+
+    #[test]
+    fn rejects_far_future_heartbeat_and_inconsistent_timestamp_order() {
+        let mut device = record();
+        device.last_seen_unix_ms = 1_000_000;
+        assert_eq!(
+            validate_inventory_record(&device, 110, 1000),
+            Err(InventoryError::StaleTelemetry)
+        );
+
+        let mut device = record();
+        device.telemetry_collected_unix_ms = 50_000;
+        device.last_seen_unix_ms = 100;
+        assert_eq!(
+            validate_inventory_record(&device, 110, 1000),
             Err(InventoryError::StaleTelemetry)
         );
     }
