@@ -25,7 +25,7 @@ pub struct Workload {
 pub struct ClassPolicy { pub class: String, pub requires_admin_approval: bool, pub max_cpu_millis: u32, pub max_memory_mb: u64 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RejectReason { InvalidIdentifier, ZeroBudget, DeviceNotApproved, DeviceUnavailable, ClassNotAllowedOnDevice, UnknownClassPolicy, ApprovalRequired, ExceedsClassLimit, CpuBudget, MemoryBudget }
+pub enum RejectReason { InvalidIdentifier, ZeroBudget, DeviceNotApproved, DeviceUnavailable, ClassNotAllowedOnDevice, UnknownClassPolicy, ApprovalRequired, ExceedsClassLimit, CpuBudget, MemoryBudget, DuplicateWorkload, TelemetryStale, OwnerOptInMissing, OutsideAdminSchedule, InteractiveUserPresent, DeviceNotRunning, OnBattery, ThermalUnsafe, NetworkPolicyDenied, DataClassificationDenied }
 impl RejectReason {
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -34,6 +34,11 @@ impl RejectReason {
             Self::ClassNotAllowedOnDevice => "class not allowed on device", Self::UnknownClassPolicy => "unknown class policy",
             Self::ApprovalRequired => "verified administrator approval required", Self::ExceedsClassLimit => "class resource limit exceeded",
             Self::CpuBudget => "CPU budget exceeded", Self::MemoryBudget => "memory budget exceeded",
+            Self::DuplicateWorkload => "workload identifier is already reserved", Self::TelemetryStale => "worker telemetry is missing or stale",
+            Self::OwnerOptInMissing => "device owner has not explicitly opted in", Self::OutsideAdminSchedule => "outside administrator-approved scheduling window",
+            Self::InteractiveUserPresent => "interactive user activity takes priority", Self::DeviceNotRunning => "device is sleeping or powered off; UJANI never wakes devices",
+            Self::OnBattery => "device is on battery power", Self::ThermalUnsafe => "device thermal state is not safe for background work",
+            Self::NetworkPolicyDenied => "network or data-egress policy blocks this workload", Self::DataClassificationDenied => "workload data classification is not approved for this worker",
         }
     }
 }
@@ -135,31 +140,31 @@ pub fn admit_with_context(
         rejection => return rejection,
     }
     if !context.telemetry_fresh {
-        return Admission::Reject("worker telemetry is missing or stale");
+        return Admission::Reject(RejectReason::TelemetryStale);
     }
     if !context.owner_opted_in {
-        return Admission::Reject("device owner has not explicitly opted in");
+        return Admission::Reject(RejectReason::OwnerOptInMissing);
     }
     if !context.within_admin_schedule {
-        return Admission::Reject("outside administrator-approved scheduling window");
+        return Admission::Reject(RejectReason::OutsideAdminSchedule);
     }
     if context.interactive_user_present {
-        return Admission::Reject("interactive user activity takes priority");
+        return Admission::Reject(RejectReason::InteractiveUserPresent);
     }
     if !context.device_already_running {
-        return Admission::Reject("device is sleeping or powered off; UJANI never wakes devices");
+        return Admission::Reject(RejectReason::DeviceNotRunning);
     }
     if context.device_on_battery {
-        return Admission::Reject("device is on battery power");
+        return Admission::Reject(RejectReason::OnBattery);
     }
     if !context.thermal_state_safe {
-        return Admission::Reject("device thermal state is not safe for background work");
+        return Admission::Reject(RejectReason::ThermalUnsafe);
     }
     if !context.network_policy_allows {
-        return Admission::Reject("network or data-egress policy blocks this workload");
+        return Admission::Reject(RejectReason::NetworkPolicyDenied);
     }
     if !context.data_classification_allows {
-        return Admission::Reject("workload data classification is not approved for this worker");
+        return Admission::Reject(RejectReason::DataClassificationDenied);
     }
     Admission::Accept
 }
