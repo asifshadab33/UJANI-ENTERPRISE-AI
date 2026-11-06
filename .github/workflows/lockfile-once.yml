@@ -1,0 +1,37 @@
+name: One-time Enterprise lockfile generation
+
+on:
+  push:
+    branches:
+      - audit/approval-leases-hardening-2026-11
+    paths:
+      - .github/workflows/lockfile-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  lockfile:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out remediation branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: audit/approval-leases-hardening-2026-11
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+        with:
+          toolchain: stable
+      - name: Generate reviewed workspace lockfile
+        run: cargo generate-lockfile
+      - name: Commit lockfile
+        run: |
+          git add Cargo.lock
+          if git diff --cached --quiet; then
+            echo "No lockfile changes required."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "build(deps): lock enterprise policy dependency versions"
+          git push origin HEAD:audit/approval-leases-hardening-2026-11
