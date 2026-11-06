@@ -227,10 +227,16 @@ mod tests {
         device.telemetry_collected_unix_ms = 120;
         device.last_seen_unix_ms = 120;
         assert_eq!(validate_inventory_record(&device, 110, 1000), Ok(()));
-        assert_eq!(validate_inventory_record(&device, 40_200, 1000), Err(InventoryError::StaleTelemetry));
+        assert_eq!(
+            validate_inventory_record(&device, 40_200, 1000),
+            Err(InventoryError::StaleTelemetry)
+        );
         device.last_seen_unix_ms = 1;
         device.telemetry_collected_unix_ms = 100;
-        assert_eq!(validate_inventory_record(&device, 2000, 1000), Err(InventoryError::StaleTelemetry));
+        assert_eq!(
+            validate_inventory_record(&device, 2000, 1000),
+            Err(InventoryError::StaleTelemetry)
+        );
     }
 
     #[test]
