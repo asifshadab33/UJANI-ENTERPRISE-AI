@@ -50,3 +50,10 @@ This file defines minimum gates before enabling remote work on enrolled devices.
 - General-purpose execution of arbitrary third-party code.
 - Multi-tenant sharing of accelerators without a reviewed isolation model.
 - Claims of guaranteed cost savings, carbon savings or compliance.
+
+
+## Additional scheduler admission gate
+
+The policy crate exposes `admit_with_context`, layering these mandatory conditions on top of device enrolment and resource quotas: fresh telemetry, explicit owner opt-in, administrator-approved schedule, no interactive user activity, AC power, safe thermal state, network/egress approval and workload data-classification approval.
+
+This is side-effect-free policy logic. It does not read telemetry, authenticate devices, schedule or execute work. A production worker must independently revalidate the conditions immediately before launch using OS-enforced resource and isolation controls. Missing evidence fails closed.
