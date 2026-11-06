@@ -40,6 +40,38 @@ impl RejectReason {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Admission { Accept, Reject(RejectReason) }
 
+/// In-memory reservation semantics for tests and single-process prototypes only.
+/// Production scheduling must use an atomic transactional ledger in durable storage.
+#[derive(Debug, Default)]
+pub struct Ledger {
+    used: std::collections::HashMap<String, (u32, u64)>,
+    jobs: std::collections::HashMap<String, (String, u32, u64)>,
+}
+impl Ledger {
+    pub fn try_reserve(&mut self, device: &Device, workload: &Workload) -> Result<(), RejectReason> {
+        if self.jobs.contains_key(&workload.workload_id) { return Err(RejectReason::DuplicateWorkload); }
+        let (cpu, memory) = self.used.get(&device.device_id).copied().unwrap_or((0, 0));
+        if cpu.saturating_add(workload.requested_cpu_millis) > device.remaining_cpu_millis {
+            return Err(RejectReason::CpuBudget);
+        }
+        if memory.saturating_add(workload.requested_memory_mb) > device.remaining_memory_mb {
+            return Err(RejectReason::MemoryBudget);
+        }
+        self.used.insert(device.device_id.clone(), (cpu + workload.requested_cpu_millis, memory + workload.requested_memory_mb));
+        self.jobs.insert(workload.workload_id.clone(), (device.device_id.clone(), workload.requested_cpu_millis, workload.requested_memory_mb));
+        Ok(())
+    }
+    pub fn release(&mut self, workload_id: &str) {
+        if let Some((device_id, cpu, memory)) = self.jobs.remove(workload_id) {
+            if let Some(used) = self.used.get_mut(&device_id) {
+                used.0 = used.0.saturating_sub(cpu);
+                used.1 = used.1.saturating_sub(memory);
+            }
+        }
+    }
+}
+
+
 /// Conservative pre-scheduling check. Real enforcement must occur on the worker OS.
 fn valid_identifier(value: &str, max_len: usize) -> bool {
     !value.trim().is_empty()
@@ -314,8 +346,30 @@ mod tests {
     }
 
     #[test]
+    fn submitter_claim_cannot_waive_admin_class_approval() {
+        let w = workload();
+        let policy = ClassPolicy { class: "inference".into(), requires_admin_approval: true, max_cpu_millis: 4000, max_memory_mb: 8192 };
+        assert_eq!(admit(&device(), &w, &[policy], &[]), Admission::Reject(RejectReason::ApprovalRequired));
+        assert_eq!(admit(&device(), &w, &[ClassPolicy { class: "inference".into(), requires_admin_approval: true, max_cpu_millis: 4000, max_memory_mb: 8192 }], &["job-001".into()]), Admission::Accept);
+    }
+
+    #[test]
+    fn ledger_prevents_oversubscription_and_releases_reservations() {
+        let mut ledger = Ledger::default();
+        let d = device();
+        let first = workload();
+        let mut second = workload(); second.workload_id = "job-002".into();
+        let mut third = workload(); third.workload_id = "job-003".into();
+        assert!(ledger.try_reserve(&d, &first).is_ok());
+        assert!(ledger.try_reserve(&d, &second).is_ok());
+        assert_eq!(ledger.try_reserve(&d, &third), Err(RejectReason::CpuBudget));
+        ledger.release("job-001");
+        assert!(ledger.try_reserve(&d, &third).is_ok());
+    }
+
+    #[test]
     fn approval_gate_is_enforced() {
-        let mut w = workload();
+        let w = workload();
         let policy = ClassPolicy { class: "inference".into(), requires_admin_approval: true, max_cpu_millis: 4000, max_memory_mb: 8192 };
         assert_eq!(admit(&device(), &w, &[policy], &[]), Admission::Reject(RejectReason::ApprovalRequired));
     }
