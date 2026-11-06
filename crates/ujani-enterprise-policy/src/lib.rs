@@ -29,9 +29,21 @@ pub enum Admission {
 }
 
 /// Conservative pre-scheduling check. Real enforcement must occur on the worker OS.
+fn valid_identifier(value: &str, max_len: usize) -> bool {
+    !value.trim().is_empty()
+        && value.len() <= max_len
+        && value.chars().all(|c| c.is_ascii_alphanumeric() || "._:-".contains(c))
+}
+
 pub fn admit(device: &Device, workload: &Workload) -> Admission {
-    if device.device_id.trim().is_empty() || workload.workload_id.trim().is_empty() {
-        return Admission::Reject("device and workload identifiers must be present");
+    if !valid_identifier(&device.device_id, 128)
+        || !valid_identifier(&workload.workload_id, 128)
+        || !valid_identifier(&workload.class, 64)
+    {
+        return Admission::Reject("device ID, workload ID, and workload class must be valid bounded identifiers");
+    }
+    if workload.requested_cpu_millis == 0 || workload.requested_memory_mb == 0 {
+        return Admission::Reject("workload must request a positive CPU and memory budget");
     }
     if !device.enrolled || !device.admin_approved {
         return Admission::Reject("device is not explicitly enrolled and approved");
@@ -111,6 +123,32 @@ mod tests {
     fn quota_overrun_is_rejected() {
         let mut w = workload();
         w.requested_memory_mb = 9000;
+        assert!(matches!(admit(&device(), &w), Admission::Reject(_)));
+    }
+
+    #[test]
+    fn rejects_empty_or_malformed_identifiers_and_classes() {
+        let mut d = device();
+        d.device_id = "   ".into();
+        assert!(matches!(admit(&d, &workload()), Admission::Reject(_)));
+
+        let mut w = workload();
+        w.workload_id = "job/../../escape".into();
+        assert!(matches!(admit(&device(), &w), Admission::Reject(_)));
+
+        let mut w = workload();
+        w.class = "inference\\nadmin".into();
+        assert!(matches!(admit(&device(), &w), Admission::Reject(_)));
+    }
+
+    #[test]
+    fn rejects_zero_resource_requests() {
+        let mut w = workload();
+        w.requested_cpu_millis = 0;
+        assert!(matches!(admit(&device(), &w), Admission::Reject(_)));
+
+        let mut w = workload();
+        w.requested_memory_mb = 0;
         assert!(matches!(admit(&device(), &w), Admission::Reject(_)));
     }
 
