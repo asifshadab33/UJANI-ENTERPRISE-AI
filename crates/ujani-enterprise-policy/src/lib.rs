@@ -18,7 +18,6 @@ pub struct Workload {
     pub class: String,
     pub requested_cpu_millis: u32,
     pub requested_memory_mb: u64,
-    pub admin_approved: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,6 +37,7 @@ pub enum RejectReason {
     ClassNotAllowedOnDevice,
     UnknownClassPolicy,
     ApprovalRequired,
+    InvalidClassPolicy,
     ExceedsClassLimit,
     CpuBudget,
     MemoryBudget,
@@ -62,6 +62,7 @@ impl RejectReason {
             Self::ClassNotAllowedOnDevice => "class not allowed on device",
             Self::UnknownClassPolicy => "unknown class policy",
             Self::ApprovalRequired => "verified administrator approval required",
+            Self::InvalidClassPolicy => "class policy set is invalid or contains duplicates",
             Self::ExceedsClassLimit => "class resource limit exceeded",
             Self::CpuBudget => "CPU budget exceeded",
             Self::MemoryBudget => "memory budget exceeded",
@@ -148,6 +149,20 @@ fn valid_identifier(value: &str, max_len: usize) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || "._:-".contains(c))
 }
 
+
+/// Validate administrator policy before using it for admission. Duplicate class
+/// entries are ambiguous and therefore rejected rather than silently taking the first.
+pub fn validate_policies(policies: &[ClassPolicy]) -> Result<(), &'static str> {
+    let mut seen = std::collections::HashSet::new();
+    for policy in policies {
+        if !valid_identifier(&policy.class, 64) || policy.max_cpu_millis == 0 || policy.max_memory_mb == 0 {
+            return Err("invalid class policy");
+        }
+        if !seen.insert(policy.class.as_str()) { return Err("duplicate class policy"); }
+    }
+    Ok(())
+}
+
 pub fn admit(
     device: &Device,
     workload: &Workload,
@@ -177,6 +192,7 @@ pub fn admit(
     {
         return Admission::Reject(ClassNotAllowedOnDevice);
     }
+    if validate_policies(policies).is_err() { return Admission::Reject(InvalidClassPolicy); }
     let Some(policy) = policies.iter().find(|p| p.class == workload.class) else {
         return Admission::Reject(UnknownClassPolicy);
     };
@@ -206,7 +222,7 @@ pub struct SchedulingContext {
     pub owner_opted_in: bool,
     pub within_admin_schedule: bool,
     pub interactive_user_present: bool,
-    pub device_on_battery: bool,
+    pub on_ac_power: bool,
     /// True only when already powered on; UJANI must never wake devices.
     pub device_already_running: bool,
     pub thermal_state_safe: bool,
@@ -243,7 +259,7 @@ pub fn admit_with_context(
     if !context.device_already_running {
         return Admission::Reject(RejectReason::DeviceNotRunning);
     }
-    if context.device_on_battery {
+    if !context.on_ac_power {
         return Admission::Reject(RejectReason::OnBattery);
     }
     if !context.thermal_state_safe {
@@ -280,7 +296,6 @@ mod tests {
             class: "inference".into(),
             requested_cpu_millis: 2000,
             requested_memory_mb: 4096,
-            admin_approved: false,
         }
     }
 
@@ -289,7 +304,7 @@ mod tests {
             owner_opted_in: true,
             within_admin_schedule: true,
             interactive_user_present: false,
-            device_on_battery: false,
+            on_ac_power: true,
             device_already_running: true,
             thermal_state_safe: true,
             network_policy_allows: true,
@@ -340,7 +355,7 @@ mod tests {
             Admission::Reject(_)
         ));
         let mut c = safe_context();
-        c.device_on_battery = true;
+        c.on_ac_power = false;
         assert!(matches!(
             admit_with_context(&device(), &workload(), &c, &policies(), &[]),
             Admission::Reject(_)
@@ -450,7 +465,7 @@ mod tests {
         ));
 
         let mut w = workload();
-        w.class = "inference\\nadmin".into();
+        w.class = "inference\nadmin".into();
         assert!(matches!(
             admit(&device(), &w, &policies(), &[]),
             Admission::Reject(_)
@@ -517,6 +532,15 @@ mod tests {
         assert_eq!(ledger.try_reserve(&d, &third), Err(RejectReason::CpuBudget));
         ledger.release("job-001");
         assert!(ledger.try_reserve(&d, &third).is_ok());
+    }
+
+
+    #[test]
+    fn duplicate_or_zero_limit_class_policies_are_rejected() {
+        let duplicate = vec![policies()[0].clone(), policies()[0].clone()];
+        assert_eq!(admit(&device(), &workload(), &duplicate, &[]), Admission::Reject(RejectReason::InvalidClassPolicy));
+        let invalid = vec![ClassPolicy { class: "inference".into(), requires_admin_approval: false, max_cpu_millis: 0, max_memory_mb: 1024 }];
+        assert_eq!(validate_policies(&invalid), Err("invalid class policy"));
     }
 
     #[test]
