@@ -86,7 +86,9 @@ pub fn validate_inventory_record(
     if record.telemetry_collected_unix_ms > latest_allowed_timestamp
         || record.last_seen_unix_ms > latest_allowed_timestamp
         || record.telemetry_collected_unix_ms
-            > record.last_seen_unix_ms.saturating_add(CLOCK_SKEW_TOLERANCE_MS)
+            > record
+                .last_seen_unix_ms
+                .saturating_add(CLOCK_SKEW_TOLERANCE_MS)
         || now_unix_ms.saturating_sub(record.telemetry_collected_unix_ms) > max_age_ms
         || now_unix_ms.saturating_sub(record.last_seen_unix_ms) > max_age_ms
     {
