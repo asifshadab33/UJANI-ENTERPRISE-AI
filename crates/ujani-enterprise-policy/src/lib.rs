@@ -317,4 +317,7 @@ mod tests {
 }
 
 pub mod inventory;
-pub use inventory::{summarize_inventory, validate_inventory_record, DeviceInventoryRecord, DevicePowerState, InventoryError, InventorySummary, InventoryTrust};
+pub use inventory::{
+    summarize_inventory, validate_inventory_record, DeviceInventoryRecord, DevicePowerState,
+    InventoryError, InventorySummary, InventoryTrust,
+};
