@@ -434,17 +434,27 @@ impl ConsentAuthorityBackend for MemoryConsentAuthority {
         {
             return Err(AuthorityError::InvalidIdentifier);
         }
-        if record.generation == 0 || record.tenant_generation == 0 || record.expires_at_unix_ms <= record.updated_at_unix_ms {
+        if record.generation == 0
+            || record.tenant_generation == 0
+            || record.expires_at_unix_ms <= record.updated_at_unix_ms
+        {
             return Err(AuthorityError::InvalidGeneration);
         }
         validate_individual_record(&record)?;
         let request_hash = individual_request_hash(&record, expected_generation);
-        let mut state = self.state.lock().map_err(|_| AuthorityError::LockPoisoned)?;
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| AuthorityError::LockPoisoned)?;
         if let Some(existing) = state
             .idempotency
             .get(&(record.tenant_id.clone(), idempotency_key.to_owned()))
         {
-            return if existing.request_hash == request_hash { Ok(existing.audit.clone()) } else { Err(AuthorityError::IdempotencyConflict) };
+            return if existing.request_hash == request_hash {
+                Ok(existing.audit.clone())
+            } else {
+                Err(AuthorityError::IdempotencyConflict)
+            };
         }
         let tenant = state
             .tenants
@@ -461,7 +471,13 @@ impl ConsentAuthorityBackend for MemoryConsentAuthority {
             record.device_id.clone(),
         );
         let current = state.individuals.get(&key).map(|r| r.generation);
-        if current != expected_generation || record.generation != current.unwrap_or(0).checked_add(1).ok_or(AuthorityError::GenerationExhausted)? {
+        if current != expected_generation
+            || record.generation
+                != current
+                    .unwrap_or(0)
+                    .checked_add(1)
+                    .ok_or(AuthorityError::GenerationExhausted)?
+        {
             return Err(AuthorityError::GenerationConflict);
         }
         let audit = Self::append_audit(
