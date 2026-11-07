@@ -352,6 +352,32 @@ mod tests {
         assert_eq!(r.authenticate_request(&forged, 252), Err(DeviceTrustError::TenantMismatch));
     }
     #[test]
+    fn signed_revocation_invalidates_the_enrolled_device() {
+        let (mut r, admin, device) = registry();
+        let enroll = enrollment(&admin, &device, 1);
+        r.apply_admin_command(&enroll, 200).unwrap();
+        let mut revoke = SignedDeviceAdminCommand {
+            action: DeviceCommandAction::Revoke, tenant_id: "tenant-a".into(),
+            device_id: "device-1".into(), admin_key_id: "admin-v1".into(),
+            target_key_id: String::new(), target_public_key: None,
+            issued_at_unix_ms: 300, expires_at_unix_ms: 1000, nonce: [8;16],
+            signature: [0;64], old_device_signature: None, new_device_signature: None,
+        };
+        revoke.signature = admin.sign(&admin_command_bytes(&revoke)).to_bytes();
+        assert_eq!(r.apply_admin_command(&revoke, 350), Ok(2));
+        let claims = DeviceRequestClaims {
+            tenant_id: "tenant-a".into(), device_id: "device-1".into(),
+            key_id: "device-key-v1".into(), key_generation: 1, request_id: [9;16],
+            issued_at_unix_ms: 350, expires_at_unix_ms: 500,
+            method: "POST".into(), resource_id: "lease:acquire".into(),
+        };
+        let signed = SignedDeviceRequest {
+            signature: device.sign(&device_request_bytes(&claims)).to_bytes(), claims,
+        };
+        assert_eq!(r.authenticate_request(&signed, 400), Err(DeviceTrustError::DeviceNotEnrolled));
+    }
+
+    #[test]
     fn stale_key_generation_is_rejected_after_rotation() {
         let (mut r, admin, device) = registry();
         let c = enrollment(&admin, &device, 1);
