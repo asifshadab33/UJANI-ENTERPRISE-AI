@@ -13,12 +13,14 @@ This roadmap is a statement of intended work, not a claim that these capabilitie
 - [ ] Short-lived device credentials, rotation and revocation.
 - [ ] Read-only CPU/RAM/GPU/NPU/runtime inventory.
 - [ ] Device heartbeat and availability reporting.
+- [x] Policy-library verification of dual-signed worker telemetry and administrator scheduling decisions bound to the exact workload manifest and a single-use dispatch challenge (trusted enrollment registry remains external).
 - [ ] Admin UI showing enrolled devices and policy state.
 - [ ] No workload execution until identity and policy checks pass.
 
 ## Phase 2 — safe scheduling
 - [ ] Workload classes, priorities and deadlines.
-- [ ] Resource reservations and per-device quotas.
+- [ ] Resource reservations and per-device quotas in a live scheduler.
+- [x] File-backed local reservation policy store with OS advisory locks, crash-recovery snapshots, token-bound lease renewal/release and persisted single-use dispatch challenges (not a distributed scheduler or production database).
 - [ ] Idle/interactive-aware scheduling with user-visible opt-out.
 - [ ] GPU memory and accelerator compatibility checks.
 - [ ] Cancellation, timeout and cleanup behaviour.

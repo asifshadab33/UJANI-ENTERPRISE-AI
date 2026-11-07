@@ -303,6 +303,8 @@ pub enum RejectReason {
     NetworkPolicyDenied,
     DataClassificationDenied,
     InvalidLeaseToken,
+    SchedulingEvidenceMismatch,
+    SchedulingEvidenceExpired,
 }
 impl RejectReason {
     pub fn as_str(&self) -> &'static str {
@@ -333,6 +335,10 @@ impl RejectReason {
                 "workload data classification is not approved for this worker"
             }
             Self::InvalidLeaseToken => "lease capability is invalid or already in use",
+            Self::SchedulingEvidenceMismatch => {
+                "verified scheduling evidence does not match this device and workload"
+            }
+            Self::SchedulingEvidenceExpired => "verified scheduling evidence has expired",
         }
     }
 }
@@ -349,6 +355,8 @@ pub struct Ledger {
     used: std::collections::HashMap<String, (u32, u64)>,
     jobs: std::collections::HashMap<String, (String, u32, u64, u64, Option<String>)>,
     consumed_approvals: std::collections::HashSet<String>,
+    /// Short-lived, single-use dispatch challenges persisted by DurableLedger.
+    consumed_challenges: std::collections::HashMap<[u8; 16], u64>,
     /// Domain-separated SHA-256 digests of caller-generated 256-bit lease capabilities.
     lease_token_hashes: std::collections::HashMap<String, [u8; 32]>,
 }
@@ -487,6 +495,21 @@ impl Ledger {
         true
     }
 
+    pub(crate) fn consume_challenge_nonce(
+        &mut self,
+        nonce: [u8; 16],
+        expires_unix_ms: u64,
+        now_unix_ms: u64,
+    ) -> bool {
+        self.consumed_challenges
+            .retain(|_, expires| *expires > now_unix_ms);
+        if expires_unix_ms <= now_unix_ms || self.consumed_challenges.contains_key(&nonce) {
+            return false;
+        }
+        self.consumed_challenges.insert(nonce, expires_unix_ms);
+        true
+    }
+
     pub fn expire(&mut self, now_unix_ms: u64) {
         let expired: Vec<String> = self
             .jobs
@@ -497,6 +520,8 @@ impl Ledger {
         for id in expired {
             self.release(&id);
         }
+        self.consumed_challenges
+            .retain(|_, expires| *expires > now_unix_ms);
     }
 }
 
@@ -697,10 +722,14 @@ pub(crate) fn admit_and_reserve(
     }
 }
 
+pub mod durable_ledger;
+pub use durable_ledger::{DurableLedger, DurableLedgerError, DurableLedgerSnapshot};
+
 pub mod scheduling_evidence;
 pub use scheduling_evidence::{
-    admit_and_reserve_with_verified_lease, admit_with_verified_context, verify_scheduling_context,
-    SchedulingEvidenceError, SchedulingPolicyClaims, SignedSchedulingPolicy, SignedWorkerTelemetry,
+    admit_and_reserve_durably_with_verified_lease, admit_and_reserve_with_verified_lease,
+    admit_with_verified_context, verify_and_consume_scheduling_context, SchedulingEvidenceError,
+    SchedulingPolicyClaims, SignedSchedulingPolicy, SignedWorkerTelemetry,
     VerifiedSchedulingContext, WorkerTelemetryClaims,
 };
 

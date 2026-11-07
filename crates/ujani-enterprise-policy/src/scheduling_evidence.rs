@@ -5,8 +5,8 @@
 //! administrator key and bound to the exact workload manifest. Callers cannot
 //! construct a VerifiedSchedulingContext directly.
 use crate::{
-    admit_with_context, Admission, ClassPolicy, Device, Ledger, SchedulingContext,
-    VerifiedAdminApproval, Workload,
+    admit_with_context, Admission, ClassPolicy, Device, DurableLedger, DurableLedgerError, Ledger,
+    RejectReason, SchedulingContext, VerifiedAdminApproval, Workload,
 };
 use ed25519_dalek::{Signature, VerifyingKey};
 
@@ -56,10 +56,36 @@ pub struct SignedSchedulingPolicy {
     pub signature: [u8; 64],
 }
 
-/// A scheduling context that can only be produced after both signatures,
-/// challenge binding, workload binding and freshness checks succeed.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct VerifiedSchedulingContext(SchedulingContext);
+/// A non-cloneable, single-use scheduling context. It retains the exact device,
+/// workload manifest and expiry that were covered by the signed evidence.
+#[derive(Debug, PartialEq, Eq)]
+pub struct VerifiedSchedulingContext {
+    context: SchedulingContext,
+    device_id: String,
+    workload_id: String,
+    manifest_sha256: [u8; 32],
+    expires_at_unix_ms: u64,
+}
+
+impl VerifiedSchedulingContext {
+    fn rejection_for(
+        &self,
+        device: &Device,
+        workload: &Workload,
+        now_unix_ms: u64,
+    ) -> Option<RejectReason> {
+        if self.device_id != device.device_id
+            || self.workload_id != workload.workload_id
+            || self.manifest_sha256 != workload.manifest_sha256
+        {
+            return Some(RejectReason::SchedulingEvidenceMismatch);
+        }
+        if now_unix_ms >= self.expires_at_unix_ms {
+            return Some(RejectReason::SchedulingEvidenceExpired);
+        }
+        None
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SchedulingEvidenceError {
@@ -73,6 +99,8 @@ pub enum SchedulingEvidenceError {
     UnknownAdminKey,
     InvalidWorkerSignature,
     InvalidPolicySignature,
+    ChallengeReplayed,
+    ChallengeStoreUnavailable,
 }
 
 fn append_string(bytes: &mut Vec<u8>, value: &str) {
@@ -140,7 +168,7 @@ fn valid_time_window(issued: u64, expires: u64, now: u64, max_ttl: u64) -> bool 
 /// these signatures attest runtime gates and admin policy, not hardware telemetry.
 /// This crate does not persist enrollment, revocation or the registry's root of trust.
 #[allow(clippy::too_many_arguments)] // Keep both trust roots and the dispatch challenge explicit.
-pub fn verify_scheduling_context(
+pub(crate) fn verify_scheduling_context(
     device: &Device,
     workload: &Workload,
     telemetry: &SignedWorkerTelemetry,
@@ -224,7 +252,52 @@ pub fn verify_scheduling_context(
         data_classification_allows: policy_claims.data_classification_allows,
         telemetry_fresh: true,
     };
-    Ok(VerifiedSchedulingContext(context))
+    Ok(VerifiedSchedulingContext {
+        context,
+        device_id: device.device_id.clone(),
+        workload_id: workload.workload_id.clone(),
+        manifest_sha256: workload.manifest_sha256,
+        expires_at_unix_ms: telemetry_claims
+            .expires_unix_ms
+            .min(policy_claims.expires_unix_ms),
+    })
+}
+
+/// Verify signed evidence and atomically consume its dispatch challenge in the
+/// durable ledger. This is the only public constructor for VerifiedSchedulingContext.
+#[allow(clippy::too_many_arguments)] // Keep both trust roots and the per-dispatch challenge explicit.
+pub fn verify_and_consume_scheduling_context(
+    ledger: &DurableLedger,
+    device: &Device,
+    workload: &Workload,
+    telemetry: &SignedWorkerTelemetry,
+    policy: &SignedSchedulingPolicy,
+    enrolled_device_keys: &[(String, VerifyingKey)],
+    enrolled_admin_keys: &[(String, VerifyingKey)],
+    expected_challenge_nonce: &[u8; 16],
+    now_unix_ms: u64,
+) -> Result<VerifiedSchedulingContext, SchedulingEvidenceError> {
+    let verified = verify_scheduling_context(
+        device,
+        workload,
+        telemetry,
+        policy,
+        enrolled_device_keys,
+        enrolled_admin_keys,
+        expected_challenge_nonce,
+        now_unix_ms,
+    )?;
+    let expires_unix_ms = telemetry
+        .claims
+        .expires_unix_ms
+        .min(policy.claims.expires_unix_ms);
+    let consumed = ledger
+        .consume_challenge_nonce(*expected_challenge_nonce, expires_unix_ms, now_unix_ms)
+        .map_err(|_| SchedulingEvidenceError::ChallengeStoreUnavailable)?;
+    if !consumed {
+        return Err(SchedulingEvidenceError::ChallengeReplayed);
+    }
+    Ok(verified)
 }
 
 /// Evaluate policy using only cryptographically verified scheduling evidence.
@@ -236,13 +309,42 @@ pub fn admit_with_verified_context(
     approvals: &[VerifiedAdminApproval],
     now_unix_ms: u64,
 ) -> Admission {
+    if let Some(reason) = context.rejection_for(device, workload, now_unix_ms) {
+        return Admission::Reject(reason);
+    }
     admit_with_context(
         device,
         workload,
-        &context.0,
+        &context.context,
         policies,
         approvals,
         now_unix_ms,
+    )
+}
+
+/// Atomically persist a reservation after verifying signed scheduling evidence.
+#[allow(clippy::too_many_arguments)] // Keep all policy, identity and capability inputs explicit.
+pub fn admit_and_reserve_durably_with_verified_lease(
+    ledger: &DurableLedger,
+    device: &Device,
+    workload: &Workload,
+    context: VerifiedSchedulingContext,
+    policies: &[ClassPolicy],
+    approvals: &[VerifiedAdminApproval],
+    now_unix_ms: u64,
+    lease_token: &[u8; 32],
+) -> Result<Admission, DurableLedgerError> {
+    if let Some(reason) = context.rejection_for(device, workload, now_unix_ms) {
+        return Ok(Admission::Reject(reason));
+    }
+    ledger.admit_and_reserve_with_lease(
+        device,
+        workload,
+        &context.context,
+        policies,
+        approvals,
+        now_unix_ms,
+        lease_token,
     )
 }
 
@@ -253,16 +355,19 @@ pub fn admit_and_reserve_with_verified_lease(
     ledger: &mut Ledger,
     device: &Device,
     workload: &Workload,
-    context: &VerifiedSchedulingContext,
+    context: VerifiedSchedulingContext,
     policies: &[ClassPolicy],
     approvals: &[VerifiedAdminApproval],
     now_unix_ms: u64,
     lease_token: &[u8; 32],
 ) -> Admission {
+    if let Some(reason) = context.rejection_for(device, workload, now_unix_ms) {
+        return Admission::Reject(reason);
+    }
     ledger.admit_and_reserve_with_lease(
         device,
         workload,
-        &context.0,
+        &context.context,
         policies,
         approvals,
         now_unix_ms,
@@ -382,11 +487,108 @@ mod tests {
             2_000,
         )
         .unwrap();
-        assert!(verified.0.owner_opted_in);
-        assert!(verified.0.within_admin_schedule);
-        assert!(verified.0.network_policy_allows);
-        assert!(verified.0.data_classification_allows);
-        assert!(verified.0.telemetry_fresh);
+        assert!(verified.context.owner_opted_in);
+        assert!(verified.context.within_admin_schedule);
+        assert!(verified.context.network_policy_allows);
+        assert!(verified.context.data_classification_allows);
+        assert!(verified.context.telemetry_fresh);
+    }
+
+    #[test]
+    fn verified_context_is_bound_to_device_manifest_and_expiry() {
+        let d = device();
+        let w = workload();
+        let challenge = [0x31u8; 16];
+        let (telemetry, policy, device_key, admin_key) = signed_evidence(challenge, 1_000);
+        let verified = verify_scheduling_context(
+            &d,
+            &w,
+            &telemetry,
+            &policy,
+            &[("worker-01".into(), device_key.verifying_key())],
+            &[("admin-key-01".into(), admin_key.verifying_key())],
+            &challenge,
+            2_000,
+        )
+        .unwrap();
+
+        let mut other_device = device();
+        other_device.device_id = "worker-02".into();
+        assert_eq!(
+            admit_with_verified_context(&other_device, &w, &verified, &[], &[], 2_000),
+            Admission::Reject(RejectReason::SchedulingEvidenceMismatch)
+        );
+
+        let mut other_workload = workload();
+        other_workload.workload_id = "job-02".into();
+        assert_eq!(
+            admit_with_verified_context(&d, &other_workload, &verified, &[], &[], 2_000),
+            Admission::Reject(RejectReason::SchedulingEvidenceMismatch)
+        );
+
+        let mut changed_manifest = workload();
+        changed_manifest.manifest_sha256[0] ^= 1;
+        assert_eq!(
+            admit_with_verified_context(&d, &changed_manifest, &verified, &[], &[], 2_000),
+            Admission::Reject(RejectReason::SchedulingEvidenceMismatch)
+        );
+
+        assert_eq!(
+            admit_with_verified_context(&d, &w, &verified, &[], &[], 31_000),
+            Admission::Reject(RejectReason::SchedulingEvidenceExpired)
+        );
+    }
+
+    #[test]
+    fn durable_reservation_rejects_workload_substitution() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let path = std::env::temp_dir().join(format!(
+            "ujani-scheduling-binding-{}-{}.ledger",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let ledger = DurableLedger::open(&path).unwrap();
+        let d = device();
+        let w = workload();
+        let challenge = [0x32u8; 16];
+        let (telemetry, policy, device_key, admin_key) = signed_evidence(challenge, 1_000);
+        let keys = [("worker-01".into(), device_key.verifying_key())];
+        let admins = [("admin-key-01".into(), admin_key.verifying_key())];
+        let verified = verify_and_consume_scheduling_context(
+            &ledger, &d, &w, &telemetry, &policy, &keys, &admins, &challenge, 2_000,
+        )
+        .unwrap();
+
+        let mut substituted = workload();
+        substituted.workload_id = "job-substituted".into();
+        let result = admit_and_reserve_durably_with_verified_lease(
+            &ledger,
+            &d,
+            &substituted,
+            verified,
+            &[],
+            &[],
+            2_000,
+            &[0x41u8; 32],
+        )
+        .unwrap();
+        assert_eq!(
+            result,
+            Admission::Reject(RejectReason::SchedulingEvidenceMismatch)
+        );
+        assert_eq!(ledger.snapshot().unwrap().active_jobs, 0);
+
+        drop(ledger);
+        let lock_path = {
+            let mut value = path.as_os_str().to_os_string();
+            value.push(".lock");
+            std::path::PathBuf::from(value)
+        };
+        let _ = std::fs::remove_file(lock_path);
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]
@@ -463,6 +665,45 @@ mod tests {
             .unwrap_err(),
             SchedulingEvidenceError::WorkloadMismatch
         );
+    }
+
+    #[test]
+    fn dispatch_challenge_is_consumed_durably_and_cannot_be_replayed() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let path = std::env::temp_dir().join(format!(
+            "ujani-scheduling-challenge-{}-{}.ledger",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let ledger = DurableLedger::open(&path).unwrap();
+        let d = device();
+        let w = workload();
+        let challenge = [0x77u8; 16];
+        let (telemetry, policy, device_key, admin_key) = signed_evidence(challenge, 1_000);
+        let keys = [("worker-01".into(), device_key.verifying_key())];
+        let admins = [("admin-key-01".into(), admin_key.verifying_key())];
+        assert!(verify_and_consume_scheduling_context(
+            &ledger, &d, &w, &telemetry, &policy, &keys, &admins, &challenge, 2_000
+        )
+        .is_ok());
+        assert_eq!(
+            verify_and_consume_scheduling_context(
+                &ledger, &d, &w, &telemetry, &policy, &keys, &admins, &challenge, 2_001
+            )
+            .unwrap_err(),
+            SchedulingEvidenceError::ChallengeReplayed
+        );
+        drop(ledger);
+        let lock_path = {
+            let mut value = path.as_os_str().to_os_string();
+            value.push(".lock");
+            std::path::PathBuf::from(value)
+        };
+        let _ = std::fs::remove_file(lock_path);
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]
