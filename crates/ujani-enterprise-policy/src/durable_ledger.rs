@@ -102,6 +102,17 @@ impl DurableLedger {
         })
     }
 
+    pub(crate) fn consume_challenge_nonce(
+        &self,
+        nonce: [u8; 16],
+        expires_unix_ms: u64,
+        now_unix_ms: u64,
+    ) -> Result<bool, DurableLedgerError> {
+        self.transact(|ledger| {
+            Ok(ledger.consume_challenge_nonce(nonce, expires_unix_ms, now_unix_ms))
+        })
+    }
+
     pub fn renew_lease(
         &self,
         workload_id: &str,
@@ -245,6 +256,11 @@ fn serialize_snapshot(ledger: &Ledger) -> Vec<u8> {
     for approval_id in approvals {
         body.push_str(&format!("A\t{}\n", hex_encode(approval_id.as_bytes())));
     }
+    let mut challenges = ledger.consumed_challenges.iter().collect::<Vec<_>>();
+    challenges.sort_by_key(|(nonce, _)| **nonce);
+    for (nonce, expires) in challenges {
+        body.push_str(&format!("C\t{}\t{}\n", hex_encode(nonce), expires));
+    }
     let digest = Sha256::digest(body.as_bytes());
     body.push_str(&format!("H\t{}\n", hex_encode(&digest)));
     body.into_bytes()
@@ -336,6 +352,17 @@ fn deserialize_snapshot(bytes: &[u8]) -> Result<Ledger, DurableLedgerError> {
                 if !valid_stored_identifier(&approval_id, 128)
                     || !ledger.consumed_approvals.insert(approval_id)
                 {
+                    return Err(DurableLedgerError::InvalidRecord);
+                }
+            }
+            Some("C") if fields.len() == 3 => {
+                let nonce = hex_decode(fields[1])?
+                    .try_into()
+                    .map_err(|_| DurableLedgerError::InvalidRecord)?;
+                let expires = fields[2]
+                    .parse::<u64>()
+                    .map_err(|_| DurableLedgerError::InvalidRecord)?;
+                if expires == 0 || ledger.consumed_challenges.insert(nonce, expires).is_some() {
                     return Err(DurableLedgerError::InvalidRecord);
                 }
             }
