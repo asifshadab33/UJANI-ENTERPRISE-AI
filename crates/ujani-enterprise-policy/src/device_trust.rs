@@ -207,11 +207,11 @@ impl DeviceRegistry {
             return Err(DeviceTrustError::InvalidRequestWindow);
         }
         self.request_nonces.retain(|_, expiry| *expiry > now);
-        if self.request_nonces.contains_key(&c.request_id) { return Err(DeviceTrustError::ReplayDetected); }
-        if self.request_nonces.len() >= MAX_REPLAY_ENTRIES { return Err(DeviceTrustError::ReplayDetected); }
         let record = self.devices.get(&c.device_id).ok_or(DeviceTrustError::DeviceNotFound)?;
         if record.state != DeviceTrustState::Enrolled { return Err(DeviceTrustError::DeviceNotEnrolled); }
         if record.tenant_id != c.tenant_id { return Err(DeviceTrustError::TenantMismatch); }
+        if self.request_nonces.contains_key(&c.request_id) { return Err(DeviceTrustError::ReplayDetected); }
+        if self.request_nonces.len() >= MAX_REPLAY_ENTRIES { return Err(DeviceTrustError::ReplayDetected); }
         if record.key_id != c.key_id || record.generation != c.key_generation { return Err(DeviceTrustError::StaleKeyGeneration); }
         record.key.verify_strict(&device_request_bytes(c), &Signature::from_bytes(&signed.signature))
             .map_err(|_| DeviceTrustError::InvalidDeviceSignature)?;
@@ -358,7 +358,7 @@ mod tests {
         r.apply_admin_command(&c, 200).unwrap();
         let mut rotate = SignedDeviceAdminCommand { action: DeviceCommandAction::RotateKey,
             tenant_id: "tenant-a".into(), device_id: "device-1".into(), admin_key_id: "admin-v1".into(),
-            target_key_id: "device-key-v2".into(), target_public_key: Some([11u8;32]),
+            target_key_id: "device-key-v2".into(), target_public_key: Some(new_device.verifying_key().to_bytes()),
             issued_at_unix_ms: 300, expires_at_unix_ms: 1000, nonce: [4;16], signature: [0;64],
             old_device_signature: None, new_device_signature: None };
         let new_device = SigningKey::from_bytes(&[11u8;32]);
