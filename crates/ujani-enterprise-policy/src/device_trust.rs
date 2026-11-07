@@ -549,7 +549,7 @@ mod tests {
             signature: device.sign(&device_request_bytes(&claims)).to_bytes(),
             claims: claims.clone(),
         };
-        assert!(r.authenticate_request(&signed, 250).is_ok());
+        assert!(r.authenticate_request(&signed, b"", 250).is_ok());
         assert_eq!(
             r.authenticate_request(&signed, b"", 251),
             Err(DeviceTrustError::ReplayDetected)
@@ -580,13 +580,14 @@ mod tests {
             expires_at_unix_ms: 500,
             method: "POST".into(),
             resource_id: "lease:acquire".into(),
+            body_sha256: sha2::Sha256::digest([]).into(),
         };
         let signed = SignedDeviceRequest {
             signature: device.sign(&device_request_bytes(&claims)).to_bytes(),
             claims,
         };
         assert_eq!(
-            r.authenticate_request(&signed, 250),
+            r.authenticate_request(&signed, b"", 250),
             Err(DeviceTrustError::InvalidIdentifier)
         );
     }
@@ -650,6 +651,7 @@ mod tests {
             expires_at_unix_ms: 500,
             method: "POST".into(),
             resource_id: "lease:acquire".into(),
+            body_sha256: sha2::Sha256::digest([]).into(),
         };
         let signed = SignedDeviceRequest {
             signature: device.sign(&device_request_bytes(&claims)).to_bytes(),
