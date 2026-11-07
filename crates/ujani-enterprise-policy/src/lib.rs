@@ -699,10 +699,9 @@ pub(crate) fn admit_and_reserve(
 
 pub mod scheduling_evidence;
 pub use scheduling_evidence::{
-    admit_and_reserve_with_verified_lease, admit_with_verified_context,
-    verify_scheduling_context, SchedulingEvidenceError, SchedulingPolicyClaims,
-    SignedSchedulingPolicy, SignedWorkerTelemetry, VerifiedSchedulingContext,
-    WorkerTelemetryClaims,
+    admit_and_reserve_with_verified_lease, admit_with_verified_context, verify_scheduling_context,
+    SchedulingEvidenceError, SchedulingPolicyClaims, SignedSchedulingPolicy, SignedWorkerTelemetry,
+    VerifiedSchedulingContext, WorkerTelemetryClaims,
 };
 
 #[cfg(test)]
@@ -1346,4 +1345,3 @@ pub use inventory::{
     summarize_inventory, validate_inventory_record, DeviceInventoryRecord, DevicePowerState,
     InventoryError, InventorySummary, InventoryTrust,
 };
-
