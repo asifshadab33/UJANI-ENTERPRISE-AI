@@ -134,7 +134,7 @@ fn valid_time_window(issued: u64, expires: u64, now: u64, max_ttl: u64) -> bool 
 /// The caller must issue a cryptographically random, single-use challenge and
 /// atomically consume it in its control plane; this function verifies equality
 /// but does not provide persistent replay storage.
-pub fn verify_scheduling_context(
+#[allow(clippy::too_many_arguments)] // Keep both trust roots and the dispatch challenge explicit.\npub fn verify_scheduling_context(
     device: &Device,
     workload: &Workload,
     telemetry: &SignedWorkerTelemetry,
@@ -243,7 +243,7 @@ pub fn admit_with_verified_context(
 
 /// Atomically reserve in the in-memory prototype after verified evidence and
 /// lease-capability checks. Production still needs a durable transactional ledger.
-pub fn admit_and_reserve_with_verified_lease(
+#[allow(clippy::too_many_arguments)] // Preserve explicit admission evidence and reservation inputs.\npub fn admit_and_reserve_with_verified_lease(
     ledger: &mut Ledger,
     device: &Device,
     workload: &Workload,
