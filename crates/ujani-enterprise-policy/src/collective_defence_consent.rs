@@ -264,6 +264,17 @@ pub fn verify_individual_consent(
     Ok(VerifiedIndividualConsent(claims.clone()))
 }
 
+/// Server-authenticated identity and freshly loaded consent-generation snapshot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ConsentContext<'a> {
+    pub tenant_id: &'a str,
+    pub device_id: &'a str,
+    pub principal_id: &'a str,
+    pub current_tenant_generation: u64,
+    pub current_individual_generation: u64,
+    pub now_unix_ms: u64,
+}
+
 /// Require both verified opt-ins and the current authoritative revocation generations.
 ///
 /// The current generations must come from a durable, rollback-resistant control-plane
@@ -272,43 +283,42 @@ pub fn verify_individual_consent(
 pub fn authorize_event_sharing(
     tenant: &VerifiedTenantConsent,
     individual: &VerifiedIndividualConsent,
-    expected_tenant_id: &str,
-    expected_device_id: &str,
-    current_tenant_generation: u64,
-    current_individual_generation: u64,
-    now_unix_ms: u64,
+    context: &ConsentContext<'_>,
 ) -> Result<ConsentPermit, ConsentError> {
     let tenant_claims = &tenant.0;
     let individual_claims = &individual.0;
 
-    if tenant_claims.tenant_id != expected_tenant_id
-        || individual_claims.tenant_id != expected_tenant_id
+    if tenant_claims.tenant_id != context.tenant_id
+        || individual_claims.tenant_id != context.tenant_id
     {
         return Err(ConsentError::TenantMismatch);
     }
-    if individual_claims.device_id != expected_device_id {
+    if individual_claims.device_id != context.device_id {
         return Err(ConsentError::DeviceMismatch);
+    }
+    if individual_claims.principal_id != context.principal_id {
+        return Err(ConsentError::PrincipalMismatch);
     }
     if individual_claims.tenant_generation != tenant_claims.generation {
         return Err(ConsentError::PolicyGenerationMismatch);
     }
-    if tenant_claims.generation != current_tenant_generation
-        || individual_claims.generation != current_individual_generation
+    if tenant_claims.generation != context.current_tenant_generation
+        || individual_claims.generation != context.current_individual_generation
     {
         return Err(ConsentError::RevokedOrStaleGeneration);
     }
-    if tenant_claims.expires_at_unix_ms <= now_unix_ms
-        || individual_claims.expires_at_unix_ms <= now_unix_ms
+    if tenant_claims.expires_at_unix_ms <= context.now_unix_ms
+        || individual_claims.expires_at_unix_ms <= context.now_unix_ms
     {
         return Err(ConsentError::Expired);
     }
 
     Ok(ConsentPermit {
-        tenant_id: expected_tenant_id.to_owned(),
-        device_id: expected_device_id.to_owned(),
+        tenant_id: context.tenant_id.to_owned(),
+        device_id: context.device_id.to_owned(),
         principal_id: individual_claims.principal_id.clone(),
-        tenant_generation: current_tenant_generation,
-        individual_generation: current_individual_generation,
+        tenant_generation: context.current_tenant_generation,
+        individual_generation: context.current_individual_generation,
         event_schema_version: tenant_claims.event_schema_version.clone(),
         retention_seconds: tenant_claims.retention_seconds,
         expires_at_unix_ms: tenant_claims
@@ -318,20 +328,14 @@ pub fn authorize_event_sharing(
 }
 
 impl ConsentPermit {
-    /// Re-check immediately before transmission using freshly loaded generations.
-    pub fn is_current(
-        &self,
-        tenant_id: &str,
-        device_id: &str,
-        current_tenant_generation: u64,
-        current_individual_generation: u64,
-        now_unix_ms: u64,
-    ) -> bool {
-        self.tenant_id == tenant_id
-            && self.device_id == device_id
-            && self.tenant_generation == current_tenant_generation
-            && self.individual_generation == current_individual_generation
-            && now_unix_ms < self.expires_at_unix_ms
+    /// Re-check identity, expiry, and fresh generations immediately before transmission.
+    pub fn is_current(&self, context: &ConsentContext<'_>) -> bool {
+        self.tenant_id == context.tenant_id
+            && self.device_id == context.device_id
+            && self.principal_id == context.principal_id
+            && self.tenant_generation == context.current_tenant_generation
+            && self.individual_generation == context.current_individual_generation
+            && context.now_unix_ms < self.expires_at_unix_ms
     }
 
     pub fn tenant_id(&self) -> &str {
@@ -440,6 +444,24 @@ mod tests {
         (admin, user, admins, users)
     }
 
+    fn context<'a>(
+        tenant_id: &'a str,
+        device_id: &'a str,
+        principal_id: &'a str,
+        current_tenant_generation: u64,
+        current_individual_generation: u64,
+        now_unix_ms: u64,
+    ) -> ConsentContext<'a> {
+        ConsentContext {
+            tenant_id,
+            device_id,
+            principal_id,
+            current_tenant_generation,
+            current_individual_generation,
+            now_unix_ms,
+        }
+    }
+
     fn permit() -> ConsentPermit {
         let (admin, user, admins, users) = keys();
         let tenant =
@@ -447,7 +469,7 @@ mod tests {
         let individual =
             verify_individual_consent(&signed_individual(&user, true, 4, 2, EXPIRY), &users, NOW)
                 .unwrap();
-        authorize_event_sharing(&tenant, &individual, "tenant-a", "device-01", 4, 2, NOW).unwrap()
+        authorize_event_sharing(&tenant, &individual, &context("tenant-a", "device-01", "user-01", 4, 2, NOW)).unwrap()
     }
 
     #[test]
@@ -503,11 +525,11 @@ mod tests {
             verify_individual_consent(&signed_individual(&user, true, 4, 2, EXPIRY), &users, NOW)
                 .unwrap();
         assert_eq!(
-            authorize_event_sharing(&tenant, &individual, "tenant-b", "device-01", 4, 2, NOW),
+            authorize_event_sharing(&tenant, &individual, &context("tenant-b", "device-01", "user-01", 4, 2, NOW)),
             Err(ConsentError::TenantMismatch)
         );
         assert_eq!(
-            authorize_event_sharing(&tenant, &individual, "tenant-a", "device-02", 4, 2, NOW),
+            authorize_event_sharing(&tenant, &individual, &context("tenant-a", "device-02", "user-01", 4, 2, NOW)),
             Err(ConsentError::DeviceMismatch)
         );
     }
@@ -515,10 +537,10 @@ mod tests {
     #[test]
     fn tenant_disable_or_individual_withdrawal_invalidates_existing_permit_generation() {
         let p = permit();
-        assert!(!p.is_current("tenant-a", "device-01", 5, 2, NOW));
-        assert!(!p.is_current("tenant-a", "device-01", 4, 3, NOW));
-        assert!(!p.is_current("tenant-b", "device-01", 4, 2, NOW));
-        assert!(!p.is_current("tenant-a", "device-02", 4, 2, NOW));
+        assert!(!p.is_current(&context("tenant-a", "device-01", "user-01", 5, 2, NOW)));
+        assert!(!p.is_current(&context("tenant-a", "device-01", "user-01", 4, 3, NOW)));
+        assert!(!p.is_current(&context("tenant-b", "device-01", "user-01", 4, 2, NOW)));
+        assert!(!p.is_current(&context("tenant-a", "device-02", "user-01", 4, 2, NOW)));
     }
 
     #[test]
@@ -532,10 +554,10 @@ mod tests {
             NOW,
         )
         .unwrap();
-        let p = authorize_event_sharing(&tenant, &individual, "tenant-a", "device-01", 4, 2, NOW)
+        let p = authorize_event_sharing(&tenant, &individual, &context("tenant-a", "device-01", "user-01", 4, 2, NOW))
             .unwrap();
         assert_eq!(p.expires_at_unix_ms(), NOW + 30_000);
-        assert!(!p.is_current("tenant-a", "device-01", 4, 2, NOW + 30_000));
+        assert!(!p.is_current(&context("tenant-a", "device-01", "user-01", 4, 2, NOW) + 30_000));
     }
 
     #[test]
@@ -547,18 +569,18 @@ mod tests {
             verify_individual_consent(&signed_individual(&user, true, 3, 2, EXPIRY), &users, NOW)
                 .unwrap();
         assert_eq!(
-            authorize_event_sharing(&tenant, &individual, "tenant-a", "device-01", 4, 2, NOW),
+            authorize_event_sharing(&tenant, &individual, &context("tenant-a", "device-01", "user-01", 4, 2, NOW)),
             Err(ConsentError::PolicyGenerationMismatch)
         );
         let individual =
             verify_individual_consent(&signed_individual(&user, true, 4, 2, EXPIRY), &users, NOW)
                 .unwrap();
         assert_eq!(
-            authorize_event_sharing(&tenant, &individual, "tenant-a", "device-01", 5, 2, NOW),
+            authorize_event_sharing(&tenant, &individual, &context("tenant-a", "device-01", "user-01", 5, 2, NOW)),
             Err(ConsentError::RevokedOrStaleGeneration)
         );
         assert_eq!(
-            authorize_event_sharing(&tenant, &individual, "tenant-a", "device-01", 4, 3, NOW),
+            authorize_event_sharing(&tenant, &individual, &context("tenant-a", "device-01", "user-01", 4, 3, NOW)),
             Err(ConsentError::RevokedOrStaleGeneration)
         );
     }
