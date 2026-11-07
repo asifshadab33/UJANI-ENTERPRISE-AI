@@ -30,10 +30,17 @@ pub struct SnapshotAnchorRecord {
 impl SnapshotAnchorRecord {
     /// Construct a record returned by a trusted external anchor provider.
     pub fn new(generation: u64, snapshot_sha256: [u8; 32]) -> Option<Self> {
-        (generation > 0).then_some(Self { generation, snapshot_sha256 })
+        (generation > 0).then_some(Self {
+            generation,
+            snapshot_sha256,
+        })
     }
-    pub fn generation(&self) -> u64 { self.generation }
-    pub fn snapshot_sha256(&self) -> [u8; 32] { self.snapshot_sha256 }
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+    pub fn snapshot_sha256(&self) -> [u8; 32] {
+        self.snapshot_sha256
+    }
 }
 
 /// External monotonic anchor contract. compare_and_set must atomically create
@@ -70,9 +77,16 @@ impl std::fmt::Display for DurableDeviceTrustError {
             Self::Trust(v) => write!(f, "device trust operation rejected: {v:?}"),
             Self::LockPoisoned => write!(f, "device trust thread lock is poisoned"),
             Self::AnchorUnavailable(v) => write!(f, "external monotonic anchor unavailable: {v}"),
-            Self::AnchorMismatch => write!(f, "device trust snapshot does not match its external monotonic anchor"),
-            Self::AnchorConflict => write!(f, "external monotonic anchor rejected a stale generation"),
-            Self::AnchorGenerationExhausted => write!(f, "external monotonic anchor generation exhausted"),
+            Self::AnchorMismatch => write!(
+                f,
+                "device trust snapshot does not match its external monotonic anchor"
+            ),
+            Self::AnchorConflict => {
+                write!(f, "external monotonic anchor rejected a stale generation")
+            }
+            Self::AnchorGenerationExhausted => {
+                write!(f, "external monotonic anchor generation exhausted")
+            }
         }
     }
 }
@@ -168,7 +182,12 @@ impl DurableDeviceRegistry {
         if !valid_id(&registry_id, 128) {
             return Err(DurableDeviceTrustError::CorruptState);
         }
-        Self::open_internal(path, trusted_admin_keys, integrity_key, Some((registry_id, anchor)))
+        Self::open_internal(
+            path,
+            trusted_admin_keys,
+            integrity_key,
+            Some((registry_id, anchor)),
+        )
     }
 
     fn open_internal(
@@ -210,7 +229,9 @@ impl DurableDeviceRegistry {
         now: u64,
     ) -> Result<u64, DurableDeviceTrustError> {
         self.transact(|registry| {
-            registry.apply_admin_command(command, now).map_err(Into::into)
+            registry
+                .apply_admin_command(command, now)
+                .map_err(Into::into)
         })
     }
 
@@ -220,7 +241,9 @@ impl DurableDeviceRegistry {
         now: u64,
     ) -> Result<AuthenticatedDevice, DurableDeviceTrustError> {
         self.transact(|registry| {
-            registry.authenticate_request(request, now).map_err(Into::into)
+            registry
+                .authenticate_request(request, now)
+                .map_err(Into::into)
         })
     }
 
@@ -239,7 +262,9 @@ impl DurableDeviceRegistry {
                     let bytes = fs::read(&self.path)?;
                     if snapshot_sha256(&bytes) == record.snapshot_sha256 {
                         return decode_snapshot(
-                            &bytes, &self.admin_keys, self.integrity_key.key_id(),
+                            &bytes,
+                            &self.admin_keys,
+                            self.integrity_key.key_id(),
                             &self.integrity_key.bytes,
                         );
                     }
@@ -249,7 +274,9 @@ impl DurableDeviceRegistry {
                     if snapshot_sha256(&bytes) == record.snapshot_sha256 {
                         restore_snapshot_from_backup(&self.path, &bytes)?;
                         return decode_snapshot(
-                            &bytes, &self.admin_keys, self.integrity_key.key_id(),
+                            &bytes,
+                            &self.admin_keys,
+                            self.integrity_key.key_id(),
                             &self.integrity_key.bytes,
                         );
                     }
@@ -269,7 +296,9 @@ impl DurableDeviceRegistry {
         &self,
         operation: impl FnOnce(&mut DeviceRegistry) -> Result<T, DurableDeviceTrustError>,
     ) -> Result<T, DurableDeviceTrustError> {
-        let _guard = self.thread_lock.lock()
+        let _guard = self
+            .thread_lock
+            .lock()
             .map_err(|_| DurableDeviceTrustError::LockPoisoned)?;
         let mut options = OpenOptions::new();
         options.create(true).truncate(false).read(true).write(true);
@@ -282,7 +311,8 @@ impl DurableDeviceRegistry {
         lock.lock()?;
 
         let anchor_record = match (&self.anchor, &self.anchor_namespace) {
-            (Some(anchor), Some(namespace)) => anchor.load(namespace)
+            (Some(anchor), Some(namespace)) => anchor
+                .load(namespace)
                 .map_err(DurableDeviceTrustError::AnchorUnavailable)?,
             (None, None) => None,
             _ => return Err(DurableDeviceTrustError::AnchorMismatch),
@@ -293,15 +323,19 @@ impl DurableDeviceRegistry {
             let backup = suffix(&self.path, ".bak");
             if self.path.exists() {
                 decode_snapshot(
-                    &fs::read(&self.path)?, &self.admin_keys,
-                    self.integrity_key.key_id(), &self.integrity_key.bytes,
+                    &fs::read(&self.path)?,
+                    &self.admin_keys,
+                    self.integrity_key.key_id(),
+                    &self.integrity_key.bytes,
                 )?
             } else if backup.exists() {
                 // Recover only the interrupted-rename case. A present but invalid
                 // primary snapshot is never silently replaced by an older backup.
                 let bytes = fs::read(&backup)?;
                 let recovered = decode_snapshot(
-                    &bytes, &self.admin_keys, self.integrity_key.key_id(),
+                    &bytes,
+                    &self.admin_keys,
+                    self.integrity_key.key_id(),
                     &self.integrity_key.bytes,
                 )?;
                 atomic_write(&self.path, &bytes, false)?;
@@ -312,7 +346,9 @@ impl DurableDeviceRegistry {
         };
         let result = operation(&mut registry)?;
         let bytes = encode_snapshot(
-            &registry, self.integrity_key.key_id(), &self.integrity_key.bytes,
+            &registry,
+            self.integrity_key.key_id(),
+            &self.integrity_key.bytes,
         );
         if bytes.len() as u64 > MAX_BYTES {
             return Err(DurableDeviceTrustError::CapacityExceeded);
@@ -321,13 +357,16 @@ impl DurableDeviceRegistry {
 
         if let (Some(anchor), Some(namespace)) = (&self.anchor, &self.anchor_namespace) {
             let expected_generation = anchor_record.as_ref().map(SnapshotAnchorRecord::generation);
-            let generation = expected_generation.unwrap_or(0).checked_add(1)
+            let generation = expected_generation
+                .unwrap_or(0)
+                .checked_add(1)
                 .ok_or(DurableDeviceTrustError::AnchorGenerationExhausted)?;
             let next = SnapshotAnchorRecord {
                 generation,
                 snapshot_sha256: snapshot_sha256(&bytes),
             };
-            let advanced = anchor.compare_and_set(namespace, expected_generation, next)
+            let advanced = anchor
+                .compare_and_set(namespace, expected_generation, next)
                 .map_err(DurableDeviceTrustError::AnchorUnavailable)?;
             if !advanced {
                 return Err(DurableDeviceTrustError::AnchorConflict);
@@ -358,13 +397,17 @@ fn restore_snapshot_from_backup(path: &Path, bytes: &[u8]) -> Result<(), Durable
     file.sync_all()?;
     drop(file);
     #[cfg(windows)]
-    if path.exists() { fs::remove_file(path)?; }
+    if path.exists() {
+        fs::remove_file(path)?;
+    }
     if let Err(error) = fs::rename(&temp, path) {
         let _ = fs::remove_file(&temp);
         return Err(error.into());
     }
     if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
-        if let Ok(dir) = File::open(parent) { let _ = dir.sync_all(); }
+        if let Ok(dir) = File::open(parent) {
+            let _ = dir.sync_all();
+        }
     }
     Ok(())
 }
@@ -560,7 +603,11 @@ fn decode_snapshot(
     }
     Ok(registry)
 }
-fn atomic_write(path: &Path, bytes: &[u8], preserve_backup: bool) -> Result<(), DurableDeviceTrustError> {
+fn atomic_write(
+    path: &Path,
+    bytes: &[u8],
+    preserve_backup: bool,
+) -> Result<(), DurableDeviceTrustError> {
     let temp = suffix(path, ".tmp");
     let backup = suffix(path, ".bak");
     let mut options = OpenOptions::new();
@@ -598,7 +645,9 @@ fn atomic_write(path: &Path, bytes: &[u8], preserve_backup: bool) -> Result<(), 
             let _ = dir.sync_all();
         }
     }
-    if !preserve_backup { let _ = fs::remove_file(backup); }
+    if !preserve_backup {
+        let _ = fs::remove_file(backup);
+    }
     Ok(())
 }
 
@@ -754,8 +803,11 @@ mod tests {
             vec![("admin-v1".into(), admin.verifying_key())],
             DeviceTrustIntegrityKey::new("integrity-v1", [0x42; 32]),
             anchor.clone(),
-        ).unwrap();
-        store.apply_admin_command(&enroll(&admin, &device), 200).unwrap();
+        )
+        .unwrap();
+        store
+            .apply_admin_command(&enroll(&admin, &device), 200)
+            .unwrap();
 
         let claims = DeviceRequestClaims {
             tenant_id: "tenant-a".into(),
@@ -773,7 +825,14 @@ mod tests {
             claims,
         };
         store.authenticate_request(&signed, 250).unwrap();
-        assert_eq!(anchor.load("tenant-a-device-registry").unwrap().unwrap().generation(), 3);
+        assert_eq!(
+            anchor
+                .load("tenant-a-device-registry")
+                .unwrap()
+                .unwrap()
+                .generation(),
+            3
+        );
         drop(store);
 
         // The backup is a valid, correctly HMAC-authenticated but older snapshot.
@@ -786,7 +845,10 @@ mod tests {
             DeviceTrustIntegrityKey::new("integrity-v1", [0x42; 32]),
             anchor,
         );
-        assert!(matches!(reopened, Err(DurableDeviceTrustError::AnchorMismatch)));
+        assert!(matches!(
+            reopened,
+            Err(DurableDeviceTrustError::AnchorMismatch)
+        ));
         let _ = fs::remove_file(&path);
         let _ = fs::remove_file(suffix(&path, ".bak"));
         let _ = fs::remove_file(suffix(&path, ".lock"));
@@ -805,8 +867,11 @@ mod tests {
             vec![("admin-v1".into(), admin.verifying_key())],
             DeviceTrustIntegrityKey::new("integrity-v1", [0x42; 32]),
             anchor.clone(),
-        ).unwrap();
-        store.apply_admin_command(&enroll(&admin, &device), 200).unwrap();
+        )
+        .unwrap();
+        store
+            .apply_admin_command(&enroll(&admin, &device), 200)
+            .unwrap();
 
         let claims = DeviceRequestClaims {
             tenant_id: "tenant-a".into(),
@@ -823,7 +888,9 @@ mod tests {
             signature: device.sign(&device_request_bytes(&claims)).to_bytes(),
             claims,
         };
-        anchor.fail_next_cas.store(true, std::sync::atomic::Ordering::SeqCst);
+        anchor
+            .fail_next_cas
+            .store(true, std::sync::atomic::Ordering::SeqCst);
         assert!(matches!(
             store.authenticate_request(&signed, 250),
             Err(DurableDeviceTrustError::AnchorUnavailable(_))
