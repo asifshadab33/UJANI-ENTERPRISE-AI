@@ -244,7 +244,8 @@ pub fn admit_with_verified_context(
 
 /// Atomically reserve in the in-memory prototype after verified evidence and
 /// lease-capability checks. Production still needs a durable transactional ledger.
-#[allow(clippy::too_many_arguments)] // Preserve explicit admission evidence and reservation inputs.\npub fn admit_and_reserve_with_verified_lease(
+#[allow(clippy::too_many_arguments)] // Preserve explicit admission evidence and reservation inputs.
+pub fn admit_and_reserve_with_verified_lease(
     ledger: &mut Ledger,
     device: &Device,
     workload: &Workload,
