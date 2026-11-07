@@ -23,6 +23,11 @@ pub const MAX_CONSENT_TTL_MS: u64 = 24 * 60 * 60 * 1000;
 pub const MAX_CONSENT_CLOCK_SKEW_MS: u64 = 30_000;
 pub const MAX_EVENT_RETENTION_SECONDS: u32 = 90 * 24 * 60 * 60;
 
+/// Trusted administrator key ID, tenant ID, and public key.
+pub type TrustedTenantAdminKey = (String, String, VerifyingKey);
+/// Trusted user key ID, tenant ID, device ID, principal ID, and public key.
+pub type TrustedIndividualConsentKey = (String, String, String, String, VerifyingKey);
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConsentError {
     InvalidIdentifier,
@@ -169,7 +174,7 @@ fn validate_window(issued_at: u64, expires_at: u64, now: u64) -> Result<(), Cons
 /// Verify a tenant administrator's opt-in using only pre-trusted admin keys.
 pub fn verify_tenant_consent(
     signed: &SignedTenantConsent,
-    trusted_admin_keys: &[(String, String, VerifyingKey)],
+    trusted_admin_keys: &[TrustedTenantAdminKey],
     now_unix_ms: u64,
 ) -> Result<VerifiedTenantConsent, ConsentError> {
     let claims = &signed.claims;
@@ -218,7 +223,7 @@ pub fn verify_tenant_consent(
 /// Verify a user's independent opt-in using an identity-provider-trusted key.
 pub fn verify_individual_consent(
     signed: &SignedIndividualConsent,
-    trusted_user_keys: &[(String, String, String, String, VerifyingKey)],
+    trusted_user_keys: &[TrustedIndividualConsentKey],
     now_unix_ms: u64,
 ) -> Result<VerifiedIndividualConsent, ConsentError> {
     let claims = &signed.claims;
@@ -424,8 +429,8 @@ mod tests {
     fn keys() -> (
         SigningKey,
         SigningKey,
-        Vec<(String, String, VerifyingKey)>,
-        Vec<(String, String, String, String, VerifyingKey)>,
+        Vec<TrustedTenantAdminKey>,
+        Vec<TrustedIndividualConsentKey>,
     ) {
         let admin = SigningKey::from_bytes(&[7u8; 32]);
         let user = SigningKey::from_bytes(&[9u8; 32]);
@@ -482,15 +487,16 @@ mod tests {
             verify_individual_consent(&individual, &users, NOW),
             Err(ConsentError::IndividualOptInRequired)
         );
+        let individual = verify_individual_consent(
+            &signed_individual(&user, true, 4, 2, EXPIRY),
+            &users,
+            NOW,
+        )
+        .unwrap();
         assert!(authorize_event_sharing(
             &tenant,
-            &verify_individual_consent(&signed_individual(&user, true, 4, 2, EXPIRY), &users, NOW)
-                .unwrap(),
-            "tenant-a",
-            "device-01",
-            4,
-            2,
-            NOW
+            &individual,
+            &context("tenant-a", "device-01", "user-01", 4, 2, NOW)
         )
         .is_ok());
     }
@@ -667,7 +673,7 @@ mod tests {
 
     #[test]
     fn consent_must_bind_the_exact_nonzero_notice_digest() {
-        let (admin, user, admins, users) = keys();
+        let (_, user, _, users) = keys();
         let mut individual = signed_individual(&user, true, 4, 2, EXPIRY);
         individual.claims.notice_sha256 = [0u8; 32];
         individual.signature = user
