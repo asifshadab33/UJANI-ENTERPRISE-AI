@@ -676,6 +676,60 @@ mod tests {
     }
 
     #[test]
+    fn idempotency_keys_are_scoped_to_the_tenant() {
+        let store = MemoryConsentAuthority::default();
+        store
+            .put_tenant(tenant(true, 1, 100), None, "shared-request-key")
+            .unwrap();
+
+        let mut tenant_b = tenant(true, 1, 100);
+        tenant_b.tenant_id = "tenant-b".into();
+        assert!(store
+            .put_tenant(tenant_b, None, "shared-request-key")
+            .is_ok());
+    }
+
+    #[test]
+    fn consent_records_reject_invalid_policy_and_notice_fields() {
+        let store = MemoryConsentAuthority::default();
+
+        let mut invalid_purpose = tenant(true, 1, 100);
+        invalid_purpose.purpose = "other-purpose".into();
+        assert_eq!(
+            store.put_tenant(invalid_purpose, None, "bad-purpose"),
+            Err(AuthorityError::InvalidPurpose)
+        );
+
+        let mut invalid_schema = tenant(true, 1, 100);
+        invalid_schema.schema_version = "2.0".into();
+        assert_eq!(
+            store.put_tenant(invalid_schema, None, "bad-schema"),
+            Err(AuthorityError::UnsupportedSchema)
+        );
+
+        let mut invalid_retention = tenant(true, 1, 100);
+        invalid_retention.retention_seconds = 0;
+        assert_eq!(
+            store.put_tenant(invalid_retention, None, "bad-retention"),
+            Err(AuthorityError::InvalidRetention)
+        );
+
+        let mut invalid_notice = individual(true, 1, 1, 100);
+        invalid_notice.notice_sha256 = [0; 32];
+        assert_eq!(
+            store.put_individual(invalid_notice, None, "bad-notice"),
+            Err(AuthorityError::InvalidNoticeDigest)
+        );
+
+        let mut excessive_ttl = tenant(true, 1, 100);
+        excessive_ttl.expires_at_unix_ms = 100 + MAX_CONSENT_TTL_MS + 1;
+        assert_eq!(
+            store.put_tenant(excessive_ttl, None, "bad-ttl"),
+            Err(AuthorityError::InvalidTimeWindow)
+        );
+    }
+
+    #[test]
     fn audit_records_form_a_hash_chain() {
         let store = MemoryConsentAuthority::default();
         store.put_tenant(tenant(true, 1, 100), None, "t-1").unwrap();
