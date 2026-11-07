@@ -633,7 +633,8 @@ mod tests {
     #[test]
     fn oversized_request_body_is_rejected_before_nonce_consumption() {
         let (mut r, admin, device) = registry();
-        r.apply_admin_command(&enrollment(&admin, &device, 1), 200).unwrap();
+        r.apply_admin_command(&enrollment(&admin, &device, 1), 200)
+            .unwrap();
         let body = vec![b'x'; MAX_DEVICE_REQUEST_BODY_BYTES + 1];
         let request_id = [13; 16];
         let claims = DeviceRequestClaims {
