@@ -14,7 +14,6 @@
 #![forbid(unsafe_code)]
 
 use ed25519_dalek::{Signature, VerifyingKey};
-use sha2::{Digest, Sha256};
 
 const TENANT_DOMAIN: &[u8] = b"UJANI-COLLECTIVE-DEFENCE-TENANT-CONSENT-V1\0";
 const INDIVIDUAL_DOMAIN: &[u8] = b"UJANI-COLLECTIVE-DEFENCE-INDIVIDUAL-CONSENT-V1\0";
@@ -167,7 +166,7 @@ fn validate_window(issued_at: u64, expires_at: u64, now: u64) -> Result<(), Cons
 /// Verify a tenant administrator's opt-in using only pre-trusted admin keys.
 pub fn verify_tenant_consent(
     signed: &SignedTenantConsent,
-    trusted_admin_keys: &[(String, VerifyingKey)],
+    trusted_admin_keys: &[(String, String, VerifyingKey)],
     now_unix_ms: u64,
 ) -> Result<VerifiedTenantConsent, ConsentError> {
     let claims = &signed.claims;
@@ -192,8 +191,8 @@ pub fn verify_tenant_consent(
 
     let key = trusted_admin_keys
         .iter()
-        .find(|(key_id, _)| key_id == &claims.admin_key_id)
-        .map(|(_, key)| key)
+        .find(|(key_id, tenant_id, _)| key_id == &claims.admin_key_id && tenant_id == &claims.tenant_id)
+        .map(|(_, _, key)| key)
         .ok_or(ConsentError::UnknownSigningKey)?;
     key.verify_strict(
         &tenant_consent_bytes(claims),
@@ -210,7 +209,7 @@ pub fn verify_tenant_consent(
 /// Verify a user's independent opt-in using an identity-provider-trusted key.
 pub fn verify_individual_consent(
     signed: &SignedIndividualConsent,
-    trusted_user_keys: &[(String, VerifyingKey)],
+    trusted_user_keys: &[(String, String, String, String, VerifyingKey)],
     now_unix_ms: u64,
 ) -> Result<VerifiedIndividualConsent, ConsentError> {
     let claims = &signed.claims;
@@ -231,8 +230,13 @@ pub fn verify_individual_consent(
 
     let key = trusted_user_keys
         .iter()
-        .find(|(key_id, _)| key_id == &claims.user_key_id)
-        .map(|(_, key)| key)
+        .find(|(key_id, tenant_id, device_id, principal_id, _)| {
+            key_id == &claims.user_key_id
+                && tenant_id == &claims.tenant_id
+                && device_id == &claims.device_id
+                && principal_id == &claims.principal_id
+        })
+        .map(|(_, _, _, _, key)| key)
         .ok_or(ConsentError::UnknownSigningKey)?;
     key.verify_strict(
         &individual_consent_bytes(claims),
@@ -398,11 +402,22 @@ mod tests {
         }
     }
 
-    fn keys() -> (SigningKey, SigningKey, Vec<(String, VerifyingKey)>, Vec<(String, VerifyingKey)>) {
+    fn keys() -> (
+        SigningKey,
+        SigningKey,
+        Vec<(String, String, VerifyingKey)>,
+        Vec<(String, String, String, String, VerifyingKey)>,
+    ) {
         let admin = SigningKey::from_bytes(&[7u8; 32]);
         let user = SigningKey::from_bytes(&[9u8; 32]);
-        let admins = vec![("tenant-admin-key".into(), admin.verifying_key())];
-        let users = vec![("user-consent-key".into(), user.verifying_key())];
+        let admins = vec![("tenant-admin-key".into(), "tenant-a".into(), admin.verifying_key())];
+        let users = vec![(
+            "user-consent-key".into(),
+            "tenant-a".into(),
+            "device-01".into(),
+            "user-01".into(),
+            user.verifying_key(),
+        )];
         (admin, user, admins, users)
     }
 
