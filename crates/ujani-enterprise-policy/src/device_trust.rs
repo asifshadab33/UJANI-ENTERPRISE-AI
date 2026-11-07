@@ -584,7 +584,10 @@ mod tests {
             signature: device.sign(&device_request_bytes(&claims)).to_bytes(),
             claims,
         };
-        assert_eq!(r.authenticate_request(&signed, 400), Err(DeviceTrustError::DeviceNotEnrolled));
+        assert_eq!(
+            r.authenticate_request(&signed, 400),
+            Err(DeviceTrustError::DeviceNotEnrolled)
+        );
     }
 
     #[test]
