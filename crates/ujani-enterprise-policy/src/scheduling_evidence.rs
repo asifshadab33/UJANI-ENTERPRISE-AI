@@ -5,8 +5,8 @@
 //! administrator key and bound to the exact workload manifest. Callers cannot
 //! construct a VerifiedSchedulingContext directly.
 use crate::{
-    admit_with_context, Admission, ClassPolicy, Device, Ledger,
-    SchedulingContext, VerifiedAdminApproval, Workload,
+    admit_with_context, Admission, ClassPolicy, Device, Ledger, SchedulingContext,
+    VerifiedAdminApproval, Workload,
 };
 use ed25519_dalek::{Signature, VerifyingKey};
 
@@ -155,9 +155,7 @@ pub fn verify_scheduling_context(
     {
         return Err(SchedulingEvidenceError::InvalidIdentifier);
     }
-    if telemetry_claims.device_id != device.device_id
-        || policy_claims.device_id != device.device_id
-    {
+    if telemetry_claims.device_id != device.device_id || policy_claims.device_id != device.device_id {
         return Err(SchedulingEvidenceError::DeviceMismatch);
     }
     if policy_claims.workload_id != workload.workload_id {
