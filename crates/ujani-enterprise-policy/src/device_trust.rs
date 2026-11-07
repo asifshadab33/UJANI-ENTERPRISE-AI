@@ -555,7 +555,8 @@ mod tests {
     #[test]
     fn all_zero_request_nonce_is_rejected_before_persistence() {
         let (mut r, admin, device) = registry();
-        r.apply_admin_command(&enrollment(&admin, &device, 1), 200).unwrap();
+        r.apply_admin_command(&enrollment(&admin, &device, 1), 200)
+            .unwrap();
         let claims = DeviceRequestClaims {
             tenant_id: "tenant-a".into(),
             device_id: "device-1".into(),
