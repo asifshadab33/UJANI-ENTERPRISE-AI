@@ -44,6 +44,12 @@ Run tests:
 cargo test --workspace --locked
 ```
 
+## Collective Defence security boundary
+
+The Collective Defence work is currently a versioned, privacy-minimised event contract plus a side-effect-free dual-consent policy primitive. Participation is intended to require both an authorised tenant administrator's opt-in and a separate individual user's opt-in for the exact device and principal. See [the consent policy and production integration requirements](docs/COLLECTIVE-DEFENCE-CONSENT.md) and [the event contract](docs/COLLECTIVE-DEFENCE-EVENTS.md).
+
+This is not yet a live sensor, ingestion service, detection/correlation engine, or dashboard. Consent/revocation persistence and authenticated transport are not implemented. Threat-intelligence exchange does not grant remote access or remote execution; automated containment and remote execution remain disabled.
+
 ## Deployment boundary
 
 Start with a trusted internal lab and explicitly enrolled test machines. Do not deploy to employee endpoints or production servers until identity, agent security, isolation, resource enforcement, incident response and independent security review are complete.
