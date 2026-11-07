@@ -532,9 +532,8 @@ mod tests {
             NOW,
         )
         .unwrap();
-        let p =
-            authorize_event_sharing(&tenant, &individual, "tenant-a", "device-01", 4, 2, NOW)
-                .unwrap();
+        let p = authorize_event_sharing(&tenant, &individual, "tenant-a", "device-01", 4, 2, NOW)
+            .unwrap();
         assert_eq!(p.expires_at_unix_ms(), NOW + 30_000);
         assert!(!p.is_current("tenant-a", "device-01", 4, 2, NOW + 30_000));
     }
