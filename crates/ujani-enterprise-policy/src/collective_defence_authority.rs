@@ -342,10 +342,14 @@ impl MemoryConsentAuthority {
             .checked_add(1)
             .ok_or(AuthorityError::GenerationExhausted)?;
         let previous_hash = state.audit.last().map(|a| a.record_hash).unwrap_or([0; 32]);
-        let event_id: [u8; 32] = Sha256::digest([
-            command.request_hash.as_slice(),
-            command.idempotency_key.as_bytes(),
-        ].concat()).into();
+        let event_id: [u8; 32] = Sha256::digest(
+            [
+                command.request_hash.as_slice(),
+                command.idempotency_key.as_bytes(),
+            ]
+            .concat(),
+        )
+        .into();
         let mut audit = ConsentAuditRecord {
             sequence,
             event_id,
