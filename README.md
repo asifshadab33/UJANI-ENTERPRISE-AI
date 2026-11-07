@@ -34,9 +34,9 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/SECURITY.md](docs/SECURI
 
 ## Initial prototype
 
-The Rust crate in `crates/ujani-enterprise-policy` contains device/workload policy types, a conservative admission decision, signed administrator approvals, in-memory reservation semantics and a strict versioned workload-manifest contract. The manifest is a library-level validation foundation; it is not yet wired to a control-plane API. The project does not communicate with devices, schedule real jobs, create sandboxes or enforce operating-system security controls.
+The Rust crate in `crates/ujani-enterprise-policy` contains device/workload policy types, signed administrator approvals, dual-signed worker/admin scheduling evidence, a file-backed reservation ledger with OS advisory locking and crash-recovery snapshots, token-bound lease renewal/release, persistent single-use dispatch challenges, and a strict versioned workload-manifest contract. These are local policy/storage prototypes, not a production control plane or distributed scheduler. The ledger checksum detects accidental corruption but is not a MAC; the ledger is not encrypted at rest and cannot protect against a local attacker who can modify its files. Enrollment keys and device inventory must come from a trusted, non-caller-controlled control plane. The project still does not communicate with devices, dispatch or execute real jobs, create sandboxes or enforce operating-system security controls.
 
-See [the workload manifest contract](docs/WORKLOAD-MANIFEST.md) and [the Personal-to-Enterprise integration draft](docs/INTEGRATION_CONTRACT_DRAFT.md).
+See [the workload manifest contract](docs/WORKLOAD-MANIFEST.md), [the durable reservation ledger boundary](docs/DURABLE_RESERVATION_LEDGER.md) and [the Personal-to-Enterprise integration draft](docs/INTEGRATION_CONTRACT_DRAFT.md).
 
 Run tests:
 
