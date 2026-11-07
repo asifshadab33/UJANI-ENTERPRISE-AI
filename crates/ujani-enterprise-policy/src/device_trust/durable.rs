@@ -376,7 +376,7 @@ mod tests {
         let t2=std::thread::spawn(move || { b2.wait(); second.authenticate_request(&signed2,250) });
         let results=[t1.join().unwrap(),t2.join().unwrap()];
         assert_eq!(results.iter().filter(|r| r.is_ok()).count(),1);
-        assert_eq!(results.iter().filter(|r| **r==Err(DurableDeviceTrustError::Trust(DeviceTrustError::ReplayDetected))).count(),1);
+        assert_eq!(results.iter().filter(|r| r.as_ref().err()==Some(&DurableDeviceTrustError::Trust(DeviceTrustError::ReplayDetected))).count(),1);
         let _=fs::remove_file(&path); let _=fs::remove_file(suffix(&path,".lock"));
     }
 
