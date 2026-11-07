@@ -12,6 +12,7 @@ The ledger currently supports:
 - Expiry cleanup and an aggregate reservation snapshot.
 - Durable, single-use dispatch challenge nonces used when signed worker telemetry and administrator scheduling policy are verified.
 - A verified scheduling context bound to the exact device ID, workload ID, workload manifest digest and evidence expiry. The context is non-cloneable and reservation APIs consume it by value.
+- A 16 MiB snapshot-size ceiling. Writes that would exceed the limit fail before replacing the last committed snapshot.
 
 The implementation has unit tests for process-restart persistence, token-protected renewal/release, recovery from a corrupt current snapshot when a valid backup exists, cross-instance concurrent admission, challenge replay rejection, and signed-evidence binding.
 
@@ -22,6 +23,7 @@ The implementation has unit tests for process-restart persistence, token-protect
 - The ledger is not encrypted at rest. Unix files created by the implementation request mode 0600, but parent-directory permissions, ownership and deployment ACLs remain the operator's responsibility. Windows ACLs must be provisioned by the host service.
 - Lease-token hashes are safe only when the control plane supplies high-entropy 32-byte tokens from an OS CSPRNG and protects the raw token from workloads and logs.
 - The ledger is single-host and file-backed. It does not provide replication, multi-node consensus, database transactions across services, or high availability.
+- The 16 MiB ceiling is a fail-closed safety bound, not automatic compaction. Operators must provision retention/compaction before sustained approval and replay records approach the limit.
 - A file checksum and OS file lock do not defend against a privileged local attacker, filesystem rollback, malicious storage administrator, or compromise of the service account.
 - Key lists and device capacity/class inventory used by signed-evidence verification must be sourced from an authenticated, non-caller-controlled enrollment registry. This repository does not yet implement that registry, its root of trust, durable enrollment/revocation, or key rotation.
 - Signed scheduling evidence verifies policy inputs; it does not create a sandbox, enforce network egress, or launch/authorize a remote process.
