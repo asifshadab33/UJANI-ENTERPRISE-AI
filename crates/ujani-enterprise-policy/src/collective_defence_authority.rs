@@ -281,7 +281,9 @@ impl ConsentAuthorityBackend for MemoryConsentAuthority {
             return if existing.request_hash == request_hash { Ok(existing.audit.clone()) } else { Err(AuthorityError::IdempotencyConflict) };
         }
         let tenant = state.tenants.get(&record.tenant_id).ok_or(AuthorityError::TenantNotEnabled)?;
-        if !tenant.enabled || tenant.generation != record.tenant_generation {
+        // A user must be able to withdraw even after the tenant disables the
+        // feature. New individual opt-ins still require tenant enablement.
+        if tenant.generation != record.tenant_generation || (record.enabled && !tenant.enabled) {
             return Err(AuthorityError::TenantNotEnabled);
         }
         let key = (record.tenant_id.clone(), record.principal_id.clone(), record.device_id.clone());
@@ -360,6 +362,17 @@ mod tests {
         store.put_individual(individual(true, 1, 1, 101), None, "i-1").unwrap();
         store.put_individual(individual(false, 1, 2, 102), Some(1), "i-2").unwrap();
         assert_eq!(store.authorization_snapshot("tenant-a", "user-a", "device-a", 103), Err(AuthorityError::IndividualNotEnabled));
+    }
+
+    #[test]
+    fn individual_withdrawal_remains_available_after_tenant_disable() {
+        let store = MemoryConsentAuthority::default();
+        store.put_tenant(tenant(true, 1, 100), None, "t-1").unwrap();
+        store.put_individual(individual(true, 1, 1, 101), None, "i-1").unwrap();
+        store.put_tenant(tenant(false, 2, 102), Some(1), "t-2").unwrap();
+        let withdrawal = individual(false, 2, 2, 103);
+        assert!(store.put_individual(withdrawal, Some(1), "i-withdraw").is_ok());
+        assert_eq!(store.authorization_snapshot("tenant-a", "user-a", "device-a", 104), Err(AuthorityError::TenantNotEnabled));
     }
 
     #[test]
