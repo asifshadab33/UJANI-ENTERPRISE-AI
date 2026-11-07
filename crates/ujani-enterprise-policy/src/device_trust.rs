@@ -43,6 +43,7 @@ pub enum DeviceTrustError {
     InvalidAdminSignature,
     InvalidDeviceSignature,
     BodyDigestMismatch,
+    RequestTargetMismatch,
     BodyTooLarge,
     ExpiredCommand,
     FutureTimestamp,
@@ -275,6 +276,25 @@ impl DeviceRegistry {
         self.admin_nonces
             .insert(command.nonce, command.expires_at_unix_ms);
         Ok(next_generation)
+    }
+
+    /// Authenticate a request only when its signed HTTP method and route resource
+    /// match the endpoint selected by the server. A mismatch is rejected before
+    /// replay state is consumed, so the same request can be retried at its proper route.
+    pub fn authenticate_request_for(
+        &mut self,
+        signed: &SignedDeviceRequest,
+        expected_method: &str,
+        expected_resource_id: &str,
+        body: &[u8],
+        now: u64,
+    ) -> Result<AuthenticatedDevice, DeviceTrustError> {
+        if signed.claims.method != expected_method
+            || signed.claims.resource_id != expected_resource_id
+        {
+            return Err(DeviceTrustError::RequestTargetMismatch);
+        }
+        self.authenticate_request(signed, body, now)
     }
 
     /// Authenticate one short-lived device request and consume its replay nonce.
