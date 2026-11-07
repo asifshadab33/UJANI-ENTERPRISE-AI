@@ -456,22 +456,31 @@ mod tests {
             std::process::id()
         ))
     }
-    fn open(path:&Path, admin:&SigningKey) -> DurableDeviceRegistry {
+    fn open(path: &Path, admin: &SigningKey) -> DurableDeviceRegistry {
         DurableDeviceRegistry::open(
-            path, vec![("admin-v1".into(),admin.verifying_key())],
-            DeviceTrustIntegrityKey::new("integrity-v1",[0x42;32])
-        ).unwrap()
+            path,
+            vec![("admin-v1".into(), admin.verifying_key())],
+            DeviceTrustIntegrityKey::new("integrity-v1", [0x42; 32]),
+        )
+        .unwrap()
     }
-    fn enroll(admin:&SigningKey, device:&SigningKey) -> SignedDeviceAdminCommand {
-        let mut c=SignedDeviceAdminCommand {
-            action:DeviceCommandAction::Enroll, tenant_id:"tenant-a".into(),
-            device_id:"device-1".into(), admin_key_id:"admin-v1".into(),
-            target_key_id:"device-key-v1".into(), target_public_key:Some(device.verifying_key().to_bytes()),
-            issued_at_unix_ms:100, expires_at_unix_ms:1000, nonce:[1;16],
-            signature:[0;64], old_device_signature:None, new_device_signature:None,
+    fn enroll(admin: &SigningKey, device: &SigningKey) -> SignedDeviceAdminCommand {
+        let mut c = SignedDeviceAdminCommand {
+            action: DeviceCommandAction::Enroll,
+            tenant_id: "tenant-a".into(),
+            device_id: "device-1".into(),
+            admin_key_id: "admin-v1".into(),
+            target_key_id: "device-key-v1".into(),
+            target_public_key: Some(device.verifying_key().to_bytes()),
+            issued_at_unix_ms: 100,
+            expires_at_unix_ms: 1000,
+            nonce: [1; 16],
+            signature: [0; 64],
+            old_device_signature: None,
+            new_device_signature: None,
         };
-        c.new_device_signature=Some(device.sign(&enrollment_proof_bytes(&c)).to_bytes());
-        c.signature=admin.sign(&admin_command_bytes(&c)).to_bytes();
+        c.new_device_signature = Some(device.sign(&enrollment_proof_bytes(&c)).to_bytes());
+        c.signature = admin.sign(&admin_command_bytes(&c)).to_bytes();
         c
     }
     #[test]
