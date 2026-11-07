@@ -733,7 +733,9 @@ mod tests {
         };
         assert_eq!(
             store.authenticate_request(&signed, b"tampered body", 250),
-            Err(DurableDeviceTrustError::Trust(DeviceTrustError::BodyDigestMismatch))
+            Err(DurableDeviceTrustError::Trust(
+                DeviceTrustError::BodyDigestMismatch
+            ))
         );
         assert!(store.authenticate_request(&signed, body, 250).is_ok());
         drop(store);
