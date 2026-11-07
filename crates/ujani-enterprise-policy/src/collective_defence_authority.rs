@@ -133,9 +133,9 @@ pub struct MemoryConsentAuthority {
 fn valid_id(value: &str, max: usize) -> bool {
     !value.is_empty()
         && value.len() <= max
-        && value.bytes().all(|b| {
-            b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b':' | b'-' | b'@')
-        })
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b':' | b'-' | b'@'))
 }
 
 fn push_string(out: &mut Vec<u8>, value: &str) {
@@ -198,11 +198,25 @@ fn audit_hash(record: &ConsentAuditRecord) -> [u8; 32] {
 
 impl MemoryConsentAuthority {
     pub fn audit_log(&self) -> Result<Vec<ConsentAuditRecord>, AuthorityError> {
-        Ok(self.state.lock().map_err(|_| AuthorityError::LockPoisoned)?.audit.clone())
+        Ok(self
+            .state
+            .lock()
+            .map_err(|_| AuthorityError::LockPoisoned)?
+            .audit
+            .clone())
     }
 
-    pub fn tenant_record(&self, tenant_id: &str) -> Result<Option<TenantConsentRecord>, AuthorityError> {
-        Ok(self.state.lock().map_err(|_| AuthorityError::LockPoisoned)?.tenants.get(tenant_id).cloned())
+    pub fn tenant_record(
+        &self,
+        tenant_id: &str,
+    ) -> Result<Option<TenantConsentRecord>, AuthorityError> {
+        Ok(self
+            .state
+            .lock()
+            .map_err(|_| AuthorityError::LockPoisoned)?
+            .tenants
+            .get(tenant_id)
+            .cloned())
     }
 
     fn append_audit(
@@ -225,51 +239,119 @@ impl MemoryConsentAuthority {
                 Err(AuthorityError::IdempotencyConflict)
             };
         }
-        if state.audit.len() >= MAX_AUDIT_RECORDS || state.idempotency.len() >= MAX_IDEMPOTENCY_KEYS {
+        if state.audit.len() >= MAX_AUDIT_RECORDS || state.idempotency.len() >= MAX_IDEMPOTENCY_KEYS
+        {
             return Err(AuthorityError::CapacityExceeded);
         }
-        let sequence = u64::try_from(state.audit.len()).map_err(|_| AuthorityError::CapacityExceeded)?.checked_add(1).ok_or(AuthorityError::GenerationExhausted)?;
+        let sequence = u64::try_from(state.audit.len())
+            .map_err(|_| AuthorityError::CapacityExceeded)?
+            .checked_add(1)
+            .ok_or(AuthorityError::GenerationExhausted)?;
         let previous_hash = state.audit.last().map(|a| a.record_hash).unwrap_or([0; 32]);
-        let event_id: [u8; 32] = Sha256::digest([request_hash.as_slice(), idempotency_key.as_bytes()].concat()).into();
+        let event_id: [u8; 32] =
+            Sha256::digest([request_hash.as_slice(), idempotency_key.as_bytes()].concat()).into();
         let mut audit = ConsentAuditRecord {
-            sequence, event_id, tenant_id: tenant_id.to_owned(),
+            sequence,
+            event_id,
+            tenant_id: tenant_id.to_owned(),
             principal_id: principal_id.map(str::to_owned),
             device_id: device_id.map(str::to_owned),
-            action: action.to_owned(), previous_generation, next_generation,
-            actor_key_id: actor_key_id.to_owned(), committed_at_unix_ms: committed_at,
-            previous_hash, record_hash: [0; 32],
+            action: action.to_owned(),
+            previous_generation,
+            next_generation,
+            actor_key_id: actor_key_id.to_owned(),
+            committed_at_unix_ms: committed_at,
+            previous_hash,
+            record_hash: [0; 32],
         };
         audit.record_hash = audit_hash(&audit);
         state.audit.push(audit.clone());
-        state.idempotency.insert(idempotency_key.to_owned(), IdempotencyOutcome { request_hash, audit: audit.clone() });
+        state.idempotency.insert(
+            idempotency_key.to_owned(),
+            IdempotencyOutcome {
+                request_hash,
+                audit: audit.clone(),
+            },
+        );
         Ok(audit)
     }
 }
 
 impl ConsentAuthorityBackend for MemoryConsentAuthority {
-    fn put_tenant(&self, record: TenantConsentRecord, expected_generation: Option<u64>, idempotency_key: &str) -> Result<ConsentAuditRecord, AuthorityError> {
-        if !valid_id(&record.tenant_id, 128) || !valid_id(&record.actor_key_id, 128) || !valid_id(&record.notice_version, 64) || idempotency_key.is_empty() || idempotency_key.len() > 128 {
+    fn put_tenant(
+        &self,
+        record: TenantConsentRecord,
+        expected_generation: Option<u64>,
+        idempotency_key: &str,
+    ) -> Result<ConsentAuditRecord, AuthorityError> {
+        if !valid_id(&record.tenant_id, 128)
+            || !valid_id(&record.actor_key_id, 128)
+            || !valid_id(&record.notice_version, 64)
+            || idempotency_key.is_empty()
+            || idempotency_key.len() > 128
+        {
             return Err(AuthorityError::InvalidIdentifier);
         }
         if record.generation == 0 || record.expires_at_unix_ms <= record.updated_at_unix_ms {
             return Err(AuthorityError::InvalidGeneration);
         }
         let request_hash = tenant_request_hash(&record, expected_generation);
-        let mut state = self.state.lock().map_err(|_| AuthorityError::LockPoisoned)?;
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| AuthorityError::LockPoisoned)?;
         if let Some(existing) = state.idempotency.get(idempotency_key) {
-            return if existing.request_hash == request_hash { Ok(existing.audit.clone()) } else { Err(AuthorityError::IdempotencyConflict) };
+            return if existing.request_hash == request_hash {
+                Ok(existing.audit.clone())
+            } else {
+                Err(AuthorityError::IdempotencyConflict)
+            };
         }
         let current = state.tenants.get(&record.tenant_id).map(|r| r.generation);
-        if current != expected_generation || record.generation != current.unwrap_or(0).checked_add(1).ok_or(AuthorityError::GenerationExhausted)? {
+        if current != expected_generation
+            || record.generation
+                != current
+                    .unwrap_or(0)
+                    .checked_add(1)
+                    .ok_or(AuthorityError::GenerationExhausted)?
+        {
             return Err(AuthorityError::GenerationConflict);
         }
-        let audit = Self::append_audit(&mut state, idempotency_key, request_hash, &record.tenant_id, None, None, if record.enabled { "tenant.enable" } else { "tenant.disable" }, current.unwrap_or(0), record.generation, &record.actor_key_id, record.updated_at_unix_ms)?;
+        let audit = Self::append_audit(
+            &mut state,
+            idempotency_key,
+            request_hash,
+            &record.tenant_id,
+            None,
+            None,
+            if record.enabled {
+                "tenant.enable"
+            } else {
+                "tenant.disable"
+            },
+            current.unwrap_or(0),
+            record.generation,
+            &record.actor_key_id,
+            record.updated_at_unix_ms,
+        )?;
         state.tenants.insert(record.tenant_id.clone(), record);
         Ok(audit)
     }
 
-    fn put_individual(&self, record: IndividualConsentRecord, expected_generation: Option<u64>, idempotency_key: &str) -> Result<ConsentAuditRecord, AuthorityError> {
-        if !valid_id(&record.tenant_id, 128) || !valid_id(&record.principal_id, 128) || !valid_id(&record.device_id, 128) || !valid_id(&record.actor_key_id, 128) || !valid_id(&record.notice_version, 64) || idempotency_key.is_empty() || idempotency_key.len() > 128 {
+    fn put_individual(
+        &self,
+        record: IndividualConsentRecord,
+        expected_generation: Option<u64>,
+        idempotency_key: &str,
+    ) -> Result<ConsentAuditRecord, AuthorityError> {
+        if !valid_id(&record.tenant_id, 128)
+            || !valid_id(&record.principal_id, 128)
+            || !valid_id(&record.device_id, 128)
+            || !valid_id(&record.actor_key_id, 128)
+            || !valid_id(&record.notice_version, 64)
+            || idempotency_key.is_empty()
+            || idempotency_key.len() > 128
+        {
             return Err(AuthorityError::InvalidIdentifier);
         }
         if record.generation == 0 || record.tenant_generation == 0 || record.expires_at_unix_ms <= record.updated_at_unix_ms {
@@ -280,30 +362,71 @@ impl ConsentAuthorityBackend for MemoryConsentAuthority {
         if let Some(existing) = state.idempotency.get(idempotency_key) {
             return if existing.request_hash == request_hash { Ok(existing.audit.clone()) } else { Err(AuthorityError::IdempotencyConflict) };
         }
-        let tenant = state.tenants.get(&record.tenant_id).ok_or(AuthorityError::TenantNotEnabled)?;
+        let tenant = state
+            .tenants
+            .get(&record.tenant_id)
+            .ok_or(AuthorityError::TenantNotEnabled)?;
         // A user must be able to withdraw even after the tenant disables the
         // feature. New individual opt-ins still require tenant enablement.
         if tenant.generation != record.tenant_generation || (record.enabled && !tenant.enabled) {
             return Err(AuthorityError::TenantNotEnabled);
         }
-        let key = (record.tenant_id.clone(), record.principal_id.clone(), record.device_id.clone());
+        let key = (
+            record.tenant_id.clone(),
+            record.principal_id.clone(),
+            record.device_id.clone(),
+        );
         let current = state.individuals.get(&key).map(|r| r.generation);
         if current != expected_generation || record.generation != current.unwrap_or(0).checked_add(1).ok_or(AuthorityError::GenerationExhausted)? {
             return Err(AuthorityError::GenerationConflict);
         }
-        let audit = Self::append_audit(&mut state, idempotency_key, request_hash, &record.tenant_id, Some(&record.principal_id), Some(&record.device_id), if record.enabled { "individual.enable" } else { "individual.withdraw" }, current.unwrap_or(0), record.generation, &record.actor_key_id, record.updated_at_unix_ms)?;
+        let audit = Self::append_audit(
+            &mut state,
+            idempotency_key,
+            request_hash,
+            &record.tenant_id,
+            Some(&record.principal_id),
+            Some(&record.device_id),
+            if record.enabled {
+                "individual.enable"
+            } else {
+                "individual.withdraw"
+            },
+            current.unwrap_or(0),
+            record.generation,
+            &record.actor_key_id,
+            record.updated_at_unix_ms,
+        )?;
         state.individuals.insert(key, record);
         Ok(audit)
     }
 
-    fn authorization_snapshot(&self, tenant_id: &str, principal_id: &str, device_id: &str, now: u64) -> Result<ConsentSnapshot, AuthorityError> {
+    fn authorization_snapshot(
+        &self,
+        tenant_id: &str,
+        principal_id: &str,
+        device_id: &str,
+        now: u64,
+    ) -> Result<ConsentSnapshot, AuthorityError> {
         let state = self.state.lock().map_err(|_| AuthorityError::LockPoisoned)?;
-        let tenant = state.tenants.get(tenant_id).cloned().ok_or(AuthorityError::TenantNotEnabled)?;
+        let tenant = state
+            .tenants
+            .get(tenant_id)
+            .cloned()
+            .ok_or(AuthorityError::TenantNotEnabled)?;
         if !tenant.enabled || tenant.expires_at_unix_ms <= now {
             return Err(AuthorityError::TenantNotEnabled);
         }
-        let key = (tenant_id.to_owned(), principal_id.to_owned(), device_id.to_owned());
-        let individual = state.individuals.get(&key).cloned().ok_or(AuthorityError::IndividualNotEnabled)?;
+        let key = (
+            tenant_id.to_owned(),
+            principal_id.to_owned(),
+            device_id.to_owned(),
+        );
+        let individual = state
+            .individuals
+            .get(&key)
+            .cloned()
+            .ok_or(AuthorityError::IndividualNotEnabled)?;
         if !individual.enabled || individual.expires_at_unix_ms <= now {
             return Err(AuthorityError::IndividualNotEnabled);
         }
@@ -320,19 +443,38 @@ mod tests {
 
     fn tenant(enabled: bool, generation: u64, now: u64) -> TenantConsentRecord {
         TenantConsentRecord {
-            tenant_id: "tenant-a".into(), enabled, generation,
-            purpose: "collective-defence.read-only.v1".into(), schema_version: "1.0".into(),
+            tenant_id: "tenant-a".into(),
+            enabled,
+            generation,
+            purpose: "collective-defence.read-only.v1".into(),
+            schema_version: "1.0".into(),
             retention_seconds: if enabled { 86_400 } else { 0 },
-            notice_version: "notice-v1".into(), notice_sha256: [1; 32],
-            actor_key_id: "admin-key".into(), updated_at_unix_ms: now, expires_at_unix_ms: now + 60_000,
+            notice_version: "notice-v1".into(),
+            notice_sha256: [1; 32],
+            actor_key_id: "admin-key".into(),
+            updated_at_unix_ms: now,
+            expires_at_unix_ms: now + 60_000,
         }
     }
-    fn individual(enabled: bool, tenant_generation: u64, generation: u64, now: u64) -> IndividualConsentRecord {
+    fn individual(
+        enabled: bool,
+        tenant_generation: u64,
+        generation: u64,
+        now: u64,
+    ) -> IndividualConsentRecord {
         IndividualConsentRecord {
-            tenant_id: "tenant-a".into(), principal_id: "user-a".into(), device_id: "device-a".into(),
-            enabled, tenant_generation, generation, purpose: "collective-defence.read-only.v1".into(),
-            notice_version: "notice-v1".into(), notice_sha256: [2; 32], actor_key_id: "user-key".into(),
-            updated_at_unix_ms: now, expires_at_unix_ms: now + 60_000,
+            tenant_id: "tenant-a".into(),
+            principal_id: "user-a".into(),
+            device_id: "device-a".into(),
+            enabled,
+            tenant_generation,
+            generation,
+            purpose: "collective-defence.read-only.v1".into(),
+            notice_version: "notice-v1".into(),
+            notice_sha256: [2; 32],
+            actor_key_id: "user-key".into(),
+            updated_at_unix_ms: now,
+            expires_at_unix_ms: now + 60_000,
         }
     }
 
@@ -340,39 +482,72 @@ mod tests {
     fn two_independent_decisions_are_required() {
         let store = MemoryConsentAuthority::default();
         store.put_tenant(tenant(true, 1, 100), None, "t-1").unwrap();
-        assert_eq!(store.authorization_snapshot("tenant-a", "user-a", "device-a", 101), Err(AuthorityError::IndividualNotEnabled));
-        store.put_individual(individual(true, 1, 1, 102), None, "i-1").unwrap();
-        assert!(store.authorization_snapshot("tenant-a", "user-a", "device-a", 103).is_ok());
+        assert_eq!(
+            store.authorization_snapshot("tenant-a", "user-a", "device-a", 101),
+            Err(AuthorityError::IndividualNotEnabled)
+        );
+        store
+            .put_individual(individual(true, 1, 1, 102), None, "i-1")
+            .unwrap();
+        assert!(store
+            .authorization_snapshot("tenant-a", "user-a", "device-a", 103)
+            .is_ok());
     }
 
     #[test]
     fn tenant_disable_invalidates_every_individual_snapshot() {
         let store = MemoryConsentAuthority::default();
         store.put_tenant(tenant(true, 1, 100), None, "t-1").unwrap();
-        store.put_individual(individual(true, 1, 1, 101), None, "i-1").unwrap();
-        store.put_tenant(tenant(false, 2, 102), Some(1), "t-2").unwrap();
-        assert_eq!(store.authorization_snapshot("tenant-a", "user-a", "device-a", 103), Err(AuthorityError::TenantNotEnabled));
-        assert_eq!(store.put_individual(individual(true, 1, 2, 104), Some(1), "i-2"), Err(AuthorityError::TenantNotEnabled));
+        store
+            .put_individual(individual(true, 1, 1, 101), None, "i-1")
+            .unwrap();
+        store
+            .put_tenant(tenant(false, 2, 102), Some(1), "t-2")
+            .unwrap();
+        assert_eq!(
+            store.authorization_snapshot("tenant-a", "user-a", "device-a", 103),
+            Err(AuthorityError::TenantNotEnabled)
+        );
+        assert_eq!(
+            store.put_individual(individual(true, 1, 2, 104), Some(1), "i-2"),
+            Err(AuthorityError::TenantNotEnabled)
+        );
     }
 
     #[test]
     fn individual_withdrawal_invalidates_only_that_device() {
         let store = MemoryConsentAuthority::default();
         store.put_tenant(tenant(true, 1, 100), None, "t-1").unwrap();
-        store.put_individual(individual(true, 1, 1, 101), None, "i-1").unwrap();
-        store.put_individual(individual(false, 1, 2, 102), Some(1), "i-2").unwrap();
-        assert_eq!(store.authorization_snapshot("tenant-a", "user-a", "device-a", 103), Err(AuthorityError::IndividualNotEnabled));
+        store
+            .put_individual(individual(true, 1, 1, 101), None, "i-1")
+            .unwrap();
+        store
+            .put_individual(individual(false, 1, 2, 102), Some(1), "i-2")
+            .unwrap();
+        assert_eq!(
+            store.authorization_snapshot("tenant-a", "user-a", "device-a", 103),
+            Err(AuthorityError::IndividualNotEnabled)
+        );
     }
 
     #[test]
     fn individual_withdrawal_remains_available_after_tenant_disable() {
         let store = MemoryConsentAuthority::default();
         store.put_tenant(tenant(true, 1, 100), None, "t-1").unwrap();
-        store.put_individual(individual(true, 1, 1, 101), None, "i-1").unwrap();
-        store.put_tenant(tenant(false, 2, 102), Some(1), "t-2").unwrap();
+        store
+            .put_individual(individual(true, 1, 1, 101), None, "i-1")
+            .unwrap();
+        store
+            .put_tenant(tenant(false, 2, 102), Some(1), "t-2")
+            .unwrap();
         let withdrawal = individual(false, 2, 2, 103);
-        assert!(store.put_individual(withdrawal, Some(1), "i-withdraw").is_ok());
-        assert_eq!(store.authorization_snapshot("tenant-a", "user-a", "device-a", 104), Err(AuthorityError::TenantNotEnabled));
+        assert!(store
+            .put_individual(withdrawal, Some(1), "i-withdraw")
+            .is_ok());
+        assert_eq!(
+            store.authorization_snapshot("tenant-a", "user-a", "device-a", 104),
+            Err(AuthorityError::TenantNotEnabled)
+        );
     }
 
     #[test]
@@ -382,15 +557,23 @@ mod tests {
         let first = store.put_tenant(record.clone(), None, "request-1").unwrap();
         let retry = store.put_tenant(record, None, "request-1").unwrap();
         assert_eq!(first, retry);
-        assert_eq!(store.put_tenant(tenant(false, 2, 101), None, "request-2"), Err(AuthorityError::GenerationConflict));
-        assert_eq!(store.put_tenant(tenant(false, 2, 101), Some(1), "request-1"), Err(AuthorityError::IdempotencyConflict));
+        assert_eq!(
+            store.put_tenant(tenant(false, 2, 101), None, "request-2"),
+            Err(AuthorityError::GenerationConflict)
+        );
+        assert_eq!(
+            store.put_tenant(tenant(false, 2, 101), Some(1), "request-1"),
+            Err(AuthorityError::IdempotencyConflict)
+        );
     }
 
     #[test]
     fn audit_records_form_a_hash_chain() {
         let store = MemoryConsentAuthority::default();
         store.put_tenant(tenant(true, 1, 100), None, "t-1").unwrap();
-        store.put_tenant(tenant(false, 2, 101), Some(1), "t-2").unwrap();
+        store
+            .put_tenant(tenant(false, 2, 101), Some(1), "t-2")
+            .unwrap();
         let audit = store.audit_log().unwrap();
         assert_eq!(audit.len(), 2);
         assert_eq!(audit[1].previous_hash, audit[0].record_hash);
