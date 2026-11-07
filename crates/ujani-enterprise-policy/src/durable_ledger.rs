@@ -855,8 +855,9 @@ mod tests {
         assert_eq!(ledger.snapshot().unwrap().active_jobs, 0);
         assert!(path.exists());
         assert!(!temp.exists());
+        let keys = HashMap::from([("test-v1".to_string(), integrity_key("test-v1", 0xA5))]);
         assert_eq!(
-            deserialize_snapshot(&fs::read(&path).unwrap())
+            deserialize_snapshot(&fs::read(&path).unwrap(), &keys)
                 .unwrap()
                 .jobs
                 .len(),
@@ -864,4 +865,69 @@ mod tests {
         );
         cleanup(&path);
     }
+    #[test]
+    fn attacker_cannot_rewrite_snapshot_and_recompute_an_unkeyed_checksum() {
+        let path = temp_path("mac-tamper");
+        let ledger = open_ledger(&path);
+        assert_eq!(ledger.snapshot().unwrap().active_jobs, 0);
+        drop(ledger);
+
+        let mut bytes = fs::read(&path).unwrap();
+        let text = String::from_utf8(bytes.clone()).unwrap();
+        assert!(text.starts_with("UJANI-ENTERPRISE-LEDGER-V2\n"));
+        // Even a writer who knows the file format and can recompute SHA-256
+        // cannot produce the required MAC without the external integrity key.
+        let mac_line = text.rfind("M\t").unwrap();
+        let body = &text[..mac_line];
+        let forged = format!("{body}M\ttest-v1\t{}\n", hex_encode(&Sha256::digest(body.as_bytes())));
+        bytes = forged.into_bytes();
+        fs::write(&path, &bytes).unwrap();
+
+        assert_eq!(
+            open_ledger(&path).err(),
+            Some(DurableLedgerError::CorruptState)
+        );
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn key_rotation_accepts_previous_key_then_rewrites_with_active_key() {
+        let path = temp_path("key-rotation");
+        {
+            let old = DurableLedger::open_with_integrity_keys(
+                &path,
+                "key-v1",
+                vec![integrity_key("key-v1", 0x11)],
+            ).unwrap();
+            assert_eq!(old.snapshot().unwrap().active_jobs, 0);
+        }
+        {
+            let rotated = DurableLedger::open_with_integrity_keys(
+                &path,
+                "key-v2",
+                vec![integrity_key("key-v1", 0x11), integrity_key("key-v2", 0x22)],
+            ).unwrap();
+            assert_eq!(rotated.snapshot().unwrap().active_jobs, 0);
+        }
+        {
+            let only_new_key = DurableLedger::open_with_integrity_keys(
+                &path,
+                "key-v2",
+                vec![integrity_key("key-v2", 0x22)],
+            ).unwrap();
+            assert_eq!(only_new_key.snapshot().unwrap().active_jobs, 0);
+        }
+        cleanup(&path);
+    }
+
+    #[test]
+    fn key_material_is_redacted_from_debug_output() {
+        let key = integrity_key("secret-key", 0xA5);
+        let debug = format!("{key:?}");
+        assert!(debug.contains("secret-key"));
+        assert!(debug.contains("[REDACTED]"));
+        assert!(!debug.contains("165"));
+    }
+
 }
