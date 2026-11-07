@@ -392,7 +392,7 @@ impl ConsentAuthorityBackend for MemoryConsentAuthority {
         {
             return Err(AuthorityError::InvalidIdentifier);
         }
-        if record.generation == 0 || record.expires_at_unix_ms <= record.updated_at_unix_ms {
+        if record.generation == 0 {
             return Err(AuthorityError::InvalidGeneration);
         }
         validate_tenant_record(&record)?;
@@ -460,10 +460,7 @@ impl ConsentAuthorityBackend for MemoryConsentAuthority {
         {
             return Err(AuthorityError::InvalidIdentifier);
         }
-        if record.generation == 0
-            || record.tenant_generation == 0
-            || record.expires_at_unix_ms <= record.updated_at_unix_ms
-        {
+        if record.generation == 0 || record.tenant_generation == 0 {
             return Err(AuthorityError::InvalidGeneration);
         }
         validate_individual_record(&record)?;
@@ -752,6 +749,26 @@ mod tests {
         excessive_ttl.expires_at_unix_ms = 100 + MAX_CONSENT_TTL_MS + 1;
         assert_eq!(
             store.put_tenant(excessive_ttl, None, "bad-ttl"),
+            Err(AuthorityError::InvalidTimeWindow)
+        );
+    }
+
+    #[test]
+    fn non_positive_consent_windows_return_time_window_errors() {
+        let store = MemoryConsentAuthority::default();
+
+        let mut invalid_tenant = tenant(true, 1, 100);
+        invalid_tenant.expires_at_unix_ms = invalid_tenant.updated_at_unix_ms;
+        assert_eq!(
+            store.put_tenant(invalid_tenant, None, "bad-tenant-window"),
+            Err(AuthorityError::InvalidTimeWindow)
+        );
+
+        store.put_tenant(tenant(true, 1, 100), None, "tenant-valid").unwrap();
+        let mut invalid_individual = individual(true, 1, 1, 101);
+        invalid_individual.expires_at_unix_ms = invalid_individual.updated_at_unix_ms;
+        assert_eq!(
+            store.put_individual(invalid_individual, None, "bad-individual-window"),
             Err(AuthorityError::InvalidTimeWindow)
         );
     }
