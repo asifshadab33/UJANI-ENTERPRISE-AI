@@ -9,9 +9,9 @@
 use ed25519_dalek::{Signature, VerifyingKey};
 use std::collections::HashMap;
 
-const ADMIN_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-DEVICE-ADMIN-COMMAND-V1\\0";
-const DEVICE_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-DEVICE-REQUEST-V1\\0";
-const ENROLLMENT_PROOF_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-DEVICE-KEY-PROOF-V1\\0";
+const ADMIN_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-DEVICE-ADMIN-COMMAND-V1\0";
+const DEVICE_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-DEVICE-REQUEST-V1\0";
+const ENROLLMENT_PROOF_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-DEVICE-KEY-PROOF-V1\0";
 const CLOCK_SKEW_MS: u64 = 30_000;
 const MAX_REPLAY_ENTRIES: usize = 100_000;
 pub const MAX_DEVICE_REQUEST_TTL_MS: u64 = 30_000;
@@ -275,7 +275,7 @@ fn admin_command_bytes(c: &SignedDeviceAdminCommand) -> Vec<u8> {
     out
 }
 fn rotation_proof_bytes(c: &SignedDeviceAdminCommand) -> Vec<u8> {
-    let mut out = b"UJANI-ENTERPRISE-DEVICE-ROTATION-OLD-KEY-V1\\0".to_vec();
+    let mut out = b"UJANI-ENTERPRISE-DEVICE-ROTATION-OLD-KEY-V1\0".to_vec();
     out.extend_from_slice(&admin_command_bytes(c));
     out
 }
