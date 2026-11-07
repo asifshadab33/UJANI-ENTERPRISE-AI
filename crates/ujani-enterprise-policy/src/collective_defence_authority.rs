@@ -7,6 +7,10 @@
 //! database and an external monotonic anchor before any event is transmitted.
 #![forbid(unsafe_code)]
 
+use crate::collective_defence_consent::{
+    COLLECTIVE_DEFENCE_PURPOSE, MAX_CONSENT_TTL_MS, MAX_EVENT_RETENTION_SECONDS,
+    SECURITY_EVENT_SCHEMA_VERSION,
+};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -19,6 +23,11 @@ const MAX_IDEMPOTENCY_KEYS: usize = 100_000;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuthorityError {
     InvalidIdentifier,
+    InvalidPurpose,
+    UnsupportedSchema,
+    InvalidRetention,
+    InvalidNoticeDigest,
+    InvalidTimeWindow,
     InvalidGeneration,
     GenerationConflict,
     GenerationExhausted,
@@ -121,7 +130,7 @@ struct State {
     tenants: HashMap<String, TenantConsentRecord>,
     individuals: HashMap<(String, String, String), IndividualConsentRecord>,
     audit: Vec<ConsentAuditRecord>,
-    idempotency: HashMap<String, IdempotencyOutcome>,
+    idempotency: HashMap<(String, String), IdempotencyOutcome>,
 }
 
 /// In-memory reference implementation. Process restart loses all state.
@@ -130,12 +139,74 @@ pub struct MemoryConsentAuthority {
     state: Mutex<State>,
 }
 
+/// Verify sequence numbering, hash linkage, and each record's canonical hash.
+pub fn verify_audit_chain(records: &[ConsentAuditRecord]) -> bool {
+    let mut previous_hash = [0u8; 32];
+    for (index, record) in records.iter().enumerate() {
+        let Some(expected_sequence) = u64::try_from(index).ok().and_then(|value| value.checked_add(1)) else {
+            return false;
+        };
+        if record.sequence != expected_sequence
+            || record.previous_hash != previous_hash
+            || audit_hash(record) != record.record_hash
+        {
+            return false;
+        }
+        previous_hash = record.record_hash;
+    }
+    true
+}
+
 fn valid_id(value: &str, max: usize) -> bool {
     !value.is_empty()
         && value.len() <= max
         && value
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b':' | b'-' | b'@'))
+}
+
+fn validate_tenant_record(record: &TenantConsentRecord) -> Result<(), AuthorityError> {
+    if record.purpose != COLLECTIVE_DEFENCE_PURPOSE {
+        return Err(AuthorityError::InvalidPurpose);
+    }
+    if record.schema_version != SECURITY_EVENT_SCHEMA_VERSION {
+        return Err(AuthorityError::UnsupportedSchema);
+    }
+    if record.retention_seconds > MAX_EVENT_RETENTION_SECONDS
+        || (record.enabled && record.retention_seconds == 0)
+    {
+        return Err(AuthorityError::InvalidRetention);
+    }
+    if record.notice_sha256.iter().all(|byte| *byte == 0) {
+        return Err(AuthorityError::InvalidNoticeDigest);
+    }
+    if record.expires_at_unix_ms <= record.updated_at_unix_ms
+        || record
+            .expires_at_unix_ms
+            .saturating_sub(record.updated_at_unix_ms)
+            > MAX_CONSENT_TTL_MS
+    {
+        return Err(AuthorityError::InvalidTimeWindow);
+    }
+    Ok(())
+}
+
+fn validate_individual_record(record: &IndividualConsentRecord) -> Result<(), AuthorityError> {
+    if record.purpose != COLLECTIVE_DEFENCE_PURPOSE {
+        return Err(AuthorityError::InvalidPurpose);
+    }
+    if record.notice_sha256.iter().all(|byte| *byte == 0) {
+        return Err(AuthorityError::InvalidNoticeDigest);
+    }
+    if record.expires_at_unix_ms <= record.updated_at_unix_ms
+        || record
+            .expires_at_unix_ms
+            .saturating_sub(record.updated_at_unix_ms)
+            > MAX_CONSENT_TTL_MS
+    {
+        return Err(AuthorityError::InvalidTimeWindow);
+    }
+    Ok(())
 }
 
 fn push_string(out: &mut Vec<u8>, value: &str) {
@@ -197,6 +268,9 @@ fn audit_hash(record: &ConsentAuditRecord) -> [u8; 32] {
 }
 
 impl MemoryConsentAuthority {
+    /// Returns the reference backend's complete audit sequence for internal verification.
+    ///
+    /// A production API must apply tenant authorization before exposing audit records.
     pub fn audit_log(&self) -> Result<Vec<ConsentAuditRecord>, AuthorityError> {
         Ok(self
             .state
@@ -206,6 +280,7 @@ impl MemoryConsentAuthority {
             .clone())
     }
 
+    /// Loads one tenant's current record from this in-memory reference backend.
     pub fn tenant_record(
         &self,
         tenant_id: &str,
@@ -232,7 +307,8 @@ impl MemoryConsentAuthority {
         actor_key_id: &str,
         committed_at: u64,
     ) -> Result<ConsentAuditRecord, AuthorityError> {
-        if let Some(existing) = state.idempotency.get(idempotency_key) {
+        let idempotency_scope = (tenant_id.to_owned(), idempotency_key.to_owned());
+        if let Some(existing) = state.idempotency.get(&idempotency_scope) {
             return if existing.request_hash == request_hash {
                 Ok(existing.audit.clone())
             } else {
@@ -267,7 +343,7 @@ impl MemoryConsentAuthority {
         audit.record_hash = audit_hash(&audit);
         state.audit.push(audit.clone());
         state.idempotency.insert(
-            idempotency_key.to_owned(),
+            idempotency_scope,
             IdempotencyOutcome {
                 request_hash,
                 audit: audit.clone(),
@@ -295,12 +371,16 @@ impl ConsentAuthorityBackend for MemoryConsentAuthority {
         if record.generation == 0 || record.expires_at_unix_ms <= record.updated_at_unix_ms {
             return Err(AuthorityError::InvalidGeneration);
         }
+        validate_tenant_record(&record)?;
         let request_hash = tenant_request_hash(&record, expected_generation);
         let mut state = self
             .state
             .lock()
             .map_err(|_| AuthorityError::LockPoisoned)?;
-        if let Some(existing) = state.idempotency.get(idempotency_key) {
+        if let Some(existing) = state
+            .idempotency
+            .get(&(record.tenant_id.clone(), idempotency_key.to_owned()))
+        {
             return if existing.request_hash == request_hash {
                 Ok(existing.audit.clone())
             } else {
@@ -357,9 +437,13 @@ impl ConsentAuthorityBackend for MemoryConsentAuthority {
         if record.generation == 0 || record.tenant_generation == 0 || record.expires_at_unix_ms <= record.updated_at_unix_ms {
             return Err(AuthorityError::InvalidGeneration);
         }
+        validate_individual_record(&record)?;
         let request_hash = individual_request_hash(&record, expected_generation);
         let mut state = self.state.lock().map_err(|_| AuthorityError::LockPoisoned)?;
-        if let Some(existing) = state.idempotency.get(idempotency_key) {
+        if let Some(existing) = state
+            .idempotency
+            .get(&(record.tenant_id.clone(), idempotency_key.to_owned()))
+        {
             return if existing.request_hash == request_hash { Ok(existing.audit.clone()) } else { Err(AuthorityError::IdempotencyConflict) };
         }
         let tenant = state
@@ -408,7 +492,15 @@ impl ConsentAuthorityBackend for MemoryConsentAuthority {
         device_id: &str,
         now: u64,
     ) -> Result<ConsentSnapshot, AuthorityError> {
-        let state = self.state.lock().map_err(|_| AuthorityError::LockPoisoned)?;
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| AuthorityError::LockPoisoned)?;
+        if state.audit.len() >= MAX_AUDIT_RECORDS
+            || state.idempotency.len() >= MAX_IDEMPOTENCY_KEYS
+        {
+            return Err(AuthorityError::CapacityExceeded);
+        }
         let tenant = state
             .tenants
             .get(tenant_id)
@@ -509,7 +601,7 @@ mod tests {
             Err(AuthorityError::TenantNotEnabled)
         );
         assert_eq!(
-            store.put_individual(individual(true, 1, 2, 104), Some(1), "i-2"),
+            store.put_individual(individual(true, 2, 2, 104), Some(1), "i-2"),
             Err(AuthorityError::TenantNotEnabled)
         );
     }
@@ -578,5 +670,10 @@ mod tests {
         assert_eq!(audit.len(), 2);
         assert_eq!(audit[1].previous_hash, audit[0].record_hash);
         assert_ne!(audit[1].record_hash, [0; 32]);
+        assert!(verify_audit_chain(&audit));
+
+        let mut tampered = audit.clone();
+        tampered[0].action.push_str(".tampered");
+        assert!(!verify_audit_chain(&tampered));
     }
 }
