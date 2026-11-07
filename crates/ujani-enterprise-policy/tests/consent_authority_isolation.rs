@@ -60,9 +60,11 @@ fn individual_consent_is_scoped_to_the_exact_device() {
         )
         .unwrap();
 
-    assert!(authority
-        .authorization_snapshot("tenant-a", "user-a", "device-a", 102)
-        .is_ok());
+    assert!(
+        authority
+            .authorization_snapshot("tenant-a", "user-a", "device-a", 102)
+            .is_ok()
+    );
     assert_eq!(
         authority.authorization_snapshot("tenant-a", "user-a", "device-b", 102),
         Err(AuthorityError::IndividualNotEnabled)
