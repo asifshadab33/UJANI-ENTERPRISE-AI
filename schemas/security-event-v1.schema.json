@@ -1,0 +1,181 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ujani.example/schemas/security-event-v1.schema.json",
+  "title": "UJANI Enterprise Security Event v1",
+  "description": "Privacy-minimised, tenant-scoped endpoint security telemetry. This contract is not an authorization to collect or execute.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "event_id",
+    "tenant_id",
+    "device_id",
+    "sequence",
+    "observed_at",
+    "event_type",
+    "severity",
+    "source",
+    "evidence"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "event_id": {
+      "type": "string",
+      "format": "uuid",
+      "maxLength": 36
+    },
+    "tenant_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "device_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "observed_at": {
+      "type": "string",
+      "format": "date-time",
+      "maxLength": 40
+    },
+    "event_type": {
+      "type": "string",
+      "enum": [
+        "process.anomaly",
+        "file.activity_burst",
+        "auth.anomaly",
+        "network.anomaly",
+        "persistence.indicator",
+        "security.control.changed",
+        "sensor.health"
+      ]
+    },
+    "severity": {
+      "type": "string",
+      "enum": [
+        "info",
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ]
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sensor_id",
+        "sensor_version",
+        "platform"
+      ],
+      "properties": {
+        "sensor_id": {
+          "type": "string",
+          "enum": [
+            "ujani-process",
+            "ujani-file",
+            "ujani-auth",
+            "ujani-network",
+            "ujani-persistence",
+            "ujani-control",
+            "ujani-health"
+          ]
+        },
+        "sensor_version": {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 32,
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$"
+        },
+        "platform": {
+          "type": "string",
+          "enum": [
+            "windows",
+            "macos",
+            "linux"
+          ]
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "signal",
+        "confidence"
+      ],
+      "properties": {
+        "signal": {
+          "type": "string",
+          "enum": [
+            "dns.burst",
+            "process.unusual_parent",
+            "file.write_burst",
+            "auth.failure_burst",
+            "network.connection_anomaly",
+            "persistence.autostart_change",
+            "security.control_disabled",
+            "sensor.heartbeat",
+            "sensor.unhealthy"
+          ]
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "window_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400
+        },
+        "indicator_hash": {
+          "type": "string",
+          "pattern": "^[a-fA-F0-9]{64}$"
+        },
+        "indicator_domain": {
+          "type": "string",
+          "maxLength": 253,
+          "pattern": "^(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)+[A-Za-z]{2,63}$"
+        },
+        "path_fingerprint": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-fA-F0-9]{16,128}$"
+        },
+        "process_class": {
+          "type": "string",
+          "enum": [
+            "browser",
+            "office",
+            "shell",
+            "system",
+            "unknown"
+          ]
+        }
+      }
+    },
+    "correlation_hint": {
+      "type": "string",
+      "minLength": 32,
+      "maxLength": 128,
+      "pattern": "^[a-fA-F0-9]+$"
+    }
+  },
+  "$comment": "Consumers must enable JSON Schema format assertion for uuid and date-time. The repository CI contract validator explicitly asserts both formats."
+}
