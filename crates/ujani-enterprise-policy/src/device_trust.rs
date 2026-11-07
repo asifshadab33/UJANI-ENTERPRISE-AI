@@ -372,7 +372,8 @@ mod tests {
             method: "POST".into(), resource_id: "lease:acquire".into(),
         };
         let signed = SignedDeviceRequest {
-            signature: device.sign(&device_request_bytes(&claims)).to_bytes(), claims,
+            signature: device.sign(&device_request_bytes(&claims)).to_bytes(),
+            claims,
         };
         assert_eq!(r.authenticate_request(&signed, 400), Err(DeviceTrustError::DeviceNotEnrolled));
     }
