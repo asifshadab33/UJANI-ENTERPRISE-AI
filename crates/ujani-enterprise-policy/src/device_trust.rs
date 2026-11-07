@@ -18,6 +18,7 @@ const DEVICE_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-DEVICE-REQUEST-V1\0";
 const ENROLLMENT_PROOF_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-DEVICE-KEY-PROOF-V1\0";
 const CLOCK_SKEW_MS: u64 = 30_000;
 const MAX_REPLAY_ENTRIES: usize = 100_000;
+pub const MAX_DEVICE_REQUEST_BODY_BYTES: usize = 1024 * 1024;
 pub const MAX_DEVICE_REQUEST_TTL_MS: u64 = 30_000;
 pub const MAX_ADMIN_COMMAND_TTL_MS: u64 = 5 * 60 * 1000;
 
@@ -42,6 +43,7 @@ pub enum DeviceTrustError {
     InvalidAdminSignature,
     InvalidDeviceSignature,
     BodyDigestMismatch,
+    BodyTooLarge,
     ExpiredCommand,
     FutureTimestamp,
     InvalidCommand,
@@ -298,6 +300,9 @@ impl DeviceRegistry {
             || c.key_generation == 0
         {
             return Err(DeviceTrustError::InvalidIdentifier);
+        }
+        if body.len() > MAX_DEVICE_REQUEST_BODY_BYTES {
+            return Err(DeviceTrustError::BodyTooLarge);
         }
         let body_digest: [u8; 32] = sha2::Sha256::digest(body).into();
         if body_digest != c.body_sha256 {
@@ -623,6 +628,35 @@ mod tests {
             Err(DeviceTrustError::BodyDigestMismatch)
         );
         assert!(r.authenticate_request(&signed, body, 250).is_ok());
+    }
+
+    #[test]
+    fn oversized_request_body_is_rejected_before_nonce_consumption() {
+        let (mut r, admin, device) = registry();
+        r.apply_admin_command(&enrollment(&admin, &device, 1), 200).unwrap();
+        let body = vec![b'x'; MAX_DEVICE_REQUEST_BODY_BYTES + 1];
+        let request_id = [13; 16];
+        let claims = DeviceRequestClaims {
+            tenant_id: "tenant-a".into(),
+            device_id: "device-1".into(),
+            key_id: "device-key-v1".into(),
+            key_generation: 1,
+            request_id,
+            issued_at_unix_ms: 200,
+            expires_at_unix_ms: 500,
+            method: "POST".into(),
+            resource_id: "lease:acquire".into(),
+            body_sha256: sha2::Sha256::digest(&body).into(),
+        };
+        let signed = SignedDeviceRequest {
+            signature: device.sign(&device_request_bytes(&claims)).to_bytes(),
+            claims,
+        };
+        assert_eq!(
+            r.authenticate_request(&signed, &body, 250),
+            Err(DeviceTrustError::BodyTooLarge)
+        );
+        assert!(!r.request_nonces.contains_key(&request_id));
     }
 
     #[test]
