@@ -5,8 +5,8 @@
 //! administrator key and bound to the exact workload manifest. Callers cannot
 //! construct a VerifiedSchedulingContext directly.
 use crate::{
-    admit_with_context, Admission, ClassPolicy, Device, Ledger, SchedulingContext,
-    VerifiedAdminApproval, Workload,
+    admit_with_context, Admission, ClassPolicy, Device, DurableLedger, DurableLedgerError, Ledger,
+    SchedulingContext, VerifiedAdminApproval, Workload,
 };
 use ed25519_dalek::{Signature, VerifyingKey};
 
@@ -243,6 +243,29 @@ pub fn admit_with_verified_context(
         policies,
         approvals,
         now_unix_ms,
+    )
+}
+
+/// Atomically persist a reservation after verifying signed scheduling evidence.
+#[allow(clippy::too_many_arguments)] // Keep all policy, identity and capability inputs explicit.
+pub fn admit_and_reserve_durably_with_verified_lease(
+    ledger: &DurableLedger,
+    device: &Device,
+    workload: &Workload,
+    context: &VerifiedSchedulingContext,
+    policies: &[ClassPolicy],
+    approvals: &[VerifiedAdminApproval],
+    now_unix_ms: u64,
+    lease_token: &[u8; 32],
+) -> Result<Admission, DurableLedgerError> {
+    ledger.admit_and_reserve_with_lease(
+        device,
+        workload,
+        &context.0,
+        policies,
+        approvals,
+        now_unix_ms,
+        lease_token,
     )
 }
 
