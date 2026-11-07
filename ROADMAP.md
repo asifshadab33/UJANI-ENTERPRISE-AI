@@ -49,3 +49,14 @@ This roadmap is a statement of intended work, not a claim that these capabilitie
 ## Release gates
 
 Do not claim secure isolation, guaranteed savings, compliance or production readiness without implementation evidence, reproducible tests and independent review.
+
+
+## Operator dashboard implementation sequence (added 2026-11-07)
+- [ ] P1: Complete trusted enrollment, key custody/rotation/revocation and authenticated lease control plane (issue #20); this blocks live fleet telemetry and every privileged action.
+- [ ] Build a read-only dashboard shell using synthetic fixtures, always marked DEMO DATA.
+- [ ] Add server-authorized live inventory using `schemas/fleet-inventory-v1.schema.json`; display source and freshness, preserving unknown/stale states.
+- [ ] Add site/subnet grouping, health alerts, workload/lease status and audit search/export.
+- [ ] Add maintenance and rollout visibility; keep actions disabled until receiver-side authorization, scoped approvals, audit and rollback are verified.
+- [ ] Complete independent threat review and tenant-isolation/IDOR tests before production deployment.
+
+See [docs/OPERATOR-WORKFLOWS.md](docs/OPERATOR-WORKFLOWS.md). The dashboard design and schema are contracts only; they do not represent an implemented web UI, agent or live control plane.
