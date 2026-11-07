@@ -299,37 +299,29 @@ fn valid_stored_identifier(value: &str, max_len: usize) -> bool {
             .all(|character| character.is_ascii_alphanumeric() || "._:-".contains(character))
 }
 
-fn ledger_mac(key: &[u8; 32], key_id: &str, body: &[u8]) -> [u8; 32] {
-    // RFC 2104 HMAC-SHA256 with explicit protocol and key-ID domain separation.
-    let mut inner_pad = [0x36u8; 64];
-    let mut outer_pad = [0x5cu8; 64];
-    for (index, byte) in key.iter().enumerate() {
-        inner_pad[index] ^= byte;
-        outer_pad[index] ^= byte;
-    }
-    let mut inner = Sha256::new();
-    inner.update(inner_pad);
-    inner.update(LEDGER_MAC_DOMAIN);
-    inner.update((key_id.len() as u32).to_be_bytes());
-    inner.update(key_id.as_bytes());
-    inner.update(body);
-    let inner_digest = inner.finalize();
+type LedgerHmacSha256 = hmac::Hmac<Sha256>;
 
-    let mut outer = Sha256::new();
-    outer.update(outer_pad);
-    outer.update(inner_digest);
-    outer.finalize().into()
+fn ledger_mac(key: &[u8; 32], key_id: &str, body: &[u8]) -> [u8; 32] {
+    use hmac::Mac;
+    let mut mac = LedgerHmacSha256::new_from_slice(key)
+        .expect("HMAC accepts a fixed-size key");
+    mac.update(LEDGER_MAC_DOMAIN);
+    mac.update(&(key_id.len() as u32).to_be_bytes());
+    mac.update(key_id.as_bytes());
+    mac.update(body);
+    mac.finalize().into_bytes().into()
 }
 
-fn constant_time_equal(left: &[u8], right: &[u8]) -> bool {
-    if left.len() != right.len() {
+fn verify_ledger_mac(key: &[u8; 32], key_id: &str, body: &[u8], expected: &[u8]) -> bool {
+    use hmac::Mac;
+    let Ok(mut mac) = LedgerHmacSha256::new_from_slice(key) else {
         return false;
-    }
-    let mut difference = 0u8;
-    for (a, b) in left.iter().zip(right) {
-        difference |= a ^ b;
-    }
-    difference == 0
+    };
+    mac.update(LEDGER_MAC_DOMAIN);
+    mac.update(&(key_id.len() as u32).to_be_bytes());
+    mac.update(key_id.as_bytes());
+    mac.update(body);
+    mac.verify_slice(expected).is_ok()
 }
 
 fn serialize_snapshot(ledger: &Ledger, key_id: &str, key: &[u8; 32]) -> Vec<u8> {
@@ -399,8 +391,7 @@ fn deserialize_snapshot(
     }
     let key = integrity_keys.get(key_id).ok_or(DurableLedgerError::CorruptState)?;
     let expected_mac = hex_decode(encoded_mac)?;
-    let actual_mac = ledger_mac(&key.key, key_id, body.as_bytes());
-    if !constant_time_equal(&actual_mac, &expected_mac) {
+    if !verify_ledger_mac(&key.key, key_id, body.as_bytes(), &expected_mac) {
         return Err(DurableLedgerError::CorruptState);
     }
 
