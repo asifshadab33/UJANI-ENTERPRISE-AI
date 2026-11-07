@@ -587,6 +587,13 @@ fn atomic_write(path: &Path, bytes: &[u8], preserve_backup: bool) -> Result<(), 
         return Err(error.into());
     }
     if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        #[cfg(unix)]
+        if preserve_backup {
+            File::open(parent)?.sync_all()?;
+        } else if let Ok(dir) = File::open(parent) {
+            let _ = dir.sync_all();
+        }
+        #[cfg(not(unix))]
         if let Ok(dir) = File::open(parent) {
             let _ = dir.sync_all();
         }
