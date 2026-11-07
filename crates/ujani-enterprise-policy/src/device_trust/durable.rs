@@ -304,7 +304,7 @@ impl DurableDeviceRegistry {
                     &bytes, &self.admin_keys, self.integrity_key.key_id(),
                     &self.integrity_key.bytes,
                 )?;
-                atomic_write(&self.path, &bytes)?;
+                atomic_write(&self.path, &bytes, false)?;
                 recovered
             } else {
                 DeviceRegistry::new(self.admin_keys.as_ref().clone())?
@@ -317,7 +317,7 @@ impl DurableDeviceRegistry {
         if bytes.len() as u64 > MAX_BYTES {
             return Err(DurableDeviceTrustError::CapacityExceeded);
         }
-        atomic_write(&self.path, &bytes)?;
+        atomic_write(&self.path, &bytes, self.anchor.is_some())?;
 
         if let (Some(anchor), Some(namespace)) = (&self.anchor, &self.anchor_namespace) {
             let expected_generation = anchor_record.as_ref().map(SnapshotAnchorRecord::generation);
@@ -560,7 +560,7 @@ fn decode_snapshot(
     }
     Ok(registry)
 }
-fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), DurableDeviceTrustError> {
+fn atomic_write(path: &Path, bytes: &[u8], preserve_backup: bool) -> Result<(), DurableDeviceTrustError> {
     let temp = suffix(path, ".tmp");
     let backup = suffix(path, ".bak");
     let mut options = OpenOptions::new();
@@ -591,7 +591,7 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), DurableDeviceTrustError
             let _ = dir.sync_all();
         }
     }
-    let _ = fs::remove_file(backup);
+    if !preserve_backup { let _ = fs::remove_file(backup); }
     Ok(())
 }
 
