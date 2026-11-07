@@ -46,7 +46,7 @@ cargo test --workspace --locked
 
 ## Collective Defence security boundary
 
-The Collective Defence work is currently a versioned, privacy-minimised event contract plus a side-effect-free dual-consent policy primitive. Participation is intended to require both an authorised tenant administrator's opt-in and a separate individual user's opt-in for the exact device and principal. See [the consent policy and production integration requirements](docs/COLLECTIVE-DEFENCE-CONSENT.md) and [the event contract](docs/COLLECTIVE-DEFENCE-EVENTS.md).
+The Collective Defence work is currently a versioned, privacy-minimised event contract plus a side-effect-free dual-consent policy primitive. Participation is intended to require both an authorised tenant administrator's opt-in and a separate individual user's opt-in for the exact device and principal. See [the consent policy and production integration requirements](docs/COLLECTIVE-DEFENCE-CONSENT.md) and [the event contract](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/blob/roadmap/collective-defence-event-contract/docs/COLLECTIVE-DEFENCE-EVENTS.md).
 
 This is not yet a live sensor, ingestion service, detection/correlation engine, or dashboard. Consent/revocation persistence and authenticated transport are not implemented. Threat-intelligence exchange does not grant remote access or remote execution; automated containment and remote execution remain disabled.
 
