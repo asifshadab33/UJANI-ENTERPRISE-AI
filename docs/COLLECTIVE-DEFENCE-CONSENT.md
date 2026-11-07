@@ -7,7 +7,7 @@ Collective Defence is **off by default**. Participation requires two separate, i
 1. An authorized administrator's tenant-scoped opt-in.
 2. The individual user's separate opt-in for one named device, using a trusted identity-provider key bound to that tenant, device, and principal.
 
-A tenant administrator enabling the feature never enrolls users or devices automatically. The user consent is purpose-bound to read-only Collective Defence telemetry, the current tenant-policy generation, and a versioned consent notice.
+A tenant administrator enabling the feature never enrolls users or devices automatically. The user consent is purpose-bound to read-only Collective Defence telemetry, the current tenant-policy generation, and a versioned consent notice whose exact text and data-category disclosure are bound by SHA-256.
 
 ## Implemented policy primitive
 
