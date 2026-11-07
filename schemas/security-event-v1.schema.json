@@ -177,14 +177,5 @@
       "pattern": "^[a-fA-F0-9]+$"
     }
   },
-  "$vocabulary": {
-    "https://json-schema.org/draft/2020-12/vocab/core": true,
-    "https://json-schema.org/draft/2020-12/vocab/applicator": true,
-    "https://json-schema.org/draft/2020-12/vocab/unevaluated": true,
-    "https://json-schema.org/draft/2020-12/vocab/validation": true,
-    "https://json-schema.org/draft/2020-12/vocab/meta-data": true,
-    "https://json-schema.org/draft/2020-12/vocab/format-annotation": false,
-    "https://json-schema.org/draft/2020-12/vocab/format-assertion": true,
-    "https://json-schema.org/draft/2020-12/vocab/content": true
-  }
+  "$comment": "Consumers must enable JSON Schema format assertion for uuid and date-time. The repository CI contract validator explicitly asserts both formats."
 }
