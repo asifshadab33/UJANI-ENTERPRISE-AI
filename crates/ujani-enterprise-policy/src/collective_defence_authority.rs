@@ -1,0 +1,398 @@
+//! Transactional reference model for Collective Defence consent authority.
+//!
+//! This module deliberately provides an in-memory reference backend only. It is
+//! useful for specifying and testing generation/CAS/audit semantics, but it is
+//! NOT durable, rollback-resistant, or suitable for production sharing. A
+//! production adapter must implement the same atomic contract with a durable
+//! database and an external monotonic anchor before any event is transmitted.
+#![forbid(unsafe_code)]
+
+use sha2::{Digest, Sha256};
+use std::collections::HashMap;
+use std::sync::Mutex;
+
+const AUDIT_DOMAIN: &[u8] = b"UJANI-COLLECTIVE-DEFENCE-CONSENT-AUDIT-V1\0";
+const RECORD_DOMAIN: &[u8] = b"UJANI-COLLECTIVE-DEFENCE-CONSENT-RECORD-V1\0";
+const MAX_AUDIT_RECORDS: usize = 100_000;
+const MAX_IDEMPOTENCY_KEYS: usize = 100_000;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AuthorityError {
+    InvalidIdentifier,
+    InvalidGeneration,
+    GenerationConflict,
+    GenerationExhausted,
+    IdempotencyConflict,
+    CapacityExceeded,
+    LockPoisoned,
+    TenantNotEnabled,
+    IndividualNotEnabled,
+    ConsentNotCurrent,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TenantConsentRecord {
+    pub tenant_id: String,
+    pub enabled: bool,
+    pub generation: u64,
+    pub purpose: String,
+    pub schema_version: String,
+    pub retention_seconds: u32,
+    pub notice_version: String,
+    pub notice_sha256: [u8; 32],
+    pub actor_key_id: String,
+    pub updated_at_unix_ms: u64,
+    pub expires_at_unix_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IndividualConsentRecord {
+    pub tenant_id: String,
+    pub principal_id: String,
+    pub device_id: String,
+    pub enabled: bool,
+    pub tenant_generation: u64,
+    pub generation: u64,
+    pub purpose: String,
+    pub notice_version: String,
+    pub notice_sha256: [u8; 32],
+    pub actor_key_id: String,
+    pub updated_at_unix_ms: u64,
+    pub expires_at_unix_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConsentAuditRecord {
+    pub sequence: u64,
+    pub event_id: [u8; 32],
+    pub tenant_id: String,
+    pub principal_id: Option<String>,
+    pub device_id: Option<String>,
+    pub action: String,
+    pub previous_generation: u64,
+    pub next_generation: u64,
+    pub actor_key_id: String,
+    pub committed_at_unix_ms: u64,
+    pub previous_hash: [u8; 32],
+    pub record_hash: [u8; 32],
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConsentSnapshot {
+    pub tenant: TenantConsentRecord,
+    pub individual: IndividualConsentRecord,
+}
+
+/// Backend contract. Implementations must make record mutation, audit append,
+/// and idempotency outcome one atomic transaction. Production implementations
+/// must additionally bind committed snapshots to an external monotonic anchor.
+pub trait ConsentAuthorityBackend: Send + Sync {
+    fn put_tenant(
+        &self,
+        record: TenantConsentRecord,
+        expected_generation: Option<u64>,
+        idempotency_key: &str,
+    ) -> Result<ConsentAuditRecord, AuthorityError>;
+
+    fn put_individual(
+        &self,
+        record: IndividualConsentRecord,
+        expected_generation: Option<u64>,
+        idempotency_key: &str,
+    ) -> Result<ConsentAuditRecord, AuthorityError>;
+
+    fn authorization_snapshot(
+        &self,
+        tenant_id: &str,
+        principal_id: &str,
+        device_id: &str,
+        now_unix_ms: u64,
+    ) -> Result<ConsentSnapshot, AuthorityError>;
+}
+
+#[derive(Debug, Clone)]
+struct IdempotencyOutcome {
+    request_hash: [u8; 32],
+    audit: ConsentAuditRecord,
+}
+
+#[derive(Default)]
+struct State {
+    tenants: HashMap<String, TenantConsentRecord>,
+    individuals: HashMap<(String, String, String), IndividualConsentRecord>,
+    audit: Vec<ConsentAuditRecord>,
+    idempotency: HashMap<String, IdempotencyOutcome>,
+}
+
+/// In-memory reference implementation. Process restart loses all state.
+#[derive(Default)]
+pub struct MemoryConsentAuthority {
+    state: Mutex<State>,
+}
+
+fn valid_id(value: &str, max: usize) -> bool {
+    !value.is_empty()
+        && value.len() <= max
+        && value.bytes().all(|b| {
+            b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b':' | b'-' | b'@')
+        })
+}
+
+fn push_string(out: &mut Vec<u8>, value: &str) {
+    out.extend_from_slice(&(value.len() as u32).to_be_bytes());
+    out.extend_from_slice(value.as_bytes());
+}
+
+fn tenant_request_hash(record: &TenantConsentRecord, expected: Option<u64>) -> [u8; 32] {
+    let mut bytes = RECORD_DOMAIN.to_vec();
+    bytes.push(b'T');
+    push_string(&mut bytes, &record.tenant_id);
+    bytes.push(u8::from(record.enabled));
+    bytes.extend_from_slice(&record.generation.to_be_bytes());
+    push_string(&mut bytes, &record.purpose);
+    push_string(&mut bytes, &record.schema_version);
+    bytes.extend_from_slice(&record.retention_seconds.to_be_bytes());
+    push_string(&mut bytes, &record.notice_version);
+    bytes.extend_from_slice(&record.notice_sha256);
+    push_string(&mut bytes, &record.actor_key_id);
+    bytes.extend_from_slice(&record.updated_at_unix_ms.to_be_bytes());
+    bytes.extend_from_slice(&record.expires_at_unix_ms.to_be_bytes());
+    bytes.extend_from_slice(&expected.unwrap_or(0).to_be_bytes());
+    Sha256::digest(bytes).into()
+}
+
+fn individual_request_hash(record: &IndividualConsentRecord, expected: Option<u64>) -> [u8; 32] {
+    let mut bytes = RECORD_DOMAIN.to_vec();
+    bytes.push(b'I');
+    for value in [&record.tenant_id, &record.principal_id, &record.device_id] {
+        push_string(&mut bytes, value);
+    }
+    bytes.push(u8::from(record.enabled));
+    bytes.extend_from_slice(&record.tenant_generation.to_be_bytes());
+    bytes.extend_from_slice(&record.generation.to_be_bytes());
+    push_string(&mut bytes, &record.purpose);
+    push_string(&mut bytes, &record.notice_version);
+    bytes.extend_from_slice(&record.notice_sha256);
+    push_string(&mut bytes, &record.actor_key_id);
+    bytes.extend_from_slice(&record.updated_at_unix_ms.to_be_bytes());
+    bytes.extend_from_slice(&record.expires_at_unix_ms.to_be_bytes());
+    bytes.extend_from_slice(&expected.unwrap_or(0).to_be_bytes());
+    Sha256::digest(bytes).into()
+}
+
+fn audit_hash(
+    sequence: u64,
+    event_id: &[u8; 32],
+    tenant_id: &str,
+    principal_id: Option<&str>,
+    device_id: Option<&str>,
+    action: &str,
+    previous_generation: u64,
+    next_generation: u64,
+    actor_key_id: &str,
+    committed_at: u64,
+    previous_hash: &[u8; 32],
+) -> [u8; 32] {
+    let mut bytes = AUDIT_DOMAIN.to_vec();
+    bytes.extend_from_slice(&sequence.to_be_bytes());
+    bytes.extend_from_slice(event_id);
+    push_string(&mut bytes, tenant_id);
+    push_string(&mut bytes, principal_id.unwrap_or(""));
+    push_string(&mut bytes, device_id.unwrap_or(""));
+    push_string(&mut bytes, action);
+    bytes.extend_from_slice(&previous_generation.to_be_bytes());
+    bytes.extend_from_slice(&next_generation.to_be_bytes());
+    push_string(&mut bytes, actor_key_id);
+    bytes.extend_from_slice(&committed_at.to_be_bytes());
+    bytes.extend_from_slice(previous_hash);
+    Sha256::digest(bytes).into()
+}
+
+impl MemoryConsentAuthority {
+    pub fn audit_log(&self) -> Result<Vec<ConsentAuditRecord>, AuthorityError> {
+        Ok(self.state.lock().map_err(|_| AuthorityError::LockPoisoned)?.audit.clone())
+    }
+
+    pub fn tenant_record(&self, tenant_id: &str) -> Result<Option<TenantConsentRecord>, AuthorityError> {
+        Ok(self.state.lock().map_err(|_| AuthorityError::LockPoisoned)?.tenants.get(tenant_id).cloned())
+    }
+
+    fn append_audit(
+        state: &mut State,
+        idempotency_key: &str,
+        request_hash: [u8; 32],
+        tenant_id: &str,
+        principal_id: Option<&str>,
+        device_id: Option<&str>,
+        action: &str,
+        previous_generation: u64,
+        next_generation: u64,
+        actor_key_id: &str,
+        committed_at: u64,
+    ) -> Result<ConsentAuditRecord, AuthorityError> {
+        if let Some(existing) = state.idempotency.get(idempotency_key) {
+            return if existing.request_hash == request_hash {
+                Ok(existing.audit.clone())
+            } else {
+                Err(AuthorityError::IdempotencyConflict)
+            };
+        }
+        if state.audit.len() >= MAX_AUDIT_RECORDS || state.idempotency.len() >= MAX_IDEMPOTENCY_KEYS {
+            return Err(AuthorityError::CapacityExceeded);
+        }
+        let sequence = u64::try_from(state.audit.len()).map_err(|_| AuthorityError::CapacityExceeded)?.checked_add(1).ok_or(AuthorityError::GenerationExhausted)?;
+        let previous_hash = state.audit.last().map(|a| a.record_hash).unwrap_or([0; 32]);
+        let event_id: [u8; 32] = Sha256::digest([request_hash.as_slice(), idempotency_key.as_bytes()].concat()).into();
+        let record_hash = audit_hash(sequence, &event_id, tenant_id, principal_id, device_id, action, previous_generation, next_generation, actor_key_id, committed_at, &previous_hash);
+        let audit = ConsentAuditRecord {
+            sequence, event_id, tenant_id: tenant_id.to_owned(),
+            principal_id: principal_id.map(str::to_owned),
+            device_id: device_id.map(str::to_owned),
+            action: action.to_owned(), previous_generation, next_generation,
+            actor_key_id: actor_key_id.to_owned(), committed_at_unix_ms: committed_at,
+            previous_hash, record_hash,
+        };
+        state.audit.push(audit.clone());
+        state.idempotency.insert(idempotency_key.to_owned(), IdempotencyOutcome { request_hash, audit: audit.clone() });
+        Ok(audit)
+    }
+}
+
+impl ConsentAuthorityBackend for MemoryConsentAuthority {
+    fn put_tenant(&self, record: TenantConsentRecord, expected_generation: Option<u64>, idempotency_key: &str) -> Result<ConsentAuditRecord, AuthorityError> {
+        if !valid_id(&record.tenant_id, 128) || !valid_id(&record.actor_key_id, 128) || !valid_id(&record.notice_version, 64) || idempotency_key.is_empty() || idempotency_key.len() > 128 {
+            return Err(AuthorityError::InvalidIdentifier);
+        }
+        if record.generation == 0 || record.expires_at_unix_ms <= record.updated_at_unix_ms {
+            return Err(AuthorityError::InvalidGeneration);
+        }
+        let request_hash = tenant_request_hash(&record, expected_generation);
+        let mut state = self.state.lock().map_err(|_| AuthorityError::LockPoisoned)?;
+        if let Some(existing) = state.idempotency.get(idempotency_key) {
+            return if existing.request_hash == request_hash { Ok(existing.audit.clone()) } else { Err(AuthorityError::IdempotencyConflict) };
+        }
+        let current = state.tenants.get(&record.tenant_id).map(|r| r.generation);
+        if current != expected_generation || record.generation != current.unwrap_or(0).checked_add(1).ok_or(AuthorityError::GenerationExhausted)? {
+            return Err(AuthorityError::GenerationConflict);
+        }
+        let audit = Self::append_audit(&mut state, idempotency_key, request_hash, &record.tenant_id, None, None, if record.enabled { "tenant.enable" } else { "tenant.disable" }, current.unwrap_or(0), record.generation, &record.actor_key_id, record.updated_at_unix_ms)?;
+        state.tenants.insert(record.tenant_id.clone(), record);
+        Ok(audit)
+    }
+
+    fn put_individual(&self, record: IndividualConsentRecord, expected_generation: Option<u64>, idempotency_key: &str) -> Result<ConsentAuditRecord, AuthorityError> {
+        if !valid_id(&record.tenant_id, 128) || !valid_id(&record.principal_id, 128) || !valid_id(&record.device_id, 128) || !valid_id(&record.actor_key_id, 128) || !valid_id(&record.notice_version, 64) || idempotency_key.is_empty() || idempotency_key.len() > 128 {
+            return Err(AuthorityError::InvalidIdentifier);
+        }
+        if record.generation == 0 || record.tenant_generation == 0 || record.expires_at_unix_ms <= record.updated_at_unix_ms {
+            return Err(AuthorityError::InvalidGeneration);
+        }
+        let request_hash = individual_request_hash(&record, expected_generation);
+        let mut state = self.state.lock().map_err(|_| AuthorityError::LockPoisoned)?;
+        if let Some(existing) = state.idempotency.get(idempotency_key) {
+            return if existing.request_hash == request_hash { Ok(existing.audit.clone()) } else { Err(AuthorityError::IdempotencyConflict) };
+        }
+        let tenant = state.tenants.get(&record.tenant_id).ok_or(AuthorityError::TenantNotEnabled)?;
+        if !tenant.enabled || tenant.generation != record.tenant_generation {
+            return Err(AuthorityError::TenantNotEnabled);
+        }
+        let key = (record.tenant_id.clone(), record.principal_id.clone(), record.device_id.clone());
+        let current = state.individuals.get(&key).map(|r| r.generation);
+        if current != expected_generation || record.generation != current.unwrap_or(0).checked_add(1).ok_or(AuthorityError::GenerationExhausted)? {
+            return Err(AuthorityError::GenerationConflict);
+        }
+        let audit = Self::append_audit(&mut state, idempotency_key, request_hash, &record.tenant_id, Some(&record.principal_id), Some(&record.device_id), if record.enabled { "individual.enable" } else { "individual.withdraw" }, current.unwrap_or(0), record.generation, &record.actor_key_id, record.updated_at_unix_ms)?;
+        state.individuals.insert(key, record);
+        Ok(audit)
+    }
+
+    fn authorization_snapshot(&self, tenant_id: &str, principal_id: &str, device_id: &str, now: u64) -> Result<ConsentSnapshot, AuthorityError> {
+        let state = self.state.lock().map_err(|_| AuthorityError::LockPoisoned)?;
+        let tenant = state.tenants.get(tenant_id).cloned().ok_or(AuthorityError::TenantNotEnabled)?;
+        if !tenant.enabled || tenant.expires_at_unix_ms <= now {
+            return Err(AuthorityError::TenantNotEnabled);
+        }
+        let key = (tenant_id.to_owned(), principal_id.to_owned(), device_id.to_owned());
+        let individual = state.individuals.get(&key).cloned().ok_or(AuthorityError::IndividualNotEnabled)?;
+        if !individual.enabled || individual.expires_at_unix_ms <= now {
+            return Err(AuthorityError::IndividualNotEnabled);
+        }
+        if individual.tenant_generation != tenant.generation {
+            return Err(AuthorityError::ConsentNotCurrent);
+        }
+        Ok(ConsentSnapshot { tenant, individual })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tenant(enabled: bool, generation: u64, now: u64) -> TenantConsentRecord {
+        TenantConsentRecord {
+            tenant_id: "tenant-a".into(), enabled, generation,
+            purpose: "collective-defence.read-only.v1".into(), schema_version: "1.0".into(),
+            retention_seconds: if enabled { 86_400 } else { 0 },
+            notice_version: "notice-v1".into(), notice_sha256: [1; 32],
+            actor_key_id: "admin-key".into(), updated_at_unix_ms: now, expires_at_unix_ms: now + 60_000,
+        }
+    }
+    fn individual(enabled: bool, tenant_generation: u64, generation: u64, now: u64) -> IndividualConsentRecord {
+        IndividualConsentRecord {
+            tenant_id: "tenant-a".into(), principal_id: "user-a".into(), device_id: "device-a".into(),
+            enabled, tenant_generation, generation, purpose: "collective-defence.read-only.v1".into(),
+            notice_version: "notice-v1".into(), notice_sha256: [2; 32], actor_key_id: "user-key".into(),
+            updated_at_unix_ms: now, expires_at_unix_ms: now + 60_000,
+        }
+    }
+
+    #[test]
+    fn two_independent_decisions_are_required() {
+        let store = MemoryConsentAuthority::default();
+        store.put_tenant(tenant(true, 1, 100), None, "t-1").unwrap();
+        assert_eq!(store.authorization_snapshot("tenant-a", "user-a", "device-a", 101), Err(AuthorityError::IndividualNotEnabled));
+        store.put_individual(individual(true, 1, 1, 102), None, "i-1").unwrap();
+        assert!(store.authorization_snapshot("tenant-a", "user-a", "device-a", 103).is_ok());
+    }
+
+    #[test]
+    fn tenant_disable_invalidates_every_individual_snapshot() {
+        let store = MemoryConsentAuthority::default();
+        store.put_tenant(tenant(true, 1, 100), None, "t-1").unwrap();
+        store.put_individual(individual(true, 1, 1, 101), None, "i-1").unwrap();
+        store.put_tenant(tenant(false, 2, 102), Some(1), "t-2").unwrap();
+        assert_eq!(store.authorization_snapshot("tenant-a", "user-a", "device-a", 103), Err(AuthorityError::TenantNotEnabled));
+        assert_eq!(store.put_individual(individual(true, 1, 2, 104), Some(1), "i-2"), Err(AuthorityError::TenantNotEnabled));
+    }
+
+    #[test]
+    fn individual_withdrawal_invalidates_only_that_device() {
+        let store = MemoryConsentAuthority::default();
+        store.put_tenant(tenant(true, 1, 100), None, "t-1").unwrap();
+        store.put_individual(individual(true, 1, 1, 101), None, "i-1").unwrap();
+        store.put_individual(individual(false, 1, 2, 102), Some(1), "i-2").unwrap();
+        assert_eq!(store.authorization_snapshot("tenant-a", "user-a", "device-a", 103), Err(AuthorityError::IndividualNotEnabled));
+    }
+
+    #[test]
+    fn compare_and_set_and_idempotency_are_enforced() {
+        let store = MemoryConsentAuthority::default();
+        let record = tenant(true, 1, 100);
+        let first = store.put_tenant(record.clone(), None, "request-1").unwrap();
+        let retry = store.put_tenant(record, None, "request-1").unwrap();
+        assert_eq!(first, retry);
+        assert_eq!(store.put_tenant(tenant(false, 2, 101), None, "request-2"), Err(AuthorityError::GenerationConflict));
+        assert_eq!(store.put_tenant(tenant(false, 2, 101), Some(1), "request-1"), Err(AuthorityError::IdempotencyConflict));
+    }
+
+    #[test]
+    fn audit_records_form_a_hash_chain() {
+        let store = MemoryConsentAuthority::default();
+        store.put_tenant(tenant(true, 1, 100), None, "t-1").unwrap();
+        store.put_tenant(tenant(false, 2, 101), Some(1), "t-2").unwrap();
+        let audit = store.audit_log().unwrap();
+        assert_eq!(audit.len(), 2);
+        assert_eq!(audit[1].previous_hash, audit[0].record_hash);
+        assert_ne!(audit[1].record_hash, [0; 32]);
+    }
+}
