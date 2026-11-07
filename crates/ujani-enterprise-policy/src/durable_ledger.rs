@@ -22,6 +22,7 @@ pub enum DurableLedgerError {
     Io(String),
     CorruptState,
     InvalidRecord,
+    CapacityExceeded,
     LockPoisoned,
 }
 
@@ -36,6 +37,10 @@ impl std::fmt::Display for DurableLedgerError {
             Self::InvalidRecord => write!(
                 formatter,
                 "durable ledger contains an invalid or duplicate record"
+            ),
+            Self::CapacityExceeded => write!(
+                formatter,
+                "durable ledger snapshot would exceed the 16 MiB safety limit; committed state was not changed"
             ),
             Self::LockPoisoned => write!(formatter, "durable ledger thread lock is poisoned"),
         }
@@ -439,6 +444,9 @@ fn persist_snapshot(path: &Path, ledger: &Ledger) -> Result<(), DurableLedgerErr
         fs::remove_file(&temp)?;
     }
     let bytes = serialize_snapshot(ledger);
+    if bytes.len() as u64 > MAX_LEDGER_BYTES {
+        return Err(DurableLedgerError::CapacityExceeded);
+    }
     let mut temp_options = OpenOptions::new();
     temp_options.create_new(true).write(true);
     #[cfg(unix)]
@@ -610,6 +618,28 @@ mod tests {
         fs::write(&path, b"corrupt").unwrap();
         let ledger = DurableLedger::open(&path).unwrap();
         assert_eq!(ledger.snapshot().unwrap().active_jobs, 1);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn oversized_snapshot_is_rejected_without_replacing_committed_file() {
+        let path = temp_path("capacity");
+        fs::write(&path, b"previous committed snapshot").unwrap();
+
+        let mut ledger = Ledger::default();
+        let prefix = "a".repeat(120);
+        for index in 0..70_000 {
+            ledger
+                .consumed_approvals
+                .insert(format!("{prefix}-{index:06}"));
+        }
+        assert!(serialize_snapshot(&ledger).len() as u64 > MAX_LEDGER_BYTES);
+
+        assert_eq!(
+            persist_snapshot(&path, &ledger),
+            Err(DurableLedgerError::CapacityExceeded)
+        );
+        assert_eq!(fs::read(&path).unwrap(), b"previous committed snapshot");
         cleanup(&path);
     }
 
