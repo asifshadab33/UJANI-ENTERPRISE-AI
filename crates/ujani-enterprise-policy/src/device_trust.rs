@@ -747,10 +747,9 @@ mod tests {
         };
         // A V1 signature must not be accepted after the V2 body/workload binding change.
         let mut legacy_claims = signed.claims.clone();
-        legacy_claims.request_id =
-            sha2::Sha256::digest(b"legacy-v1-request-id")[..16]
-                .try_into()
-                .unwrap();
+        legacy_claims.request_id = sha2::Sha256::digest(b"legacy-v1-request-id")[..16]
+            .try_into()
+            .unwrap();
         let mut legacy_bytes = device_request_bytes(&legacy_claims);
         let legacy_domain = b"UJANI-ENTERPRISE-DEVICE-REQUEST-V1\0";
         assert_eq!(legacy_domain.len(), DEVICE_DOMAIN.len());
@@ -771,7 +770,9 @@ mod tests {
             r.authenticate_request(&signed, b"tampered body", 250),
             Err(DeviceTrustError::BodyDigestMismatch)
         );
-        let authenticated = r.authenticate_request_for(&signed, "POST", "lease:acquire", body, 250).unwrap();
+        let authenticated = r
+            .authenticate_request_for(&signed, "POST", "lease:acquire", body, 250)
+            .unwrap();
         assert_eq!(authenticated.tenant_id(), "tenant-a");
         assert_eq!(authenticated.workload_id(), "workload-1");
         assert_eq!(authenticated.resource_id(), "lease:acquire");
