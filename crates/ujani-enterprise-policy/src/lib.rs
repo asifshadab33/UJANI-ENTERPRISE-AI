@@ -337,7 +337,7 @@ impl RejectReason {
             Self::InvalidLeaseToken => "lease capability is invalid or already in use",
             Self::SchedulingEvidenceMismatch => {
                 "verified scheduling evidence does not match this device and workload"
-            },
+            }
             Self::SchedulingEvidenceExpired => "verified scheduling evidence has expired",
         }
     }
