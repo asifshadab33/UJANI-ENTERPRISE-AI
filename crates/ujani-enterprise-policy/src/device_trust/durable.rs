@@ -296,8 +296,10 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn path() -> PathBuf {
-        let n=SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        std::env::temp_dir().join(format!("ujani-device-trust-{}-{n}.db",std::process::id()))
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        std::env::temp_dir().join(format!("ujani-device-trust-{}-{time}-{n}.db", std::process::id()))
     }
     fn open(path:&Path, admin:&SigningKey) -> DurableDeviceRegistry {
         DurableDeviceRegistry::open(
