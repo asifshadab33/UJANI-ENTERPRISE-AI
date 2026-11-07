@@ -595,7 +595,8 @@ mod tests {
     #[test]
     fn request_body_must_match_the_signed_digest() {
         let (mut r, admin, device) = registry();
-        r.apply_admin_command(&enrollment(&admin, &device, 1), 200).unwrap();
+        r.apply_admin_command(&enrollment(&admin, &device, 1), 200)
+            .unwrap();
         let body = b"tenant-scoped lease request";
         let claims = DeviceRequestClaims {
             tenant_id: "tenant-a".into(),
