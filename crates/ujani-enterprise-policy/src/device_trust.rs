@@ -14,7 +14,8 @@ use sha2::Digest;
 use std::collections::HashMap;
 
 const ADMIN_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-DEVICE-ADMIN-COMMAND-V1\0";
-const DEVICE_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-DEVICE-REQUEST-V1\0";
+// V2 signs the exact body digest and explicit workload/manifest binding fields.
+const DEVICE_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-DEVICE-REQUEST-V2\0";
 const ENROLLMENT_PROOF_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-DEVICE-KEY-PROOF-V1\0";
 const CLOCK_SKEW_MS: u64 = 30_000;
 const MAX_REPLAY_ENTRIES: usize = 100_000;
@@ -86,6 +87,10 @@ pub struct DeviceRequestClaims {
     pub expires_at_unix_ms: u64,
     pub method: String,
     pub resource_id: String,
+    /// Workload this signed request is authorized to acquire, renew or release.
+    pub workload_id: String,
+    /// Canonical manifest digest claimed by the workload request.
+    pub manifest_sha256: [u8; 32],
     /// SHA-256 of the exact raw request body; the transport must pass those same bytes to authentication.
     pub body_sha256: [u8; 32],
 }
@@ -94,6 +99,72 @@ pub struct DeviceRequestClaims {
 pub struct SignedDeviceRequest {
     pub claims: DeviceRequestClaims,
     pub signature: [u8; 64],
+}
+
+/// Request-scoped identity and workload binding produced after device signature verification.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthenticatedDeviceRequest {
+    device: AuthenticatedDevice,
+    workload_id: String,
+    manifest_sha256: [u8; 32],
+    request_id: [u8; 16],
+    method: String,
+    resource_id: String,
+    expires_at_unix_ms: u64,
+}
+impl AuthenticatedDeviceRequest {
+    /// Returns the authenticated device principal.
+    pub fn device(&self) -> &AuthenticatedDevice {
+        &self.device
+    }
+    /// Returns the tenant authenticated by the enrolled device key.
+    pub fn tenant_id(&self) -> &str {
+        self.device.tenant_id()
+    }
+    /// Returns the enrolled device identifier.
+    pub fn device_id(&self) -> &str {
+        self.device.device_id()
+    }
+    /// Returns the key identifier used to sign this request.
+    pub fn key_id(&self) -> &str {
+        self.device.key_id()
+    }
+    /// Returns the enrolled key generation used to sign this request.
+    pub fn key_generation(&self) -> u64 {
+        self.device.key_generation()
+    }
+    /// Returns the workload identifier covered by the request signature.
+    pub fn workload_id(&self) -> &str {
+        &self.workload_id
+    }
+    /// Returns the manifest SHA-256 covered by the request signature.
+    pub fn manifest_sha256(&self) -> &[u8; 32] {
+        &self.manifest_sha256
+    }
+    /// Returns the replay-protected request identifier.
+    pub fn request_id(&self) -> &[u8; 16] {
+        &self.request_id
+    }
+    /// Returns the HTTP-style method covered by the request signature.
+    pub fn method(&self) -> &str {
+        &self.method
+    }
+    /// Returns the resource or lease operation covered by the request signature.
+    pub fn resource_id(&self) -> &str {
+        &self.resource_id
+    }
+    /// Returns the request expiry in Unix milliseconds.
+    pub fn expires_at_unix_ms(&self) -> u64 {
+        self.expires_at_unix_ms
+    }
+    /// Validates and confirms that a workload manifest matches the signed request binding.
+    pub fn binds_manifest(
+        &self,
+        manifest: &crate::WorkloadManifest,
+    ) -> Result<bool, crate::ManifestError> {
+        let digest = crate::workload_manifest_sha256(manifest)?;
+        Ok(self.workload_id == manifest.workload_id && self.manifest_sha256 == digest)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -278,9 +349,9 @@ impl DeviceRegistry {
         Ok(next_generation)
     }
 
-    /// Authenticate a request only when its signed HTTP method and route resource
-    /// match the endpoint selected by the server. A mismatch is rejected before
-    /// replay state is consumed, so the same request can be retried at its proper route.
+    /// Authenticates a request only for the method and resource selected by the server route.
+    ///
+    /// A route mismatch is rejected before the replay nonce is consumed.
     pub fn authenticate_request_for(
         &mut self,
         signed: &SignedDeviceRequest,
@@ -288,7 +359,7 @@ impl DeviceRegistry {
         expected_resource_id: &str,
         body: &[u8],
         now: u64,
-    ) -> Result<AuthenticatedDevice, DeviceTrustError> {
+    ) -> Result<AuthenticatedDeviceRequest, DeviceTrustError> {
         if signed.claims.method != expected_method
             || signed.claims.resource_id != expected_resource_id
         {
@@ -309,13 +380,14 @@ impl DeviceRegistry {
         signed: &SignedDeviceRequest,
         body: &[u8],
         now: u64,
-    ) -> Result<AuthenticatedDevice, DeviceTrustError> {
+    ) -> Result<AuthenticatedDeviceRequest, DeviceTrustError> {
         let c = &signed.claims;
         if !valid_id(&c.tenant_id, 128)
             || !valid_id(&c.device_id, 128)
             || !valid_id(&c.key_id, 128)
             || !valid_id(&c.method, 16)
             || !valid_id(&c.resource_id, 256)
+            || !valid_id(&c.workload_id, 128)
             || c.request_id.iter().all(|byte| *byte == 0)
             || c.key_generation == 0
         {
@@ -366,11 +438,19 @@ impl DeviceRegistry {
             .map_err(|_| DeviceTrustError::InvalidDeviceSignature)?;
         self.request_nonces
             .insert(c.request_id, c.expires_at_unix_ms);
-        Ok(AuthenticatedDevice {
-            tenant_id: c.tenant_id.clone(),
-            device_id: c.device_id.clone(),
-            key_id: c.key_id.clone(),
-            key_generation: c.key_generation,
+        Ok(AuthenticatedDeviceRequest {
+            device: AuthenticatedDevice {
+                tenant_id: c.tenant_id.clone(),
+                device_id: c.device_id.clone(),
+                key_id: c.key_id.clone(),
+                key_generation: c.key_generation,
+            },
+            workload_id: c.workload_id.clone(),
+            manifest_sha256: c.manifest_sha256,
+            request_id: c.request_id,
+            method: c.method.clone(),
+            resource_id: c.resource_id.clone(),
+            expires_at_unix_ms: c.expires_at_unix_ms,
         })
     }
 }
@@ -492,6 +572,8 @@ fn device_request_bytes(c: &DeviceRequestClaims) -> Vec<u8> {
     ] {
         put_string(&mut out, v);
     }
+    put_string(&mut out, &c.workload_id);
+    out.extend_from_slice(&c.manifest_sha256);
     out.extend_from_slice(&c.key_generation.to_be_bytes());
     out.extend_from_slice(&c.request_id);
     out.extend_from_slice(&c.body_sha256);
@@ -547,6 +629,8 @@ mod tests {
             expires_at_unix_ms: 500,
             method: "POST".into(),
             resource_id: "lease:acquire".into(),
+            workload_id: "workload-1".into(),
+            manifest_sha256: sha2::Sha256::digest(b"manifest-v1").into(),
             body_sha256: sha2::Sha256::digest([]).into(),
         };
         let signed = SignedDeviceRequest {
@@ -572,6 +656,8 @@ mod tests {
             expires_at_unix_ms: 500,
             method: "POST".into(),
             resource_id: "lease:renew".into(),
+            workload_id: "workload-1".into(),
+            manifest_sha256: sha2::Sha256::digest(b"manifest-v1").into(),
             body_sha256: sha2::Sha256::digest([]).into(),
         };
         let signed = SignedDeviceRequest {
@@ -609,6 +695,8 @@ mod tests {
             expires_at_unix_ms: 500,
             method: "POST".into(),
             resource_id: "lease:acquire".into(),
+            workload_id: "workload-1".into(),
+            manifest_sha256: sha2::Sha256::digest(b"manifest-v1").into(),
             body_sha256: sha2::Sha256::digest([]).into(),
         };
         let signed = SignedDeviceRequest {
@@ -627,6 +715,18 @@ mod tests {
         r.apply_admin_command(&enrollment(&admin, &device, 1), 200)
             .unwrap();
         let body = b"tenant-scoped lease request";
+        let manifest = crate::WorkloadManifest {
+            schema_version: 1,
+            workload_id: "workload-1".into(),
+            class: "inference".into(),
+            model: "test-model".into(),
+            requested_cpu_millis: 500,
+            requested_memory_mb: 512,
+            max_runtime_ms: 30_000,
+            data_classification: crate::DataClassification::Public,
+            network_access: false,
+        };
+        let manifest_digest = crate::workload_manifest_sha256(&manifest).unwrap();
         let claims = DeviceRequestClaims {
             tenant_id: "tenant-a".into(),
             device_id: "device-1".into(),
@@ -637,17 +737,73 @@ mod tests {
             expires_at_unix_ms: 500,
             method: "POST".into(),
             resource_id: "lease:acquire".into(),
+            workload_id: "workload-1".into(),
+            manifest_sha256: manifest_digest,
             body_sha256: sha2::Sha256::digest(body).into(),
         };
         let signed = SignedDeviceRequest {
             signature: device.sign(&device_request_bytes(&claims)).to_bytes(),
             claims,
         };
+        // A V1 signature must not be accepted after the V2 body/workload binding change.
+        let mut legacy_claims = signed.claims.clone();
+        legacy_claims.request_id = sha2::Sha256::digest(b"legacy-v1-request-id")[..16]
+            .try_into()
+            .unwrap();
+        let mut legacy_bytes = device_request_bytes(&legacy_claims);
+        let legacy_domain = b"UJANI-ENTERPRISE-DEVICE-REQUEST-V1\0";
+        assert_eq!(legacy_domain.len(), DEVICE_DOMAIN.len());
+        legacy_bytes[..legacy_domain.len()].copy_from_slice(legacy_domain);
+        let legacy_signed = SignedDeviceRequest {
+            signature: device.sign(&legacy_bytes).to_bytes(),
+            claims: legacy_claims,
+        };
+        assert_eq!(
+            r.authenticate_request(&legacy_signed, body, 250),
+            Err(DeviceTrustError::InvalidDeviceSignature)
+        );
+        assert_eq!(
+            r.authenticate_request_for(&signed, "POST", "lease:renew", body, 250),
+            Err(DeviceTrustError::RequestTargetMismatch)
+        );
         assert_eq!(
             r.authenticate_request(&signed, b"tampered body", 250),
             Err(DeviceTrustError::BodyDigestMismatch)
         );
-        assert!(r.authenticate_request(&signed, body, 250).is_ok());
+        let authenticated = r
+            .authenticate_request_for(&signed, "POST", "lease:acquire", body, 250)
+            .unwrap();
+        assert_eq!(authenticated.tenant_id(), "tenant-a");
+        assert_eq!(authenticated.workload_id(), "workload-1");
+        assert_eq!(authenticated.resource_id(), "lease:acquire");
+        assert_eq!(authenticated.expires_at_unix_ms(), 500);
+        assert!(authenticated.binds_manifest(&manifest).unwrap());
+        let mut substituted_manifest = manifest.clone();
+        substituted_manifest.workload_id = "workload-other".into();
+        assert!(!authenticated.binds_manifest(&substituted_manifest).unwrap());
+        let mut changed_manifest = manifest.clone();
+        changed_manifest.model = "other-model".into();
+        assert!(!authenticated.binds_manifest(&changed_manifest).unwrap());
+        let wrong_manifest_digest: [u8; 32] = sha2::Sha256::digest(b"substituted-manifest").into();
+        let mut substituted = signed.clone();
+        substituted.claims.request_id = sha2::Sha256::digest(b"substituted-workload-id")[..16]
+            .try_into()
+            .unwrap();
+        substituted.claims.workload_id = "workload-other".into();
+        assert_eq!(
+            r.authenticate_request(&substituted, body, 250),
+            Err(DeviceTrustError::InvalidDeviceSignature)
+        );
+        let mut substituted_digest = signed.clone();
+        substituted_digest.claims.request_id = sha2::Sha256::digest(b"substituted-manifest-id")
+            [..16]
+            .try_into()
+            .unwrap();
+        substituted_digest.claims.manifest_sha256 = wrong_manifest_digest;
+        assert_eq!(
+            r.authenticate_request(&substituted_digest, body, 250),
+            Err(DeviceTrustError::InvalidDeviceSignature)
+        );
     }
 
     #[test]
@@ -656,7 +812,8 @@ mod tests {
         r.apply_admin_command(&enrollment(&admin, &device, 1), 200)
             .unwrap();
         let body = vec![b'x'; MAX_DEVICE_REQUEST_BODY_BYTES + 1];
-        let request_id = [13; 16];
+        let request_digest = sha2::Sha256::digest(&body);
+        let request_id: [u8; 16] = request_digest[..16].try_into().unwrap();
         let claims = DeviceRequestClaims {
             tenant_id: "tenant-a".into(),
             device_id: "device-1".into(),
@@ -667,6 +824,8 @@ mod tests {
             expires_at_unix_ms: 500,
             method: "POST".into(),
             resource_id: "lease:acquire".into(),
+            workload_id: "workload-1".into(),
+            manifest_sha256: sha2::Sha256::digest(b"manifest-v1").into(),
             body_sha256: sha2::Sha256::digest(&body).into(),
         };
         let signed = SignedDeviceRequest {
@@ -711,6 +870,8 @@ mod tests {
             expires_at_unix_ms: 500,
             method: "POST".into(),
             resource_id: "lease:acquire".into(),
+            workload_id: "workload-1".into(),
+            manifest_sha256: sha2::Sha256::digest(b"manifest-v1").into(),
             body_sha256: sha2::Sha256::digest([]).into(),
         };
         let signed = SignedDeviceRequest {
@@ -758,6 +919,8 @@ mod tests {
             expires_at_unix_ms: 500,
             method: "POST".into(),
             resource_id: "lease:release".into(),
+            workload_id: "workload-1".into(),
+            manifest_sha256: sha2::Sha256::digest(b"manifest-v1").into(),
             body_sha256: sha2::Sha256::digest([]).into(),
         };
         let old_signed = SignedDeviceRequest {
