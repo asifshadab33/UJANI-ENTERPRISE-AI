@@ -1,0 +1,466 @@
+//! Signed, challenge-bound scheduling evidence.
+//!
+//! Worker telemetry is signed by the enrolled worker device. Scheduling,
+//! network-egress and data-classification decisions are signed by an enrolled
+//! administrator key and bound to the exact workload manifest. Callers cannot
+//! construct a VerifiedSchedulingContext directly.
+use crate::{
+    admit_and_reserve, admit_with_context, Admission, ClassPolicy, Device, Ledger,
+    SchedulingContext, VerifiedAdminApproval, Workload,
+};
+use ed25519_dalek::{Signature, VerifyingKey};
+use sha2::{Digest, Sha256};
+
+const TELEMETRY_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-WORKER-TELEMETRY-V1\0";
+const POLICY_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-SCHEDULING-POLICY-V1\0";
+const CLOCK_SKEW_TOLERANCE_MS: u64 = 30_000;
+pub const MAX_WORKER_TELEMETRY_TTL_MS: u64 = 30_000;
+pub const MAX_SCHEDULING_POLICY_TTL_MS: u64 = 5 * 60 * 1000;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkerTelemetryClaims {
+    pub device_id: String,
+    pub challenge_nonce: [u8; 16],
+    pub issued_at_unix_ms: u64,
+    pub expires_unix_ms: u64,
+    pub owner_opted_in: bool,
+    pub interactive_user_present: bool,
+    pub on_ac_power: bool,
+    pub device_already_running: bool,
+    pub thermal_state_safe: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignedWorkerTelemetry {
+    pub claims: WorkerTelemetryClaims,
+    pub signature: [u8; 64],
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SchedulingPolicyClaims {
+    pub policy_id: String,
+    pub policy_key_id: String,
+    pub device_id: String,
+    pub workload_id: String,
+    pub manifest_sha256: [u8; 32],
+    pub challenge_nonce: [u8; 16],
+    pub issued_at_unix_ms: u64,
+    pub expires_unix_ms: u64,
+    pub within_admin_schedule: bool,
+    pub network_policy_allows: bool,
+    pub data_classification_allows: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignedSchedulingPolicy {
+    pub claims: SchedulingPolicyClaims,
+    pub signature: [u8; 64],
+}
+
+/// A scheduling context that can only be produced after both signatures,
+/// challenge binding, workload binding and freshness checks succeed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedSchedulingContext(SchedulingContext);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SchedulingEvidenceError {
+    InvalidIdentifier,
+    DeviceMismatch,
+    WorkloadMismatch,
+    ManifestMismatch,
+    ChallengeMismatch,
+    InvalidTimeWindow,
+    UnknownDeviceKey,
+    UnknownAdminKey,
+    InvalidWorkerSignature,
+    InvalidPolicySignature,
+}
+
+fn append_string(bytes: &mut Vec<u8>, value: &str) {
+    bytes.extend_from_slice(&(value.len() as u32).to_be_bytes());
+    bytes.extend_from_slice(value.as_bytes());
+}
+
+fn worker_telemetry_bytes(claims: &WorkerTelemetryClaims) -> Vec<u8> {
+    let mut bytes = TELEMETRY_DOMAIN.to_vec();
+    append_string(&mut bytes, &claims.device_id);
+    bytes.extend_from_slice(&claims.challenge_nonce);
+    bytes.extend_from_slice(&claims.issued_at_unix_ms.to_be_bytes());
+    bytes.extend_from_slice(&claims.expires_unix_ms.to_be_bytes());
+    bytes.push(u8::from(claims.owner_opted_in));
+    bytes.push(u8::from(claims.interactive_user_present));
+    bytes.push(u8::from(claims.on_ac_power));
+    bytes.push(u8::from(claims.device_already_running));
+    bytes.push(u8::from(claims.thermal_state_safe));
+    bytes
+}
+
+fn scheduling_policy_bytes(claims: &SchedulingPolicyClaims) -> Vec<u8> {
+    let mut bytes = POLICY_DOMAIN.to_vec();
+    for value in [
+        &claims.policy_id,
+        &claims.policy_key_id,
+        &claims.device_id,
+        &claims.workload_id,
+    ] {
+        append_string(&mut bytes, value);
+    }
+    bytes.extend_from_slice(&claims.manifest_sha256);
+    bytes.extend_from_slice(&claims.challenge_nonce);
+    bytes.extend_from_slice(&claims.issued_at_unix_ms.to_be_bytes());
+    bytes.extend_from_slice(&claims.expires_unix_ms.to_be_bytes());
+    bytes.push(u8::from(claims.within_admin_schedule));
+    bytes.push(u8::from(claims.network_policy_allows));
+    bytes.push(u8::from(claims.data_classification_allows));
+    bytes
+}
+
+fn valid_identifier(value: &str, max_len: usize) -> bool {
+    !value.trim().is_empty()
+        && value.len() <= max_len
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "._:-".contains(c))
+}
+
+fn valid_time_window(issued: u64, expires: u64, now: u64, max_ttl: u64) -> bool {
+    issued <= now.saturating_add(CLOCK_SKEW_TOLERANCE_MS)
+        && expires > now
+        && expires > issued
+        && expires.saturating_sub(issued) <= max_ttl
+        && now.saturating_sub(issued) <= max_ttl
+}
+
+/// Verify fresh worker telemetry and administrator policy for one dispatch.
+/// The caller must issue a cryptographically random, single-use challenge and
+/// atomically consume it in its control plane; this function verifies equality
+/// but does not provide persistent replay storage.
+pub fn verify_scheduling_context(
+    device: &Device,
+    workload: &Workload,
+    telemetry: &SignedWorkerTelemetry,
+    policy: &SignedSchedulingPolicy,
+    enrolled_device_keys: &[(String, VerifyingKey)],
+    enrolled_admin_keys: &[(String, VerifyingKey)],
+    expected_challenge_nonce: &[u8; 16],
+    now_unix_ms: u64,
+) -> Result<VerifiedSchedulingContext, SchedulingEvidenceError> {
+    let telemetry_claims = &telemetry.claims;
+    let policy_claims = &policy.claims;
+
+    if !valid_identifier(&device.device_id, 128)
+        || !valid_identifier(&workload.workload_id, 128)
+        || !valid_identifier(&policy_claims.policy_id, 128)
+        || !valid_identifier(&policy_claims.policy_key_id, 128)
+    {
+        return Err(SchedulingEvidenceError::InvalidIdentifier);
+    }
+    if telemetry_claims.device_id != device.device_id
+        || policy_claims.device_id != device.device_id
+    {
+        return Err(SchedulingEvidenceError::DeviceMismatch);
+    }
+    if policy_claims.workload_id != workload.workload_id {
+        return Err(SchedulingEvidenceError::WorkloadMismatch);
+    }
+    if policy_claims.manifest_sha256 != workload.manifest_sha256 {
+        return Err(SchedulingEvidenceError::ManifestMismatch);
+    }
+    if telemetry_claims.challenge_nonce != *expected_challenge_nonce
+        || policy_claims.challenge_nonce != *expected_challenge_nonce
+    {
+        return Err(SchedulingEvidenceError::ChallengeMismatch);
+    }
+    if !valid_time_window(
+        telemetry_claims.issued_at_unix_ms,
+        telemetry_claims.expires_unix_ms,
+        now_unix_ms,
+        MAX_WORKER_TELEMETRY_TTL_MS,
+    ) || !valid_time_window(
+        policy_claims.issued_at_unix_ms,
+        policy_claims.expires_unix_ms,
+        now_unix_ms,
+        MAX_SCHEDULING_POLICY_TTL_MS,
+    ) {
+        return Err(SchedulingEvidenceError::InvalidTimeWindow);
+    }
+
+    let device_key = enrolled_device_keys
+        .iter()
+        .find(|(device_id, _)| device_id == &device.device_id)
+        .map(|(_, key)| key)
+        .ok_or(SchedulingEvidenceError::UnknownDeviceKey)?;
+    device_key
+        .verify_strict(
+            &worker_telemetry_bytes(telemetry_claims),
+            &Signature::from_bytes(&telemetry.signature),
+        )
+        .map_err(|_| SchedulingEvidenceError::InvalidWorkerSignature)?;
+
+    let admin_key = enrolled_admin_keys
+        .iter()
+        .find(|(key_id, _)| key_id == &policy_claims.policy_key_id)
+        .map(|(_, key)| key)
+        .ok_or(SchedulingEvidenceError::UnknownAdminKey)?;
+    admin_key
+        .verify_strict(
+            &scheduling_policy_bytes(policy_claims),
+            &Signature::from_bytes(&policy.signature),
+        )
+        .map_err(|_| SchedulingEvidenceError::InvalidPolicySignature)?;
+
+    let mut context = SchedulingContext {
+        owner_opted_in: telemetry_claims.owner_opted_in,
+        within_admin_schedule: policy_claims.within_admin_schedule,
+        interactive_user_present: telemetry_claims.interactive_user_present,
+        on_ac_power: telemetry_claims.on_ac_power,
+        device_already_running: telemetry_claims.device_already_running,
+        thermal_state_safe: telemetry_claims.thermal_state_safe,
+        network_policy_allows: policy_claims.network_policy_allows,
+        data_classification_allows: policy_claims.data_classification_allows,
+        telemetry_fresh: true,
+    };
+    // Fail closed if the signed worker evidence is internally inconsistent.
+    if !telemetry_claims.owner_opted_in {
+        context.owner_opted_in = false;
+    }
+    Ok(VerifiedSchedulingContext(context))
+}
+
+/// Evaluate policy using only cryptographically verified scheduling evidence.
+pub fn admit_with_verified_context(
+    device: &Device,
+    workload: &Workload,
+    context: &VerifiedSchedulingContext,
+    policies: &[ClassPolicy],
+    approvals: &[VerifiedAdminApproval],
+    now_unix_ms: u64,
+) -> Admission {
+    admit_with_context(
+        device,
+        workload,
+        &context.0,
+        policies,
+        approvals,
+        now_unix_ms,
+    )
+}
+
+/// Atomically reserve in the in-memory prototype after verified evidence and
+/// lease-capability checks. Production still needs a durable transactional ledger.
+pub fn admit_and_reserve_with_verified_lease(
+    ledger: &mut Ledger,
+    device: &Device,
+    workload: &Workload,
+    context: &VerifiedSchedulingContext,
+    policies: &[ClassPolicy],
+    approvals: &[VerifiedAdminApproval],
+    now_unix_ms: u64,
+    lease_token: &[u8; 32],
+) -> Admission {
+    ledger.admit_and_reserve_with_lease(
+        device,
+        workload,
+        &context.0,
+        policies,
+        approvals,
+        now_unix_ms,
+        lease_token,
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{workload_from_manifest, DataClassification, WorkloadManifest};
+    use ed25519_dalek::{Signer, SigningKey};
+
+    fn device() -> Device {
+        Device {
+            device_id: "worker-01".into(),
+            enrolled: true,
+            admin_approved: true,
+            available: true,
+            allowed_workload_classes: vec!["inference".into()],
+            remaining_cpu_millis: 4000,
+            remaining_memory_mb: 8192,
+        }
+    }
+
+    fn workload() -> Workload {
+        workload_from_manifest(&WorkloadManifest {
+            schema_version: 1,
+            workload_id: "job-01".into(),
+            class: "inference".into(),
+            model: "llama3.2".into(),
+            requested_cpu_millis: 1000,
+            requested_memory_mb: 1024,
+            max_runtime_ms: 60_000,
+            data_classification: DataClassification::Internal,
+            network_access: false,
+        })
+        .unwrap()
+    }
+
+    fn signed_evidence(
+        challenge: [u8; 16],
+        now: u64,
+    ) -> (
+        SignedWorkerTelemetry,
+        SignedSchedulingPolicy,
+        SigningKey,
+        SigningKey,
+    ) {
+        let device_key = SigningKey::from_bytes(&[5u8; 32]);
+        let admin_key = SigningKey::from_bytes(&[6u8; 32]);
+        let telemetry_claims = WorkerTelemetryClaims {
+            device_id: "worker-01".into(),
+            challenge_nonce: challenge,
+            issued_at_unix_ms: now,
+            expires_unix_ms: now + MAX_WORKER_TELEMETRY_TTL_MS,
+            owner_opted_in: true,
+            interactive_user_present: false,
+            on_ac_power: true,
+            device_already_running: true,
+            thermal_state_safe: true,
+        };
+        let telemetry = SignedWorkerTelemetry {
+            signature: device_key
+                .sign(&worker_telemetry_bytes(&telemetry_claims))
+                .to_bytes(),
+            claims: telemetry_claims,
+        };
+        let work = workload();
+        let policy_claims = SchedulingPolicyClaims {
+            policy_id: "policy-01".into(),
+            policy_key_id: "admin-key-01".into(),
+            device_id: "worker-01".into(),
+            workload_id: work.workload_id.clone(),
+            manifest_sha256: crate::workload_manifest_sha256(&crate::WorkloadManifest {
+                schema_version: 1,
+                workload_id: "job-01".into(),
+                class: "inference".into(),
+                model: "llama3.2".into(),
+                requested_cpu_millis: 1000,
+                requested_memory_mb: 1024,
+                max_runtime_ms: 60_000,
+                data_classification: DataClassification::Internal,
+                network_access: false,
+            })
+            .unwrap(),
+            challenge_nonce: challenge,
+            issued_at_unix_ms: now,
+            expires_unix_ms: now + MAX_SCHEDULING_POLICY_TTL_MS,
+            within_admin_schedule: true,
+            network_policy_allows: true,
+            data_classification_allows: true,
+        };
+        let policy = SignedSchedulingPolicy {
+            signature: admin_key
+                .sign(&scheduling_policy_bytes(&policy_claims))
+                .to_bytes(),
+            claims: policy_claims,
+        };
+        (telemetry, policy, device_key, admin_key)
+    }
+
+    #[test]
+    fn accepts_fresh_dual_signed_challenge_bound_context() {
+        let d = device();
+        let w = workload();
+        let challenge = [9u8; 16];
+        let (telemetry, policy, device_key, admin_key) = signed_evidence(challenge, 1_000);
+        let verified = verify_scheduling_context(
+            &d,
+            &w,
+            &telemetry,
+            &policy,
+            &[("worker-01".into(), device_key.verifying_key())],
+            &[("admin-key-01".into(), admin_key.verifying_key())],
+            &challenge,
+            2_000,
+        )
+        .unwrap();
+        assert!(verified.0.owner_opted_in);
+        assert!(verified.0.within_admin_schedule);
+        assert!(verified.0.network_policy_allows);
+        assert!(verified.0.data_classification_allows);
+        assert!(verified.0.telemetry_fresh);
+    }
+
+    #[test]
+    fn rejects_wrong_challenge_and_tampered_worker_telemetry() {
+        let d = device();
+        let w = workload();
+        let challenge = [9u8; 16];
+        let (telemetry, policy, device_key, admin_key) = signed_evidence(challenge, 1_000);
+        assert_eq!(
+            verify_scheduling_context(
+                &d,
+                &w,
+                &telemetry,
+                &policy,
+                &[("worker-01".into(), device_key.verifying_key())],
+                &[("admin-key-01".into(), admin_key.verifying_key())],
+                &[8u8; 16],
+                2_000,
+            )
+            .unwrap_err(),
+            SchedulingEvidenceError::ChallengeMismatch
+        );
+        let mut tampered = telemetry;
+        tampered.claims.on_ac_power = false;
+        assert_eq!(
+            verify_scheduling_context(
+                &d,
+                &w,
+                &tampered,
+                &policy,
+                &[("worker-01".into(), device_key.verifying_key())],
+                &[("admin-key-01".into(), admin_key.verifying_key())],
+                &challenge,
+                2_000,
+            )
+            .unwrap_err(),
+            SchedulingEvidenceError::InvalidWorkerSignature
+        );
+    }
+
+    #[test]
+    fn rejects_stale_evidence_and_manifest_substitution() {
+        let d = device();
+        let w = workload();
+        let challenge = [9u8; 16];
+        let (telemetry, policy, device_key, admin_key) = signed_evidence(challenge, 1_000);
+        assert_eq!(
+            verify_scheduling_context(
+                &d,
+                &w,
+                &telemetry,
+                &policy,
+                &[("worker-01".into(), device_key.verifying_key())],
+                &[("admin-key-01".into(), admin_key.verifying_key())],
+                &challenge,
+                40_000,
+            )
+            .unwrap_err(),
+            SchedulingEvidenceError::InvalidTimeWindow
+        );
+        let mut changed = workload();
+        changed.workload_id = "job-02".into();
+        assert_eq!(
+            verify_scheduling_context(
+                &d,
+                &changed,
+                &telemetry,
+                &policy,
+                &[("worker-01".into(), device_key.verifying_key())],
+                &[("admin-key-01".into(), admin_key.verifying_key())],
+                &challenge,
+                2_000,
+            )
+            .unwrap_err(),
+            SchedulingEvidenceError::WorkloadMismatch
+        );
+    }
+}
