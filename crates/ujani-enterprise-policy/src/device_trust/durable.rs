@@ -248,13 +248,7 @@ impl DurableDeviceRegistry {
     ) -> Result<AuthenticatedDeviceRequest, DurableDeviceTrustError> {
         self.transact(|registry| {
             registry
-                .authenticate_request_for(
-                    request,
-                    expected_method,
-                    expected_resource_id,
-                    body,
-                    now,
-                )
+                .authenticate_request_for(request, expected_method, expected_resource_id, body, now)
                 .map_err(Into::into)
         })
     }
@@ -765,7 +759,9 @@ mod tests {
         );
         assert_eq!(
             store.authenticate_request_for(&signed, "POST", "lease:renew", body, 250),
-            Err(DurableDeviceTrustError::Trust(DeviceTrustError::RequestTargetMismatch))
+            Err(DurableDeviceTrustError::Trust(
+                DeviceTrustError::RequestTargetMismatch
+            ))
         );
         let authenticated = store
             .authenticate_request_for(&signed, "POST", "lease:acquire", body, 250)
