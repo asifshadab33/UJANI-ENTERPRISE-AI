@@ -74,3 +74,20 @@ See [docs/OPERATOR-WORKFLOWS.md](docs/OPERATOR-WORKFLOWS.md). The dashboard desi
 - [ ] Keep dispatch and worker execution disabled until receiver-side authorization, encrypted mutual-authenticated transport, quotas and OS-enforced isolation are independently verified.
 
 The merged device-trust implementation is a policy and persistence primitive, not a production control plane. See [docs/DURABLE_DEVICE_TRUST.md](docs/DURABLE_DEVICE_TRUST.md) for its trust boundary and limitations.
+
+
+## Collective cyber-defence foundation — 2026-11-08
+
+- [x] Define a versioned, privacy-minimised endpoint security event schema (v1).
+- [x] Document authentication, replay protection, tenant isolation, retention, poisoning resistance and read-only response boundaries.
+- [x] Add dependency-free schema contract regression checks to CI (valid/invalid fixtures, strict unknown-field rejection and privacy/response-field guardrails).
+- [ ] Add full JSON Schema conformance and fuzz/property tests in the policy crate.
+- [ ] Implement an opt-in read-only sensor prototype with local bounded queue; no remote response.
+- [ ] Implement authenticated tenant-scoped ingestion using existing device-trust primitives.
+- [ ] Add durable event storage, deduplication, sequence enforcement and retention.
+- [ ] Add deterministic cross-device correlation with explainable evidence and confidence.
+- [ ] Build analyst incident timeline and alert dashboard.
+- [ ] Add approval-gated, reversible containment only after receiver-side authorization and independent security review.
+- [ ] Consider cross-tenant indicator sharing only with explicit governance and opt-in.
+
+See [the collective-defence event contract](docs/COLLECTIVE-DEFENCE-EVENTS.md). The schema and documentation are contracts only; they do not represent a live endpoint sensor, ingestion service, detection engine or response capability.
