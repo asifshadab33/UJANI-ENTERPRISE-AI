@@ -751,6 +751,61 @@ mod tests {
         let _ = fs::remove_file(suffix(&path, ".lock"));
     }
     #[test]
+    fn revocation_persists_and_rejects_requests_from_the_revoked_device() {
+        let path = path();
+        let admin = SigningKey::from_bytes(&[7; 32]);
+        let device = SigningKey::from_bytes(&[9; 32]);
+        let store = open(&path, &admin);
+        store.apply_admin_command(&enroll(&admin, &device), 200).unwrap();
+
+        let body = b"lease acquisition";
+        let claims = DeviceRequestClaims {
+            tenant_id: "tenant-a".into(),
+            device_id: "device-1".into(),
+            key_id: "device-key-v1".into(),
+            key_generation: 1,
+            request_id: [4; 16],
+            issued_at_unix_ms: 250,
+            expires_at_unix_ms: 700,
+            method: "POST".into(),
+            resource_id: "lease:acquire".into(),
+            body_sha256: sha2::Sha256::digest(body).into(),
+        };
+        let signed_request = SignedDeviceRequest {
+            signature: device.sign(&device_request_bytes(&claims)).to_bytes(),
+            claims,
+        };
+        assert!(store.authenticate_request(&signed_request, body, 300).is_ok());
+
+        let mut revoke = SignedDeviceAdminCommand {
+            action: DeviceCommandAction::Revoke,
+            tenant_id: "tenant-a".into(),
+            device_id: "device-1".into(),
+            admin_key_id: "admin-v1".into(),
+            target_key_id: String::new(),
+            target_public_key: None,
+            issued_at_unix_ms: 310,
+            expires_at_unix_ms: 900,
+            nonce: [5; 16],
+            signature: [0; 64],
+            old_device_signature: None,
+            new_device_signature: None,
+        };
+        revoke.signature = admin.sign(&admin_command_bytes(&revoke)).to_bytes();
+        assert_eq!(store.apply_admin_command(&revoke, 320).unwrap(), 2);
+        drop(store);
+
+        let reopened = open(&path, &admin);
+        assert_eq!(
+            reopened.authenticate_request(&signed_request, body, 330),
+            Err(DurableDeviceTrustError::Trust(DeviceTrustError::DeviceNotEnrolled))
+        );
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(suffix(&path, ".bak"));
+        let _ = fs::remove_file(suffix(&path, ".lock"));
+    }
+
+    #[test]
     fn modified_snapshot_fails_closed() {
         let path = path();
         let admin = SigningKey::from_bytes(&[7; 32]);
