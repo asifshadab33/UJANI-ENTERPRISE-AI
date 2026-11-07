@@ -285,6 +285,7 @@ impl DeviceRegistry {
             || !valid_id(&c.key_id, 128)
             || !valid_id(&c.method, 16)
             || !valid_id(&c.resource_id, 256)
+            || c.request_id.iter().all(|byte| *byte == 0)
             || c.key_generation == 0
         {
             return Err(DeviceTrustError::InvalidIdentifier);
@@ -551,6 +552,32 @@ mod tests {
             Err(DeviceTrustError::TenantMismatch)
         );
     }
+    #[test]
+    fn all_zero_request_nonce_is_rejected_before_persistence() {
+        let (mut r, admin, device) = registry();
+        r.apply_admin_command(&enrollment(&admin, &device, 1), 200)
+            .unwrap();
+        let claims = DeviceRequestClaims {
+            tenant_id: "tenant-a".into(),
+            device_id: "device-1".into(),
+            key_id: "device-key-v1".into(),
+            key_generation: 1,
+            request_id: [0; 16],
+            issued_at_unix_ms: 200,
+            expires_at_unix_ms: 500,
+            method: "POST".into(),
+            resource_id: "lease:acquire".into(),
+        };
+        let signed = SignedDeviceRequest {
+            signature: device.sign(&device_request_bytes(&claims)).to_bytes(),
+            claims,
+        };
+        assert_eq!(
+            r.authenticate_request(&signed, 250),
+            Err(DeviceTrustError::InvalidIdentifier)
+        );
+    }
+
     #[test]
     fn signed_revocation_invalidates_the_enrolled_device() {
         let (mut r, admin, device) = registry();
