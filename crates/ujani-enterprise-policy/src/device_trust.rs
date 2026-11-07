@@ -13,6 +13,7 @@ const ADMIN_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-DEVICE-ADMIN-COMMAND-V1\\0";
 const DEVICE_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-DEVICE-REQUEST-V1\\0";
 const ENROLLMENT_PROOF_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-DEVICE-KEY-PROOF-V1\\0";
 const CLOCK_SKEW_MS: u64 = 30_000;
+const MAX_REPLAY_ENTRIES: usize = 100_000;
 pub const MAX_DEVICE_REQUEST_TTL_MS: u64 = 30_000;
 pub const MAX_ADMIN_COMMAND_TTL_MS: u64 = 5 * 60 * 1000;
 
@@ -104,7 +105,7 @@ struct DeviceRecord {
 pub struct DeviceRegistry {
     admin_keys: HashMap<String, VerifyingKey>,
     devices: HashMap<String, DeviceRecord>,
-    admin_nonces: HashSet<[u8; 16]>,
+    admin_nonces: HashMap<[u8; 16], u64>,
     request_nonces: HashMap<[u8; 16], u64>,
 }
 impl std::fmt::Debug for DeviceRegistry {
@@ -129,14 +130,16 @@ impl DeviceRegistry {
                 return Err(DeviceTrustError::InvalidIdentifier);
             }
         }
-        Ok(Self { admin_keys, devices: HashMap::new(), admin_nonces: HashSet::new(), request_nonces: HashMap::new() })
+        Ok(Self { admin_keys, devices: HashMap::new(), admin_nonces: HashMap::new(), request_nonces: HashMap::new() })
     }
 
     /// Apply a signed administrator enrollment, rotation or revocation command.
     /// For enrollment and rotation, the target device key must prove possession.
     pub fn apply_admin_command(&mut self, command: &SignedDeviceAdminCommand, now: u64) -> Result<u64, DeviceTrustError> {
         validate_admin_command(command, now)?;
-        if self.admin_nonces.contains(&command.nonce) { return Err(DeviceTrustError::ReplayDetected); }
+        self.admin_nonces.retain(|_, expiry| *expiry > now);
+        if self.admin_nonces.contains_key(&command.nonce) { return Err(DeviceTrustError::ReplayDetected); }
+        if self.admin_nonces.len() >= MAX_REPLAY_ENTRIES { return Err(DeviceTrustError::ReplayDetected); }
         let admin = self.admin_keys.get(&command.admin_key_id).ok_or(DeviceTrustError::UnknownAdminKey)?;
         admin.verify_strict(&admin_command_bytes(command), &Signature::from_bytes(&command.signature))
             .map_err(|_| DeviceTrustError::InvalidAdminSignature)?;
@@ -166,7 +169,7 @@ impl DeviceRegistry {
                 }
                 let current = self.devices.get(&command.device_id).ok_or(DeviceTrustError::DeviceNotFound)?;
                 if current.tenant_id != command.tenant_id { return Err(DeviceTrustError::TenantMismatch); }
-                current.generation
+                current.generation.checked_add(1).ok_or(DeviceTrustError::StaleKeyGeneration)?
             }
         };
 
@@ -181,10 +184,10 @@ impl DeviceRegistry {
             DeviceCommandAction::Revoke => {
                 let current = self.devices.get_mut(&command.device_id).ok_or(DeviceTrustError::DeviceNotFound)?;
                 current.state = DeviceTrustState::Revoked;
-                current.generation = current.generation.checked_add(1).ok_or(DeviceTrustError::StaleKeyGeneration)?;
+                current.generation = next_generation;
             }
         }
-        self.admin_nonces.insert(command.nonce);
+        self.admin_nonces.insert(command.nonce, command.expires_at_unix_ms);
         Ok(next_generation)
     }
 
@@ -205,6 +208,7 @@ impl DeviceRegistry {
         }
         self.request_nonces.retain(|_, expiry| *expiry > now);
         if self.request_nonces.contains_key(&c.request_id) { return Err(DeviceTrustError::ReplayDetected); }
+        if self.request_nonces.len() >= MAX_REPLAY_ENTRIES { return Err(DeviceTrustError::ReplayDetected); }
         let record = self.devices.get(&c.device_id).ok_or(DeviceTrustError::DeviceNotFound)?;
         if record.state != DeviceTrustState::Enrolled { return Err(DeviceTrustError::DeviceNotEnrolled); }
         if record.tenant_id != c.tenant_id { return Err(DeviceTrustError::TenantMismatch); }
