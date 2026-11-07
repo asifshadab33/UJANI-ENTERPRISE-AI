@@ -4,7 +4,9 @@
 //! one policy operation, and commits a checksummed snapshot using a same-directory
 //! temp file plus backup/rename recovery. The raw lease capability is never
 //! persisted; only its domain-separated digest is stored.
-use crate::{Admission, Device, Ledger, SchedulingContext, VerifiedAdminApproval, Workload, ClassPolicy};
+use crate::{
+    Admission, ClassPolicy, Device, Ledger, SchedulingContext, VerifiedAdminApproval, Workload,
+};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
@@ -27,8 +29,14 @@ impl std::fmt::Display for DurableLedgerError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Io(message) => write!(formatter, "durable ledger I/O failed: {message}"),
-            Self::CorruptState => write!(formatter, "durable ledger is corrupt or has an invalid checksum"),
-            Self::InvalidRecord => write!(formatter, "durable ledger contains an invalid or duplicate record"),
+            Self::CorruptState => write!(
+                formatter,
+                "durable ledger is corrupt or has an invalid checksum"
+            ),
+            Self::InvalidRecord => write!(
+                formatter,
+                "durable ledger contains an invalid or duplicate record"
+            ),
             Self::LockPoisoned => write!(formatter, "durable ledger thread lock is poisoned"),
         }
     }
@@ -63,7 +71,10 @@ pub struct DurableLedger {
 impl DurableLedger {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, DurableLedgerError> {
         let path = path.as_ref().to_path_buf();
-        if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+        if let Some(parent) = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
             fs::create_dir_all(parent)?;
         }
         let store = Self {
@@ -163,7 +174,11 @@ impl DurableLedger {
             .lock()
             .map_err(|_| DurableLedgerError::LockPoisoned)?;
         let mut lock_options = OpenOptions::new();
-        lock_options.create(true).truncate(false).read(true).write(true);
+        lock_options
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true);
         #[cfg(unix)]
         {
             use std::os::unix::fs::OpenOptionsExt;
@@ -229,8 +244,10 @@ fn serialize_snapshot(ledger: &Ledger) -> Vec<u8> {
     let mut workload_ids = ledger.jobs.keys().collect::<Vec<_>>();
     workload_ids.sort();
     for workload_id in workload_ids {
-        let (device_id, cpu, memory, expires, approval_id) =
-            ledger.jobs.get(workload_id).expect("key collected from jobs");
+        let (device_id, cpu, memory, expires, approval_id) = ledger
+            .jobs
+            .get(workload_id)
+            .expect("key collected from jobs");
         let approval = approval_id
             .as_deref()
             .map(|value| hex_encode(value.as_bytes()))
@@ -271,9 +288,7 @@ fn deserialize_snapshot(bytes: &[u8]) -> Result<Ledger, DurableLedgerError> {
     if bytes.len() as u64 > MAX_LEDGER_BYTES || !text.ends_with('\n') {
         return Err(DurableLedgerError::CorruptState);
     }
-    let hash_start = text
-        .rfind("H\t")
-        .ok_or(DurableLedgerError::CorruptState)?;
+    let hash_start = text.rfind("H\t").ok_or(DurableLedgerError::CorruptState)?;
     let body = &text[..hash_start];
     let hash_line = &text[hash_start..];
     let expected_hash = hash_line
@@ -446,7 +461,10 @@ fn persist_snapshot(path: &Path, ledger: &Ledger) -> Result<(), DurableLedgerErr
         }
         return Err(DurableLedgerError::from(error));
     }
-    if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
         if let Ok(directory) = File::open(parent) {
             let _ = directory.sync_all();
         }
@@ -600,28 +618,30 @@ mod tests {
         let first = DurableLedger::open(&path).unwrap();
         let second = DurableLedger::open(&path).unwrap();
         let first_thread = thread::spawn(move || {
-            first.admit_and_reserve_with_lease(
-                &device(),
-                &workload("job-concurrent-a"),
-                &context(),
-                &policies(),
-                &[],
-                1_000,
-                &[0x61u8; 32],
-            )
-            .unwrap()
+            first
+                .admit_and_reserve_with_lease(
+                    &device(),
+                    &workload("job-concurrent-a"),
+                    &context(),
+                    &policies(),
+                    &[],
+                    1_000,
+                    &[0x61u8; 32],
+                )
+                .unwrap()
         });
         let second_thread = thread::spawn(move || {
-            second.admit_and_reserve_with_lease(
-                &device(),
-                &workload("job-concurrent-b"),
-                &context(),
-                &policies(),
-                &[],
-                1_000,
-                &[0x62u8; 32],
-            )
-            .unwrap()
+            second
+                .admit_and_reserve_with_lease(
+                    &device(),
+                    &workload("job-concurrent-b"),
+                    &context(),
+                    &policies(),
+                    &[],
+                    1_000,
+                    &[0x62u8; 32],
+                )
+                .unwrap()
         });
         let outcomes = [first_thread.join().unwrap(), second_thread.join().unwrap()];
         assert_eq!(
