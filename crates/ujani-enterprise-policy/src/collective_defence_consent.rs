@@ -617,7 +617,7 @@ mod tests {
 
     #[test]
     fn tampered_consent_and_untrusted_signing_keys_are_rejected() {
-        let (admin, user, admins, users) = keys();
+        let (admin, user, admins, _) = keys();
         let mut tenant = signed_tenant(&admin, true, 4, EXPIRY);
         tenant.claims.enabled = false;
         assert_eq!(
@@ -673,7 +673,7 @@ mod tests {
 
     #[test]
     fn consent_must_bind_the_exact_nonzero_notice_digest() {
-        let (_, user, _, users) = keys();
+        let (admin, user, admins, users) = keys();
         let mut individual = signed_individual(&user, true, 4, 2, EXPIRY);
         individual.claims.notice_sha256 = [0u8; 32];
         individual.signature = user
