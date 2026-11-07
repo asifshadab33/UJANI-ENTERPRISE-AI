@@ -7,14 +7,14 @@ on:
     branches: [main]
   # Repeat the complete validation suite every 30 minutes (UTC).
   schedule:
-    - cron: "*/30 * * * *"
+    - cron: "11,41 * * * *"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: enterprise-policy-${{ github.ref }}
+  group: ${{ github.event_name == 'schedule' && format('enterprise-policy-schedule-{0}', github.run_id) || format('enterprise-policy-{0}', github.ref) }}
   cancel-in-progress: true
 
 jobs:
