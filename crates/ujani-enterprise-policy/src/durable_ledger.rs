@@ -1,7 +1,7 @@
 //! Durable, cross-thread and cross-process reservation ledger.
 //!
 //! Each transaction reloads the latest snapshot under an OS file lock, applies
-//! one policy operation, and commits a checksummed snapshot using a same-directory
+//! one policy operation, and commits an HMAC-authenticated snapshot using a same-directory
 //! temp file plus backup/rename recovery. The raw lease capability is never
 //! persisted; only its domain-separated digest is stored.
 use crate::{
@@ -919,6 +919,17 @@ mod tests {
         assert!(debug.contains("secret-key"));
         assert!(debug.contains("[REDACTED]"));
         assert!(!debug.contains("165"));
+    }
+
+    #[test]
+    fn legacy_checksum_only_v1_snapshot_is_rejected() {
+        let path = temp_path("legacy-v1");
+        fs::write(&path, b"UJANI-ENTERPRISE-LEDGER-V1\\nH\\tdeadbeef\\n").unwrap();
+        assert_eq!(
+            open_ledger(&path).err(),
+            Some(DurableLedgerError::CorruptState)
+        );
+        cleanup(&path);
     }
 
 }
