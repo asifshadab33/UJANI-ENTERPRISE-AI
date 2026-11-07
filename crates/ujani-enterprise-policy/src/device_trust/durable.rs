@@ -368,11 +368,12 @@ mod tests {
             resource_id:"lease:acquire".into(),
         };
         let signed=SignedDeviceRequest {signature:device.sign(&device_request_bytes(&claims)).to_bytes(),claims};
+        let signed2=signed.clone();
         let barrier=std::sync::Arc::new(std::sync::Barrier::new(2));
         let b1=barrier.clone();
         let t1=std::thread::spawn(move || { b1.wait(); first.authenticate_request(&signed,250) });
         let b2=barrier.clone();
-        let t2=std::thread::spawn(move || { b2.wait(); second.authenticate_request(&signed,250) });
+        let t2=std::thread::spawn(move || { b2.wait(); second.authenticate_request(&signed2,250) });
         let results=[t1.join().unwrap(),t2.join().unwrap()];
         assert_eq!(results.iter().filter(|r| r.is_ok()).count(),1);
         assert_eq!(results.iter().filter(|r| **r==Err(DurableDeviceTrustError::Trust(DeviceTrustError::ReplayDetected))).count(),1);
