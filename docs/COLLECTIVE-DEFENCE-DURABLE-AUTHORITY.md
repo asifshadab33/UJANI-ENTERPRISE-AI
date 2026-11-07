@@ -99,3 +99,37 @@ The API must return a committed generation and audit event ID only after durable
 7. Conduct independent security review and controlled opt-in pilot.
 
 No step in this plan enables remote execution or automated containment.
+
+## Repository architecture assessment — 8 November 2026
+
+This assessment records the implementation that exists in the repositories today. It is not a production storage selection.
+
+### Enterprise repository findings
+
+- The Enterprise root Cargo workspace currently contains only the `ujani-enterprise-policy` library crate. Its dependencies are cryptographic and serialization libraries; there is no database driver, migration framework, HTTP/control-plane service, or production database adapter in this workspace.
+- `device_trust::durable::DurableDeviceRegistry` is a single-host file-snapshot adapter. It reloads state under an OS advisory lock, authenticates snapshots with an injected HMAC-SHA-256 key, and uses temporary-file sync plus backup/rename recovery. An optional `MonotonicSnapshotAnchor` interface exists, but the repository supplies only a test/reference provider; no production KMS, HSM, or remote anchor adapter is present. Opening without an anchor does not detect rollback.
+- `DurableLedger` is also a local file-snapshot implementation using an OS advisory lock, an injected HMAC key, a temporary file, and backup/rename recovery. Its documented limits are single-host operation, no replication or multi-node transactions, no encryption at rest, and a 16 MiB snapshot ceiling.
+- The consent authority added in this PR is deliberately an in-memory `Mutex`/map/vector reference backend. It loses state on restart and is not a persistence adapter. Its global reference audit sequence and global capacity limits are useful for deterministic tests, but a production design must prevent one tenant's quota exhaustion from becoming a cross-tenant availability attack while still denying authorization if integrity or revocation capacity is uncertain.
+
+### Public AI is not the Enterprise authority
+
+The Public AI desktop application has a separate Tauri crate with bundled `rusqlite`, AES-GCM, and OS credential-vault dependencies. Its documented SQLite use is a local, opt-in, disposable metadata/search cache on the blocking worker pool. It is not a shared multi-tenant control-plane database, is not an anti-rollback anchor, and must not be reused as Enterprise consent authority. Public and Enterprise data, identity, keys, and invalidation authority remain separate.
+
+### Storage decision
+
+**No production database vendor or deployment topology is selected by this change.** The repository does not yet contain the service boundary or deployment facts needed to make that choice responsibly. In particular, the number of control-plane replicas, tenant count and write rate, data-residency regions, recovery objectives, backup operator, and available monotonic-anchor provider are not specified.
+
+For a future central, multi-node Enterprise control plane, evaluate a transactional relational database first. The evaluation must prove atomic consent mutation + audit append + idempotency + outbox persistence, tenant-scoped uniqueness, compare-and-set generation updates, durable commit semantics, migration discipline, backup/restore, and concurrent multi-instance behavior. PostgreSQL is a candidate to benchmark if a central service topology is confirmed; it is not an approved choice yet. SQLite may be evaluated only for an explicitly single-host deployment and does not satisfy the independent anti-rollback requirement. The current file-snapshot stores are not a multi-node substitute.
+
+The monotonic anchor must be a separate trust domain with authenticated service identity and durable, linearizable compare-and-set over a tenant/registry namespace, binding the accepted generation to the exact canonical snapshot digest. A generic KMS key or a second file on the same host is not sufficient unless the selected provider actually supplies the required monotonic CAS semantics.
+
+### Additional production design gates
+
+1. Define whether the audit hash chain is per tenant or globally anchored. Tenant-facing reads must never reveal another tenant's records, sequence, or activity. Prefer per-tenant chain heads/anchor namespaces unless a reviewed global-root design can prove isolation.
+2. Apply per-tenant quotas and bounded idempotency retention, with reserved capacity for disable/withdraw operations. Global integrity failures still deny all sharing; one tenant filling an ordinary quota must not silently consume every other tenant's operational budget.
+3. Specify an explicit pending/anchored/committed transaction state machine. Readers expose only a generation whose canonical digest matches the external anchor. Recovery must safely resume the same idempotent anchor CAS after a crash or ambiguous timeout; it must never infer consent from a database row alone.
+4. Add production schema migrations, authenticated database access, encryption/key custody, tenant-aware backup/restore, retention/deletion controls, audit export, and failure-injection tests for database/anchor outages, disk-full, crash windows, stale writers, failover, and restore.
+5. Select the database only after the deployment topology, region/residency constraints, availability and recovery targets, operational ownership, and anchor provider have been agreed and reviewed.
+
+Until those gates are implemented and independently reviewed, this reference backend must remain non-production and Collective Defence sharing must remain disabled. Remote execution and automated containment remain disabled.
+
