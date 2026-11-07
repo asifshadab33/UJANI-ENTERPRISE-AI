@@ -278,6 +278,10 @@ impl DeviceRegistry {
     /// Authenticate one short-lived device request and consume its replay nonce.
     /// Tenant, enrolled key ID and monotonic key generation are checked here;
     /// downstream APIs must still authorize the authenticated tenant/principal.
+    /// Authenticates a signed device request against the exact raw body bytes.
+    ///
+    /// The body digest is checked before the request nonce is consumed, so a
+    /// transport/body mismatch can be rejected without burning a valid request.
     pub fn authenticate_request(
         &mut self,
         signed: &SignedDeviceRequest,
