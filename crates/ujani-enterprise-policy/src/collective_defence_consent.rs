@@ -113,6 +113,7 @@ pub struct ConsentPermit {
     expires_at_unix_ms: u64,
 }
 
+/// Checks that an identifier is non-empty, bounded, and uses the supported ASCII set.
 fn valid_identifier(value: &str, max_len: usize) -> bool {
     !value.is_empty()
         && value.len() <= max_len
@@ -121,12 +122,14 @@ fn valid_identifier(value: &str, max_len: usize) -> bool {
         })
 }
 
+/// Appends a length-prefixed UTF-8 string to canonical consent-signature input.
 fn push_string(bytes: &mut Vec<u8>, value: &str) {
     let len = u32::try_from(value.len()).expect("bounded consent field length");
     bytes.extend_from_slice(&len.to_be_bytes());
     bytes.extend_from_slice(value.as_bytes());
 }
 
+/// Encodes tenant consent claims with the versioned, domain-separated format.
 fn tenant_consent_bytes(claims: &TenantConsentClaims) -> Vec<u8> {
     let mut bytes = TENANT_DOMAIN.to_vec();
     push_string(&mut bytes, &claims.tenant_id);
@@ -141,6 +144,7 @@ fn tenant_consent_bytes(claims: &TenantConsentClaims) -> Vec<u8> {
     bytes
 }
 
+/// Encodes individual consent claims with the versioned, domain-separated format.
 fn individual_consent_bytes(claims: &IndividualConsentClaims) -> Vec<u8> {
     let mut bytes = INDIVIDUAL_DOMAIN.to_vec();
     push_string(&mut bytes, &claims.tenant_id);
@@ -158,6 +162,7 @@ fn individual_consent_bytes(claims: &IndividualConsentClaims) -> Vec<u8> {
     bytes
 }
 
+/// Validates issue time, expiry ordering, current validity, and maximum lifetime.
 fn validate_window(issued_at: u64, expires_at: u64, now: u64) -> Result<(), ConsentError> {
     if issued_at > now.saturating_add(MAX_CONSENT_CLOCK_SKEW_MS)
         || expires_at <= issued_at
@@ -343,26 +348,32 @@ impl ConsentPermit {
             && context.now_unix_ms < self.expires_at_unix_ms
     }
 
+    /// Returns the tenant to which this verified permit is bound.
     pub fn tenant_id(&self) -> &str {
         &self.tenant_id
     }
 
+    /// Returns the exact device to which this verified permit is bound.
     pub fn device_id(&self) -> &str {
         &self.device_id
     }
 
+    /// Returns the individual principal to which this verified permit is bound.
     pub fn principal_id(&self) -> &str {
         &self.principal_id
     }
 
+    /// Returns the event schema version authorized by both consent records.
     pub fn event_schema_version(&self) -> &str {
         &self.event_schema_version
     }
 
+    /// Returns the tenant retention ceiling carried by the verified permit.
     pub fn retention_seconds(&self) -> u32 {
         self.retention_seconds
     }
 
+    /// Returns the earlier expiry of the two independently verified consent records.
     pub fn expires_at_unix_ms(&self) -> u64 {
         self.expires_at_unix_ms
     }
@@ -376,6 +387,7 @@ mod tests {
     const NOW: u64 = 1_000_000;
     const EXPIRY: u64 = NOW + 60_000;
 
+    /// Creates a signed tenant-consent fixture for unit tests.
     fn signed_tenant(
         key: &SigningKey,
         enabled: bool,
@@ -399,6 +411,7 @@ mod tests {
         }
     }
 
+    /// Creates a signed individual-consent fixture for unit tests.
     fn signed_individual(
         key: &SigningKey,
         enabled: bool,
@@ -426,6 +439,7 @@ mod tests {
         }
     }
 
+    /// Creates deterministic signing and verification keys for consent tests.
     fn keys() -> (
         SigningKey,
         SigningKey,
@@ -449,6 +463,7 @@ mod tests {
         (admin, user, admins, users)
     }
 
+    /// Builds a verification context from trusted keys and current policy generations.
     fn context<'a>(
         tenant_id: &'a str,
         device_id: &'a str,
@@ -467,6 +482,7 @@ mod tests {
         }
     }
 
+    /// Builds a verified permit fixture for accessor and expiry tests.
     fn permit() -> ConsentPermit {
         let (admin, user, admins, users) = keys();
         let tenant =
@@ -482,6 +498,7 @@ mod tests {
         .unwrap()
     }
 
+    /// Verifies tenant opt-in alone cannot authorize an individual device.
     #[test]
     fn tenant_opt_in_alone_never_enrols_an_individual() {
         let (admin, user, admins, users) = keys();
@@ -503,6 +520,7 @@ mod tests {
         .is_ok());
     }
 
+    /// Verifies individual opt-in cannot override a disabled tenant policy.
     #[test]
     fn individual_opt_in_cannot_override_tenant_default_off() {
         let (admin, user, admins, users) = keys();
@@ -518,6 +536,7 @@ mod tests {
         .is_ok());
     }
 
+    /// Verifies both signatures bind to the same tenant, principal, and exact device.
     #[test]
     fn both_independent_signatures_are_required_and_bound_to_tenant_and_device() {
         let p = permit();
@@ -558,6 +577,7 @@ mod tests {
         );
     }
 
+    /// Verifies tenant disable and individual withdrawal invalidate stale permits.
     #[test]
     fn tenant_disable_or_individual_withdrawal_invalidates_existing_permit_generation() {
         let p = permit();
@@ -568,6 +588,7 @@ mod tests {
         assert!(!p.is_current(&context("tenant-a", "device-01", "user-02", 4, 2, NOW)));
     }
 
+    /// Verifies permit expiry is bounded by both independent consent expiries.
     #[test]
     fn permit_expires_at_the_earlier_of_both_signed_consents() {
         let (admin, user, admins, users) = keys();
@@ -596,6 +617,7 @@ mod tests {
         )));
     }
 
+    /// Verifies stale or mismatched policy generations never authorize sharing.
     #[test]
     fn stale_generations_and_policy_generation_mismatch_fail_closed() {
         let (admin, user, admins, users) = keys();
@@ -633,6 +655,7 @@ mod tests {
         );
     }
 
+    /// Rejects expired consent and tokens whose lifetime exceeds policy bounds.
     #[test]
     fn expired_or_excessively_long_consent_tokens_are_rejected() {
         let (admin, user, admins, users) = keys();
@@ -652,6 +675,7 @@ mod tests {
         );
     }
 
+    /// Rejects modified consent payloads and signing keys outside the trust set.
     #[test]
     fn tampered_consent_and_untrusted_signing_keys_are_rejected() {
         let (admin, user, admins, _) = keys();
@@ -668,6 +692,7 @@ mod tests {
         );
     }
 
+    /// Rejects invalid retention limits and unsupported event schema versions.
     #[test]
     fn invalid_retention_and_schema_versions_are_rejected() {
         let (admin, _, admins, _) = keys();
@@ -686,6 +711,7 @@ mod tests {
             Err(ConsentError::UnsupportedSchema)
         );
     }
+    /// Prevents trusted consent keys from being substituted across tenant identities.
     #[test]
     fn trusted_consent_keys_cannot_be_reused_across_tenants_or_principals() {
         let (admin, user, admins, users) = keys();
@@ -708,6 +734,7 @@ mod tests {
         );
     }
 
+    /// Requires the exact nonzero notice digest to be signed by the consenting user.
     #[test]
     fn consent_must_bind_the_exact_nonzero_notice_digest() {
         let (admin, user, admins, users) = keys();
