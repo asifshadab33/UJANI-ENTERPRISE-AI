@@ -74,7 +74,10 @@ pub struct LedgerIntegrityKey {
 
 impl LedgerIntegrityKey {
     pub fn new(key_id: impl Into<String>, key: [u8; 32]) -> Self {
-        Self { key_id: key_id.into(), key }
+        Self {
+            key_id: key_id.into(),
+            key,
+        }
     }
 
     pub fn key_id(&self) -> &str {
@@ -84,7 +87,8 @@ impl LedgerIntegrityKey {
 
 impl std::fmt::Debug for LedgerIntegrityKey {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.debug_struct("LedgerIntegrityKey")
+        formatter
+            .debug_struct("LedgerIntegrityKey")
             .field("key_id", &self.key_id)
             .field("key", &"[REDACTED]")
             .finish()
@@ -129,7 +133,10 @@ impl DurableLedger {
         }
 
         let path = path.as_ref().to_path_buf();
-        if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+        if let Some(parent) = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
             fs::create_dir_all(parent)?;
         }
         let store = Self {
@@ -247,7 +254,9 @@ impl DurableLedger {
 
         let mut ledger = load_or_recover(&self.path, &self.integrity_keys)?;
         let result = operation(&mut ledger)?;
-        let active_key = self.integrity_keys.get(&self.active_key_id)
+        let active_key = self
+            .integrity_keys
+            .get(&self.active_key_id)
             .ok_or(DurableLedgerError::InvalidRecord)?;
         persist_snapshot(&self.path, &ledger, &self.active_key_id, &active_key.key)?;
         Ok(result)
@@ -303,8 +312,7 @@ type LedgerHmacSha256 = hmac::Hmac<Sha256>;
 
 fn ledger_mac(key: &[u8; 32], key_id: &str, body: &[u8]) -> [u8; 32] {
     use hmac::Mac;
-    let mut mac = LedgerHmacSha256::new_from_slice(key)
-        .expect("HMAC accepts a fixed-size key");
+    let mut mac = LedgerHmacSha256::new_from_slice(key).expect("HMAC accepts a fixed-size key");
     mac.update(LEDGER_MAC_DOMAIN);
     mac.update(&(key_id.len() as u32).to_be_bytes());
     mac.update(key_id.as_bytes());
@@ -379,8 +387,10 @@ fn deserialize_snapshot(
     let mac_start = text.rfind("M\t").ok_or(DurableLedgerError::CorruptState)?;
     let body = &text[..mac_start];
     let mac_line = &text[mac_start..];
-    let mut mac_fields = mac_line.strip_suffix('\n')
-        .ok_or(DurableLedgerError::CorruptState)?.split('\t');
+    let mut mac_fields = mac_line
+        .strip_suffix('\n')
+        .ok_or(DurableLedgerError::CorruptState)?
+        .split('\t');
     if mac_fields.next() != Some("M") {
         return Err(DurableLedgerError::CorruptState);
     }
@@ -389,7 +399,9 @@ fn deserialize_snapshot(
     if mac_fields.next().is_some() || !valid_stored_identifier(key_id, 128) {
         return Err(DurableLedgerError::CorruptState);
     }
-    let key = integrity_keys.get(key_id).ok_or(DurableLedgerError::CorruptState)?;
+    let key = integrity_keys
+        .get(key_id)
+        .ok_or(DurableLedgerError::CorruptState)?;
     let expected_mac = hex_decode(encoded_mac)?;
     if !verify_ledger_mac(&key.key, key_id, body.as_bytes(), &expected_mac) {
         return Err(DurableLedgerError::CorruptState);
@@ -490,7 +502,10 @@ fn read_snapshot(path: &Path) -> Result<Vec<u8>, DurableLedgerError> {
     Ok(fs::read(path)?)
 }
 
-fn load_or_recover(path: &Path, integrity_keys: &HashMap<String, LedgerIntegrityKey>) -> Result<Ledger, DurableLedgerError> {
+fn load_or_recover(
+    path: &Path,
+    integrity_keys: &HashMap<String, LedgerIntegrityKey>,
+) -> Result<Ledger, DurableLedgerError> {
     let backup = append_suffix(path, ".bak");
     if !path.exists() {
         if backup.exists() {
@@ -526,7 +541,12 @@ fn load_or_recover(path: &Path, integrity_keys: &HashMap<String, LedgerIntegrity
     }
 }
 
-fn persist_snapshot(path: &Path, ledger: &Ledger, key_id: &str, key: &[u8; 32]) -> Result<(), DurableLedgerError> {
+fn persist_snapshot(
+    path: &Path,
+    ledger: &Ledger,
+    key_id: &str,
+    key: &[u8; 32],
+) -> Result<(), DurableLedgerError> {
     let temp = append_suffix(path, ".tmp");
     let backup = append_suffix(path, ".bak");
     if temp.exists() {
@@ -735,7 +755,9 @@ mod tests {
                 .consumed_approvals
                 .insert(format!("{prefix}-{index:06}"));
         }
-        assert!(serialize_snapshot(&ledger, "test-v1", &[0xA5; 32]).len() as u64 > MAX_LEDGER_BYTES);
+        assert!(
+            serialize_snapshot(&ledger, "test-v1", &[0xA5; 32]).len() as u64 > MAX_LEDGER_BYTES
+        );
 
         assert_eq!(
             persist_snapshot(&path, &ledger, "test-v1", &[0xA5; 32]),
@@ -871,7 +893,10 @@ mod tests {
         // cannot produce the required MAC without the external integrity key.
         let mac_line = text.rfind("M\t").unwrap();
         let body = &text[..mac_line];
-        let forged = format!("{body}M\ttest-v1\t{}\n", hex_encode(&Sha256::digest(body.as_bytes())));
+        let forged = format!(
+            "{body}M\ttest-v1\t{}\n",
+            hex_encode(&Sha256::digest(body.as_bytes()))
+        );
         bytes = forged.into_bytes();
         fs::write(&path, &bytes).unwrap();
 
@@ -891,7 +916,8 @@ mod tests {
                 &path,
                 "key-v1",
                 vec![integrity_key("key-v1", 0x11)],
-            ).unwrap();
+            )
+            .unwrap();
             assert_eq!(old.snapshot().unwrap().active_jobs, 0);
         }
         {
@@ -899,7 +925,8 @@ mod tests {
                 &path,
                 "key-v2",
                 vec![integrity_key("key-v1", 0x11), integrity_key("key-v2", 0x22)],
-            ).unwrap();
+            )
+            .unwrap();
             assert_eq!(rotated.snapshot().unwrap().active_jobs, 0);
         }
         {
@@ -907,7 +934,8 @@ mod tests {
                 &path,
                 "key-v2",
                 vec![integrity_key("key-v2", 0x22)],
-            ).unwrap();
+            )
+            .unwrap();
             assert_eq!(only_new_key.snapshot().unwrap().active_jobs, 0);
         }
         cleanup(&path);
@@ -932,5 +960,4 @@ mod tests {
         );
         cleanup(&path);
     }
-
 }
