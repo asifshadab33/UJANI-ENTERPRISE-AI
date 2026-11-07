@@ -180,31 +180,19 @@ fn individual_request_hash(record: &IndividualConsentRecord, expected: Option<u6
     Sha256::digest(bytes).into()
 }
 
-fn audit_hash(
-    sequence: u64,
-    event_id: &[u8; 32],
-    tenant_id: &str,
-    principal_id: Option<&str>,
-    device_id: Option<&str>,
-    action: &str,
-    previous_generation: u64,
-    next_generation: u64,
-    actor_key_id: &str,
-    committed_at: u64,
-    previous_hash: &[u8; 32],
-) -> [u8; 32] {
+fn audit_hash(record: &ConsentAuditRecord) -> [u8; 32] {
     let mut bytes = AUDIT_DOMAIN.to_vec();
-    bytes.extend_from_slice(&sequence.to_be_bytes());
-    bytes.extend_from_slice(event_id);
-    push_string(&mut bytes, tenant_id);
-    push_string(&mut bytes, principal_id.unwrap_or(""));
-    push_string(&mut bytes, device_id.unwrap_or(""));
-    push_string(&mut bytes, action);
-    bytes.extend_from_slice(&previous_generation.to_be_bytes());
-    bytes.extend_from_slice(&next_generation.to_be_bytes());
-    push_string(&mut bytes, actor_key_id);
-    bytes.extend_from_slice(&committed_at.to_be_bytes());
-    bytes.extend_from_slice(previous_hash);
+    bytes.extend_from_slice(&record.sequence.to_be_bytes());
+    bytes.extend_from_slice(&record.event_id);
+    push_string(&mut bytes, &record.tenant_id);
+    push_string(&mut bytes, record.principal_id.as_deref().unwrap_or(""));
+    push_string(&mut bytes, record.device_id.as_deref().unwrap_or(""));
+    push_string(&mut bytes, &record.action);
+    bytes.extend_from_slice(&record.previous_generation.to_be_bytes());
+    bytes.extend_from_slice(&record.next_generation.to_be_bytes());
+    push_string(&mut bytes, &record.actor_key_id);
+    bytes.extend_from_slice(&record.committed_at_unix_ms.to_be_bytes());
+    bytes.extend_from_slice(&record.previous_hash);
     Sha256::digest(bytes).into()
 }
 
@@ -243,15 +231,15 @@ impl MemoryConsentAuthority {
         let sequence = u64::try_from(state.audit.len()).map_err(|_| AuthorityError::CapacityExceeded)?.checked_add(1).ok_or(AuthorityError::GenerationExhausted)?;
         let previous_hash = state.audit.last().map(|a| a.record_hash).unwrap_or([0; 32]);
         let event_id: [u8; 32] = Sha256::digest([request_hash.as_slice(), idempotency_key.as_bytes()].concat()).into();
-        let record_hash = audit_hash(sequence, &event_id, tenant_id, principal_id, device_id, action, previous_generation, next_generation, actor_key_id, committed_at, &previous_hash);
-        let audit = ConsentAuditRecord {
+        let mut audit = ConsentAuditRecord {
             sequence, event_id, tenant_id: tenant_id.to_owned(),
             principal_id: principal_id.map(str::to_owned),
             device_id: device_id.map(str::to_owned),
             action: action.to_owned(), previous_generation, next_generation,
             actor_key_id: actor_key_id.to_owned(), committed_at_unix_ms: committed_at,
-            previous_hash, record_hash,
+            previous_hash, record_hash: [0; 32],
         };
+        audit.record_hash = audit_hash(&audit);
         state.audit.push(audit.clone());
         state.idempotency.insert(idempotency_key.to_owned(), IdempotencyOutcome { request_hash, audit: audit.clone() });
         Ok(audit)
