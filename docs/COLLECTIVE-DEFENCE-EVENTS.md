@@ -23,6 +23,7 @@ Use the existing device-trust and authenticated-request primitives; do not creat
 - Never send file contents, document contents, credentials, tokens, raw command lines, memory dumps or unrestricted process arguments in this event format.
 - Do not send raw usernames, home-directory paths, full file paths, email addresses or personal identifiers by default.
 - Prefer bounded categorical signals, hashes/fingerprints and pseudonymous identifiers. Sensor IDs, sensor versions, and signal names are allowlisted or pattern-constrained; free-form command text is not accepted in source metadata. Hashes can still be sensitive or linkable; protect them as security data.
+- Treat `evidence.indicator_domain` as sensitive and potentially linkable: it can reveal visited sites, and arbitrary subdomain labels can carry covert data. Include it only when strictly necessary for an approved security indicator. Receivers must normalize/allowlist domains, restrict access and retention, and avoid exposing values in general telemetry or broad logs. Prefer registered-domain or hash-based indicators in a future schema version.
 - Tenant-private storage is the default. Cross-tenant exchange requires separate explicit policy, governance, provenance and opt-in.
 - Apply purpose limitation, access logging, encryption, retention limits and deletion workflows.
 
