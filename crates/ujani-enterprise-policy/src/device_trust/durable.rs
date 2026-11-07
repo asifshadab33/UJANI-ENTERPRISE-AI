@@ -711,11 +711,14 @@ mod tests {
         let _ = fs::remove_file(suffix(&path, ".lock"));
     }
     #[derive(Default)]
-    struct MemoryAnchor(std::sync::Mutex<Option<SnapshotAnchorRecord>>);
+    struct MemoryAnchor {
+        record: std::sync::Mutex<Option<SnapshotAnchorRecord>>,
+        fail_next_cas: std::sync::atomic::AtomicBool,
+    }
 
     impl MonotonicSnapshotAnchor for MemoryAnchor {
         fn load(&self, _registry_id: &str) -> Result<Option<SnapshotAnchorRecord>, String> {
-            Ok(self.0.lock().map_err(|e| e.to_string())?.clone())
+            Ok(self.record.lock().map_err(|e| e.to_string())?.clone())
         }
 
         fn compare_and_set(
@@ -724,7 +727,11 @@ mod tests {
             expected_generation: Option<u64>,
             next: SnapshotAnchorRecord,
         ) -> Result<bool, String> {
-            let mut current = self.0.lock().map_err(|e| e.to_string())?;
+            use std::sync::atomic::Ordering;
+            if self.fail_next_cas.swap(false, Ordering::SeqCst) {
+                return Err("simulated external anchor outage".into());
+            }
+            let mut current = self.record.lock().map_err(|e| e.to_string())?;
             if current.as_ref().map(SnapshotAnchorRecord::generation) != expected_generation
                 || next.generation() != expected_generation.unwrap_or(0).saturating_add(1)
             {
@@ -784,6 +791,58 @@ mod tests {
         let _ = fs::remove_file(suffix(&path, ".bak"));
         let _ = fs::remove_file(suffix(&path, ".lock"));
         let _ = fs::remove_file(suffix(&path, ".anchor-restore.tmp"));
+    }
+
+    #[test]
+    fn external_anchor_outage_restores_the_last_committed_backup() {
+        let path = path();
+        let admin = SigningKey::from_bytes(&[7; 32]);
+        let device = SigningKey::from_bytes(&[9; 32]);
+        let anchor = std::sync::Arc::new(MemoryAnchor::default());
+        let store = DurableDeviceRegistry::open_with_anchor(
+            &path,
+            "tenant-a-device-registry",
+            vec![("admin-v1".into(), admin.verifying_key())],
+            DeviceTrustIntegrityKey::new("integrity-v1", [0x42; 32]),
+            anchor.clone(),
+        ).unwrap();
+        store.apply_admin_command(&enroll(&admin, &device), 200).unwrap();
+
+        let claims = DeviceRequestClaims {
+            tenant_id: "tenant-a".into(),
+            device_id: "device-1".into(),
+            key_id: "device-key-v1".into(),
+            key_generation: 1,
+            request_id: [10; 16],
+            issued_at_unix_ms: 200,
+            expires_at_unix_ms: 500,
+            method: "POST".into(),
+            resource_id: "lease:acquire".into(),
+        };
+        let signed = SignedDeviceRequest {
+            signature: device.sign(&device_request_bytes(&claims)).to_bytes(),
+            claims,
+        };
+        anchor.fail_next_cas.store(true, std::sync::atomic::Ordering::SeqCst);
+        assert!(matches!(
+            store.authenticate_request(&signed, 250),
+            Err(DurableDeviceTrustError::AnchorUnavailable(_))
+        ));
+        drop(store);
+
+        // The local write happened, but the external CAS did not. Reopen must
+        // restore the backup that still matches the last committed anchor.
+        let reopened = DurableDeviceRegistry::open_with_anchor(
+            &path,
+            "tenant-a-device-registry",
+            vec![("admin-v1".into(), admin.verifying_key())],
+            DeviceTrustIntegrityKey::new("integrity-v1", [0x42; 32]),
+            anchor,
+        ).unwrap();
+        assert!(reopened.authenticate_request(&signed, 251).is_ok());
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(suffix(&path, ".bak"));
+        let _ = fs::remove_file(suffix(&path, ".lock"));
     }
 
     #[test]
