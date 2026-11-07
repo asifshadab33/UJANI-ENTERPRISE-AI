@@ -905,7 +905,8 @@ mod tests {
             vec![("admin-v1".into(), admin.verifying_key())],
             DeviceTrustIntegrityKey::new("integrity-v1", [0x42; 32]),
             anchor,
-        ).unwrap();
+        )
+        .unwrap();
         assert!(reopened.authenticate_request(&signed, 251).is_ok());
         let _ = fs::remove_file(&path);
         let _ = fs::remove_file(suffix(&path, ".bak"));
