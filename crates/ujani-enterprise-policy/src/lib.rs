@@ -3,6 +3,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod collective_defence_consent;
 pub mod device_trust;
 use ed25519_dalek::{Signature, VerifyingKey};
 use serde::Deserialize;
