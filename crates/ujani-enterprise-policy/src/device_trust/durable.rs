@@ -146,7 +146,7 @@ impl DurableDeviceRegistry {
         lock.lock()?;
 
         let mut registry = if self.path.exists() {
-            decode_snapshot(&fs::read(&self.path)?, &self.admin_keys, &self.integrity_key.bytes)?
+            decode_snapshot(&fs::read(&self.path)?, &self.admin_keys, self.integrity_key.key_id(), &self.integrity_key.bytes)?
         } else {
             DeviceRegistry::new(self.admin_keys.as_ref().clone())?
         };
@@ -202,7 +202,7 @@ fn encode_snapshot(r: &DeviceRegistry, key_id: &str, key: &[u8;32]) -> Vec<u8> {
     body.into_bytes()
 }
 fn decode_snapshot(
-    bytes: &[u8], admin_keys: &[(String,VerifyingKey)], key: &[u8;32],
+    bytes: &[u8], admin_keys: &[(String,VerifyingKey)], expected_key_id: &str, key: &[u8;32],
 ) -> Result<DeviceRegistry,DurableDeviceTrustError> {
     if bytes.len() as u64 > MAX_BYTES { return Err(DurableDeviceTrustError::CapacityExceeded); }
     let text=std::str::from_utf8(bytes).map_err(|_| DurableDeviceTrustError::CorruptState)?;
@@ -211,7 +211,7 @@ fn decode_snapshot(
     let fields=tail.trim_end_matches('\n').split('|').collect::<Vec<_>>();
     if fields.len()!=3 || fields[0]!="H" { return Err(DurableDeviceTrustError::CorruptState); }
     let key_id=String::from_utf8(unhex(fields[1])?).map_err(|_| DurableDeviceTrustError::CorruptState)?;
-    if !valid_id(&key_id,128) { return Err(DurableDeviceTrustError::CorruptState); }
+    if !valid_id(&key_id,128) || key_id != expected_key_id { return Err(DurableDeviceTrustError::CorruptState); }
     let expected=unhex(fields[2])?;
     let mut mac=Hmac::<Sha256>::new_from_slice(key).map_err(|_| DurableDeviceTrustError::CorruptState)?;
     mac.update(DOMAIN); mac.update(&(key_id.len() as u32).to_be_bytes());
@@ -278,4 +278,71 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(),DurableDeviceTrustError>
     }
     let _=fs::remove_file(backup);
     Ok(())
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ed25519_dalek::{Signer, SigningKey};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn path() -> PathBuf {
+        let n=SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        std::env::temp_dir().join(format!("ujani-device-trust-{}-{n}.db",std::process::id()))
+    }
+    fn open(path:&Path, admin:&SigningKey) -> DurableDeviceRegistry {
+        DurableDeviceRegistry::open(
+            path, vec![("admin-v1".into(),admin.verifying_key())],
+            DeviceTrustIntegrityKey::new("integrity-v1",[0x42;32])
+        ).unwrap()
+    }
+    fn enroll(admin:&SigningKey, device:&SigningKey) -> SignedDeviceAdminCommand {
+        let mut c=SignedDeviceAdminCommand {
+            action:DeviceCommandAction::Enroll, tenant_id:"tenant-a".into(),
+            device_id:"device-1".into(), admin_key_id:"admin-v1".into(),
+            target_key_id:"device-key-v1".into(), target_public_key:Some(device.verifying_key().to_bytes()),
+            issued_at_unix_ms:100, expires_at_unix_ms:1000, nonce:[1;16],
+            signature:[0;64], old_device_signature:None, new_device_signature:None,
+        };
+        c.new_device_signature=Some(device.sign(&enrollment_proof_bytes(&c)).to_bytes());
+        c.signature=admin.sign(&admin_command_bytes(&c)).to_bytes();
+        c
+    }
+    #[test]
+    fn enrollment_and_request_replay_state_survive_restart() {
+        let path=path();
+        let admin=SigningKey::from_bytes(&[7;32]);
+        let device=SigningKey::from_bytes(&[9;32]);
+        let store=open(&path,&admin);
+        assert_eq!(store.apply_admin_command(&enroll(&admin,&device),200).unwrap(),1);
+        let claims=DeviceRequestClaims {
+            tenant_id:"tenant-a".into(), device_id:"device-1".into(),
+            key_id:"device-key-v1".into(), key_generation:1, request_id:[3;16],
+            issued_at_unix_ms:200, expires_at_unix_ms:500, method:"POST".into(),
+            resource_id:"lease:acquire".into(),
+        };
+        let signed=SignedDeviceRequest {signature:device.sign(&device_request_bytes(&claims)).to_bytes(),claims};
+        assert!(store.authenticate_request(&signed,250).is_ok());
+        drop(store);
+        let reopened=open(&path,&admin);
+        assert_eq!(reopened.device_count().unwrap(),1);
+        assert_eq!(reopened.authenticate_request(&signed,251),Err(DurableDeviceTrustError::Trust(DeviceTrustError::ReplayDetected)));
+        let _=fs::remove_file(&path); let _=fs::remove_file(suffix(&path,".lock"));
+    }
+    #[test]
+    fn modified_snapshot_fails_closed() {
+        let path=path();
+        let admin=SigningKey::from_bytes(&[7;32]);
+        let device=SigningKey::from_bytes(&[9;32]);
+        let store=open(&path,&admin);
+        store.apply_admin_command(&enroll(&admin,&device),200).unwrap();
+        drop(store);
+        let mut bytes=fs::read(&path).unwrap();
+        let index=bytes.iter().position(|b| *b==b'E').unwrap();
+        bytes[index]=b'R';
+        fs::write(&path,bytes).unwrap();
+        assert!(matches!(open(&path,&admin),Err(DurableDeviceTrustError::CorruptState)));
+        let _=fs::remove_file(&path); let _=fs::remove_file(suffix(&path,".lock"));
+    }
 }
