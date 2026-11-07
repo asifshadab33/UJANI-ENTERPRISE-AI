@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 const LEDGER_HEADER: &str = "UJANI-ENTERPRISE-LEDGER-V1";
+const MAX_LEDGER_BYTES: u64 = 16 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DurableLedgerError {
@@ -150,12 +151,14 @@ impl DurableLedger {
             .thread_lock
             .lock()
             .map_err(|_| DurableLedgerError::LockPoisoned)?;
-        let lock_file = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .open(&self.lock_path)?;
+        let mut lock_options = OpenOptions::new();
+        lock_options.create(true).truncate(false).read(true).write(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            lock_options.mode(0o600);
+        }
+        let lock_file = lock_options.open(&self.lock_path)?;
         lock_file.lock()?;
 
         let mut ledger = load_or_recover(&self.path)?;
@@ -175,8 +178,8 @@ fn hex_encode(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut output = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
-        output.push(HEX[(byte >> 4) as usize] as char);
-        output.push(HEX[(byte & 0x0f) as usize] as char);
+        output.push(HEX[(*byte >> 4) as usize] as char);
+        output.push(HEX[(*byte & 0x0f) as usize] as char);
     }
     output
 }
@@ -249,7 +252,7 @@ fn serialize_snapshot(ledger: &Ledger) -> Vec<u8> {
 
 fn deserialize_snapshot(bytes: &[u8]) -> Result<Ledger, DurableLedgerError> {
     let text = std::str::from_utf8(bytes).map_err(|_| DurableLedgerError::CorruptState)?;
-    if !text.ends_with('\n') {
+    if bytes.len() as u64 > MAX_LEDGER_BYTES || !text.ends_with('\n') {
         return Err(DurableLedgerError::CorruptState);
     }
     let hash_start = text
@@ -342,6 +345,14 @@ fn deserialize_snapshot(bytes: &[u8]) -> Result<Ledger, DurableLedgerError> {
     Ok(ledger)
 }
 
+fn read_snapshot(path: &Path) -> Result<Vec<u8>, DurableLedgerError> {
+    let metadata = fs::metadata(path)?;
+    if metadata.len() > MAX_LEDGER_BYTES {
+        return Err(DurableLedgerError::CorruptState);
+    }
+    Ok(fs::read(path)?)
+}
+
 fn load_or_recover(path: &Path) -> Result<Ledger, DurableLedgerError> {
     let backup = append_suffix(path, ".bak");
     if !path.exists() {
@@ -351,7 +362,7 @@ fn load_or_recover(path: &Path) -> Result<Ledger, DurableLedgerError> {
             return Ok(Ledger::default());
         }
     }
-    let current = fs::read(path).map_err(DurableLedgerError::from);
+    let current = read_snapshot(path);
     match current.and_then(|bytes| deserialize_snapshot(&bytes)) {
         Ok(ledger) => {
             if backup.exists() {
@@ -363,7 +374,7 @@ fn load_or_recover(path: &Path) -> Result<Ledger, DurableLedgerError> {
             if !backup.exists() {
                 return Err(current_error);
             }
-            let backup_bytes = fs::read(&backup)?;
+            let backup_bytes = read_snapshot(&backup)?;
             let recovered = deserialize_snapshot(&backup_bytes)?;
             let corrupt = append_suffix(path, ".corrupt");
             if corrupt.exists() {
@@ -385,10 +396,14 @@ fn persist_snapshot(path: &Path, ledger: &Ledger) -> Result<(), DurableLedgerErr
         fs::remove_file(&temp)?;
     }
     let bytes = serialize_snapshot(ledger);
-    let mut file = OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(&temp)?;
+    let mut temp_options = OpenOptions::new();
+    temp_options.create_new(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        temp_options.mode(0o600);
+    }
+    let mut file = temp_options.open(&temp)?;
     file.write_all(&bytes)?;
     file.sync_all()?;
 
