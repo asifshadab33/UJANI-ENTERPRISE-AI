@@ -1,13 +1,14 @@
 //! Device trust primitives for the Enterprise control-plane adapter.
 //!
 //! The base registry is in-memory; `durable` adds an authenticated persistent adapter.
-pub mod durable;
 //!
 //! IMPORTANT: this module is not a network service or durable registry. The
 //! caller must bootstrap admin verifying keys from protected configuration and
 //! persist registry state transactionally before using these decisions across
 //! restarts or multiple control-plane instances. It intentionally fails closed.
 #![forbid(unsafe_code)]
+
+pub mod durable;
 
 use ed25519_dalek::{Signature, VerifyingKey};
 use std::collections::HashMap;
