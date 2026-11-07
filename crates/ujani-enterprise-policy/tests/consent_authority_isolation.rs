@@ -60,11 +60,9 @@ fn individual_consent_is_scoped_to_the_exact_device() {
         )
         .unwrap();
 
-    assert!(
-        authority
-            .authorization_snapshot("tenant-a", "user-a", "device-a", 102)
-            .is_ok()
-    );
+    assert!(authority
+        .authorization_snapshot("tenant-a", "user-a", "device-a", 102)
+        .is_ok());
     assert_eq!(
         authority.authorization_snapshot("tenant-a", "user-a", "device-b", 102),
         Err(AuthorityError::IndividualNotEnabled)
@@ -151,11 +149,9 @@ fn expired_tenant_or_individual_consent_fails_closed() {
         .put_individual(expired_individual, None, "expired-individual")
         .unwrap();
 
-    assert!(
-        authority
-            .authorization_snapshot("tenant-expired", "user-a", "device-a", 100)
-            .is_ok()
-    );
+    assert!(authority
+        .authorization_snapshot("tenant-expired", "user-a", "device-a", 100)
+        .is_ok());
     assert_eq!(
         authority.authorization_snapshot("tenant-expired", "user-a", "device-a", 101),
         Err(AuthorityError::TenantNotEnabled)
