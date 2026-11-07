@@ -134,7 +134,8 @@ fn valid_time_window(issued: u64, expires: u64, now: u64, max_ttl: u64) -> bool 
 /// The caller must issue a cryptographically random, single-use challenge and
 /// atomically consume it in its control plane; this function verifies equality
 /// but does not provide persistent replay storage.
-#[allow(clippy::too_many_arguments)] // Keep both trust roots and the dispatch challenge explicit.\npub fn verify_scheduling_context(
+#[allow(clippy::too_many_arguments)] // Keep both trust roots and the dispatch challenge explicit.
+pub fn verify_scheduling_context(
     device: &Device,
     workload: &Workload,
     telemetry: &SignedWorkerTelemetry,
