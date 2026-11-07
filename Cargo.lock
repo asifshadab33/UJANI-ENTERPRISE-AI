@@ -316,6 +316,7 @@ dependencies = [
  "hmac",
  "serde",
  "sha2",
+ "zeroize",
 ]
 
 [[package]]
