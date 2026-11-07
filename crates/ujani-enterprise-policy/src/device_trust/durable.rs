@@ -28,6 +28,10 @@ pub struct SnapshotAnchorRecord {
     snapshot_sha256: [u8; 32],
 }
 impl SnapshotAnchorRecord {
+    /// Construct a record returned by a trusted external anchor provider.
+    pub fn new(generation: u64, snapshot_sha256: [u8; 32]) -> Option<Self> {
+        (generation > 0).then_some(Self { generation, snapshot_sha256 })
+    }
     pub fn generation(&self) -> u64 { self.generation }
     pub fn snapshot_sha256(&self) -> [u8; 32] { self.snapshot_sha256 }
 }
@@ -699,6 +703,82 @@ mod tests {
         let _ = fs::remove_file(&path);
         let _ = fs::remove_file(suffix(&path, ".lock"));
     }
+    #[derive(Default)]
+    struct MemoryAnchor(std::sync::Mutex<Option<SnapshotAnchorRecord>>);
+
+    impl MonotonicSnapshotAnchor for MemoryAnchor {
+        fn load(&self, _registry_id: &str) -> Result<Option<SnapshotAnchorRecord>, String> {
+            Ok(self.0.lock().map_err(|e| e.to_string())?.clone())
+        }
+
+        fn compare_and_set(
+            &self,
+            _registry_id: &str,
+            expected_generation: Option<u64>,
+            next: SnapshotAnchorRecord,
+        ) -> Result<bool, String> {
+            let mut current = self.0.lock().map_err(|e| e.to_string())?;
+            if current.as_ref().map(SnapshotAnchorRecord::generation) != expected_generation
+                || next.generation() != expected_generation.unwrap_or(0).saturating_add(1)
+            {
+                return Ok(false);
+            }
+            *current = Some(next);
+            Ok(true)
+        }
+    }
+
+    #[test]
+    fn external_anchor_detects_rollback_to_an_older_valid_hmac_snapshot() {
+        let path = path();
+        let admin = SigningKey::from_bytes(&[7; 32]);
+        let device = SigningKey::from_bytes(&[9; 32]);
+        let anchor = std::sync::Arc::new(MemoryAnchor::default());
+        let store = DurableDeviceRegistry::open_with_anchor(
+            &path,
+            "tenant-a/device-registry",
+            vec![("admin-v1".into(), admin.verifying_key())],
+            DeviceTrustIntegrityKey::new("integrity-v1", [0x42; 32]),
+            anchor.clone(),
+        ).unwrap();
+        store.apply_admin_command(&enroll(&admin, &device), 200).unwrap();
+
+        let claims = DeviceRequestClaims {
+            tenant_id: "tenant-a".into(),
+            device_id: "device-1".into(),
+            key_id: "device-key-v1".into(),
+            key_generation: 1,
+            request_id: [8; 16],
+            issued_at_unix_ms: 200,
+            expires_at_unix_ms: 500,
+            method: "POST".into(),
+            resource_id: "lease:acquire".into(),
+        };
+        let signed = SignedDeviceRequest {
+            signature: device.sign(&device_request_bytes(&claims)).to_bytes(),
+            claims,
+        };
+        store.authenticate_request(&signed, 250).unwrap();
+        assert_eq!(anchor.load("tenant-a/device-registry").unwrap().unwrap().generation(), 3);
+        drop(store);
+
+        // The backup is a valid, correctly HMAC-authenticated but older snapshot.
+        let old_snapshot = fs::read(suffix(&path, ".bak")).unwrap();
+        fs::write(&path, old_snapshot).unwrap();
+        let reopened = DurableDeviceRegistry::open_with_anchor(
+            &path,
+            "tenant-a/device-registry",
+            vec![("admin-v1".into(), admin.verifying_key())],
+            DeviceTrustIntegrityKey::new("integrity-v1", [0x42; 32]),
+            anchor,
+        );
+        assert!(matches!(reopened, Err(DurableDeviceTrustError::AnchorMismatch)));
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(suffix(&path, ".bak"));
+        let _ = fs::remove_file(suffix(&path, ".lock"));
+        let _ = fs::remove_file(suffix(&path, ".anchor-restore.tmp"));
+    }
+
     #[test]
     fn concurrent_handles_consume_a_request_nonce_once() {
         let path = path();
