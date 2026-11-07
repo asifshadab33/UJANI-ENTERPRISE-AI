@@ -31,6 +31,8 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
       - name: Run workspace tests
         run: cargo test --workspace --locked
+      - name: Validate collective-defence event schema contract
+        run: python3 scripts/validate_security_event_schema.py
       - name: Check formatting
         run: cargo fmt --all -- --check
       - name: Check lint warnings
