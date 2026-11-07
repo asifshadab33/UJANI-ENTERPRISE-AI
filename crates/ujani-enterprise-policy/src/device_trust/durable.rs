@@ -145,8 +145,16 @@ impl DurableDeviceRegistry {
         let lock = options.open(&self.lock_path)?;
         lock.lock()?;
 
+        let backup = suffix(&self.path, ".bak");
         let mut registry = if self.path.exists() {
             decode_snapshot(&fs::read(&self.path)?, &self.admin_keys, self.integrity_key.key_id(), &self.integrity_key.bytes)?
+        } else if backup.exists() {
+            // Recover only the interrupted-rename case. A present but invalid
+            // primary snapshot is never silently replaced by an older backup.
+            let bytes = fs::read(&backup)?;
+            let recovered = decode_snapshot(&bytes, &self.admin_keys, self.integrity_key.key_id(), &self.integrity_key.bytes)?;
+            atomic_write(&self.path, &bytes)?;
+            recovered
         } else {
             DeviceRegistry::new(self.admin_keys.as_ref().clone())?
         };
@@ -339,7 +347,7 @@ mod tests {
         store.apply_admin_command(&enroll(&admin,&device),200).unwrap();
         drop(store);
         let mut bytes=fs::read(&path).unwrap();
-        let index=bytes.iter().position(|b| *b==b'E').unwrap();
+        let index=bytes.windows(3).position(|w| w==b"|E|").unwrap()+1;
         bytes[index]=b'R';
         fs::write(&path,bytes).unwrap();
         assert!(matches!(open(&path,&admin),Err(DurableDeviceTrustError::CorruptState)));
