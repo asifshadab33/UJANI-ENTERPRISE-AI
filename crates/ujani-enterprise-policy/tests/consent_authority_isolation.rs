@@ -6,6 +6,7 @@ use ujani_enterprise_policy::collective_defence_authority::{
     TenantConsentRecord,
 };
 
+/// Builds a valid tenant consent fixture with the requested generation and state.
 fn tenant(tenant_id: &str, enabled: bool, generation: u64, now: u64) -> TenantConsentRecord {
     TenantConsentRecord {
         tenant_id: tenant_id.into(),
@@ -22,6 +23,7 @@ fn tenant(tenant_id: &str, enabled: bool, generation: u64, now: u64) -> TenantCo
     }
 }
 
+/// Builds a valid principal/device consent fixture for a tenant generation.
 fn individual(
     tenant_id: &str,
     principal_id: &str,
@@ -46,6 +48,7 @@ fn individual(
     }
 }
 
+/// Verifies that an individual's opt-in authorizes only the exact enrolled device.
 #[test]
 fn individual_consent_is_scoped_to_the_exact_device() {
     let authority = MemoryConsentAuthority::default();
@@ -69,6 +72,7 @@ fn individual_consent_is_scoped_to_the_exact_device() {
     );
 }
 
+/// Verifies that re-enabling a tenant cannot revive consent from an older generation.
 #[test]
 fn tenant_reenable_does_not_restore_old_individual_consent() {
     let authority = MemoryConsentAuthority::default();
@@ -95,6 +99,7 @@ fn tenant_reenable_does_not_restore_old_individual_consent() {
     );
 }
 
+/// Verifies compare-and-set prevents concurrent tenant updates from both committing.
 #[test]
 fn concurrent_tenant_updates_cannot_both_win_the_same_generation() {
     let authority = Arc::new(MemoryConsentAuthority::default());
@@ -135,6 +140,7 @@ fn concurrent_tenant_updates_cannot_both_win_the_same_generation() {
     );
 }
 
+/// Verifies expired tenant or individual consent never produces an authorization snapshot.
 #[test]
 fn expired_tenant_or_individual_consent_fails_closed() {
     let authority = MemoryConsentAuthority::default();
@@ -172,6 +178,7 @@ fn expired_tenant_or_individual_consent_fails_closed() {
     );
 }
 
+/// Verifies tenant, principal, device, and generation bindings cannot cross tenants.
 #[test]
 fn tenant_records_and_individual_consents_do_not_cross_tenant_boundaries() {
     let authority = MemoryConsentAuthority::default();
