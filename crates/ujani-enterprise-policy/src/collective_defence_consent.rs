@@ -532,6 +532,10 @@ mod tests {
             authorize_event_sharing(&tenant, &individual, &context("tenant-a", "device-02", "user-01", 4, 2, NOW)),
             Err(ConsentError::DeviceMismatch)
         );
+        assert_eq!(
+            authorize_event_sharing(&tenant, &individual, &context("tenant-a", "device-01", "user-02", 4, 2, NOW)),
+            Err(ConsentError::PrincipalMismatch)
+        );
     }
 
     #[test]
@@ -541,6 +545,7 @@ mod tests {
         assert!(!p.is_current(&context("tenant-a", "device-01", "user-01", 4, 3, NOW)));
         assert!(!p.is_current(&context("tenant-b", "device-01", "user-01", 4, 2, NOW)));
         assert!(!p.is_current(&context("tenant-a", "device-02", "user-01", 4, 2, NOW)));
+        assert!(!p.is_current(&context("tenant-a", "device-01", "user-02", 4, 2, NOW)));
     }
 
     #[test]
@@ -557,7 +562,7 @@ mod tests {
         let p = authorize_event_sharing(&tenant, &individual, &context("tenant-a", "device-01", "user-01", 4, 2, NOW))
             .unwrap();
         assert_eq!(p.expires_at_unix_ms(), NOW + 30_000);
-        assert!(!p.is_current(&context("tenant-a", "device-01", "user-01", 4, 2, NOW) + 30_000));
+        assert!(!p.is_current(&context("tenant-a", "device-01", "user-01", 4, 2, NOW + 30_000)));
     }
 
     #[test]
