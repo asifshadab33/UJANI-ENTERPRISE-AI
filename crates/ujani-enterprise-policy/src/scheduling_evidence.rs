@@ -5,11 +5,10 @@
 //! administrator key and bound to the exact workload manifest. Callers cannot
 //! construct a VerifiedSchedulingContext directly.
 use crate::{
-    admit_and_reserve, admit_with_context, Admission, ClassPolicy, Device, Ledger,
+    admit_with_context, Admission, ClassPolicy, Device, Ledger,
     SchedulingContext, VerifiedAdminApproval, Workload,
 };
 use ed25519_dalek::{Signature, VerifyingKey};
-use sha2::{Digest, Sha256};
 
 const TELEMETRY_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-WORKER-TELEMETRY-V1\0";
 const POLICY_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-SCHEDULING-POLICY-V1\0";
@@ -209,7 +208,7 @@ pub fn verify_scheduling_context(
         )
         .map_err(|_| SchedulingEvidenceError::InvalidPolicySignature)?;
 
-    let mut context = SchedulingContext {
+    let context = SchedulingContext {
         owner_opted_in: telemetry_claims.owner_opted_in,
         within_admin_schedule: policy_claims.within_admin_schedule,
         interactive_user_present: telemetry_claims.interactive_user_present,
@@ -220,10 +219,6 @@ pub fn verify_scheduling_context(
         data_classification_allows: policy_claims.data_classification_allows,
         telemetry_fresh: true,
     };
-    // Fail closed if the signed worker evidence is internally inconsistent.
-    if !telemetry_claims.owner_opted_in {
-        context.owner_opted_in = false;
-    }
     Ok(VerifiedSchedulingContext(context))
 }
 
