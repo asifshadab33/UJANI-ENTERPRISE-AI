@@ -1,0 +1,79 @@
+# Device trust service integration contract
+
+Status: implementation contract for the next control-plane phase. The current `device_trust` Rust module is an in-memory policy primitive only; it is not a deployable service or durable source of truth.
+
+## Trust bootstrap
+
+- Load administrator Ed25519 verifying keys from a protected deployment trust store (HSM/KMS/TPM-backed adapter or tightly controlled secret manager).
+- Do not accept administrator public keys from enrollment requests, devices, tenants or ordinary API callers.
+- Assign each administrator key a stable key ID and lifecycle generation. Key replacement and revocation must be an audited, authenticated administrative operation.
+- Keep private signing keys outside this repository and outside the writable registry/ledger directory.
+
+## Durable authoritative registry
+
+Persist, transactionally:
+- device ID, tenant ID, lifecycle state, creation/approval/revocation timestamps and actor;
+- active device key ID, public key, monotonic generation and rotation history;
+- owner consent and administrator approval evidence references;
+- registry version and audit event sequence.
+
+Unique constraints must prevent one device identity from being bound to multiple tenants. A device move between tenants is a de-enrollment followed by a separately approved enrollment; it is never an in-place tenant reassignment.
+
+Registry mutations and audit events must commit in one database transaction. State must be protected against unauthorized writes and backup/restore rollback. A stale restored registry must not resurrect a revoked device; use a monotonic external generation or append-only signed checkpoint.
+
+## Signed request envelope
+
+Every agent-to-control-plane request must carry:
+- tenant ID, device ID, active key ID and key generation;
+- HTTP method and canonical resource/action;
+- unique random request ID (at least 128 bits);
+- issued-at and expiry timestamps;
+- Ed25519 signature over a versioned, domain-separated canonical encoding of all fields and the body digest.
+
+Reject unknown schema versions, non-canonical encodings, expired or overlong windows, excessive clock skew, unknown devices, revoked devices, tenant mismatch, stale key generation, wrong method/resource binding, body-digest mismatch and replayed request IDs. Consume the request ID atomically with the authenticated operation or durable idempotency record. Never authorize from cached identity, enrollment, role, approval or lease state.
+
+## Enrollment and key lifecycle
+
+1. An administrator creates a short-lived, single-use enrollment challenge for one tenant and intended device.
+2. Device proves possession of its new private key and returns the challenge signed by that key.
+3. Administrator approval signature binds tenant, device, key ID, public key fingerprint, challenge, expiry and policy.
+4. Service validates both proofs and atomically records the enrollment plus audit event.
+5. Rotation requires administrator authorization and proof from both the currently enrolled key and the proposed new key. Increment key generation atomically; all old-generation requests immediately fail.
+6. Revocation increments generation, marks the device revoked, invalidates sessions/leases and publishes an auditable revocation event. It must be fail-closed during control-plane or registry outages.
+
+## Lease API binding
+
+The lease service must authenticate the signed request before policy evaluation and bind each lease to:
+- authenticated tenant and device identity;
+- workload ID and exact manifest digest;
+- lease ID, capability digest, key generation and expiry;
+- requested resource limits and approved data/network policy.
+
+Acquire, renew, release and cancel must be idempotent and transactionally coupled to the durable reservation ledger. Renewal must reject expired/revoked/stale-key leases. A lease capability alone is not device identity; it supplements, never replaces, authenticated device requests. Do not accept caller-supplied identity or public keys as proof of trust.
+
+## Operational controls
+
+- Rate-limit enrollment, authentication failures, key rotation and lease operations per tenant/device.
+- Bound body sizes, request concurrency, nonce retention, audit retention and database growth.
+- Use TLS with server identity validation; mutual TLS may be an additional layer, not a replacement for signed request authorization.
+- Return generic authentication failures to untrusted callers while recording detailed internal reason codes without secrets.
+- Alert on repeated replay, tenant mismatch, stale-generation use, revoked-device traffic and clock skew.
+- Ensure registry and replay state survive restart and are consistent across all service instances.
+- Add disaster recovery tests proving a restored backup cannot roll back revocation or replay protection.
+
+## Required integration tests before any remote dispatch
+
+- enrollment requires both admin approval and device proof;
+- forged/caller-supplied admin key is not trusted;
+- cross-tenant enrollment, lookup and lease access fail;
+- key rotation invalidates old key generation immediately;
+- revoked devices cannot authenticate, renew or release/dispatch work;
+- replay fails across concurrent service instances and after restart;
+- request method, path, body digest, tenant, manifest digest and expiry are signature-bound;
+- registry/ledger corruption or key-provider outage fails closed;
+- lease acquire/renew/release/cancel is atomic and idempotent under races;
+- audit event and state mutation are transactionally consistent.
+
+## Explicit non-goals of the current library PR
+
+The current in-memory registry does not provide durable storage, HTTP endpoints, RBAC, administrator-key revocation, HSM integration, multi-instance replay protection, lease-service integration or production availability. Passing its unit tests is necessary but not sufficient to enable a worker, partner or public network execution mode.
