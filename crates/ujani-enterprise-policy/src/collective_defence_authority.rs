@@ -133,6 +133,19 @@ struct IdempotencyOutcome {
     audit: ConsentAuditRecord,
 }
 
+struct AuditAppend<'a> {
+    idempotency_key: &'a str,
+    request_hash: [u8; 32],
+    tenant_id: &'a str,
+    principal_id: Option<&'a str>,
+    device_id: Option<&'a str>,
+    action: &'a str,
+    previous_generation: u64,
+    next_generation: u64,
+    actor_key_id: &'a str,
+    committed_at: u64,
+}
+
 #[derive(Default)]
 struct State {
     tenants: HashMap<String, TenantConsentRecord>,
@@ -307,20 +320,14 @@ impl MemoryConsentAuthority {
 
     fn append_audit(
         state: &mut State,
-        idempotency_key: &str,
-        request_hash: [u8; 32],
-        tenant_id: &str,
-        principal_id: Option<&str>,
-        device_id: Option<&str>,
-        action: &str,
-        previous_generation: u64,
-        next_generation: u64,
-        actor_key_id: &str,
-        committed_at: u64,
+        command: AuditAppend<'_>,
     ) -> Result<ConsentAuditRecord, AuthorityError> {
-        let idempotency_scope = (tenant_id.to_owned(), idempotency_key.to_owned());
+        let idempotency_scope = (
+            command.tenant_id.to_owned(),
+            command.idempotency_key.to_owned(),
+        );
         if let Some(existing) = state.idempotency.get(&idempotency_scope) {
-            return if existing.request_hash == request_hash {
+            return if existing.request_hash == command.request_hash {
                 Ok(existing.audit.clone())
             } else {
                 Err(AuthorityError::IdempotencyConflict)
@@ -335,19 +342,21 @@ impl MemoryConsentAuthority {
             .checked_add(1)
             .ok_or(AuthorityError::GenerationExhausted)?;
         let previous_hash = state.audit.last().map(|a| a.record_hash).unwrap_or([0; 32]);
-        let event_id: [u8; 32] =
-            Sha256::digest([request_hash.as_slice(), idempotency_key.as_bytes()].concat()).into();
+        let event_id: [u8; 32] = Sha256::digest([
+            command.request_hash.as_slice(),
+            command.idempotency_key.as_bytes(),
+        ].concat()).into();
         let mut audit = ConsentAuditRecord {
             sequence,
             event_id,
-            tenant_id: tenant_id.to_owned(),
-            principal_id: principal_id.map(str::to_owned),
-            device_id: device_id.map(str::to_owned),
-            action: action.to_owned(),
-            previous_generation,
-            next_generation,
-            actor_key_id: actor_key_id.to_owned(),
-            committed_at_unix_ms: committed_at,
+            tenant_id: command.tenant_id.to_owned(),
+            principal_id: command.principal_id.map(str::to_owned),
+            device_id: command.device_id.map(str::to_owned),
+            action: command.action.to_owned(),
+            previous_generation: command.previous_generation,
+            next_generation: command.next_generation,
+            actor_key_id: command.actor_key_id.to_owned(),
+            committed_at_unix_ms: command.committed_at,
             previous_hash,
             record_hash: [0; 32],
         };
@@ -356,7 +365,7 @@ impl MemoryConsentAuthority {
         state.idempotency.insert(
             idempotency_scope,
             IdempotencyOutcome {
-                request_hash,
+                request_hash: command.request_hash,
                 audit: audit.clone(),
             },
         );
@@ -410,20 +419,22 @@ impl ConsentAuthorityBackend for MemoryConsentAuthority {
         }
         let audit = Self::append_audit(
             &mut state,
-            idempotency_key,
-            request_hash,
-            &record.tenant_id,
-            None,
-            None,
-            if record.enabled {
-                "tenant.enable"
-            } else {
-                "tenant.disable"
+            AuditAppend {
+                idempotency_key,
+                request_hash,
+                tenant_id: &record.tenant_id,
+                principal_id: None,
+                device_id: None,
+                action: if record.enabled {
+                    "tenant.enable"
+                } else {
+                    "tenant.disable"
+                },
+                previous_generation: current.unwrap_or(0),
+                next_generation: record.generation,
+                actor_key_id: &record.actor_key_id,
+                committed_at: record.updated_at_unix_ms,
             },
-            current.unwrap_or(0),
-            record.generation,
-            &record.actor_key_id,
-            record.updated_at_unix_ms,
         )?;
         state.tenants.insert(record.tenant_id.clone(), record);
         Ok(audit)
@@ -493,20 +504,22 @@ impl ConsentAuthorityBackend for MemoryConsentAuthority {
         }
         let audit = Self::append_audit(
             &mut state,
-            idempotency_key,
-            request_hash,
-            &record.tenant_id,
-            Some(&record.principal_id),
-            Some(&record.device_id),
-            if record.enabled {
-                "individual.enable"
-            } else {
-                "individual.withdraw"
+            AuditAppend {
+                idempotency_key,
+                request_hash,
+                tenant_id: &record.tenant_id,
+                principal_id: Some(&record.principal_id),
+                device_id: Some(&record.device_id),
+                action: if record.enabled {
+                    "individual.enable"
+                } else {
+                    "individual.withdraw"
+                },
+                previous_generation: current.unwrap_or(0),
+                next_generation: record.generation,
+                actor_key_id: &record.actor_key_id,
+                committed_at: record.updated_at_unix_ms,
             },
-            current.unwrap_or(0),
-            record.generation,
-            &record.actor_key_id,
-            record.updated_at_unix_ms,
         )?;
         state.individuals.insert(key, record);
         Ok(audit)
