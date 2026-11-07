@@ -151,7 +151,10 @@ pub struct MemoryConsentAuthority {
 pub fn verify_audit_chain(records: &[ConsentAuditRecord]) -> bool {
     let mut previous_hash = [0u8; 32];
     for (index, record) in records.iter().enumerate() {
-        let Some(expected_sequence) = u64::try_from(index).ok().and_then(|value| value.checked_add(1)) else {
+        let Some(expected_sequence) = u64::try_from(index)
+            .ok()
+            .and_then(|value| value.checked_add(1))
+        else {
             return false;
         };
         if record.sequence != expected_sequence
@@ -520,8 +523,7 @@ impl ConsentAuthorityBackend for MemoryConsentAuthority {
             .state
             .lock()
             .map_err(|_| AuthorityError::LockPoisoned)?;
-        if state.audit.len() >= MAX_AUDIT_RECORDS
-            || state.idempotency.len() >= MAX_IDEMPOTENCY_KEYS
+        if state.audit.len() >= MAX_AUDIT_RECORDS || state.idempotency.len() >= MAX_IDEMPOTENCY_KEYS
         {
             return Err(AuthorityError::CapacityExceeded);
         }
