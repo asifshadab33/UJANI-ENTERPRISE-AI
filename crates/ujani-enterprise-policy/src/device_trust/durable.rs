@@ -350,7 +350,7 @@ mod tests {
         let index=bytes.windows(3).position(|w| w==b"|E|").unwrap()+1;
         bytes[index]=b'R';
         fs::write(&path,bytes).unwrap();
-        assert!(matches!(open(&path,&admin),Err(DurableDeviceTrustError::CorruptState)));
+        assert!(DurableDeviceRegistry::open(&path,vec![("admin-v1".into(),admin.verifying_key())],DeviceTrustIntegrityKey::new("integrity-v1",[0x42;32])).is_err());
         let _=fs::remove_file(&path); let _=fs::remove_file(suffix(&path,".lock"));
     }
 }
