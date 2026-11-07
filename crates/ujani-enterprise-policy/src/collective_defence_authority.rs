@@ -181,6 +181,7 @@ pub fn verify_audit_chain(records: &[ConsentAuditRecord]) -> bool {
     true
 }
 
+/// Checks that an identifier is non-empty, bounded, and uses the supported ASCII set.
 fn valid_id(value: &str, max: usize) -> bool {
     !value.is_empty()
         && value.len() <= max
@@ -189,6 +190,7 @@ fn valid_id(value: &str, max: usize) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b':' | b'-' | b'@'))
 }
 
+/// Validates tenant consent policy, notice, retention, and expiry constraints.
 fn validate_tenant_record(record: &TenantConsentRecord) -> Result<(), AuthorityError> {
     if record.purpose != COLLECTIVE_DEFENCE_PURPOSE {
         return Err(AuthorityError::InvalidPurpose);
@@ -215,6 +217,7 @@ fn validate_tenant_record(record: &TenantConsentRecord) -> Result<(), AuthorityE
     Ok(())
 }
 
+/// Validates individual consent purpose, notice digest, and expiry constraints.
 fn validate_individual_record(record: &IndividualConsentRecord) -> Result<(), AuthorityError> {
     if record.purpose != COLLECTIVE_DEFENCE_PURPOSE {
         return Err(AuthorityError::InvalidPurpose);
@@ -233,11 +236,13 @@ fn validate_individual_record(record: &IndividualConsentRecord) -> Result<(), Au
     Ok(())
 }
 
+/// Appends a length-prefixed UTF-8 string to canonical hash input.
 fn push_string(out: &mut Vec<u8>, value: &str) {
     out.extend_from_slice(&(value.len() as u32).to_be_bytes());
     out.extend_from_slice(value.as_bytes());
 }
 
+/// Computes the domain-separated request digest for a tenant decision.
 fn tenant_request_hash(record: &TenantConsentRecord, expected: Option<u64>) -> [u8; 32] {
     let mut bytes = RECORD_DOMAIN.to_vec();
     bytes.push(b'T');
@@ -256,6 +261,7 @@ fn tenant_request_hash(record: &TenantConsentRecord, expected: Option<u64>) -> [
     Sha256::digest(bytes).into()
 }
 
+/// Computes the domain-separated request digest for an individual decision.
 fn individual_request_hash(record: &IndividualConsentRecord, expected: Option<u64>) -> [u8; 32] {
     let mut bytes = RECORD_DOMAIN.to_vec();
     bytes.push(b'I');
@@ -275,6 +281,7 @@ fn individual_request_hash(record: &IndividualConsentRecord, expected: Option<u6
     Sha256::digest(bytes).into()
 }
 
+/// Computes the canonical hash for one consent audit record.
 fn audit_hash(record: &ConsentAuditRecord) -> [u8; 32] {
     let mut bytes = AUDIT_DOMAIN.to_vec();
     bytes.extend_from_slice(&record.sequence.to_be_bytes());
@@ -318,6 +325,7 @@ impl MemoryConsentAuthority {
             .cloned())
     }
 
+    /// Appends an idempotent, tenant-scoped audit decision to the reference state.
     fn append_audit(
         state: &mut State,
         command: AuditAppend<'_>,
