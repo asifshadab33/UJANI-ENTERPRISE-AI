@@ -462,4 +462,58 @@ mod tests {
             SchedulingEvidenceError::WorkloadMismatch
         );
     }
+
+    #[test]
+    fn rejects_tampered_admin_policy_and_unenrolled_keys() {
+        let d = device();
+        let w = workload();
+        let challenge = [9u8; 16];
+        let (telemetry, policy, device_key, admin_key) = signed_evidence(challenge, 1_000);
+
+        let mut tampered_policy = policy.clone();
+        tampered_policy.claims.network_policy_allows = false;
+        assert_eq!(
+            verify_scheduling_context(
+                &d,
+                &w,
+                &telemetry,
+                &tampered_policy,
+                &[("worker-01".into(), device_key.verifying_key())],
+                &[("admin-key-01".into(), admin_key.verifying_key())],
+                &challenge,
+                2_000,
+            )
+            .unwrap_err(),
+            SchedulingEvidenceError::InvalidPolicySignature
+        );
+        assert_eq!(
+            verify_scheduling_context(
+                &d,
+                &w,
+                &telemetry,
+                &policy,
+                &[],
+                &[("admin-key-01".into(), admin_key.verifying_key())],
+                &challenge,
+                2_000,
+            )
+            .unwrap_err(),
+            SchedulingEvidenceError::UnknownDeviceKey
+        );
+        assert_eq!(
+            verify_scheduling_context(
+                &d,
+                &w,
+                &telemetry,
+                &policy,
+                &[("worker-01".into(), device_key.verifying_key())],
+                &[],
+                &challenge,
+                2_000,
+            )
+            .unwrap_err(),
+            SchedulingEvidenceError::UnknownAdminKey
+        );
+    }
+
 }
