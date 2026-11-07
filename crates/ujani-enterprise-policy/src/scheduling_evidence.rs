@@ -545,7 +545,10 @@ mod tests {
         let path = std::env::temp_dir().join(format!(
             "ujani-scheduling-binding-{}-{}.ledger",
             std::process::id(),
-            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
         ));
         let ledger = DurableLedger::open(&path).unwrap();
         let d = device();
@@ -555,8 +558,9 @@ mod tests {
         let keys = [("worker-01".into(), device_key.verifying_key())];
         let admins = [("admin-key-01".into(), admin_key.verifying_key())];
         let verified = verify_and_consume_scheduling_context(
-            &ledger, &d, &w, &telemetry, &policy, &keys, &admins, &challenge, 2_000
-        ).unwrap();
+            &ledger, &d, &w, &telemetry, &policy, &keys, &admins, &challenge, 2_000,
+        )
+        .unwrap();
 
         let mut substituted = workload();
         substituted.workload_id = "job-substituted".into();
@@ -669,7 +673,10 @@ mod tests {
         let path = std::env::temp_dir().join(format!(
             "ujani-scheduling-challenge-{}-{}.ledger",
             std::process::id(),
-            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
         ));
         let ledger = DurableLedger::open(&path).unwrap();
         let d = device();
