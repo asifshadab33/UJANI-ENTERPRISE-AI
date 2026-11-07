@@ -736,7 +736,7 @@ mod tests {
         let anchor = std::sync::Arc::new(MemoryAnchor::default());
         let store = DurableDeviceRegistry::open_with_anchor(
             &path,
-            "tenant-a/device-registry",
+            "tenant-a-device-registry",
             vec![("admin-v1".into(), admin.verifying_key())],
             DeviceTrustIntegrityKey::new("integrity-v1", [0x42; 32]),
             anchor.clone(),
@@ -759,7 +759,7 @@ mod tests {
             claims,
         };
         store.authenticate_request(&signed, 250).unwrap();
-        assert_eq!(anchor.load("tenant-a/device-registry").unwrap().unwrap().generation(), 3);
+        assert_eq!(anchor.load("tenant-a-device-registry").unwrap().unwrap().generation(), 3);
         drop(store);
 
         // The backup is a valid, correctly HMAC-authenticated but older snapshot.
@@ -767,7 +767,7 @@ mod tests {
         fs::write(&path, old_snapshot).unwrap();
         let reopened = DurableDeviceRegistry::open_with_anchor(
             &path,
-            "tenant-a/device-registry",
+            "tenant-a-device-registry",
             vec![("admin-v1".into(), admin.verifying_key())],
             DeviceTrustIntegrityKey::new("integrity-v1", [0x42; 32]),
             anchor,
