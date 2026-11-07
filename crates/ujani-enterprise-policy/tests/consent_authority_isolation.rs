@@ -197,7 +197,10 @@ fn tenant_records_and_individual_consents_do_not_cross_tenant_boundaries() {
     assert_eq!(snapshot.individual.principal_id, "user-a");
     assert_eq!(snapshot.individual.device_id, "device-a");
     assert_eq!(snapshot.tenant.generation, 1);
-    assert_eq!(snapshot.individual.tenant_generation, snapshot.tenant.generation);
+    assert_eq!(
+        snapshot.individual.tenant_generation,
+        snapshot.tenant.generation
+    );
     assert_eq!(
         authority.authorization_snapshot("tenant-b", "user-a", "device-a", 102),
         Err(AuthorityError::IndividualNotEnabled)
