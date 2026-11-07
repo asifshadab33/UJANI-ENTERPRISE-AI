@@ -41,7 +41,7 @@ See [the workload manifest contract](docs/WORKLOAD-MANIFEST.md), [the durable re
 Run tests:
 
 ```sh
-cargo test --workspace
+cargo test --workspace --locked
 ```
 
 ## Deployment boundary
