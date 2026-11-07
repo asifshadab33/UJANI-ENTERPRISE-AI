@@ -152,6 +152,7 @@ impl DurableLedger {
             .map_err(|_| DurableLedgerError::LockPoisoned)?;
         let lock_file = OpenOptions::new()
             .create(true)
+            .truncate(false)
             .read(true)
             .write(true)
             .open(&self.lock_path)?;
