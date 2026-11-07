@@ -43,7 +43,7 @@ def validate(value, schema, path="$"):
                 except ValueError:
                     errors.append(f"{path}: invalid UUID")
         if schema.get("format") == "date-time":
-            rfc3339 = r"^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$"
+            rfc3339 = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$"
             if re.fullmatch(rfc3339, value) is None:
                 errors.append(f"{path}: invalid RFC 3339 date-time")
             else:
