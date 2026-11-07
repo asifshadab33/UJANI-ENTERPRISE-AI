@@ -1,20 +1,22 @@
 //! Durable, cross-thread and cross-process reservation ledger.
 //!
 //! Each transaction reloads the latest snapshot under an OS file lock, applies
-//! one policy operation, and commits a checksummed snapshot using a same-directory
+//! one policy operation, and commits an HMAC-authenticated snapshot using a same-directory
 //! temp file plus backup/rename recovery. The raw lease capability is never
 //! persisted; only its domain-separated digest is stored.
 use crate::{
     Admission, ClassPolicy, Device, Ledger, SchedulingContext, VerifiedAdminApproval, Workload,
 };
-use sha2::{Digest, Sha256};
-use std::collections::HashSet;
+use sha2::Sha256;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use zeroize::Zeroize;
 
-const LEDGER_HEADER: &str = "UJANI-ENTERPRISE-LEDGER-V1";
+const LEDGER_HEADER: &str = "UJANI-ENTERPRISE-LEDGER-V2";
+const LEDGER_MAC_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-LEDGER-HMAC-SHA256-V2\0";
 const MAX_LEDGER_BYTES: u64 = 16 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,19 +64,81 @@ pub struct DurableLedgerSnapshot {
     pub reserved_memory_mb: u64,
 }
 
+/// An integrity key supplied by a trusted secret provider (for example, an
+/// OS keyring, TPM-backed service, or HSM adapter). Never store this key beside
+/// the ledger file. Debug output intentionally redacts key bytes.
+#[derive(Clone)]
+pub struct LedgerIntegrityKey {
+    key_id: String,
+    key: [u8; 32],
+}
+
+impl LedgerIntegrityKey {
+    pub fn new(key_id: impl Into<String>, key: [u8; 32]) -> Self {
+        Self {
+            key_id: key_id.into(),
+            key,
+        }
+    }
+
+    pub fn key_id(&self) -> &str {
+        &self.key_id
+    }
+}
+
+impl std::fmt::Debug for LedgerIntegrityKey {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("LedgerIntegrityKey")
+            .field("key_id", &self.key_id)
+            .field("key", &"[REDACTED]")
+            .finish()
+    }
+}
+
+impl Drop for LedgerIntegrityKey {
+    fn drop(&mut self) {
+        self.key.zeroize();
+    }
+}
+
 /// A durable reservation store. Separate instances pointing to the same path
-/// coordinate through an OS advisory file lock; each operation reloads state
-/// while holding that lock, so stale in-memory snapshots cannot overwrite newer
-/// reservations from another process.
+/// coordinate through an OS advisory file lock. Integrity keys are injected by
+/// the trusted caller and must be held outside the writable ledger directory.
 #[derive(Debug, Clone)]
 pub struct DurableLedger {
     path: PathBuf,
     lock_path: PathBuf,
     thread_lock: Arc<Mutex<()>>,
+    integrity_keys: Arc<HashMap<String, LedgerIntegrityKey>>,
+    active_key_id: String,
 }
 
 impl DurableLedger {
-    pub fn open(path: impl AsRef<Path>) -> Result<Self, DurableLedgerError> {
+    /// Opens a V2 authenticated ledger. The key set must contain the active key
+    /// and any previous keys still needed to verify snapshots during rotation.
+    /// The caller must load keys from protected storage. Legacy checksum-only
+    /// V1 ledgers are rejected rather than silently trusted.
+    pub fn open_with_integrity_keys(
+        path: impl AsRef<Path>,
+        active_key_id: &str,
+        keys: Vec<LedgerIntegrityKey>,
+    ) -> Result<Self, DurableLedgerError> {
+        if !valid_stored_identifier(active_key_id, 128) || keys.is_empty() {
+            return Err(DurableLedgerError::InvalidRecord);
+        }
+        let mut integrity_keys = HashMap::new();
+        for key in keys {
+            if !valid_stored_identifier(key.key_id(), 128)
+                || integrity_keys.insert(key.key_id.clone(), key).is_some()
+            {
+                return Err(DurableLedgerError::InvalidRecord);
+            }
+        }
+        if !integrity_keys.contains_key(active_key_id) {
+            return Err(DurableLedgerError::InvalidRecord);
+        }
+
         let path = path.as_ref().to_path_buf();
         if let Some(parent) = path
             .parent()
@@ -86,6 +150,8 @@ impl DurableLedger {
             lock_path: append_suffix(&path, ".lock"),
             path,
             thread_lock: Arc::new(Mutex::new(())),
+            integrity_keys: Arc::new(integrity_keys),
+            active_key_id: active_key_id.to_string(),
         };
         store.transact(|_| Ok(()))?;
         Ok(store)
@@ -193,9 +259,13 @@ impl DurableLedger {
         let lock_file = lock_options.open(&self.lock_path)?;
         lock_file.lock()?;
 
-        let mut ledger = load_or_recover(&self.path)?;
+        let mut ledger = load_or_recover(&self.path, &self.integrity_keys)?;
         let result = operation(&mut ledger)?;
-        persist_snapshot(&self.path, &ledger)?;
+        let active_key = self
+            .integrity_keys
+            .get(&self.active_key_id)
+            .ok_or(DurableLedgerError::InvalidRecord)?;
+        persist_snapshot(&self.path, &ledger, &self.active_key_id, &active_key.key)?;
         Ok(result)
     }
 }
@@ -245,7 +315,31 @@ fn valid_stored_identifier(value: &str, max_len: usize) -> bool {
             .all(|character| character.is_ascii_alphanumeric() || "._:-".contains(character))
 }
 
-fn serialize_snapshot(ledger: &Ledger) -> Vec<u8> {
+type LedgerHmacSha256 = hmac::Hmac<Sha256>;
+
+fn ledger_mac(key: &[u8; 32], key_id: &str, body: &[u8]) -> [u8; 32] {
+    use hmac::Mac;
+    let mut mac = LedgerHmacSha256::new_from_slice(key).expect("HMAC accepts a fixed-size key");
+    mac.update(LEDGER_MAC_DOMAIN);
+    mac.update(&(key_id.len() as u32).to_be_bytes());
+    mac.update(key_id.as_bytes());
+    mac.update(body);
+    mac.finalize().into_bytes().into()
+}
+
+fn verify_ledger_mac(key: &[u8; 32], key_id: &str, body: &[u8], expected: &[u8]) -> bool {
+    use hmac::Mac;
+    let Ok(mut mac) = LedgerHmacSha256::new_from_slice(key) else {
+        return false;
+    };
+    mac.update(LEDGER_MAC_DOMAIN);
+    mac.update(&(key_id.len() as u32).to_be_bytes());
+    mac.update(key_id.as_bytes());
+    mac.update(body);
+    mac.verify_slice(expected).is_ok()
+}
+
+fn serialize_snapshot(ledger: &Ledger, key_id: &str, key: &[u8; 32]) -> Vec<u8> {
     let mut body = format!("{LEDGER_HEADER}\n");
     let mut workload_ids = ledger.jobs.keys().collect::<Vec<_>>();
     workload_ids.sort();
@@ -284,25 +378,39 @@ fn serialize_snapshot(ledger: &Ledger) -> Vec<u8> {
     for (nonce, expires) in challenges {
         body.push_str(&format!("C\t{}\t{}\n", hex_encode(nonce), expires));
     }
-    let digest = Sha256::digest(body.as_bytes());
-    body.push_str(&format!("H\t{}\n", hex_encode(&digest)));
+    let mac = ledger_mac(key, key_id, body.as_bytes());
+    body.push_str(&format!("M\t{}\t{}\n", key_id, hex_encode(&mac)));
     body.into_bytes()
 }
 
-fn deserialize_snapshot(bytes: &[u8]) -> Result<Ledger, DurableLedgerError> {
+fn deserialize_snapshot(
+    bytes: &[u8],
+    integrity_keys: &HashMap<String, LedgerIntegrityKey>,
+) -> Result<Ledger, DurableLedgerError> {
     let text = std::str::from_utf8(bytes).map_err(|_| DurableLedgerError::CorruptState)?;
     if bytes.len() as u64 > MAX_LEDGER_BYTES || !text.ends_with('\n') {
         return Err(DurableLedgerError::CorruptState);
     }
-    let hash_start = text.rfind("H\t").ok_or(DurableLedgerError::CorruptState)?;
-    let body = &text[..hash_start];
-    let hash_line = &text[hash_start..];
-    let expected_hash = hash_line
-        .strip_prefix("H\t")
-        .and_then(|value| value.strip_suffix('\n'))
+    let mac_start = text.rfind("M\t").ok_or(DurableLedgerError::CorruptState)?;
+    let body = &text[..mac_start];
+    let mac_line = &text[mac_start..];
+    let mut mac_fields = mac_line
+        .strip_suffix('\n')
+        .ok_or(DurableLedgerError::CorruptState)?
+        .split('\t');
+    if mac_fields.next() != Some("M") {
+        return Err(DurableLedgerError::CorruptState);
+    }
+    let key_id = mac_fields.next().ok_or(DurableLedgerError::CorruptState)?;
+    let encoded_mac = mac_fields.next().ok_or(DurableLedgerError::CorruptState)?;
+    if mac_fields.next().is_some() || !valid_stored_identifier(key_id, 128) {
+        return Err(DurableLedgerError::CorruptState);
+    }
+    let key = integrity_keys
+        .get(key_id)
         .ok_or(DurableLedgerError::CorruptState)?;
-    let actual_hash = hex_encode(&Sha256::digest(body.as_bytes()));
-    if actual_hash != expected_hash {
+    let expected_mac = hex_decode(encoded_mac)?;
+    if !verify_ledger_mac(&key.key, key_id, body.as_bytes(), &expected_mac) {
         return Err(DurableLedgerError::CorruptState);
     }
 
@@ -401,7 +509,10 @@ fn read_snapshot(path: &Path) -> Result<Vec<u8>, DurableLedgerError> {
     Ok(fs::read(path)?)
 }
 
-fn load_or_recover(path: &Path) -> Result<Ledger, DurableLedgerError> {
+fn load_or_recover(
+    path: &Path,
+    integrity_keys: &HashMap<String, LedgerIntegrityKey>,
+) -> Result<Ledger, DurableLedgerError> {
     let backup = append_suffix(path, ".bak");
     if !path.exists() {
         if backup.exists() {
@@ -411,7 +522,7 @@ fn load_or_recover(path: &Path) -> Result<Ledger, DurableLedgerError> {
         }
     }
     let current = read_snapshot(path);
-    match current.and_then(|bytes| deserialize_snapshot(&bytes)) {
+    match current.and_then(|bytes| deserialize_snapshot(&bytes, integrity_keys)) {
         Ok(ledger) => {
             if backup.exists() {
                 let _ = fs::remove_file(backup);
@@ -423,7 +534,7 @@ fn load_or_recover(path: &Path) -> Result<Ledger, DurableLedgerError> {
                 return Err(current_error);
             }
             let backup_bytes = read_snapshot(&backup)?;
-            let recovered = deserialize_snapshot(&backup_bytes)?;
+            let recovered = deserialize_snapshot(&backup_bytes, integrity_keys)?;
             let corrupt = append_suffix(path, ".corrupt");
             if corrupt.exists() {
                 fs::remove_file(&corrupt)?;
@@ -437,13 +548,18 @@ fn load_or_recover(path: &Path) -> Result<Ledger, DurableLedgerError> {
     }
 }
 
-fn persist_snapshot(path: &Path, ledger: &Ledger) -> Result<(), DurableLedgerError> {
+fn persist_snapshot(
+    path: &Path,
+    ledger: &Ledger,
+    key_id: &str,
+    key: &[u8; 32],
+) -> Result<(), DurableLedgerError> {
     let temp = append_suffix(path, ".tmp");
     let backup = append_suffix(path, ".bak");
     if temp.exists() {
         fs::remove_file(&temp)?;
     }
-    let bytes = serialize_snapshot(ledger);
+    let bytes = serialize_snapshot(ledger, key_id, key);
     if bytes.len() as u64 > MAX_LEDGER_BYTES {
         return Err(DurableLedgerError::CapacityExceeded);
     }
@@ -488,6 +604,7 @@ fn persist_snapshot(path: &Path, ledger: &Ledger) -> Result<(), DurableLedgerErr
 mod tests {
     use super::*;
     use crate::{workload_from_manifest, DataClassification, WorkloadManifest};
+    use sha2::Digest;
     use std::thread;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -541,6 +658,18 @@ mod tests {
         }]
     }
 
+    fn integrity_key(id: &str, byte: u8) -> LedgerIntegrityKey {
+        LedgerIntegrityKey::new(id, [byte; 32])
+    }
+
+    fn open_ledger(path: &Path) -> Result<DurableLedger, DurableLedgerError> {
+        DurableLedger::open_with_integrity_keys(
+            path,
+            "test-v1",
+            vec![integrity_key("test-v1", 0xA5)],
+        )
+    }
+
     fn temp_path(label: &str) -> PathBuf {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -565,7 +694,7 @@ mod tests {
         let path = temp_path("restart");
         let token = [0x51u8; 32];
         {
-            let ledger = DurableLedger::open(&path).unwrap();
+            let ledger = open_ledger(&path).unwrap();
             assert_eq!(
                 ledger
                     .admit_and_reserve_with_lease(
@@ -583,7 +712,7 @@ mod tests {
             assert_eq!(ledger.snapshot().unwrap().active_jobs, 1);
         }
         {
-            let ledger = DurableLedger::open(&path).unwrap();
+            let ledger = open_ledger(&path).unwrap();
             assert!(ledger.renew_lease("job-restart", &token, 2_000).unwrap());
             assert!(!ledger.release_lease("job-restart", &[0x33u8; 32]).unwrap());
             assert!(ledger.release_lease("job-restart", &token).unwrap());
@@ -597,7 +726,7 @@ mod tests {
         let path = temp_path("backup");
         let token = [0x52u8; 32];
         {
-            let ledger = DurableLedger::open(&path).unwrap();
+            let ledger = open_ledger(&path).unwrap();
             assert_eq!(
                 ledger
                     .admit_and_reserve_with_lease(
@@ -616,7 +745,7 @@ mod tests {
         let snapshot = fs::read(&path).unwrap();
         fs::write(append_suffix(&path, ".bak"), snapshot).unwrap();
         fs::write(&path, b"corrupt").unwrap();
-        let ledger = DurableLedger::open(&path).unwrap();
+        let ledger = open_ledger(&path).unwrap();
         assert_eq!(ledger.snapshot().unwrap().active_jobs, 1);
         cleanup(&path);
     }
@@ -633,10 +762,12 @@ mod tests {
                 .consumed_approvals
                 .insert(format!("{prefix}-{index:06}"));
         }
-        assert!(serialize_snapshot(&ledger).len() as u64 > MAX_LEDGER_BYTES);
+        assert!(
+            serialize_snapshot(&ledger, "test-v1", &[0xA5; 32]).len() as u64 > MAX_LEDGER_BYTES
+        );
 
         assert_eq!(
-            persist_snapshot(&path, &ledger),
+            persist_snapshot(&path, &ledger, "test-v1", &[0xA5; 32]),
             Err(DurableLedgerError::CapacityExceeded)
         );
         assert_eq!(fs::read(&path).unwrap(), b"previous committed snapshot");
@@ -646,8 +777,8 @@ mod tests {
     #[test]
     fn separate_store_instances_serialize_capacity_reservations() {
         let path = temp_path("concurrent");
-        let first = DurableLedger::open(&path).unwrap();
-        let second = DurableLedger::open(&path).unwrap();
+        let first = open_ledger(&path).unwrap();
+        let second = open_ledger(&path).unwrap();
         let first_thread = thread::spawn(move || {
             first
                 .admit_and_reserve_with_lease(
@@ -682,21 +813,21 @@ mod tests {
                 .count(),
             1
         );
-        let ledger = DurableLedger::open(&path).unwrap();
+        let ledger = open_ledger(&path).unwrap();
         assert_eq!(ledger.snapshot().unwrap().active_jobs, 1);
         cleanup(&path);
     }
     #[test]
     fn missing_primary_restores_the_last_committed_backup() {
         let path = temp_path("missing-primary");
-        let ledger = DurableLedger::open(&path).unwrap();
+        let ledger = open_ledger(&path).unwrap();
         assert_eq!(ledger.snapshot().unwrap().active_jobs, 0);
         let committed = fs::read(&path).unwrap();
         let backup = append_suffix(&path, ".bak");
         fs::write(&backup, committed).unwrap();
         fs::remove_file(&path).unwrap();
 
-        let restored = DurableLedger::open(&path).unwrap();
+        let restored = open_ledger(&path).unwrap();
         assert_eq!(restored.snapshot().unwrap().active_jobs, 0);
         assert!(path.exists());
         assert!(!backup.exists());
@@ -710,7 +841,7 @@ mod tests {
         fs::write(&path, corrupt).unwrap();
 
         assert_eq!(
-            DurableLedger::open(&path).err(),
+            open_ledger(&path).err(),
             Some(DurableLedgerError::CorruptState)
         );
         assert_eq!(fs::read(&path).unwrap(), corrupt);
@@ -727,7 +858,7 @@ mod tests {
         fs::write(&backup, corrupt_backup).unwrap();
 
         assert_eq!(
-            DurableLedger::open(&path).err(),
+            open_ledger(&path).err(),
             Some(DurableLedgerError::CorruptState)
         );
         assert_eq!(fs::read(&path).unwrap(), corrupt_primary);
@@ -741,16 +872,98 @@ mod tests {
         let temp = append_suffix(&path, ".tmp");
         fs::write(&temp, b"uncommitted temporary snapshot").unwrap();
 
-        let ledger = DurableLedger::open(&path).unwrap();
+        let ledger = open_ledger(&path).unwrap();
         assert_eq!(ledger.snapshot().unwrap().active_jobs, 0);
         assert!(path.exists());
         assert!(!temp.exists());
+        let keys = HashMap::from([("test-v1".to_string(), integrity_key("test-v1", 0xA5))]);
         assert_eq!(
-            deserialize_snapshot(&fs::read(&path).unwrap())
+            deserialize_snapshot(&fs::read(&path).unwrap(), &keys)
                 .unwrap()
                 .jobs
                 .len(),
             0
+        );
+        cleanup(&path);
+    }
+    #[test]
+    fn attacker_cannot_rewrite_snapshot_and_recompute_an_unkeyed_checksum() {
+        let path = temp_path("mac-tamper");
+        let ledger = open_ledger(&path).unwrap();
+        assert_eq!(ledger.snapshot().unwrap().active_jobs, 0);
+        drop(ledger);
+
+        let mut bytes = fs::read(&path).unwrap();
+        let text = String::from_utf8(bytes.clone()).unwrap();
+        assert!(text.starts_with("UJANI-ENTERPRISE-LEDGER-V2\n"));
+        // Even a writer who knows the file format and can recompute SHA-256
+        // cannot produce the required MAC without the external integrity key.
+        let mac_line = text.rfind("M\t").unwrap();
+        let body = &text[..mac_line];
+        let forged = format!(
+            "{body}M\ttest-v1\t{}\n",
+            hex_encode(&Sha256::digest(body.as_bytes()))
+        );
+        bytes = forged.into_bytes();
+        fs::write(&path, &bytes).unwrap();
+
+        assert_eq!(
+            open_ledger(&path).err(),
+            Some(DurableLedgerError::CorruptState)
+        );
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn key_rotation_accepts_previous_key_then_rewrites_with_active_key() {
+        let path = temp_path("key-rotation");
+        {
+            let old = DurableLedger::open_with_integrity_keys(
+                &path,
+                "key-v1",
+                vec![integrity_key("key-v1", 0x11)],
+            )
+            .unwrap();
+            assert_eq!(old.snapshot().unwrap().active_jobs, 0);
+        }
+        {
+            let rotated = DurableLedger::open_with_integrity_keys(
+                &path,
+                "key-v2",
+                vec![integrity_key("key-v1", 0x11), integrity_key("key-v2", 0x22)],
+            )
+            .unwrap();
+            assert_eq!(rotated.snapshot().unwrap().active_jobs, 0);
+        }
+        {
+            let only_new_key = DurableLedger::open_with_integrity_keys(
+                &path,
+                "key-v2",
+                vec![integrity_key("key-v2", 0x22)],
+            )
+            .unwrap();
+            assert_eq!(only_new_key.snapshot().unwrap().active_jobs, 0);
+        }
+        cleanup(&path);
+    }
+
+    #[test]
+    fn key_material_is_redacted_from_debug_output() {
+        let key = integrity_key("secret-key", 0xA5);
+        let debug = format!("{key:?}");
+        assert!(debug.contains("secret-key"));
+        assert!(debug.contains("[REDACTED]"));
+        assert!(!debug.contains("165"));
+    }
+
+    #[test]
+    fn legacy_checksum_only_v1_snapshot_is_rejected() {
+        let path = temp_path("legacy-v1");
+        fs::write(&path, b"UJANI-ENTERPRISE-LEDGER-V1\\nH\\tdeadbeef\\n").unwrap();
+        assert_eq!(
+            open_ledger(&path).err(),
+            Some(DurableLedgerError::CorruptState)
         );
         cleanup(&path);
     }

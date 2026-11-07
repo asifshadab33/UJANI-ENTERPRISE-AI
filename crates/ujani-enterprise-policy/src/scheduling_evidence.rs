@@ -550,7 +550,12 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ));
-        let ledger = DurableLedger::open(&path).unwrap();
+        let ledger = DurableLedger::open_with_integrity_keys(
+            &path,
+            "test-v1",
+            vec![crate::LedgerIntegrityKey::new("test-v1", [0xA5; 32])],
+        )
+        .unwrap();
         let d = device();
         let w = workload();
         let challenge = [0x32u8; 16];
@@ -678,7 +683,12 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ));
-        let ledger = DurableLedger::open(&path).unwrap();
+        let ledger = DurableLedger::open_with_integrity_keys(
+            &path,
+            "test-v1",
+            vec![crate::LedgerIntegrityKey::new("test-v1", [0xA5; 32])],
+        )
+        .unwrap();
         let d = device();
         let w = workload();
         let challenge = [0x77u8; 16];

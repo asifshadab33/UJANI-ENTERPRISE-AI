@@ -723,7 +723,9 @@ pub(crate) fn admit_and_reserve(
 }
 
 pub mod durable_ledger;
-pub use durable_ledger::{DurableLedger, DurableLedgerError, DurableLedgerSnapshot};
+pub use durable_ledger::{
+    DurableLedger, DurableLedgerError, DurableLedgerSnapshot, LedgerIntegrityKey,
+};
 
 pub mod scheduling_evidence;
 pub use scheduling_evidence::{
