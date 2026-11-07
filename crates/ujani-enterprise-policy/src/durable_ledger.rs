@@ -299,7 +299,40 @@ fn valid_stored_identifier(value: &str, max_len: usize) -> bool {
             .all(|character| character.is_ascii_alphanumeric() || "._:-".contains(character))
 }
 
-fn serialize_snapshot(ledger: &Ledger) -> Vec<u8> {
+fn ledger_mac(key: &[u8; 32], key_id: &str, body: &[u8]) -> [u8; 32] {
+    // RFC 2104 HMAC-SHA256 with explicit protocol and key-ID domain separation.
+    let mut inner_pad = [0x36u8; 64];
+    let mut outer_pad = [0x5cu8; 64];
+    for (index, byte) in key.iter().enumerate() {
+        inner_pad[index] ^= byte;
+        outer_pad[index] ^= byte;
+    }
+    let mut inner = Sha256::new();
+    inner.update(inner_pad);
+    inner.update(LEDGER_MAC_DOMAIN);
+    inner.update((key_id.len() as u32).to_be_bytes());
+    inner.update(key_id.as_bytes());
+    inner.update(body);
+    let inner_digest = inner.finalize();
+
+    let mut outer = Sha256::new();
+    outer.update(outer_pad);
+    outer.update(inner_digest);
+    outer.finalize().into()
+}
+
+fn constant_time_equal(left: &[u8], right: &[u8]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    let mut difference = 0u8;
+    for (a, b) in left.iter().zip(right) {
+        difference |= a ^ b;
+    }
+    difference == 0
+}
+
+fn serialize_snapshot(ledger: &Ledger, key_id: &str, key: &[u8; 32]) -> Vec<u8> {
     let mut body = format!("{LEDGER_HEADER}\n");
     let mut workload_ids = ledger.jobs.keys().collect::<Vec<_>>();
     workload_ids.sort();
@@ -338,25 +371,36 @@ fn serialize_snapshot(ledger: &Ledger) -> Vec<u8> {
     for (nonce, expires) in challenges {
         body.push_str(&format!("C\t{}\t{}\n", hex_encode(nonce), expires));
     }
-    let digest = Sha256::digest(body.as_bytes());
-    body.push_str(&format!("H\t{}\n", hex_encode(&digest)));
+    let mac = ledger_mac(key, key_id, body.as_bytes());
+    body.push_str(&format!("M\t{}\t{}\n", key_id, hex_encode(&mac)));
     body.into_bytes()
 }
 
-fn deserialize_snapshot(bytes: &[u8]) -> Result<Ledger, DurableLedgerError> {
+fn deserialize_snapshot(
+    bytes: &[u8],
+    integrity_keys: &HashMap<String, LedgerIntegrityKey>,
+) -> Result<Ledger, DurableLedgerError> {
     let text = std::str::from_utf8(bytes).map_err(|_| DurableLedgerError::CorruptState)?;
     if bytes.len() as u64 > MAX_LEDGER_BYTES || !text.ends_with('\n') {
         return Err(DurableLedgerError::CorruptState);
     }
-    let hash_start = text.rfind("H\t").ok_or(DurableLedgerError::CorruptState)?;
-    let body = &text[..hash_start];
-    let hash_line = &text[hash_start..];
-    let expected_hash = hash_line
-        .strip_prefix("H\t")
-        .and_then(|value| value.strip_suffix('\n'))
-        .ok_or(DurableLedgerError::CorruptState)?;
-    let actual_hash = hex_encode(&Sha256::digest(body.as_bytes()));
-    if actual_hash != expected_hash {
+    let mac_start = text.rfind("M\t").ok_or(DurableLedgerError::CorruptState)?;
+    let body = &text[..mac_start];
+    let mac_line = &text[mac_start..];
+    let mut mac_fields = mac_line.strip_suffix('\n')
+        .ok_or(DurableLedgerError::CorruptState)?.split('\t');
+    if mac_fields.next() != Some("M") {
+        return Err(DurableLedgerError::CorruptState);
+    }
+    let key_id = mac_fields.next().ok_or(DurableLedgerError::CorruptState)?;
+    let encoded_mac = mac_fields.next().ok_or(DurableLedgerError::CorruptState)?;
+    if mac_fields.next().is_some() || !valid_stored_identifier(key_id, 128) {
+        return Err(DurableLedgerError::CorruptState);
+    }
+    let key = integrity_keys.get(key_id).ok_or(DurableLedgerError::CorruptState)?;
+    let expected_mac = hex_decode(encoded_mac)?;
+    let actual_mac = ledger_mac(&key.key, key_id, body.as_bytes());
+    if !constant_time_equal(&actual_mac, &expected_mac) {
         return Err(DurableLedgerError::CorruptState);
     }
 
@@ -455,7 +499,7 @@ fn read_snapshot(path: &Path) -> Result<Vec<u8>, DurableLedgerError> {
     Ok(fs::read(path)?)
 }
 
-fn load_or_recover(path: &Path) -> Result<Ledger, DurableLedgerError> {
+fn load_or_recover(path: &Path, integrity_keys: &HashMap<String, LedgerIntegrityKey>) -> Result<Ledger, DurableLedgerError> {
     let backup = append_suffix(path, ".bak");
     if !path.exists() {
         if backup.exists() {
@@ -465,7 +509,7 @@ fn load_or_recover(path: &Path) -> Result<Ledger, DurableLedgerError> {
         }
     }
     let current = read_snapshot(path);
-    match current.and_then(|bytes| deserialize_snapshot(&bytes)) {
+    match current.and_then(|bytes| deserialize_snapshot(&bytes, integrity_keys)) {
         Ok(ledger) => {
             if backup.exists() {
                 let _ = fs::remove_file(backup);
@@ -477,7 +521,7 @@ fn load_or_recover(path: &Path) -> Result<Ledger, DurableLedgerError> {
                 return Err(current_error);
             }
             let backup_bytes = read_snapshot(&backup)?;
-            let recovered = deserialize_snapshot(&backup_bytes)?;
+            let recovered = deserialize_snapshot(&backup_bytes, integrity_keys)?;
             let corrupt = append_suffix(path, ".corrupt");
             if corrupt.exists() {
                 fs::remove_file(&corrupt)?;
@@ -491,13 +535,13 @@ fn load_or_recover(path: &Path) -> Result<Ledger, DurableLedgerError> {
     }
 }
 
-fn persist_snapshot(path: &Path, ledger: &Ledger) -> Result<(), DurableLedgerError> {
+fn persist_snapshot(path: &Path, ledger: &Ledger, key_id: &str, key: &[u8; 32]) -> Result<(), DurableLedgerError> {
     let temp = append_suffix(path, ".tmp");
     let backup = append_suffix(path, ".bak");
     if temp.exists() {
         fs::remove_file(&temp)?;
     }
-    let bytes = serialize_snapshot(ledger);
+    let bytes = serialize_snapshot(ledger, key_id, key);
     if bytes.len() as u64 > MAX_LEDGER_BYTES {
         return Err(DurableLedgerError::CapacityExceeded);
     }
