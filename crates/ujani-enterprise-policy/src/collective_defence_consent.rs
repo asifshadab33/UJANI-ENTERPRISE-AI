@@ -453,7 +453,8 @@ mod tests {
     #[test]
     fn tenant_opt_in_alone_never_enrols_an_individual() {
         let (admin, user, admins, users) = keys();
-        let tenant = verify_tenant_consent(&signed_tenant(&admin, true, 4, EXPIRY), &admins, NOW).unwrap();
+        let tenant =
+            verify_tenant_consent(&signed_tenant(&admin, true, 4, EXPIRY), &admins, NOW).unwrap();
         let individual = signed_individual(&user, false, 4, 2, EXPIRY);
         assert_eq!(
             verify_individual_consent(&individual, &users, NOW),
@@ -496,7 +497,8 @@ mod tests {
         assert_eq!(p.event_schema_version(), "1.0");
         assert_eq!(p.retention_seconds(), 86_400);
         let (admin, user, admins, users) = keys();
-        let tenant = verify_tenant_consent(&signed_tenant(&admin, true, 4, EXPIRY), &admins, NOW).unwrap();
+        let tenant =
+            verify_tenant_consent(&signed_tenant(&admin, true, 4, EXPIRY), &admins, NOW).unwrap();
         let individual =
             verify_individual_consent(&signed_individual(&user, true, 4, 2, EXPIRY), &users, NOW)
                 .unwrap();
@@ -522,7 +524,8 @@ mod tests {
     #[test]
     fn permit_expires_at_the_earlier_of_both_signed_consents() {
         let (admin, user, admins, users) = keys();
-        let tenant = verify_tenant_consent(&signed_tenant(&admin, true, 4, EXPIRY), &admins, NOW).unwrap();
+        let tenant =
+            verify_tenant_consent(&signed_tenant(&admin, true, 4, EXPIRY), &admins, NOW).unwrap();
         let individual = verify_individual_consent(
             &signed_individual(&user, true, 4, 2, NOW + 30_000), &users, NOW
         ).unwrap();
@@ -536,7 +539,8 @@ mod tests {
     #[test]
     fn stale_generations_and_policy_generation_mismatch_fail_closed() {
         let (admin, user, admins, users) = keys();
-        let tenant = verify_tenant_consent(&signed_tenant(&admin, true, 4, EXPIRY), &admins, NOW).unwrap();
+        let tenant =
+            verify_tenant_consent(&signed_tenant(&admin, true, 4, EXPIRY), &admins, NOW).unwrap();
         let individual = verify_individual_consent(
             &signed_individual(&user, true, 3, 2, EXPIRY), &users, NOW
         ).unwrap();
