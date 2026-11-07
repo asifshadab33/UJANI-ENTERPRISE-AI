@@ -248,13 +248,7 @@ impl DurableDeviceRegistry {
     ) -> Result<AuthenticatedDevice, DurableDeviceTrustError> {
         self.transact(|registry| {
             registry
-                .authenticate_request_for(
-                    request,
-                    expected_method,
-                    expected_resource_id,
-                    body,
-                    now,
-                )
+                .authenticate_request_for(request, expected_method, expected_resource_id, body, now)
                 .map_err(Into::into)
         })
     }
@@ -763,7 +757,9 @@ mod tests {
         );
         assert_eq!(
             store.authenticate_request_for(&signed, "POST", "lease:renew", body, 250),
-            Err(DurableDeviceTrustError::Trust(DeviceTrustError::RequestTargetMismatch))
+            Err(DurableDeviceTrustError::Trust(
+                DeviceTrustError::RequestTargetMismatch
+            ))
         );
         assert!(store
             .authenticate_request_for(&signed, "POST", "lease:acquire", body, 250)
@@ -786,7 +782,9 @@ mod tests {
         let admin = SigningKey::from_bytes(&[7; 32]);
         let device = SigningKey::from_bytes(&[9; 32]);
         let store = open(&path, &admin);
-        store.apply_admin_command(&enroll(&admin, &device), 200).unwrap();
+        store
+            .apply_admin_command(&enroll(&admin, &device), 200)
+            .unwrap();
 
         let body = b"lease acquisition";
         let claims = DeviceRequestClaims {
@@ -805,7 +803,9 @@ mod tests {
             signature: device.sign(&device_request_bytes(&claims)).to_bytes(),
             claims,
         };
-        assert!(store.authenticate_request(&signed_request, body, 300).is_ok());
+        assert!(store
+            .authenticate_request(&signed_request, body, 300)
+            .is_ok());
 
         let mut revoke = SignedDeviceAdminCommand {
             action: DeviceCommandAction::Revoke,
@@ -828,7 +828,9 @@ mod tests {
         let reopened = open(&path, &admin);
         assert_eq!(
             reopened.authenticate_request(&signed_request, body, 330),
-            Err(DurableDeviceTrustError::Trust(DeviceTrustError::DeviceNotEnrolled))
+            Err(DurableDeviceTrustError::Trust(
+                DeviceTrustError::DeviceNotEnrolled
+            ))
         );
         let _ = fs::remove_file(&path);
         let _ = fs::remove_file(suffix(&path, ".bak"));
