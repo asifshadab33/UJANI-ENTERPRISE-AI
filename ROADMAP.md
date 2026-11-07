@@ -9,8 +9,8 @@ This roadmap is a statement of intended work, not a claim that these capabilitie
 - [ ] Agree a versioned task/capability protocol with UJANI Public AI.
 
 ## Phase 1 — trusted lab prototype
-- [ ] Admin-created device enrolment with explicit approval.
-- [ ] Short-lived device credentials, rotation and revocation.
+- [x] Signed administrator device-enrollment command primitives with proof of possession and tenant binding (policy library only; no authenticated service endpoint).
+- [x] Signed device-key rotation/revocation primitives with monotonic per-device key generations and replay checks (policy library only; protected key provider and live service lifecycle remain pending).
 - [ ] Read-only CPU/RAM/GPU/NPU/runtime inventory.
 - [ ] Device heartbeat and availability reporting.
 - [x] Policy-library verification of dual-signed worker telemetry and administrator scheduling decisions bound to the exact workload manifest and a single-use dispatch challenge (trusted enrollment registry remains external).
@@ -60,3 +60,17 @@ Do not claim secure isolation, guaranteed savings, compliance or production read
 - [ ] Complete independent threat review and tenant-isolation/IDOR tests before production deployment.
 
 See [docs/OPERATOR-WORKFLOWS.md](docs/OPERATOR-WORKFLOWS.md). The dashboard design and schema are contracts only; they do not represent an implemented web UI, agent or live control plane.
+
+
+## Device trust persistence update — 2026-11-07
+
+- [x] Add HMAC-authenticated durable device registry snapshots using an integrity key injected by a trusted host, never loaded from the writable registry directory.
+- [x] Persist tenant binding, device public keys/key IDs/key generations, enrollment/revocation state, administrator nonces and device-request replay nonces.
+- [x] Serialize cross-process operations with OS advisory locking; use bounded parsing and fail closed on malformed, oversized, duplicate or MAC-invalid state.
+- [x] Test restart persistence, request replay after restart, tamper detection and concurrent registry handles.
+- [ ] Integrate a production KMS/HSM/TPM-backed integrity-key provider, key rotation and disaster recovery.
+- [ ] Add an external monotonic snapshot anchor to detect rollback to an older but valid HMAC snapshot; do not use a local sidecar file as the anchor.
+- [ ] Expose authenticated enrollment/request/lease endpoints with tenant RBAC, replay/clock-skew enforcement and durable authorization audit.
+- [ ] Keep dispatch and worker execution disabled until receiver-side authorization, encrypted mutual-authenticated transport, quotas and OS-enforced isolation are independently verified.
+
+The merged device-trust implementation is a policy and persistence primitive, not a production control plane. See [docs/DURABLE_DEVICE_TRUST.md](docs/DURABLE_DEVICE_TRUST.md) for its trust boundary and limitations.
