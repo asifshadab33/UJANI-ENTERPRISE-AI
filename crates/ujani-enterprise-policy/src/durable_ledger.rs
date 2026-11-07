@@ -13,6 +13,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use zeroize::Zeroize;
 
 const LEDGER_HEADER: &str = "UJANI-ENTERPRISE-LEDGER-V2";
 const LEDGER_MAC_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-LEDGER-HMAC-SHA256-V2\0";
@@ -92,6 +93,12 @@ impl std::fmt::Debug for LedgerIntegrityKey {
             .field("key_id", &self.key_id)
             .field("key", &"[REDACTED]")
             .finish()
+    }
+}
+
+impl Drop for LedgerIntegrityKey {
+    fn drop(&mut self) {
+        self.key.zeroize();
     }
 }
 
