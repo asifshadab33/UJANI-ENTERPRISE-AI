@@ -600,7 +600,7 @@ mod tests {
         assert_eq!(
             outcomes
                 .iter()
-                .filter(|outcome| **outcome == Admission::Accept)
+                .filter(|outcome| matches!(outcome, &&Admission::Accept))
                 .count(),
             1
         );
