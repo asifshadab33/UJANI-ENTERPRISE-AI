@@ -14,7 +14,16 @@ from pathlib import Path
 
 SCHEMA_PATH = Path(__file__).resolve().parents[1] / "schemas/security-event-v1.schema.json"
 
+ANNOTATION_KEYWORDS = {"$schema", "$id", "title", "description", "$comment"}
+VALIDATION_KEYWORDS = {
+    "type", "const", "enum", "minLength", "maxLength", "pattern", "format",
+    "minimum", "maximum", "required", "properties", "additionalProperties",
+}
+SUPPORTED_SCHEMA_KEYWORDS = ANNOTATION_KEYWORDS | VALIDATION_KEYWORDS
+
+
 def validate(value, schema, path="$"):
+    """Validate one event value against the JSON Schema subset implemented below."""
     errors = []
     kind = schema.get("type")
     checks = {
@@ -65,7 +74,32 @@ def validate(value, schema, path="$"):
                 errors.extend(validate(child, props[key], f"{path}.{key}"))
     return errors
 
+
+def ensure_supported_keywords(schema, path="$"):
+    """Reject schema constructs that the dependency-free validator cannot enforce."""
+    if not isinstance(schema, dict):
+        raise SystemExit(f"{path}: expected a schema object")
+    unsupported = set(schema) - SUPPORTED_SCHEMA_KEYWORDS
+    if unsupported:
+        names = ", ".join(sorted(unsupported))
+        raise SystemExit(f"{path}: unsupported JSON Schema keyword(s): {names}")
+    kind = schema.get("type")
+    if kind is not None and kind not in {"object", "string", "integer", "number"}:
+        raise SystemExit(f"{path}: unsupported JSON Schema type: {kind}")
+    fmt = schema.get("format")
+    if fmt is not None and fmt not in {"uuid", "date-time"}:
+        raise SystemExit(f"{path}: unsupported JSON Schema format: {fmt}")
+    if "additionalProperties" in schema and schema["additionalProperties"] is not False:
+        raise SystemExit(f"{path}: only additionalProperties:false is supported")
+    properties = schema.get("properties", {})
+    if not isinstance(properties, dict):
+        raise SystemExit(f"{path}: properties must be an object")
+    for name, child in properties.items():
+        ensure_supported_keywords(child, f"{path}.properties.{name}")
+
+
 def sample_event():
+    """Return the minimal valid event used as the basis for regression fixtures."""
     return {
         "schema_version": "1.0",
         "event_id": "b4e8aef0-6f3e-4b58-8db5-63c2c8ac62b7",
@@ -101,10 +135,37 @@ def collect_property_names(schema):
 def main():
     """Run valid, invalid, format, privacy, and nested-schema contract fixtures."""
     schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+    ensure_supported_keywords(schema)
+
+    # Prove that schema constructs outside the implemented subset fail loudly.
+    unsupported_schema = json.loads(json.dumps(schema))
+    unsupported_schema["properties"]["evidence"]["properties"]["signal"]["oneOf"] = [
+        {"const": "dns.burst"}
+    ]
+    try:
+        ensure_supported_keywords(unsupported_schema)
+    except SystemExit:
+        pass
+    else:
+        raise SystemExit("unsupported schema keyword unexpectedly accepted")
+
     event = sample_event()
     failures = validate(event, schema)
     if failures:
         raise SystemExit("valid fixture rejected: " + "; ".join(failures))
+
+    optional_event = sample_event()
+    optional_event["evidence"].update({
+        "indicator_hash": "a" * 64,
+        "indicator_domain": "example.com",
+        "path_fingerprint": "b" * 64,
+        "process_class": "browser",
+    })
+    optional_event["correlation_hint"] = "c" * 64
+    failures = validate(optional_event, schema)
+    if failures:
+        raise SystemExit("valid optional-field fixture rejected: " + "; ".join(failures))
+
     cases = []
     unknown = sample_event(); unknown["command"] = "execute"
     cases.append(("unknown command field", unknown))
@@ -130,6 +191,18 @@ def main():
     cases.append(("unknown source field", unknown_source))
     unknown_evidence = sample_event(); unknown_evidence["evidence"]["unexpected_field"] = "value"
     cases.append(("unknown evidence field", unknown_evidence))
+    short_hash = sample_event(); short_hash["evidence"]["indicator_hash"] = "abc"
+    cases.append(("short indicator hash", short_hash))
+    domain_with_path = sample_event(); domain_with_path["evidence"]["indicator_domain"] = "example.com/path"
+    cases.append(("indicator domain containing a path", domain_with_path))
+    domain_with_whitespace = sample_event(); domain_with_whitespace["evidence"]["indicator_domain"] = "example.com "
+    cases.append(("indicator domain containing whitespace", domain_with_whitespace))
+    path_like_fingerprint = sample_event(); path_like_fingerprint["evidence"]["path_fingerprint"] = "../etc/passwd"
+    cases.append(("path-like fingerprint", path_like_fingerprint))
+    unknown_process_class = sample_event(); unknown_process_class["evidence"]["process_class"] = "administrator"
+    cases.append(("unknown process class", unknown_process_class))
+    short_correlation_hint = sample_event(); short_correlation_hint["correlation_hint"] = "abc"
+    cases.append(("short correlation hint", short_correlation_hint))
     for label, candidate in cases:
         if not validate(candidate, schema):
             raise SystemExit(f"invalid fixture unexpectedly accepted: {label}")
@@ -143,7 +216,7 @@ def main():
         raise SystemExit("privacy/remote-execution fields entered the event contract")
     if schema.get("additionalProperties") is not False:
         raise SystemExit("root event schema must reject unknown fields")
-    print(f"security-event-v1 schema contract checks passed ({len(cases) + 1} fixtures)")
+    print(f"security-event-v1 schema contract checks passed ({len(cases) + 2} event fixtures)")
 
 if __name__ == "__main__":
     main()
