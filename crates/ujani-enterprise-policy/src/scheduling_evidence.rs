@@ -73,6 +73,8 @@ pub enum SchedulingEvidenceError {
     UnknownAdminKey,
     InvalidWorkerSignature,
     InvalidPolicySignature,
+    ChallengeReplayed,
+    ChallengeStoreUnavailable,
 }
 
 fn append_string(bytes: &mut Vec<u8>, value: &str) {
@@ -140,7 +142,7 @@ fn valid_time_window(issued: u64, expires: u64, now: u64, max_ttl: u64) -> bool 
 /// these signatures attest runtime gates and admin policy, not hardware telemetry.
 /// This crate does not persist enrollment, revocation or the registry's root of trust.
 #[allow(clippy::too_many_arguments)] // Keep both trust roots and the dispatch challenge explicit.
-pub fn verify_scheduling_context(
+pub(crate) fn verify_scheduling_context(
     device: &Device,
     workload: &Workload,
     telemetry: &SignedWorkerTelemetry,
@@ -225,6 +227,43 @@ pub fn verify_scheduling_context(
         telemetry_fresh: true,
     };
     Ok(VerifiedSchedulingContext(context))
+}
+
+/// Verify signed evidence and atomically consume its dispatch challenge in the
+/// durable ledger. This is the only public constructor for VerifiedSchedulingContext.
+#[allow(clippy::too_many_arguments)] // Keep both trust roots and the per-dispatch challenge explicit.
+pub fn verify_and_consume_scheduling_context(
+    ledger: &DurableLedger,
+    device: &Device,
+    workload: &Workload,
+    telemetry: &SignedWorkerTelemetry,
+    policy: &SignedSchedulingPolicy,
+    enrolled_device_keys: &[(String, VerifyingKey)],
+    enrolled_admin_keys: &[(String, VerifyingKey)],
+    expected_challenge_nonce: &[u8; 16],
+    now_unix_ms: u64,
+) -> Result<VerifiedSchedulingContext, SchedulingEvidenceError> {
+    let verified = verify_scheduling_context(
+        device,
+        workload,
+        telemetry,
+        policy,
+        enrolled_device_keys,
+        enrolled_admin_keys,
+        expected_challenge_nonce,
+        now_unix_ms,
+    )?;
+    let expires_unix_ms = telemetry
+        .claims
+        .expires_unix_ms
+        .min(policy.claims.expires_unix_ms);
+    let consumed = ledger
+        .consume_challenge_nonce(*expected_challenge_nonce, expires_unix_ms, now_unix_ms)
+        .map_err(|_| SchedulingEvidenceError::ChallengeStoreUnavailable)?;
+    if !consumed {
+        return Err(SchedulingEvidenceError::ChallengeReplayed);
+    }
+    Ok(verified)
 }
 
 /// Evaluate policy using only cryptographically verified scheduling evidence.
@@ -486,6 +525,42 @@ mod tests {
             .unwrap_err(),
             SchedulingEvidenceError::WorkloadMismatch
         );
+    }
+
+    #[test]
+    fn dispatch_challenge_is_consumed_durably_and_cannot_be_replayed() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let path = std::env::temp_dir().join(format!(
+            "ujani-scheduling-challenge-{}-{}.ledger",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let ledger = DurableLedger::open(&path).unwrap();
+        let d = device();
+        let w = workload();
+        let challenge = [0x77u8; 16];
+        let (telemetry, policy, device_key, admin_key) = signed_evidence(challenge, 1_000);
+        let keys = [("worker-01".into(), device_key.verifying_key())];
+        let admins = [("admin-key-01".into(), admin_key.verifying_key())];
+        assert!(verify_and_consume_scheduling_context(
+            &ledger, &d, &w, &telemetry, &policy, &keys, &admins, &challenge, 2_000
+        )
+        .is_ok());
+        assert_eq!(
+            verify_and_consume_scheduling_context(
+                &ledger, &d, &w, &telemetry, &policy, &keys, &admins, &challenge, 2_001
+            )
+            .unwrap_err(),
+            SchedulingEvidenceError::ChallengeReplayed
+        );
+        drop(ledger);
+        let lock_path = {
+            let mut value = path.as_os_str().to_os_string();
+            value.push(".lock");
+            std::path::PathBuf::from(value)
+        };
+        let _ = std::fs::remove_file(lock_path);
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]
