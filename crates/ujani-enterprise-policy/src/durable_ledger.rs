@@ -90,6 +90,7 @@ impl DurableLedger {
     /// the 32-byte token using an OS CSPRNG and keep it outside the workload.
     /// This raw-context method is crate-private; public callers should use the
     /// signed-evidence wrapper in scheduling_evidence.
+    #[allow(clippy::too_many_arguments)] // Keep all admission and capability inputs explicit.
     pub(crate) fn admit_and_reserve_with_lease(
         &self,
         device: &Device,
@@ -211,11 +212,11 @@ fn hex_encode(bytes: &[u8]) -> String {
 }
 
 fn hex_decode(value: &str) -> Result<Vec<u8>, DurableLedgerError> {
-    if value.len() % 2 != 0 {
+    if !value.len().is_multiple_of(2) {
         return Err(DurableLedgerError::InvalidRecord);
     }
     let mut output = Vec::with_capacity(value.len() / 2);
-    for pair in value.as_bytes().chunks_exact(2) {
+    for pair in value.as_bytes().as_chunks::<2>().0 {
         let high = (pair[0] as char)
             .to_digit(16)
             .ok_or(DurableLedgerError::InvalidRecord)?;
