@@ -10,6 +10,7 @@
 pub mod durable;
 
 use ed25519_dalek::{Signature, VerifyingKey};
+use sha2::Digest;
 use std::collections::HashMap;
 
 const ADMIN_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-DEVICE-ADMIN-COMMAND-V1\0";
@@ -40,6 +41,7 @@ pub enum DeviceTrustError {
     UnknownAdminKey,
     InvalidAdminSignature,
     InvalidDeviceSignature,
+    BodyDigestMismatch,
     ExpiredCommand,
     FutureTimestamp,
     InvalidCommand,
@@ -81,6 +83,8 @@ pub struct DeviceRequestClaims {
     pub expires_at_unix_ms: u64,
     pub method: String,
     pub resource_id: String,
+    /// SHA-256 of the exact raw request body; the transport must pass those same bytes to authentication.
+    pub body_sha256: [u8; 32],
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -277,6 +281,7 @@ impl DeviceRegistry {
     pub fn authenticate_request(
         &mut self,
         signed: &SignedDeviceRequest,
+        body: &[u8],
         now: u64,
     ) -> Result<AuthenticatedDevice, DeviceTrustError> {
         let c = &signed.claims;
@@ -289,6 +294,10 @@ impl DeviceRegistry {
             || c.key_generation == 0
         {
             return Err(DeviceTrustError::InvalidIdentifier);
+        }
+        let body_digest: [u8; 32] = sha2::Sha256::digest(body).into();
+        if body_digest != c.body_sha256 {
+            return Err(DeviceTrustError::BodyDigestMismatch);
         }
         if c.issued_at_unix_ms > now.saturating_add(CLOCK_SKEW_MS) {
             return Err(DeviceTrustError::FutureTimestamp);
@@ -456,6 +465,7 @@ fn device_request_bytes(c: &DeviceRequestClaims) -> Vec<u8> {
     }
     out.extend_from_slice(&c.key_generation.to_be_bytes());
     out.extend_from_slice(&c.request_id);
+    out.extend_from_slice(&c.body_sha256);
     out.extend_from_slice(&c.issued_at_unix_ms.to_be_bytes());
     out.extend_from_slice(&c.expires_at_unix_ms.to_be_bytes());
     out
@@ -465,6 +475,7 @@ fn device_request_bytes(c: &DeviceRequestClaims) -> Vec<u8> {
 mod tests {
     use super::*;
     use ed25519_dalek::{Signer, SigningKey};
+    use sha2::Digest;
 
     fn registry() -> (DeviceRegistry, SigningKey, SigningKey) {
         let admin = SigningKey::from_bytes(&[7u8; 32]);
@@ -507,12 +518,13 @@ mod tests {
             expires_at_unix_ms: 500,
             method: "POST".into(),
             resource_id: "lease:acquire".into(),
+            body_sha256: sha2::Sha256::digest([]).into(),
         };
         let signed = SignedDeviceRequest {
             signature: device.sign(&device_request_bytes(&claims)).to_bytes(),
             claims,
         };
-        let auth = r.authenticate_request(&signed, 250).unwrap();
+        let auth = r.authenticate_request(&signed, b"", 250).unwrap();
         assert_eq!(auth.tenant_id(), "tenant-a");
         assert_eq!(auth.device_id(), "device-1");
     }
@@ -531,6 +543,7 @@ mod tests {
             expires_at_unix_ms: 500,
             method: "POST".into(),
             resource_id: "lease:renew".into(),
+            body_sha256: sha2::Sha256::digest([]).into(),
         };
         let signed = SignedDeviceRequest {
             signature: device.sign(&device_request_bytes(&claims)).to_bytes(),
@@ -538,7 +551,7 @@ mod tests {
         };
         assert!(r.authenticate_request(&signed, 250).is_ok());
         assert_eq!(
-            r.authenticate_request(&signed, 251),
+            r.authenticate_request(&signed, b"", 251),
             Err(DeviceTrustError::ReplayDetected)
         );
         let mut cross = claims;
@@ -548,7 +561,7 @@ mod tests {
             claims: cross,
         };
         assert_eq!(
-            r.authenticate_request(&forged, 252),
+            r.authenticate_request(&forged, b"", 252),
             Err(DeviceTrustError::TenantMismatch)
         );
     }
@@ -576,6 +589,34 @@ mod tests {
             r.authenticate_request(&signed, 250),
             Err(DeviceTrustError::InvalidIdentifier)
         );
+    }
+
+    #[test]
+    fn request_body_must_match_the_signed_digest() {
+        let (mut r, admin, device) = registry();
+        r.apply_admin_command(&enrollment(&admin, &device, 1), 200).unwrap();
+        let body = b"tenant-scoped lease request";
+        let claims = DeviceRequestClaims {
+            tenant_id: "tenant-a".into(),
+            device_id: "device-1".into(),
+            key_id: "device-key-v1".into(),
+            key_generation: 1,
+            request_id: [12; 16],
+            issued_at_unix_ms: 200,
+            expires_at_unix_ms: 500,
+            method: "POST".into(),
+            resource_id: "lease:acquire".into(),
+            body_sha256: sha2::Sha256::digest(body).into(),
+        };
+        let signed = SignedDeviceRequest {
+            signature: device.sign(&device_request_bytes(&claims)).to_bytes(),
+            claims,
+        };
+        assert_eq!(
+            r.authenticate_request(&signed, b"tampered body", 250),
+            Err(DeviceTrustError::BodyDigestMismatch)
+        );
+        assert!(r.authenticate_request(&signed, body, 250).is_ok());
     }
 
     #[test]
@@ -615,7 +656,7 @@ mod tests {
             claims,
         };
         assert_eq!(
-            r.authenticate_request(&signed, 400),
+            r.authenticate_request(&signed, b"", 400),
             Err(DeviceTrustError::DeviceNotEnrolled)
         );
     }
@@ -655,13 +696,14 @@ mod tests {
             expires_at_unix_ms: 500,
             method: "POST".into(),
             resource_id: "lease:release".into(),
+            body_sha256: sha2::Sha256::digest([]).into(),
         };
         let old_signed = SignedDeviceRequest {
             signature: device.sign(&device_request_bytes(&old_claims)).to_bytes(),
             claims: old_claims,
         };
         assert_eq!(
-            r.authenticate_request(&old_signed, 400),
+            r.authenticate_request(&old_signed, b"", 400),
             Err(DeviceTrustError::StaleKeyGeneration)
         );
     }
