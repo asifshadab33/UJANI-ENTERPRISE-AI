@@ -353,4 +353,30 @@ mod tests {
         assert!(DurableDeviceRegistry::open(&path,vec![("admin-v1".into(),admin.verifying_key())],DeviceTrustIntegrityKey::new("integrity-v1",[0x42;32])).is_err());
         let _=fs::remove_file(&path); let _=fs::remove_file(suffix(&path,".lock"));
     }
+    #[test]
+    fn concurrent_handles_consume_a_request_nonce_once() {
+        let path=path();
+        let admin=SigningKey::from_bytes(&[7;32]);
+        let device=SigningKey::from_bytes(&[9;32]);
+        let first=open(&path,&admin);
+        first.apply_admin_command(&enroll(&admin,&device),200).unwrap();
+        let second=open(&path,&admin);
+        let claims=DeviceRequestClaims {
+            tenant_id:"tenant-a".into(), device_id:"device-1".into(),
+            key_id:"device-key-v1".into(), key_generation:1, request_id:[6;16],
+            issued_at_unix_ms:200, expires_at_unix_ms:500, method:"POST".into(),
+            resource_id:"lease:acquire".into(),
+        };
+        let signed=SignedDeviceRequest {signature:device.sign(&device_request_bytes(&claims)).to_bytes(),claims};
+        let barrier=std::sync::Arc::new(std::sync::Barrier::new(2));
+        let b1=barrier.clone();
+        let t1=std::thread::spawn(move || { b1.wait(); first.authenticate_request(&signed,250) });
+        let b2=barrier.clone();
+        let t2=std::thread::spawn(move || { b2.wait(); second.authenticate_request(&signed,250) });
+        let results=[t1.join().unwrap(),t2.join().unwrap()];
+        assert_eq!(results.iter().filter(|r| r.is_ok()).count(),1);
+        assert_eq!(results.iter().filter(|r| **r==Err(DurableDeviceTrustError::Trust(DeviceTrustError::ReplayDetected))).count(),1);
+        let _=fs::remove_file(&path); let _=fs::remove_file(suffix(&path,".lock"));
+    }
+
 }
