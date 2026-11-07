@@ -8,13 +8,14 @@ use crate::{
     Admission, ClassPolicy, Device, Ledger, SchedulingContext, VerifiedAdminApproval, Workload,
 };
 use sha2::{Digest, Sha256};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-const LEDGER_HEADER: &str = "UJANI-ENTERPRISE-LEDGER-V1";
+const LEDGER_HEADER: &str = "UJANI-ENTERPRISE-LEDGER-V2";
+const LEDGER_MAC_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-LEDGER-HMAC-SHA256-V2\\0";
 const MAX_LEDGER_BYTES: u64 = 16 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,30 +63,81 @@ pub struct DurableLedgerSnapshot {
     pub reserved_memory_mb: u64,
 }
 
+/// An integrity key supplied by a trusted secret provider (for example, an
+/// OS keyring, TPM-backed service, or HSM adapter). Never store this key beside
+/// the ledger file. Debug output intentionally redacts key bytes.
+#[derive(Clone)]
+pub struct LedgerIntegrityKey {
+    key_id: String,
+    key: [u8; 32],
+}
+
+impl LedgerIntegrityKey {
+    pub fn new(key_id: impl Into<String>, key: [u8; 32]) -> Self {
+        Self { key_id: key_id.into(), key }
+    }
+
+    pub fn key_id(&self) -> &str {
+        &self.key_id
+    }
+}
+
+impl std::fmt::Debug for LedgerIntegrityKey {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("LedgerIntegrityKey")
+            .field("key_id", &self.key_id)
+            .field("key", &"[REDACTED]")
+            .finish()
+    }
+}
+
 /// A durable reservation store. Separate instances pointing to the same path
-/// coordinate through an OS advisory file lock; each operation reloads state
-/// while holding that lock, so stale in-memory snapshots cannot overwrite newer
-/// reservations from another process.
+/// coordinate through an OS advisory file lock. Integrity keys are injected by
+/// the trusted caller and must be held outside the writable ledger directory.
 #[derive(Debug, Clone)]
 pub struct DurableLedger {
     path: PathBuf,
     lock_path: PathBuf,
     thread_lock: Arc<Mutex<()>>,
+    integrity_keys: Arc<HashMap<String, LedgerIntegrityKey>>,
+    active_key_id: String,
 }
 
 impl DurableLedger {
-    pub fn open(path: impl AsRef<Path>) -> Result<Self, DurableLedgerError> {
+    /// Opens a V2 authenticated ledger. The key set must contain the active key
+    /// and any previous keys still needed to verify snapshots during rotation.
+    /// The caller must load keys from protected storage. Legacy checksum-only
+    /// V1 ledgers are rejected rather than silently trusted.
+    pub fn open_with_integrity_keys(
+        path: impl AsRef<Path>,
+        active_key_id: &str,
+        keys: Vec<LedgerIntegrityKey>,
+    ) -> Result<Self, DurableLedgerError> {
+        if !valid_stored_identifier(active_key_id, 128) || keys.is_empty() {
+            return Err(DurableLedgerError::InvalidRecord);
+        }
+        let mut integrity_keys = HashMap::new();
+        for key in keys {
+            if !valid_stored_identifier(key.key_id(), 128)
+                || integrity_keys.insert(key.key_id.clone(), key).is_some()
+            {
+                return Err(DurableLedgerError::InvalidRecord);
+            }
+        }
+        if !integrity_keys.contains_key(active_key_id) {
+            return Err(DurableLedgerError::InvalidRecord);
+        }
+
         let path = path.as_ref().to_path_buf();
-        if let Some(parent) = path
-            .parent()
-            .filter(|parent| !parent.as_os_str().is_empty())
-        {
+        if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
             fs::create_dir_all(parent)?;
         }
         let store = Self {
             lock_path: append_suffix(&path, ".lock"),
             path,
             thread_lock: Arc::new(Mutex::new(())),
+            integrity_keys: Arc::new(integrity_keys),
+            active_key_id: active_key_id.to_string(),
         };
         store.transact(|_| Ok(()))?;
         Ok(store)
@@ -193,9 +245,11 @@ impl DurableLedger {
         let lock_file = lock_options.open(&self.lock_path)?;
         lock_file.lock()?;
 
-        let mut ledger = load_or_recover(&self.path)?;
+        let mut ledger = load_or_recover(&self.path, &self.integrity_keys)?;
         let result = operation(&mut ledger)?;
-        persist_snapshot(&self.path, &ledger)?;
+        let active_key = self.integrity_keys.get(&self.active_key_id)
+            .ok_or(DurableLedgerError::InvalidRecord)?;
+        persist_snapshot(&self.path, &ledger, &self.active_key_id, &active_key.key)?;
         Ok(result)
     }
 }
