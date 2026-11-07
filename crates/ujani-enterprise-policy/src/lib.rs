@@ -697,6 +697,14 @@ pub(crate) fn admit_and_reserve(
     }
 }
 
+pub mod scheduling_evidence;
+pub use scheduling_evidence::{
+    admit_and_reserve_with_verified_lease, admit_with_verified_context,
+    verify_scheduling_context, SchedulingEvidenceError, SchedulingPolicyClaims,
+    SignedSchedulingPolicy, SignedWorkerTelemetry, VerifiedSchedulingContext,
+    WorkerTelemetryClaims,
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1339,11 +1347,3 @@ pub use inventory::{
     InventoryError, InventorySummary, InventoryTrust,
 };
 
-
-pub mod scheduling_evidence;
-pub use scheduling_evidence::{
-    admit_and_reserve_with_verified_lease, admit_with_verified_context,
-    verify_scheduling_context, SchedulingEvidenceError, SchedulingPolicyClaims,
-    SignedSchedulingPolicy, SignedWorkerTelemetry, VerifiedSchedulingContext,
-    WorkerTelemetryClaims,
-};
