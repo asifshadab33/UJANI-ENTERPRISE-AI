@@ -91,7 +91,7 @@ fn tenant_reenable_does_not_restore_old_individual_consent() {
 
     assert_eq!(
         authority.authorization_snapshot("tenant-a", "user-a", "device-a", 104),
-        Err(AuthorityError::IndividualNotEnabled)
+        Err(AuthorityError::ConsentNotCurrent)
     );
 }
 
