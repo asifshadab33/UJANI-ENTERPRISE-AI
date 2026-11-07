@@ -134,3 +134,66 @@ fn concurrent_tenant_updates_cannot_both_win_the_same_generation() {
         1
     );
 }
+
+
+#[test]
+fn expired_tenant_or_individual_consent_fails_closed() {
+    let authority = MemoryConsentAuthority::default();
+    let mut expired_tenant = tenant("tenant-expired", true, 1, 100);
+    expired_tenant.expires_at_unix_ms = 101;
+    authority
+        .put_tenant(expired_tenant, None, "expired-tenant")
+        .unwrap();
+    let mut expired_individual =
+        individual("tenant-expired", "user-a", "device-a", 1, 1, 100);
+    expired_individual.expires_at_unix_ms = 101;
+    authority
+        .put_individual(expired_individual, None, "expired-individual")
+        .unwrap();
+
+    assert_eq!(
+        authority.authorization_snapshot("tenant-expired", "user-a", "device-a", 101),
+        Err(AuthorityError::TenantNotEnabled)
+    );
+
+    let active = MemoryConsentAuthority::default();
+    active
+        .put_tenant(tenant("tenant-active", true, 1, 100), None, "active-tenant")
+        .unwrap();
+    let mut expired_device =
+        individual("tenant-active", "user-a", "device-a", 1, 1, 100);
+    expired_device.expires_at_unix_ms = 101;
+    active
+        .put_individual(expired_device, None, "expired-device")
+        .unwrap();
+    assert_eq!(
+        active.authorization_snapshot("tenant-active", "user-a", "device-a", 101),
+        Err(AuthorityError::IndividualNotEnabled)
+    );
+}
+
+#[test]
+fn tenant_records_and_individual_consents_do_not_cross_tenant_boundaries() {
+    let authority = MemoryConsentAuthority::default();
+    authority
+        .put_tenant(tenant("tenant-a", true, 1, 100), None, "tenant-a-enable")
+        .unwrap();
+    authority
+        .put_tenant(tenant("tenant-b", true, 1, 100), None, "tenant-b-enable")
+        .unwrap();
+    authority
+        .put_individual(
+            individual("tenant-a", "user-a", "device-a", 1, 1, 101),
+            None,
+            "tenant-a-user-enable",
+        )
+        .unwrap();
+
+    assert!(authority
+        .authorization_snapshot("tenant-a", "user-a", "device-a", 102)
+        .is_ok());
+    assert_eq!(
+        authority.authorization_snapshot("tenant-b", "user-a", "device-a", 102),
+        Err(AuthorityError::IndividualNotEnabled)
+    );
+}
