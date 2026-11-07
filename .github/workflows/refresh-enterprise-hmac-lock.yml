@@ -19,7 +19,7 @@ jobs:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
       - name: Resolve the new HMAC dependency
-        run: cargo update -p hmac --precise 0.12.1
+        run: cargo check --workspace
       - name: Commit the generated workspace lockfile
         run: |
           git config user.name "github-actions[bot]"
