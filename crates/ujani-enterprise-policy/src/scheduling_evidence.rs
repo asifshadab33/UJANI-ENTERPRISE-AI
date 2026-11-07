@@ -133,7 +133,10 @@ fn valid_time_window(issued: u64, expires: u64, now: u64, max_ttl: u64) -> bool 
 /// Verify fresh worker telemetry and administrator policy for one dispatch.
 /// The caller must issue a cryptographically random, single-use challenge and
 /// atomically consume it in its control plane; this function verifies equality
-/// but does not provide persistent replay storage.
+/// but does not provide persistent replay storage. The device/admin key slices
+/// must come from an authenticated, non-caller-controlled enrollment registry;
+/// supplying attacker-controlled keys defeats the trust guarantee. This crate
+/// does not persist enrollment, revocation or the registry's root of trust.
 #[allow(clippy::too_many_arguments)] // Keep both trust roots and the dispatch challenge explicit.
 pub fn verify_scheduling_context(
     device: &Device,
