@@ -303,6 +303,8 @@ pub enum RejectReason {
     NetworkPolicyDenied,
     DataClassificationDenied,
     InvalidLeaseToken,
+    SchedulingEvidenceMismatch,
+    SchedulingEvidenceExpired,
 }
 impl RejectReason {
     pub fn as_str(&self) -> &'static str {
@@ -333,6 +335,8 @@ impl RejectReason {
                 "workload data classification is not approved for this worker"
             }
             Self::InvalidLeaseToken => "lease capability is invalid or already in use",
+            Self::SchedulingEvidenceMismatch => "verified scheduling evidence does not match this device and workload",
+            Self::SchedulingEvidenceExpired => "verified scheduling evidence has expired",
         }
     }
 }
