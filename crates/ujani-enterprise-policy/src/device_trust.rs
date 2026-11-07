@@ -7,7 +7,7 @@
 #![forbid(unsafe_code)]
 
 use ed25519_dalek::{Signature, VerifyingKey};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 const ADMIN_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-DEVICE-ADMIN-COMMAND-V1\\0";
 const DEVICE_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-DEVICE-REQUEST-V1\\0";
