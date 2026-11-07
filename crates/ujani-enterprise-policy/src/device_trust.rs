@@ -356,12 +356,12 @@ mod tests {
         let (mut r, admin, device) = registry();
         let c = enrollment(&admin, &device, 1);
         r.apply_admin_command(&c, 200).unwrap();
+        let new_device = SigningKey::from_bytes(&[11u8;32]);
         let mut rotate = SignedDeviceAdminCommand { action: DeviceCommandAction::RotateKey,
             tenant_id: "tenant-a".into(), device_id: "device-1".into(), admin_key_id: "admin-v1".into(),
             target_key_id: "device-key-v2".into(), target_public_key: Some(new_device.verifying_key().to_bytes()),
             issued_at_unix_ms: 300, expires_at_unix_ms: 1000, nonce: [4;16], signature: [0;64],
             old_device_signature: None, new_device_signature: None };
-        let new_device = SigningKey::from_bytes(&[11u8;32]);
         rotate.old_device_signature = Some(device.sign(&rotation_proof_bytes(&rotate)).to_bytes());
         rotate.new_device_signature = Some(new_device.sign(&enrollment_proof_bytes(&rotate)).to_bytes());
         rotate.signature = admin.sign(&admin_command_bytes(&rotate)).to_bytes();
