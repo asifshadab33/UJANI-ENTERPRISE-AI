@@ -31,8 +31,14 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
       - name: Run workspace tests
         run: cargo test --workspace --locked
+      - name: Set up Python 3.12 for schema validation
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c
+        with:
+          python-version: '3.12'
       - name: Validate collective-defence event schema contract
-        run: python3 scripts/validate_security_event_schema.py
+        if: matrix.os == 'ubuntu-latest'
+        run: python scripts/validate_security_event_schema.py
       - name: Check formatting
         run: cargo fmt --all -- --check
       - name: Check lint warnings
