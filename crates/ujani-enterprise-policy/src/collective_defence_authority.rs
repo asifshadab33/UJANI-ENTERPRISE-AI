@@ -764,7 +764,9 @@ mod tests {
             Err(AuthorityError::InvalidTimeWindow)
         );
 
-        store.put_tenant(tenant(true, 1, 100), None, "tenant-valid").unwrap();
+        store
+            .put_tenant(tenant(true, 1, 100), None, "tenant-valid")
+            .unwrap();
         let mut invalid_individual = individual(true, 1, 1, 101);
         invalid_individual.expires_at_unix_ms = invalid_individual.updated_at_unix_ms;
         assert_eq!(
