@@ -235,6 +235,10 @@ impl DurableDeviceRegistry {
         })
     }
 
+    /// Authenticates a device request and durably records its replay nonce.
+    ///
+    /// Pass the same raw body bytes that the request handler will process;
+    /// authentication rejects mismatches before persisting replay state.
     pub fn authenticate_request(
         &self,
         request: &SignedDeviceRequest,
@@ -710,6 +714,7 @@ mod tests {
                 .unwrap(),
             1
         );
+        let body = b"tenant-scoped lease request";
         let claims = DeviceRequestClaims {
             tenant_id: "tenant-a".into(),
             device_id: "device-1".into(),
@@ -720,18 +725,22 @@ mod tests {
             expires_at_unix_ms: 500,
             method: "POST".into(),
             resource_id: "lease:acquire".into(),
-            body_sha256: sha2::Sha256::digest([]).into(),
+            body_sha256: sha2::Sha256::digest(body).into(),
         };
         let signed = SignedDeviceRequest {
             signature: device.sign(&device_request_bytes(&claims)).to_bytes(),
             claims,
         };
-        assert!(store.authenticate_request(&signed, b"", 250).is_ok());
+        assert_eq!(
+            store.authenticate_request(&signed, b"tampered body", 250),
+            Err(DurableDeviceTrustError::Trust(DeviceTrustError::BodyDigestMismatch))
+        );
+        assert!(store.authenticate_request(&signed, body, 250).is_ok());
         drop(store);
         let reopened = open(&path, &admin);
         assert_eq!(reopened.device_count().unwrap(), 1);
         assert_eq!(
-            reopened.authenticate_request(&signed, b"", 251),
+            reopened.authenticate_request(&signed, body, 251),
             Err(DurableDeviceTrustError::Trust(
                 DeviceTrustError::ReplayDetected
             ))
