@@ -822,12 +822,13 @@ mod tests {
             expires_at_unix_ms: 500,
             method: "POST".into(),
             resource_id: "lease:acquire".into(),
+            body_sha256: sha2::Sha256::digest([]).into(),
         };
         let signed = SignedDeviceRequest {
             signature: device.sign(&device_request_bytes(&claims)).to_bytes(),
             claims,
         };
-        store.authenticate_request(&signed, 250).unwrap();
+        store.authenticate_request(&signed, b"", 250).unwrap();
         assert_eq!(
             anchor
                 .load("tenant-a-device-registry")
@@ -886,6 +887,7 @@ mod tests {
             expires_at_unix_ms: 500,
             method: "POST".into(),
             resource_id: "lease:acquire".into(),
+            body_sha256: sha2::Sha256::digest([]).into(),
         };
         let signed = SignedDeviceRequest {
             signature: device.sign(&device_request_bytes(&claims)).to_bytes(),
@@ -895,7 +897,7 @@ mod tests {
             .fail_next_cas
             .store(true, std::sync::atomic::Ordering::SeqCst);
         assert!(matches!(
-            store.authenticate_request(&signed, 250),
+            store.authenticate_request(&signed, b"", 250),
             Err(DurableDeviceTrustError::AnchorUnavailable(_))
         ));
         drop(store);
@@ -936,6 +938,7 @@ mod tests {
             expires_at_unix_ms: 500,
             method: "POST".into(),
             resource_id: "lease:acquire".into(),
+            body_sha256: sha2::Sha256::digest([]).into(),
         };
         let signed = SignedDeviceRequest {
             signature: device.sign(&device_request_bytes(&claims)).to_bytes(),
