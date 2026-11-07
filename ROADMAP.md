@@ -69,7 +69,7 @@ See [docs/OPERATOR-WORKFLOWS.md](docs/OPERATOR-WORKFLOWS.md). The dashboard desi
 - [x] Serialize cross-process operations with OS advisory locking; use bounded parsing and fail closed on malformed, oversized, duplicate or MAC-invalid state.
 - [x] Test restart persistence, request replay after restart, tamper detection and concurrent registry handles.
 - [ ] Integrate a production KMS/HSM/TPM-backed integrity-key provider, key rotation and disaster recovery.
-- [ ] Add an external monotonic snapshot anchor to detect rollback to an older but valid HMAC snapshot; do not use a local sidecar file as the anchor.
+- [x] Add the `MonotonicSnapshotAnchor` compare-and-set interface and anchored registry mode, including rollback-to-older-valid-HMAC tests (in-memory test provider only; no production anchor service).\n- [ ] Integrate a production KMS/HSM/TPM-backed or separately hosted linearizable anchor provider with authenticated tenant scoping, recovery and outage tests; do not use a local sidecar file as the anchor.
 - [ ] Expose authenticated enrollment/request/lease endpoints with tenant RBAC, replay/clock-skew enforcement and durable authorization audit.
 - [ ] Keep dispatch and worker execution disabled until receiver-side authorization, encrypted mutual-authenticated transport, quotas and OS-enforced isolation are independently verified.
 
