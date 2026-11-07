@@ -416,7 +416,7 @@ impl Ledger {
     #[allow(clippy::too_many_arguments)] // The explicit policy inputs keep authorization dependencies visible.
     /// The raw token is never persisted by this policy crate; only a domain-separated
     /// digest is retained. The control plane must protect the raw token from workloads.
-    pub fn admit_and_reserve_with_lease(
+    pub(crate) fn admit_and_reserve_with_lease(
         &mut self,
         device: &Device,
         workload: &Workload,
@@ -618,7 +618,7 @@ pub struct SchedulingContext {
 
 /// Stronger admission gate for future scheduled workloads.
 /// Production workers must independently enforce these conditions immediately before launch.
-pub fn admit_with_context(
+pub(crate) fn admit_with_context(
     device: &Device,
     workload: &Workload,
     context: &SchedulingContext,
@@ -668,7 +668,7 @@ pub fn admit_with_context(
 
 /// Atomically apply all admission gates and reserve capacity in the in-memory
 /// prototype ledger. Production must perform the same operation in one DB transaction.
-pub fn admit_and_reserve(
+pub(crate) fn admit_and_reserve(
     ledger: &mut Ledger,
     device: &Device,
     workload: &Workload,
@@ -1337,4 +1337,13 @@ pub mod inventory;
 pub use inventory::{
     summarize_inventory, validate_inventory_record, DeviceInventoryRecord, DevicePowerState,
     InventoryError, InventorySummary, InventoryTrust,
+};
+
+
+pub mod scheduling_evidence;
+pub use scheduling_evidence::{
+    admit_and_reserve_with_verified_lease, admit_with_verified_context,
+    verify_scheduling_context, SchedulingEvidenceError, SchedulingPolicyClaims,
+    SignedSchedulingPolicy, SignedWorkerTelemetry, VerifiedSchedulingContext,
+    WorkerTelemetryClaims,
 };
