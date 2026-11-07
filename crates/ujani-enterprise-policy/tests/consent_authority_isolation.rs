@@ -151,9 +151,11 @@ fn expired_tenant_or_individual_consent_fails_closed() {
         .put_individual(expired_individual, None, "expired-individual")
         .unwrap();
 
-    assert!(authority
-        .authorization_snapshot("tenant-expired", "user-a", "device-a", 100)
-        .is_ok());
+    assert!(
+        authority
+            .authorization_snapshot("tenant-expired", "user-a", "device-a", 100)
+            .is_ok()
+    );
     assert_eq!(
         authority.authorization_snapshot("tenant-expired", "user-a", "device-a", 101),
         Err(AuthorityError::TenantNotEnabled)
