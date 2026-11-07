@@ -126,7 +126,11 @@ fn concurrent_tenant_updates_cannot_both_win_the_same_generation() {
         1
     );
     assert_eq!(
-        authority.tenant_record("tenant-race").unwrap().unwrap().generation,
+        authority
+            .tenant_record("tenant-race")
+            .unwrap()
+            .unwrap()
+            .generation,
         1
     );
 }
