@@ -20,6 +20,7 @@ const RECORD_DOMAIN: &[u8] = b"UJANI-COLLECTIVE-DEFENCE-CONSENT-RECORD-V1\0";
 const MAX_AUDIT_RECORDS: usize = 100_000;
 const MAX_IDEMPOTENCY_KEYS: usize = 100_000;
 
+/// Fail-closed errors returned by the consent authority reference backend.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuthorityError {
     InvalidIdentifier,
@@ -39,6 +40,7 @@ pub enum AuthorityError {
     ConsentNotCurrent,
 }
 
+/// Versioned tenant-administrator consent state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TenantConsentRecord {
     pub tenant_id: String,
@@ -54,6 +56,7 @@ pub struct TenantConsentRecord {
     pub expires_at_unix_ms: u64,
 }
 
+/// Independent user consent scoped to one tenant, principal, and device.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IndividualConsentRecord {
     pub tenant_id: String,
@@ -70,6 +73,7 @@ pub struct IndividualConsentRecord {
     pub expires_at_unix_ms: u64,
 }
 
+/// Append-only record describing one committed consent decision.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConsentAuditRecord {
     pub sequence: u64,
@@ -86,6 +90,7 @@ pub struct ConsentAuditRecord {
     pub record_hash: [u8; 32],
 }
 
+/// Pair of current tenant and individual records used for an authorization decision.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConsentSnapshot {
     pub tenant: TenantConsentRecord,
@@ -96,6 +101,7 @@ pub struct ConsentSnapshot {
 /// and idempotency outcome one atomic transaction. Production implementations
 /// must additionally bind committed snapshots to an external monotonic anchor.
 pub trait ConsentAuthorityBackend: Send + Sync {
+    /// Persist a tenant decision if its expected generation still matches.
     fn put_tenant(
         &self,
         record: TenantConsentRecord,
@@ -103,6 +109,7 @@ pub trait ConsentAuthorityBackend: Send + Sync {
         idempotency_key: &str,
     ) -> Result<ConsentAuditRecord, AuthorityError>;
 
+    /// Persist an individual decision or withdrawal using compare-and-set.
     fn put_individual(
         &self,
         record: IndividualConsentRecord,
@@ -110,6 +117,7 @@ pub trait ConsentAuthorityBackend: Send + Sync {
         idempotency_key: &str,
     ) -> Result<ConsentAuditRecord, AuthorityError>;
 
+    /// Load current consent for the exact tenant, principal, and device tuple.
     fn authorization_snapshot(
         &self,
         tenant_id: &str,
