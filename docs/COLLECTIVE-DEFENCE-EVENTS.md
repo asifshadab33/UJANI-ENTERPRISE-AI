@@ -4,7 +4,7 @@
 
 This is the first versioned boundary for privacy-minimised endpoint signals used by UJANI Enterprise AI to correlate suspicious activity across devices belonging to one authorised tenant. It is a data contract only: it does not implement an endpoint sensor, ingestion API, threat detector, antivirus engine or response agent.
 
-The normative JSON Schema is [security-event-v1.schema.json](../schemas/security-event-v1.schema.json).
+The normative JSON Schema is [security-event-v1.schema.json](../schemas/security-event-v1.schema.json). Consumers must enable JSON Schema format assertion for `uuid` and RFC 3339 `date-time`; repository CI explicitly asserts both formats. The schema restricts sensor identifiers and sensor versions to bounded formats, and signals to a fixed categorical allowlist.
 
 ## Trust and transport requirements
 
@@ -22,7 +22,7 @@ Use the existing device-trust and authenticated-request primitives; do not creat
 
 - Never send file contents, document contents, credentials, tokens, raw command lines, memory dumps or unrestricted process arguments in this event format.
 - Do not send raw usernames, home-directory paths, full file paths, email addresses or personal identifiers by default.
-- Prefer bounded categorical signals, hashes/fingerprints and pseudonymous identifiers. Hashes can still be sensitive or linkable; protect them as security data.
+- Prefer bounded categorical signals, hashes/fingerprints and pseudonymous identifiers. Sensor IDs, sensor versions, and signal names are allowlisted or pattern-constrained; free-form command text is not accepted in source metadata. Hashes can still be sensitive or linkable; protect them as security data.
 - Tenant-private storage is the default. Cross-tenant exchange requires separate explicit policy, governance, provenance and opt-in.
 - Apply purpose limitation, access logging, encryption, retention limits and deletion workflows.
 
