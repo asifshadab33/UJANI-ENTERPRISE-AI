@@ -110,6 +110,7 @@ pub trait ConsentAuthorityBackend: Send + Sync {
     ) -> Result<ConsentAuditRecord, AuthorityError>;
 
     /// Persist an individual decision or withdrawal using compare-and-set.
+    /// Stores an individual decision or withdrawal using the reference backend's checks.
     fn put_individual(
         &self,
         record: IndividualConsentRecord,
@@ -118,6 +119,7 @@ pub trait ConsentAuthorityBackend: Send + Sync {
     ) -> Result<ConsentAuditRecord, AuthorityError>;
 
     /// Load current consent for the exact tenant, principal, and device tuple.
+    /// Returns the current exact-scope snapshot only when both consent gates are valid.
     fn authorization_snapshot(
         &self,
         tenant_id: &str,
@@ -386,6 +388,7 @@ impl MemoryConsentAuthority {
 }
 
 impl ConsentAuthorityBackend for MemoryConsentAuthority {
+    /// Stores a tenant decision using the reference backend's generation and audit checks.
     fn put_tenant(
         &self,
         record: TenantConsentRecord,
@@ -581,6 +584,7 @@ impl ConsentAuthorityBackend for MemoryConsentAuthority {
 mod tests {
     use super::*;
 
+    /// Builds a valid tenant consent record for the unit-test fixtures.
     fn tenant(enabled: bool, generation: u64, now: u64) -> TenantConsentRecord {
         TenantConsentRecord {
             tenant_id: "tenant-a".into(),
@@ -596,6 +600,8 @@ mod tests {
             expires_at_unix_ms: now + 60_000,
         }
     }
+
+    /// Builds a valid individual consent record for the unit-test fixtures.
     fn individual(
         enabled: bool,
         tenant_generation: u64,
@@ -618,6 +624,7 @@ mod tests {
         }
     }
 
+    /// Requires both tenant-admin and exact user/device consent before authorization.
     #[test]
     fn two_independent_decisions_are_required() {
         let store = MemoryConsentAuthority::default();
@@ -634,6 +641,7 @@ mod tests {
             .is_ok());
     }
 
+    /// Verifies tenant disable invalidates all previously granted individual snapshots.
     #[test]
     fn tenant_disable_invalidates_every_individual_snapshot() {
         let store = MemoryConsentAuthority::default();
@@ -654,6 +662,7 @@ mod tests {
         );
     }
 
+    /// Verifies an individual withdrawal affects only the selected device.
     #[test]
     fn individual_withdrawal_invalidates_only_that_device() {
         let store = MemoryConsentAuthority::default();
@@ -670,6 +679,7 @@ mod tests {
         );
     }
 
+    /// Keeps the user's withdrawal path available after the tenant disables sharing.
     #[test]
     fn individual_withdrawal_remains_available_after_tenant_disable() {
         let store = MemoryConsentAuthority::default();
@@ -690,6 +700,7 @@ mod tests {
         );
     }
 
+    /// Verifies expected-generation conflicts and idempotent command replay handling.
     #[test]
     fn compare_and_set_and_idempotency_are_enforced() {
         let store = MemoryConsentAuthority::default();
@@ -707,6 +718,7 @@ mod tests {
         );
     }
 
+    /// Prevents idempotency keys from crossing tenant boundaries.
     #[test]
     fn idempotency_keys_are_scoped_to_the_tenant() {
         let store = MemoryConsentAuthority::default();
@@ -721,6 +733,7 @@ mod tests {
             .is_ok());
     }
 
+    /// Rejects unsupported purpose, retention, notice, and excessive-expiry values.
     #[test]
     fn consent_records_reject_invalid_policy_and_notice_fields() {
         let store = MemoryConsentAuthority::default();
@@ -761,6 +774,7 @@ mod tests {
         );
     }
 
+    /// Reports non-positive tenant and individual consent windows as time errors.
     #[test]
     fn non_positive_consent_windows_return_time_window_errors() {
         let store = MemoryConsentAuthority::default();
@@ -783,6 +797,7 @@ mod tests {
         );
     }
 
+    /// Verifies appended audit records are linked and pass canonical chain verification.
     #[test]
     fn audit_records_form_a_hash_chain() {
         let store = MemoryConsentAuthority::default();
