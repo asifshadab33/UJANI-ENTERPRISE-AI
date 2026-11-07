@@ -634,12 +634,12 @@ mod tests {
         LedgerIntegrityKey::new(id, [byte; 32])
     }
 
-    fn open_ledger(path: &Path) -> DurableLedger {
+    fn open_ledger(path: &Path) -> Result<DurableLedger, DurableLedgerError> {
         DurableLedger::open_with_integrity_keys(
             path,
             "test-v1",
             vec![integrity_key("test-v1", 0xA5)],
-        ).unwrap()
+        )
     }
 
     fn temp_path(label: &str) -> PathBuf {
