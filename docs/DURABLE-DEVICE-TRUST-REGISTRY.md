@@ -51,3 +51,9 @@ Every role is deny-by-default. Cross-tenant actions require explicit platform-le
 - external security review of the service boundary and deployment permissions.
 
 Passing crate tests is not a substitute for service and deployment validation.
+
+## Rollback and deletion threat
+
+HMAC authenticates snapshot contents but does not, by itself, prevent an attacker with write access from restoring an older valid snapshot or deleting the current file and its backup. Because old snapshots can contain already-consumed replay nonces or an earlier enrolled/revoked state, production deployment must pair this file store with an external monotonic generation anchor (for example, a KMS/HSM-backed compare-and-advance record or a transactional authoritative database) that is not writable by the file-store identity. A generation mismatch, missing snapshot when the anchor is non-zero, or anchor outage must fail closed. This external anti-rollback anchor is not implemented by this PR and is a release blocker for production use.
+
+The advisory file lock serializes cooperating service instances; it is not a defense against a privileged local attacker who can replace the lock file or bypass the service account boundary. Enforce OS ownership/permissions and isolate the registry process accordingly.
