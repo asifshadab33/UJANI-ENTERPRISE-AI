@@ -697,6 +697,9 @@ pub(crate) fn admit_and_reserve(
     }
 }
 
+pub mod durable_ledger;
+pub use durable_ledger::{DurableLedger, DurableLedgerError, DurableLedgerSnapshot};
+
 pub mod scheduling_evidence;
 pub use scheduling_evidence::{
     admit_and_reserve_with_verified_lease, admit_with_verified_context, verify_scheduling_context,
