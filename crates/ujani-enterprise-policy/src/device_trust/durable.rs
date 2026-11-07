@@ -227,11 +227,11 @@ fn hex(bytes: &[u8]) -> String {
     out
 }
 fn unhex(v: &str) -> Result<Vec<u8>, DurableDeviceTrustError> {
-    if v.len() % 2 != 0 {
+    if !v.len().is_multiple_of(2) {
         return Err(DurableDeviceTrustError::CorruptState);
     }
     let mut out = Vec::with_capacity(v.len() / 2);
-    for p in v.as_bytes().chunks_exact(2) {
+    for p in v.as_bytes().as_chunks::<2>().0 {
         let h = (p[0] as char)
             .to_digit(16)
             .ok_or(DurableDeviceTrustError::CorruptState)?;
