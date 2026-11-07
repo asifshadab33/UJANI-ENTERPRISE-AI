@@ -702,7 +702,8 @@ pub use durable_ledger::{DurableLedger, DurableLedgerError, DurableLedgerSnapsho
 
 pub mod scheduling_evidence;
 pub use scheduling_evidence::{
-    admit_and_reserve_durably_with_verified_lease, admit_and_reserve_with_verified_lease,\n    admit_with_verified_context, verify_scheduling_context,
+    admit_and_reserve_durably_with_verified_lease, admit_and_reserve_with_verified_lease,
+    admit_with_verified_context, verify_scheduling_context,
     SchedulingEvidenceError, SchedulingPolicyClaims, SignedSchedulingPolicy, SignedWorkerTelemetry,
     VerifiedSchedulingContext, WorkerTelemetryClaims,
 };
