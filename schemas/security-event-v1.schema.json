@@ -151,7 +151,8 @@
         "indicator_domain": {
           "type": "string",
           "maxLength": 253,
-          "pattern": "^(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)+[A-Za-z]{2,63}$"
+          "pattern": "^(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)+[A-Za-z]{2,63}$",
+          "description": "Sensitive and potentially linkable security indicator. May reveal visited sites; arbitrary subdomain labels can carry covert data. Include only when necessary for an approved indicator; receivers must apply domain allowlisting/normalization and protect it as sensitive security data."
         },
         "path_fingerprint": {
           "type": "string",
