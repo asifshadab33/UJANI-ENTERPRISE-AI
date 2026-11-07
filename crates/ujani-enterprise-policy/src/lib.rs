@@ -2,6 +2,8 @@
 //! This crate does not enrol devices, schedule jobs, create sandboxes or enforce quotas.
 
 #![forbid(unsafe_code)]
+
+pub mod device_trust;
 use ed25519_dalek::{Signature, VerifyingKey};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
