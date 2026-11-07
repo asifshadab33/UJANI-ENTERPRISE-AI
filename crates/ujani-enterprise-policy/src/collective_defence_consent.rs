@@ -190,11 +190,17 @@ pub fn verify_tenant_consent(
     {
         return Err(ConsentError::InvalidRetention);
     }
-    validate_window(claims.issued_at_unix_ms, claims.expires_at_unix_ms, now_unix_ms)?;
+    validate_window(
+        claims.issued_at_unix_ms,
+        claims.expires_at_unix_ms,
+        now_unix_ms,
+    )?;
 
     let key = trusted_admin_keys
         .iter()
-        .find(|(key_id, tenant_id, _)| key_id == &claims.admin_key_id && tenant_id == &claims.tenant_id)
+        .find(|(key_id, tenant_id, _)| {
+            key_id == &claims.admin_key_id && tenant_id == &claims.tenant_id
+        })
         .map(|(_, _, key)| key)
         .ok_or(ConsentError::UnknownSigningKey)?;
     key.verify_strict(
@@ -230,7 +236,11 @@ pub fn verify_individual_consent(
     if claims.purpose != COLLECTIVE_DEFENCE_PURPOSE {
         return Err(ConsentError::InvalidPurpose);
     }
-    validate_window(claims.issued_at_unix_ms, claims.expires_at_unix_ms, now_unix_ms)?;
+    validate_window(
+        claims.issued_at_unix_ms,
+        claims.expires_at_unix_ms,
+        now_unix_ms,
+    )?;
 
     let key = trusted_user_keys
         .iter()
@@ -415,7 +425,11 @@ mod tests {
     ) {
         let admin = SigningKey::from_bytes(&[7u8; 32]);
         let user = SigningKey::from_bytes(&[9u8; 32]);
-        let admins = vec![("tenant-admin-key".into(), "tenant-a".into(), admin.verifying_key())];
+        let admins = vec![(
+            "tenant-admin-key".into(),
+            "tenant-a".into(),
+            admin.verifying_key(),
+        )];
         let users = vec![(
             "user-consent-key".into(),
             "tenant-a".into(),
@@ -428,12 +442,11 @@ mod tests {
 
     fn permit() -> ConsentPermit {
         let (admin, user, admins, users) = keys();
-        let tenant = verify_tenant_consent(&signed_tenant(&admin, true, 4, EXPIRY), &admins, NOW).unwrap();
-        let individual = verify_individual_consent(
-            &signed_individual(&user, true, 4, 2, EXPIRY),
-            &users,
-            NOW,
-        ).unwrap();
+        let tenant =
+            verify_tenant_consent(&signed_tenant(&admin, true, 4, EXPIRY), &admins, NOW).unwrap();
+        let individual =
+            verify_individual_consent(&signed_individual(&user, true, 4, 2, EXPIRY), &users, NOW)
+                .unwrap();
         authorize_event_sharing(&tenant, &individual, "tenant-a", "device-01", 4, 2, NOW).unwrap()
     }
 
@@ -448,9 +461,15 @@ mod tests {
         );
         assert!(authorize_event_sharing(
             &tenant,
-            &verify_individual_consent(&signed_individual(&user, true, 4, 2, EXPIRY), &users, NOW).unwrap(),
-            "tenant-a", "device-01", 4, 2, NOW
-        ).is_ok());
+            &verify_individual_consent(&signed_individual(&user, true, 4, 2, EXPIRY), &users, NOW)
+                .unwrap(),
+            "tenant-a",
+            "device-01",
+            4,
+            2,
+            NOW
+        )
+        .is_ok());
     }
 
     #[test]
@@ -461,8 +480,11 @@ mod tests {
             Err(ConsentError::TenantOptInRequired)
         );
         assert!(verify_individual_consent(
-            &signed_individual(&user, true, 4, 2, EXPIRY), &users, NOW
-        ).is_ok());
+            &signed_individual(&user, true, 4, 2, EXPIRY),
+            &users,
+            NOW
+        )
+        .is_ok());
     }
 
     #[test]
@@ -475,9 +497,9 @@ mod tests {
         assert_eq!(p.retention_seconds(), 86_400);
         let (admin, user, admins, users) = keys();
         let tenant = verify_tenant_consent(&signed_tenant(&admin, true, 4, EXPIRY), &admins, NOW).unwrap();
-        let individual = verify_individual_consent(
-            &signed_individual(&user, true, 4, 2, EXPIRY), &users, NOW
-        ).unwrap();
+        let individual =
+            verify_individual_consent(&signed_individual(&user, true, 4, 2, EXPIRY), &users, NOW)
+                .unwrap();
         assert_eq!(
             authorize_event_sharing(&tenant, &individual, "tenant-b", "device-01", 4, 2, NOW),
             Err(ConsentError::TenantMismatch)
@@ -504,7 +526,9 @@ mod tests {
         let individual = verify_individual_consent(
             &signed_individual(&user, true, 4, 2, NOW + 30_000), &users, NOW
         ).unwrap();
-        let p = authorize_event_sharing(&tenant, &individual, "tenant-a", "device-01", 4, 2, NOW).unwrap();
+        let p =
+            authorize_event_sharing(&tenant, &individual, "tenant-a", "device-01", 4, 2, NOW)
+                .unwrap();
         assert_eq!(p.expires_at_unix_ms(), NOW + 30_000);
         assert!(!p.is_current("tenant-a", "device-01", 4, 2, NOW + 30_000));
     }
@@ -520,9 +544,9 @@ mod tests {
             authorize_event_sharing(&tenant, &individual, "tenant-a", "device-01", 4, 2, NOW),
             Err(ConsentError::PolicyGenerationMismatch)
         );
-        let individual = verify_individual_consent(
-            &signed_individual(&user, true, 4, 2, EXPIRY), &users, NOW
-        ).unwrap();
+        let individual =
+            verify_individual_consent(&signed_individual(&user, true, 4, 2, EXPIRY), &users, NOW)
+                .unwrap();
         assert_eq!(
             authorize_event_sharing(&tenant, &individual, "tenant-a", "device-01", 5, 2, NOW),
             Err(ConsentError::RevokedOrStaleGeneration)
@@ -599,7 +623,9 @@ mod tests {
 
         let mut individual = signed_individual(&user, true, 4, 2, EXPIRY);
         individual.claims.principal_id = "user-02".into();
-        individual.signature = user.sign(&individual_consent_bytes(&individual.claims)).to_bytes();
+        individual.signature = user
+            .sign(&individual_consent_bytes(&individual.claims))
+            .to_bytes();
         assert_eq!(
             verify_individual_consent(&individual, &users, NOW),
             Err(ConsentError::UnknownSigningKey)
@@ -616,8 +642,8 @@ mod tests {
             verify_individual_consent(&individual, &users, NOW),
             Err(ConsentError::InvalidIdentifier)
         );
-        let tenant = verify_tenant_consent(&signed_tenant(&admin, true, 4, EXPIRY), &admins, NOW).unwrap();
+        let tenant =
+            verify_tenant_consent(&signed_tenant(&admin, true, 4, EXPIRY), &admins, NOW).unwrap();
         assert_eq!(tenant.0.tenant_id, "tenant-a");
     }
-
 }
