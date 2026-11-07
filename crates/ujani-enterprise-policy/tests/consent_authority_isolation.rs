@@ -135,7 +135,6 @@ fn concurrent_tenant_updates_cannot_both_win_the_same_generation() {
     );
 }
 
-
 #[test]
 fn expired_tenant_or_individual_consent_fails_closed() {
     let authority = MemoryConsentAuthority::default();
@@ -144,8 +143,7 @@ fn expired_tenant_or_individual_consent_fails_closed() {
     authority
         .put_tenant(expired_tenant, None, "expired-tenant")
         .unwrap();
-    let mut expired_individual =
-        individual("tenant-expired", "user-a", "device-a", 1, 1, 100);
+    let mut expired_individual = individual("tenant-expired", "user-a", "device-a", 1, 1, 100);
     expired_individual.expires_at_unix_ms = 101;
     authority
         .put_individual(expired_individual, None, "expired-individual")
@@ -160,8 +158,7 @@ fn expired_tenant_or_individual_consent_fails_closed() {
     active
         .put_tenant(tenant("tenant-active", true, 1, 100), None, "active-tenant")
         .unwrap();
-    let mut expired_device =
-        individual("tenant-active", "user-a", "device-a", 1, 1, 100);
+    let mut expired_device = individual("tenant-active", "user-a", "device-a", 1, 1, 100);
     expired_device.expires_at_unix_ms = 101;
     active
         .put_individual(expired_device, None, "expired-device")
