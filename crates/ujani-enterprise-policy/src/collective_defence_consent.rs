@@ -527,8 +527,11 @@ mod tests {
         let tenant =
             verify_tenant_consent(&signed_tenant(&admin, true, 4, EXPIRY), &admins, NOW).unwrap();
         let individual = verify_individual_consent(
-            &signed_individual(&user, true, 4, 2, NOW + 30_000), &users, NOW
-        ).unwrap();
+            &signed_individual(&user, true, 4, 2, NOW + 30_000),
+            &users,
+            NOW,
+        )
+        .unwrap();
         let p =
             authorize_event_sharing(&tenant, &individual, "tenant-a", "device-01", 4, 2, NOW)
                 .unwrap();
@@ -541,9 +544,9 @@ mod tests {
         let (admin, user, admins, users) = keys();
         let tenant =
             verify_tenant_consent(&signed_tenant(&admin, true, 4, EXPIRY), &admins, NOW).unwrap();
-        let individual = verify_individual_consent(
-            &signed_individual(&user, true, 3, 2, EXPIRY), &users, NOW
-        ).unwrap();
+        let individual =
+            verify_individual_consent(&signed_individual(&user, true, 3, 2, EXPIRY), &users, NOW)
+                .unwrap();
         assert_eq!(
             authorize_event_sharing(&tenant, &individual, "tenant-a", "device-01", 4, 2, NOW),
             Err(ConsentError::PolicyGenerationMismatch)
@@ -641,7 +644,9 @@ mod tests {
         let (admin, user, admins, users) = keys();
         let mut individual = signed_individual(&user, true, 4, 2, EXPIRY);
         individual.claims.notice_sha256 = [0u8; 32];
-        individual.signature = user.sign(&individual_consent_bytes(&individual.claims)).to_bytes();
+        individual.signature = user
+            .sign(&individual_consent_bytes(&individual.claims))
+            .to_bytes();
         assert_eq!(
             verify_individual_consent(&individual, &users, NOW),
             Err(ConsentError::InvalidIdentifier)
