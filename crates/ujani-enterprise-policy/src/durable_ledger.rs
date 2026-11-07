@@ -686,4 +686,72 @@ mod tests {
         assert_eq!(ledger.snapshot().unwrap().active_jobs, 1);
         cleanup(&path);
     }
+    #[test]
+    fn missing_primary_restores_the_last_committed_backup() {
+        let path = temp_path("missing-primary");
+        let ledger = DurableLedger::open(&path).unwrap();
+        assert_eq!(ledger.snapshot().unwrap().active_jobs, 0);
+        let committed = fs::read(&path).unwrap();
+        let backup = append_suffix(&path, ".bak");
+        fs::write(&backup, committed).unwrap();
+        fs::remove_file(&path).unwrap();
+
+        let restored = DurableLedger::open(&path).unwrap();
+        assert_eq!(restored.snapshot().unwrap().active_jobs, 0);
+        assert!(path.exists());
+        assert!(!backup.exists());
+        cleanup(&path);
+    }
+
+    #[test]
+    fn corrupt_primary_without_backup_fails_closed_and_preserves_bytes() {
+        let path = temp_path("corrupt-primary-no-backup");
+        let corrupt = b"uncommitted or damaged state";
+        fs::write(&path, corrupt).unwrap();
+
+        assert_eq!(
+            DurableLedger::open(&path).err(),
+            Some(DurableLedgerError::CorruptState)
+        );
+        assert_eq!(fs::read(&path).unwrap(), corrupt);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn corrupt_primary_and_backup_fail_closed_without_overwriting_either() {
+        let path = temp_path("corrupt-both");
+        let corrupt_primary = b"damaged primary snapshot";
+        let corrupt_backup = b"damaged backup snapshot";
+        let backup = append_suffix(&path, ".bak");
+        fs::write(&path, corrupt_primary).unwrap();
+        fs::write(&backup, corrupt_backup).unwrap();
+
+        assert_eq!(
+            DurableLedger::open(&path).err(),
+            Some(DurableLedgerError::CorruptState)
+        );
+        assert_eq!(fs::read(&path).unwrap(), corrupt_primary);
+        assert_eq!(fs::read(&backup).unwrap(), corrupt_backup);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn orphaned_temp_file_is_not_treated_as_committed_state() {
+        let path = temp_path("orphaned-temp");
+        let temp = append_suffix(&path, ".tmp");
+        fs::write(&temp, b"uncommitted temporary snapshot").unwrap();
+
+        let ledger = DurableLedger::open(&path).unwrap();
+        assert_eq!(ledger.snapshot().unwrap().active_jobs, 0);
+        assert!(path.exists());
+        assert!(!temp.exists());
+        assert_eq!(
+            deserialize_snapshot(&fs::read(&path).unwrap())
+                .unwrap()
+                .jobs
+                .len(),
+            0
+        );
+        cleanup(&path);
+    }
 }
