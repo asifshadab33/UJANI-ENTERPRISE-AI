@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 const LEDGER_HEADER: &str = "UJANI-ENTERPRISE-LEDGER-V2";
-const LEDGER_MAC_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-LEDGER-HMAC-SHA256-V2\\0";
+const LEDGER_MAC_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-LEDGER-HMAC-SHA256-V2\0";
 const MAX_LEDGER_BYTES: u64 = 16 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -639,6 +639,18 @@ mod tests {
         }]
     }
 
+    fn integrity_key(id: &str, byte: u8) -> LedgerIntegrityKey {
+        LedgerIntegrityKey::new(id, [byte; 32])
+    }
+
+    fn open_ledger(path: &Path) -> DurableLedger {
+        DurableLedger::open_with_integrity_keys(
+            path,
+            "test-v1",
+            vec![integrity_key("test-v1", 0xA5)],
+        ).unwrap()
+    }
+
     fn temp_path(label: &str) -> PathBuf {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -663,7 +675,7 @@ mod tests {
         let path = temp_path("restart");
         let token = [0x51u8; 32];
         {
-            let ledger = DurableLedger::open(&path).unwrap();
+            let ledger = open_ledger(&path).unwrap();
             assert_eq!(
                 ledger
                     .admit_and_reserve_with_lease(
@@ -681,7 +693,7 @@ mod tests {
             assert_eq!(ledger.snapshot().unwrap().active_jobs, 1);
         }
         {
-            let ledger = DurableLedger::open(&path).unwrap();
+            let ledger = open_ledger(&path).unwrap();
             assert!(ledger.renew_lease("job-restart", &token, 2_000).unwrap());
             assert!(!ledger.release_lease("job-restart", &[0x33u8; 32]).unwrap());
             assert!(ledger.release_lease("job-restart", &token).unwrap());
@@ -695,7 +707,7 @@ mod tests {
         let path = temp_path("backup");
         let token = [0x52u8; 32];
         {
-            let ledger = DurableLedger::open(&path).unwrap();
+            let ledger = open_ledger(&path).unwrap();
             assert_eq!(
                 ledger
                     .admit_and_reserve_with_lease(
@@ -714,7 +726,7 @@ mod tests {
         let snapshot = fs::read(&path).unwrap();
         fs::write(append_suffix(&path, ".bak"), snapshot).unwrap();
         fs::write(&path, b"corrupt").unwrap();
-        let ledger = DurableLedger::open(&path).unwrap();
+        let ledger = open_ledger(&path).unwrap();
         assert_eq!(ledger.snapshot().unwrap().active_jobs, 1);
         cleanup(&path);
     }
@@ -731,10 +743,10 @@ mod tests {
                 .consumed_approvals
                 .insert(format!("{prefix}-{index:06}"));
         }
-        assert!(serialize_snapshot(&ledger).len() as u64 > MAX_LEDGER_BYTES);
+        assert!(serialize_snapshot(&ledger, "test-v1", &[0xA5; 32]).len() as u64 > MAX_LEDGER_BYTES);
 
         assert_eq!(
-            persist_snapshot(&path, &ledger),
+            persist_snapshot(&path, &ledger, "test-v1", &[0xA5; 32]),
             Err(DurableLedgerError::CapacityExceeded)
         );
         assert_eq!(fs::read(&path).unwrap(), b"previous committed snapshot");
@@ -744,8 +756,8 @@ mod tests {
     #[test]
     fn separate_store_instances_serialize_capacity_reservations() {
         let path = temp_path("concurrent");
-        let first = DurableLedger::open(&path).unwrap();
-        let second = DurableLedger::open(&path).unwrap();
+        let first = open_ledger(&path).unwrap();
+        let second = open_ledger(&path).unwrap();
         let first_thread = thread::spawn(move || {
             first
                 .admit_and_reserve_with_lease(
@@ -780,21 +792,21 @@ mod tests {
                 .count(),
             1
         );
-        let ledger = DurableLedger::open(&path).unwrap();
+        let ledger = open_ledger(&path).unwrap();
         assert_eq!(ledger.snapshot().unwrap().active_jobs, 1);
         cleanup(&path);
     }
     #[test]
     fn missing_primary_restores_the_last_committed_backup() {
         let path = temp_path("missing-primary");
-        let ledger = DurableLedger::open(&path).unwrap();
+        let ledger = open_ledger(&path).unwrap();
         assert_eq!(ledger.snapshot().unwrap().active_jobs, 0);
         let committed = fs::read(&path).unwrap();
         let backup = append_suffix(&path, ".bak");
         fs::write(&backup, committed).unwrap();
         fs::remove_file(&path).unwrap();
 
-        let restored = DurableLedger::open(&path).unwrap();
+        let restored = open_ledger(&path).unwrap();
         assert_eq!(restored.snapshot().unwrap().active_jobs, 0);
         assert!(path.exists());
         assert!(!backup.exists());
@@ -808,7 +820,7 @@ mod tests {
         fs::write(&path, corrupt).unwrap();
 
         assert_eq!(
-            DurableLedger::open(&path).err(),
+            open_ledger(&path).err(),
             Some(DurableLedgerError::CorruptState)
         );
         assert_eq!(fs::read(&path).unwrap(), corrupt);
@@ -825,7 +837,7 @@ mod tests {
         fs::write(&backup, corrupt_backup).unwrap();
 
         assert_eq!(
-            DurableLedger::open(&path).err(),
+            open_ledger(&path).err(),
             Some(DurableLedgerError::CorruptState)
         );
         assert_eq!(fs::read(&path).unwrap(), corrupt_primary);
@@ -839,7 +851,7 @@ mod tests {
         let temp = append_suffix(&path, ".tmp");
         fs::write(&temp, b"uncommitted temporary snapshot").unwrap();
 
-        let ledger = DurableLedger::open(&path).unwrap();
+        let ledger = open_ledger(&path).unwrap();
         assert_eq!(ledger.snapshot().unwrap().active_jobs, 0);
         assert!(path.exists());
         assert!(!temp.exists());
