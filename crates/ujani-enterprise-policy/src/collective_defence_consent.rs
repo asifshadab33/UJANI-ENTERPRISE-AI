@@ -67,6 +67,8 @@ pub struct IndividualConsentClaims {
     pub generation: u64,
     pub purpose: String,
     pub notice_version: String,
+    /// SHA-256 of the exact consent notice text and data-category disclosure shown to the user.
+    pub notice_sha256: [u8; 32],
     pub user_key_id: String,
     pub issued_at_unix_ms: u64,
     pub expires_at_unix_ms: u64,
@@ -144,6 +146,7 @@ fn individual_consent_bytes(claims: &IndividualConsentClaims) -> Vec<u8> {
     bytes.extend_from_slice(&claims.generation.to_be_bytes());
     push_string(&mut bytes, &claims.purpose);
     push_string(&mut bytes, &claims.notice_version);
+    bytes.extend_from_slice(&claims.notice_sha256);
     push_string(&mut bytes, &claims.user_key_id);
     bytes.extend_from_slice(&claims.issued_at_unix_ms.to_be_bytes());
     bytes.extend_from_slice(&claims.expires_at_unix_ms.to_be_bytes());
@@ -218,6 +221,7 @@ pub fn verify_individual_consent(
         || !valid_identifier(&claims.principal_id, 128)
         || !valid_identifier(&claims.user_key_id, 128)
         || !valid_identifier(&claims.notice_version, 64)
+        || claims.notice_sha256.iter().all(|byte| *byte == 0)
         || claims.tenant_generation == 0
         || claims.generation == 0
     {
@@ -392,6 +396,7 @@ mod tests {
             generation,
             purpose: COLLECTIVE_DEFENCE_PURPOSE.into(),
             notice_version: "notice-v1".into(),
+            notice_sha256: [3u8; 32],
             user_key_id: "user-consent-key".into(),
             issued_at_unix_ms: NOW,
             expires_at_unix_ms: expires_at,
@@ -581,4 +586,38 @@ mod tests {
             Err(ConsentError::UnsupportedSchema)
         );
     }
+    #[test]
+    fn trusted_consent_keys_cannot_be_reused_across_tenants_or_principals() {
+        let (admin, user, admins, users) = keys();
+        let mut tenant = signed_tenant(&admin, true, 4, EXPIRY);
+        tenant.claims.tenant_id = "tenant-b".into();
+        tenant.signature = admin.sign(&tenant_consent_bytes(&tenant.claims)).to_bytes();
+        assert_eq!(
+            verify_tenant_consent(&tenant, &admins, NOW),
+            Err(ConsentError::UnknownSigningKey)
+        );
+
+        let mut individual = signed_individual(&user, true, 4, 2, EXPIRY);
+        individual.claims.principal_id = "user-02".into();
+        individual.signature = user.sign(&individual_consent_bytes(&individual.claims)).to_bytes();
+        assert_eq!(
+            verify_individual_consent(&individual, &users, NOW),
+            Err(ConsentError::UnknownSigningKey)
+        );
+    }
+
+    #[test]
+    fn consent_must_bind_the_exact_nonzero_notice_digest() {
+        let (admin, user, admins, users) = keys();
+        let mut individual = signed_individual(&user, true, 4, 2, EXPIRY);
+        individual.claims.notice_sha256 = [0u8; 32];
+        individual.signature = user.sign(&individual_consent_bytes(&individual.claims)).to_bytes();
+        assert_eq!(
+            verify_individual_consent(&individual, &users, NOW),
+            Err(ConsentError::InvalidIdentifier)
+        );
+        let tenant = verify_tenant_consent(&signed_tenant(&admin, true, 4, EXPIRY), &admins, NOW).unwrap();
+        assert_eq!(tenant.0.tenant_id, "tenant-a");
+    }
+
 }
