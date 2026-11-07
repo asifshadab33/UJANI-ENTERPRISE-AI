@@ -235,6 +235,30 @@ impl DurableDeviceRegistry {
         })
     }
 
+    /// Authenticate a request against the route selected by the server and
+    /// durably record its replay nonce. Method/resource mismatches fail before
+    /// nonce consumption.
+    pub fn authenticate_request_for(
+        &self,
+        request: &SignedDeviceRequest,
+        expected_method: &str,
+        expected_resource_id: &str,
+        body: &[u8],
+        now: u64,
+    ) -> Result<AuthenticatedDevice, DurableDeviceTrustError> {
+        self.transact(|registry| {
+            registry
+                .authenticate_request_for(
+                    request,
+                    expected_method,
+                    expected_resource_id,
+                    body,
+                    now,
+                )
+                .map_err(Into::into)
+        })
+    }
+
     /// Authenticates a device request and durably records its replay nonce.
     ///
     /// Pass the same raw body bytes that the request handler will process;
@@ -737,7 +761,13 @@ mod tests {
                 DeviceTrustError::BodyDigestMismatch
             ))
         );
-        assert!(store.authenticate_request(&signed, body, 250).is_ok());
+        assert_eq!(
+            store.authenticate_request_for(&signed, "POST", "lease:renew", body, 250),
+            Err(DurableDeviceTrustError::Trust(DeviceTrustError::RequestTargetMismatch))
+        );
+        assert!(store
+            .authenticate_request_for(&signed, "POST", "lease:acquire", body, 250)
+            .is_ok());
         drop(store);
         let reopened = open(&path, &admin);
         assert_eq!(reopened.device_count().unwrap(), 1);
