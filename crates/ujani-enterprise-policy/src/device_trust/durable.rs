@@ -238,11 +238,12 @@ impl DurableDeviceRegistry {
     pub fn authenticate_request(
         &self,
         request: &SignedDeviceRequest,
+        body: &[u8],
         now: u64,
     ) -> Result<AuthenticatedDevice, DurableDeviceTrustError> {
         self.transact(|registry| {
             registry
-                .authenticate_request(request, now)
+                .authenticate_request(request, body, now)
                 .map_err(Into::into)
         })
     }
@@ -655,6 +656,7 @@ fn atomic_write(
 mod tests {
     use super::*;
     use ed25519_dalek::{Signer, SigningKey};
+    use sha2::Digest;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn path() -> PathBuf {
@@ -718,17 +720,18 @@ mod tests {
             expires_at_unix_ms: 500,
             method: "POST".into(),
             resource_id: "lease:acquire".into(),
+            body_sha256: sha2::Sha256::digest([]).into(),
         };
         let signed = SignedDeviceRequest {
             signature: device.sign(&device_request_bytes(&claims)).to_bytes(),
             claims,
         };
-        assert!(store.authenticate_request(&signed, 250).is_ok());
+        assert!(store.authenticate_request(&signed, b"", 250).is_ok());
         drop(store);
         let reopened = open(&path, &admin);
         assert_eq!(reopened.device_count().unwrap(), 1);
         assert_eq!(
-            reopened.authenticate_request(&signed, 251),
+            reopened.authenticate_request(&signed, b"", 251),
             Err(DurableDeviceTrustError::Trust(
                 DeviceTrustError::ReplayDetected
             ))
@@ -819,12 +822,13 @@ mod tests {
             expires_at_unix_ms: 500,
             method: "POST".into(),
             resource_id: "lease:acquire".into(),
+            body_sha256: sha2::Sha256::digest([]).into(),
         };
         let signed = SignedDeviceRequest {
             signature: device.sign(&device_request_bytes(&claims)).to_bytes(),
             claims,
         };
-        store.authenticate_request(&signed, 250).unwrap();
+        store.authenticate_request(&signed, b"", 250).unwrap();
         assert_eq!(
             anchor
                 .load("tenant-a-device-registry")
@@ -883,6 +887,7 @@ mod tests {
             expires_at_unix_ms: 500,
             method: "POST".into(),
             resource_id: "lease:acquire".into(),
+            body_sha256: sha2::Sha256::digest([]).into(),
         };
         let signed = SignedDeviceRequest {
             signature: device.sign(&device_request_bytes(&claims)).to_bytes(),
@@ -892,7 +897,7 @@ mod tests {
             .fail_next_cas
             .store(true, std::sync::atomic::Ordering::SeqCst);
         assert!(matches!(
-            store.authenticate_request(&signed, 250),
+            store.authenticate_request(&signed, b"", 250),
             Err(DurableDeviceTrustError::AnchorUnavailable(_))
         ));
         drop(store);
@@ -907,7 +912,7 @@ mod tests {
             anchor,
         )
         .unwrap();
-        assert!(reopened.authenticate_request(&signed, 251).is_ok());
+        assert!(reopened.authenticate_request(&signed, b"", 251).is_ok());
         let _ = fs::remove_file(&path);
         let _ = fs::remove_file(suffix(&path, ".bak"));
         let _ = fs::remove_file(suffix(&path, ".lock"));
@@ -933,6 +938,7 @@ mod tests {
             expires_at_unix_ms: 500,
             method: "POST".into(),
             resource_id: "lease:acquire".into(),
+            body_sha256: sha2::Sha256::digest([]).into(),
         };
         let signed = SignedDeviceRequest {
             signature: device.sign(&device_request_bytes(&claims)).to_bytes(),
@@ -943,12 +949,12 @@ mod tests {
         let b1 = barrier.clone();
         let t1 = std::thread::spawn(move || {
             b1.wait();
-            first.authenticate_request(&signed, 250)
+            first.authenticate_request(&signed, b"", 250)
         });
         let b2 = barrier.clone();
         let t2 = std::thread::spawn(move || {
             b2.wait();
-            second.authenticate_request(&signed2, 250)
+            second.authenticate_request(&signed2, b"", 250)
         });
         let results = [t1.join().unwrap(), t2.join().unwrap()];
         assert_eq!(results.iter().filter(|r| r.is_ok()).count(), 1);
