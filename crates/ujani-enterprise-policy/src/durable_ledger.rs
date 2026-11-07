@@ -7,7 +7,7 @@
 use crate::{
     Admission, ClassPolicy, Device, Ledger, SchedulingContext, VerifiedAdminApproval, Workload,
 };
-use sha2::{Digest, Sha256};
+use sha2::Sha256;
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
@@ -577,6 +577,7 @@ fn persist_snapshot(path: &Path, ledger: &Ledger, key_id: &str, key: &[u8; 32]) 
 mod tests {
     use super::*;
     use crate::{workload_from_manifest, DataClassification, WorkloadManifest};
+    use sha2::Digest;
     use std::thread;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -859,7 +860,7 @@ mod tests {
     #[test]
     fn attacker_cannot_rewrite_snapshot_and_recompute_an_unkeyed_checksum() {
         let path = temp_path("mac-tamper");
-        let ledger = open_ledger(&path);
+        let ledger = open_ledger(&path).unwrap();
         assert_eq!(ledger.snapshot().unwrap().active_jobs, 0);
         drop(ledger);
 
