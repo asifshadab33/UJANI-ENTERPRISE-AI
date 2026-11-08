@@ -434,7 +434,6 @@ impl DurableLedger {
         }
         Ok(result)
     }
-
 }
 
 fn snapshot_sha256(bytes: &[u8]) -> [u8; 32] {
