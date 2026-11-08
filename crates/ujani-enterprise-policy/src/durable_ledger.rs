@@ -4,10 +4,11 @@
 //! one policy operation, and commits an HMAC-authenticated snapshot using a same-directory
 //! temp file plus backup/rename recovery. The raw lease capability is never
 //! persisted; only its domain-separated digest is stored.
+use crate::device_trust::durable::{MonotonicSnapshotAnchor, SnapshotAnchorRecord};
 use crate::{
     Admission, ClassPolicy, Device, Ledger, SchedulingContext, VerifiedAdminApproval, Workload,
 };
-use sha2::Sha256;
+use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
@@ -26,6 +27,10 @@ pub enum DurableLedgerError {
     InvalidRecord,
     CapacityExceeded,
     LockPoisoned,
+    AnchorUnavailable(String),
+    AnchorMismatch,
+    AnchorConflict,
+    AnchorGenerationExhausted,
 }
 
 impl std::fmt::Display for DurableLedgerError {
@@ -45,6 +50,10 @@ impl std::fmt::Display for DurableLedgerError {
                 "durable ledger snapshot would exceed the 16 MiB safety limit; committed state was not changed"
             ),
             Self::LockPoisoned => write!(formatter, "durable ledger thread lock is poisoned"),
+            Self::AnchorUnavailable(message) => write!(formatter, "external ledger monotonic anchor unavailable: {message}"),
+            Self::AnchorMismatch => write!(formatter, "durable ledger snapshot does not match its external monotonic anchor"),
+            Self::AnchorConflict => write!(formatter, "external ledger anchor rejected a stale generation"),
+            Self::AnchorGenerationExhausted => write!(formatter, "external ledger anchor generation exhausted"),
         }
     }
 }
@@ -105,13 +114,25 @@ impl Drop for LedgerIntegrityKey {
 /// A durable reservation store. Separate instances pointing to the same path
 /// coordinate through an OS advisory file lock. Integrity keys are injected by
 /// the trusted caller and must be held outside the writable ledger directory.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct DurableLedger {
     path: PathBuf,
     lock_path: PathBuf,
     thread_lock: Arc<Mutex<()>>,
     integrity_keys: Arc<HashMap<String, LedgerIntegrityKey>>,
     active_key_id: String,
+    anchor_namespace: Option<String>,
+    anchor: Option<Arc<dyn MonotonicSnapshotAnchor>>,
+}
+
+impl std::fmt::Debug for DurableLedger {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("DurableLedger")
+            .field("path", &self.path)
+            .field("active_key_id", &self.active_key_id)
+            .field("anchor_enabled", &self.anchor.is_some())
+            .finish()
+    }
 }
 
 impl DurableLedger {
@@ -123,6 +144,32 @@ impl DurableLedger {
         path: impl AsRef<Path>,
         active_key_id: &str,
         keys: Vec<LedgerIntegrityKey>,
+    ) -> Result<Self, DurableLedgerError> {
+        Self::open_internal(path, active_key_id, keys, None)
+    }
+
+    /// Open a V2 ledger whose snapshot digest and generation are pinned by an
+    /// external linearizable monotonic anchor. Existing unanchored files are
+    /// rejected; migration must be explicit and separately audited.
+    pub fn open_with_anchor(
+        path: impl AsRef<Path>,
+        registry_id: impl Into<String>,
+        active_key_id: &str,
+        keys: Vec<LedgerIntegrityKey>,
+        anchor: Arc<dyn MonotonicSnapshotAnchor>,
+    ) -> Result<Self, DurableLedgerError> {
+        let registry_id = registry_id.into();
+        if !valid_stored_identifier(&registry_id, 128) {
+            return Err(DurableLedgerError::InvalidRecord);
+        }
+        Self::open_internal(path, active_key_id, keys, Some((registry_id, anchor)))
+    }
+
+    fn open_internal(
+        path: impl AsRef<Path>,
+        active_key_id: &str,
+        keys: Vec<LedgerIntegrityKey>,
+        anchor: Option<(String, Arc<dyn MonotonicSnapshotAnchor>)>,
     ) -> Result<Self, DurableLedgerError> {
         if !valid_stored_identifier(active_key_id, 128) || keys.is_empty() {
             return Err(DurableLedgerError::InvalidRecord);
@@ -140,18 +187,21 @@ impl DurableLedger {
         }
 
         let path = path.as_ref().to_path_buf();
-        if let Some(parent) = path
-            .parent()
-            .filter(|parent| !parent.as_os_str().is_empty())
-        {
+        if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
             fs::create_dir_all(parent)?;
         }
+        let (anchor_namespace, anchor) = match anchor {
+            Some((namespace, provider)) => (Some(namespace), Some(provider)),
+            None => (None, None),
+        };
         let store = Self {
             lock_path: append_suffix(&path, ".lock"),
             path,
             thread_lock: Arc::new(Mutex::new(())),
             integrity_keys: Arc::new(integrity_keys),
             active_key_id: active_key_id.to_string(),
+            anchor_namespace,
+            anchor,
         };
         store.transact(|_| Ok(()))?;
         Ok(store)
@@ -237,20 +287,44 @@ impl DurableLedger {
         })
     }
 
+    fn load_anchored_ledger(
+        &self,
+        anchor_record: Option<&SnapshotAnchorRecord>,
+    ) -> Result<Ledger, DurableLedgerError> {
+        let backup = append_suffix(&self.path, ".bak");
+        match anchor_record {
+            Some(record) => {
+                if self.path.exists() {
+                    let bytes = read_snapshot(&self.path)?;
+                    if snapshot_sha256(&bytes) == record.snapshot_sha256() {
+                        return deserialize_snapshot(&bytes, &self.integrity_keys);
+                    }
+                }
+                if backup.exists() {
+                    let bytes = read_snapshot(&backup)?;
+                    if snapshot_sha256(&bytes) == record.snapshot_sha256() {
+                        restore_anchored_backup(&self.path, &backup)?;
+                        return deserialize_snapshot(&bytes, &self.integrity_keys);
+                    }
+                }
+                Err(DurableLedgerError::AnchorMismatch)
+            }
+            None => {
+                if self.path.exists() || backup.exists() {
+                    return Err(DurableLedgerError::AnchorMismatch);
+                }
+                Ok(Ledger::default())
+            }
+        }
+    }
+
     fn transact<T>(
         &self,
         operation: impl FnOnce(&mut Ledger) -> Result<T, DurableLedgerError>,
     ) -> Result<T, DurableLedgerError> {
-        let _thread_guard = self
-            .thread_lock
-            .lock()
-            .map_err(|_| DurableLedgerError::LockPoisoned)?;
+        let _thread_guard = self.thread_lock.lock().map_err(|_| DurableLedgerError::LockPoisoned)?;
         let mut lock_options = OpenOptions::new();
-        lock_options
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true);
+        lock_options.create(true).truncate(false).read(true).write(true);
         #[cfg(unix)]
         {
             use std::os::unix::fs::OpenOptionsExt;
@@ -259,14 +333,104 @@ impl DurableLedger {
         let lock_file = lock_options.open(&self.lock_path)?;
         lock_file.lock()?;
 
-        let mut ledger = load_or_recover(&self.path, &self.integrity_keys)?;
+        let anchor_record = match (&self.anchor, &self.anchor_namespace) {
+            (Some(anchor), Some(namespace)) => anchor.load(namespace)
+                .map_err(DurableLedgerError::AnchorUnavailable)?,
+            (None, None) => None,
+            _ => return Err(DurableLedgerError::AnchorMismatch),
+        };
+        let mut ledger = if self.anchor.is_some() {
+            self.load_anchored_ledger(anchor_record.as_ref())?
+        } else {
+            load_or_recover(&self.path, &self.integrity_keys)?
+        };
         let result = operation(&mut ledger)?;
-        let active_key = self
-            .integrity_keys
-            .get(&self.active_key_id)
+        let active_key = self.integrity_keys.get(&self.active_key_id)
             .ok_or(DurableLedgerError::InvalidRecord)?;
-        persist_snapshot(&self.path, &ledger, &self.active_key_id, &active_key.key)?;
+        let bytes = serialize_snapshot(&ledger, &self.active_key_id, &active_key.key);
+        if bytes.len() as u64 > MAX_LEDGER_BYTES {
+            return Err(DurableLedgerError::CapacityExceeded);
+        }
+
+        if let (Some(anchor), Some(namespace)) = (&self.anchor, &self.anchor_namespace) {
+            persist_snapshot(&self.path, &ledger, &self.active_key_id, &active_key.key, true)?;
+            let expected_generation = anchor_record.as_ref().map(SnapshotAnchorRecord::generation);
+            let generation = expected_generation.unwrap_or(0).checked_add(1)
+                .ok_or(DurableLedgerError::AnchorGenerationExhausted)?;
+            let next = SnapshotAnchorRecord::new(generation, snapshot_sha256(&bytes))
+                .ok_or(DurableLedgerError::AnchorGenerationExhausted)?;
+            match anchor.compare_and_set(namespace, expected_generation, next.clone()) {
+                Ok(true) => {
+                    let backup = append_suffix(&self.path, ".bak");
+                    if backup.exists() { let _ = fs::remove_file(backup); }
+                    sync_parent_directory(&self.path);
+                }
+                Ok(false) => {
+                    restore_previous_snapshot(&self.path)?;
+                    return Err(DurableLedgerError::AnchorConflict);
+                }
+                Err(error) => {
+                    // Resolve an ambiguous transport result before rolling back: the
+                    // anchor may have committed even if its response was lost.
+                    match anchor.load(namespace) {
+                        Ok(Some(observed)) if observed == next => {
+                            let backup = append_suffix(&self.path, ".bak");
+                            if backup.exists() { let _ = fs::remove_file(backup); }
+                            sync_parent_directory(&self.path);
+                        }
+                        Ok(_) => {
+                            restore_previous_snapshot(&self.path)?;
+                            return Err(DurableLedgerError::AnchorUnavailable(error));
+                        }
+                        Err(load_error) => {
+                            return Err(DurableLedgerError::AnchorUnavailable(format!(
+                                "{error}; commit outcome could not be verified: {load_error}"
+                            )));
+                        }
+                    }
+                }
+            }
+        } else {
+            persist_snapshot(&self.path, &ledger, &self.active_key_id, &active_key.key, false)?;
+        }
         Ok(result)
+    }
+
+}
+
+fn snapshot_sha256(bytes: &[u8]) -> [u8; 32] {
+    Sha256::digest(bytes).into()
+}
+
+fn sync_parent_directory(path: &Path) {
+    if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+        if let Ok(directory) = File::open(parent) { let _ = directory.sync_all(); }
+    }
+}
+
+/// Restore the backup whose digest was already verified against the anchor.
+fn restore_anchored_backup(path: &Path, backup: &Path) -> Result<(), DurableLedgerError> {
+    let temp = append_suffix(path, ".anchor-restore.tmp");
+    if temp.exists() { fs::remove_file(&temp)?; }
+    fs::copy(backup, &temp)?;
+    File::open(&temp)?.sync_all()?;
+    #[cfg(windows)]
+    if path.exists() { fs::remove_file(path)?; }
+    fs::rename(&temp, path)?;
+    fs::remove_file(backup)?;
+    sync_parent_directory(path);
+    Ok(())
+}
+
+/// Roll back a local snapshot if the external anchor refused to advance.
+fn restore_previous_snapshot(path: &Path) -> Result<(), DurableLedgerError> {
+    let backup = append_suffix(path, ".bak");
+    if backup.exists() {
+        restore_anchored_backup(path, &backup)
+    } else {
+        if path.exists() { fs::remove_file(path)?; }
+        sync_parent_directory(path);
+        Ok(())
     }
 }
 
@@ -553,6 +717,7 @@ fn persist_snapshot(
     ledger: &Ledger,
     key_id: &str,
     key: &[u8; 32],
+    preserve_backup: bool,
 ) -> Result<(), DurableLedgerError> {
     let temp = append_suffix(path, ".tmp");
     let backup = append_suffix(path, ".bak");
@@ -594,7 +759,7 @@ fn persist_snapshot(
             let _ = directory.sync_all();
         }
     }
-    if backup.exists() {
+    if !preserve_backup && backup.exists() {
         let _ = fs::remove_file(backup);
     }
     Ok(())
@@ -767,7 +932,7 @@ mod tests {
         );
 
         assert_eq!(
-            persist_snapshot(&path, &ledger, "test-v1", &[0xA5; 32]),
+            persist_snapshot(&path, &ledger, "test-v1", &[0xA5; 32], false),
             Err(DurableLedgerError::CapacityExceeded)
         );
         assert_eq!(fs::read(&path).unwrap(), b"previous committed snapshot");
