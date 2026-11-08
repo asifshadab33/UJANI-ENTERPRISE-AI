@@ -21,13 +21,27 @@ These are policy/contract primitives. They do not yet provide connector discover
 |---|---|---|---|
 | Suricata | IDS/IPS alert and rule telemetry; optional separately approved enforcement provider | Local EVE JSONL import prototype with an explicit field allowlist | Live service/API adapter, health polling, rule management, inline IPS, virtual-patch deployment |
 | Zeek | Network metadata, protocol observations and notices | Local JSON log import prototype for conn, notice and weird streams | Live adapter, health polling, TSV parser, event store |
-| Malcolm | Optional higher-capability network-analysis deployment using its own specialist stack | Read-only status and evidence links; avoid duplicating its engines | Deployment automation, API adapter, indexing or PCAP pipeline |
+| Malcolm | Optional higher-capability network-analysis deployment using its own specialist stack | Read-only health adapter prototype using documented GET ping/ready/version endpoints | Event/document search adapter, deployment automation, indexing or PCAP pipeline |
 | Customer firewall (including OPNsense or other supported products) | Existing network policy enforcement point | Read-only inventory, configuration posture and status where supported | Any configuration change, policy push, restart or rule deployment |
 | CISA KEV / NVD | External vulnerability intelligence | Fetch and cache public advisories with source, version and retrieval time | Feed scheduler, normalisation and asset matching |
 | MISP / OpenCTI | Optional threat-intelligence exchange and knowledge systems | Read-only indicator/context lookup after customer selection | Live connectors, sync, write-back or feed publication |
 
 No universal virtual-patching guarantee is made. A network control can only inspect or block traffic that actually traverses the enforcement point and is covered by a validated rule. Passive monitoring observes; it does not block. Neither approach repairs unsupported firmware or protects management-plane attacks, local access, bypass traffic or vulnerabilities outside the inspected protocols.
 
+
+
+### Malcolm health adapter prototype
+
+The current feature branch adds `scripts/malcolm_readonly.py`, a read-only health probe for Malcolm's documented `GET /mapi/ping`, `GET /mapi/ready` and `GET /mapi/version` endpoints. It requires HTTPS by default, validates TLS certificates, rejects redirects, uses a five-second timeout and 1 MiB response bound, and can use optional Basic Auth credentials supplied through environment variables. It reports only allowlisted health/version metadata and does not query PCAP, session or document data.
+
+Example:
+
+```sh
+MALCOLM_API_USERNAME='read-only-user' MALCOLM_API_PASSWORD='...' \
+  python scripts/malcolm_readonly.py --base-url https://malcolm.example
+```
+
+Use a dedicated least-privilege account if the Malcolm deployment requires authentication. Do not disable TLS verification. For a private CA, supply `--ca-bundle /path/to/ca.pem`. HTTP is refused except an explicitly enabled loopback test endpoint. The script never follows redirects or sends credentials in the URL.
 
 ## First local import prototype
 
@@ -52,7 +66,7 @@ The importer rejects symlink inputs, oversized files/lines/record counts, duplic
 Official provider format/API references:
 - [Suricata EVE JSON output](https://docs.suricata.io/en/latest/output/eve/eve-json-output.html) and [EVE JSON format](https://docs.suricata.io/en/latest/output/eve/eve-json-format.html)
 - [Zeek logging framework](https://docs.zeek.org/en/lts/frameworks/logging.html) and [Zeek JSON logs quickstart](https://github.com/zeek/zeek-docs/blob/master/quickstart.rst)
-- [Malcolm REST API](https://malcolm.fyi/docs/api.html)
+- [Malcolm REST API overview](https://malcolm.fyi/docs/api.html), [ping](https://malcolm.fyi/docs/api-ping.html), [readiness](https://malcolm.fyi/docs/api-ready.html) and [version](https://malcolm.fyi/docs/api-version.html)
 - [OPNsense API reference](https://docs.opnsense.org/development/api.html) and [firewall API](https://docs.opnsense.org/development/api/core/firewall.html)
 
 ## Deployment profiles
