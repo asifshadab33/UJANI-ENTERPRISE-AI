@@ -186,6 +186,6 @@ This document is an architecture proposal only. The existing Enterprise reposito
 
 ## 10. Prototype implementation status (8 November 2026)
 
-The current `main` revision does **not** yet contain the tenant-scoped capability registry, versioned read-only connector/evidence contract, Suricata/Zeek importer or Malcolm health adapter described in the proposed implementation stage. These changes are under review separately in [PR #59](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/pull/59); until merged and validated, treat them as pending rather than available features.
+The current `main` contains an initial in-memory tenant-scoped capability metadata registry, a versioned read-only connector/evidence contract, bounded regression tests, an offline Suricata EVE / Zeek JSON-lines importer, and a read-only Malcolm health adapter. These are policy, contract and local-file/health-probe prototypes only.
 
-Even after those policy and offline-import prototypes are merged, they will not authenticate callers or providers, establish a live event-ingestion service, discover installed tools, store events durably, enforce host-runtime timeouts, provide an operator dashboard or invoke provider actions. See [Connector Integration Status](CONNECTOR-INTEGRATION-STATUS.md) for the planned provider sequence and safety gates.
+They do not authenticate callers or providers, establish a live event-ingestion service, discover installed tools, store events durably, enforce host-runtime timeouts, provide an operator dashboard, or invoke provider actions. The host must still enforce tenant authorization and resource/time limits. See [Connector Integration Status](CONNECTOR-INTEGRATION-STATUS.md) for exact implemented and deferred scope.
