@@ -62,6 +62,9 @@ pub trait MonotonicSnapshotAnchor: Send + Sync {
     /// Reads the current record for a unique ledger or registry namespace.
     fn load(&self, registry_id: &str) -> Result<Option<SnapshotAnchorRecord>, String>;
     /// Atomically creates or advances the namespace record if its generation matches.
+    ///
+    /// Before returning `Err`, the provider must settle or fence the request so an
+    /// in-flight update cannot commit after the caller has rolled back local state.
     fn compare_and_set(
         &self,
         registry_id: &str,
