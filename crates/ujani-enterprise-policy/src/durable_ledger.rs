@@ -189,13 +189,7 @@ impl DurableLedger {
         let sync_ancestors = sync_ancestor_directories;
         #[cfg(not(unix))]
         let sync_ancestors = |_path: &Path| Ok(());
-        Self::open_internal_with_ancestor_sync(
-            path,
-            active_key_id,
-            keys,
-            anchor,
-            sync_ancestors,
-        )
+        Self::open_internal_with_ancestor_sync(path, active_key_id, keys, anchor, sync_ancestors)
     }
 
     fn open_internal_with_ancestor_sync(
@@ -571,7 +565,8 @@ fn sync_ancestor_directories(path: &Path) -> Result<(), DurableLedgerError> {
         // another user; ordinary group/world-writable ancestors do not.
         if mode & 0o022 != 0 && mode & 0o1000 == 0 {
             return Err(DurableLedgerError::Io(
-                "anchored ledger ancestors must not be group- or world-writable unless sticky".into(),
+                "anchored ledger ancestors must not be group- or world-writable unless sticky"
+                    .into(),
             ));
         }
         let Some(parent) = directory.parent() else {
@@ -1195,7 +1190,9 @@ mod tests {
             Some(("registry-test-a".into(), anchor.clone())),
             |_parent| {
                 observed.store(true, std::sync::atomic::Ordering::SeqCst);
-                Err(DurableLedgerError::Io("injected ancestor sync failure".into()))
+                Err(DurableLedgerError::Io(
+                    "injected ancestor sync failure".into(),
+                ))
             },
         );
         assert!(observed.load(std::sync::atomic::Ordering::SeqCst));
@@ -1334,7 +1331,11 @@ mod tests {
             "test-v1",
             vec![integrity_key("test-v1", 0xA5)],
             Some(("registry-test-a".into(), anchor.clone())),
-            |_parent| Err(DurableLedgerError::Io("simulated ancestor sync failure".into())),
+            |_parent| {
+                Err(DurableLedgerError::Io(
+                    "simulated ancestor sync failure".into(),
+                ))
+            },
         );
         assert!(matches!(result, Err(DurableLedgerError::Io(_))));
         assert!(anchor.load("registry-test-a").unwrap().is_none());
