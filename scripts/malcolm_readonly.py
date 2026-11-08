@@ -119,8 +119,11 @@ def fetch_status(base_url, username=None, password=None, ca_bundle=None,
         raise MalcolmAdapterError("Malcolm ping response did not match the documented contract")
 
     ready = fetch_json(opener, f"{base}/mapi/ready", headers)
-    if not isinstance(ready, dict) or any(not isinstance(v, bool) for v in ready.values()):
-        raise MalcolmAdapterError("Malcolm readiness response must be an object of boolean service states")
+    if not isinstance(ready, dict) or any(
+        name in ready and not isinstance(ready[name], bool)
+        for name in REQUIRED_READY_SERVICES
+    ):
+        raise MalcolmAdapterError("Malcolm readiness response has invalid required service states")
     missing = [name for name in REQUIRED_READY_SERVICES if name not in ready]
     service_states = {name: ready.get(name, False) for name in REQUIRED_READY_SERVICES}
     is_ready = not missing and all(service_states.values())
