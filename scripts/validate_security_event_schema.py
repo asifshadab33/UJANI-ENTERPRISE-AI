@@ -158,12 +158,23 @@ def reject_non_finite_json_constant(value):
     raise ValueError(f"non-finite JSON numeric constant is not permitted: {value}")
 
 
+def reject_duplicate_json_keys(pairs):
+    """Reject ambiguous JSON objects instead of silently keeping the last key."""
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON object key is not permitted: {key}")
+        result[key] = value
+    return result
+
+
 def main():
     """Run valid, invalid, format, privacy, and nested-schema contract fixtures."""
     try:
         schema = json.loads(
             SCHEMA_PATH.read_text(encoding="utf-8"),
             parse_constant=reject_non_finite_json_constant,
+            object_pairs_hook=reject_duplicate_json_keys,
         )
     except (json.JSONDecodeError, ValueError) as exc:
         raise SystemExit(f"invalid JSON Schema document: {exc}") from exc
@@ -262,6 +273,12 @@ def main():
         except ValueError:
             continue
         raise SystemExit(f"non-standard JSON numeric constant unexpectedly accepted: {token}")
+    try:
+        json.loads('{"schema_version":"1.0","schema_version":"2.0"}', object_pairs_hook=reject_duplicate_json_keys)
+    except ValueError:
+        pass
+    else:
+        raise SystemExit("duplicate JSON object key unexpectedly accepted")
     forbidden = {
         "file_contents", "document_contents", "credentials", "token", "raw_command",
         "command", "command_line", "file_path", "memory_dump", "conversation",
