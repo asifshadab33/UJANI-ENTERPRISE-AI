@@ -159,7 +159,8 @@ pub fn validate_evidence_page(
         return Err(ConnectorError::ProviderBoundaryViolation);
     }
     if requested_page_size == 0
-        || page.records.len() > requested_page_size.min(MAX_PAGE_SIZE) as usize
+        || requested_page_size > MAX_PAGE_SIZE
+        || page.records.len() > requested_page_size as usize
         || page
             .next_cursor
             .as_ref()
