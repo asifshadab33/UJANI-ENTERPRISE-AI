@@ -15,6 +15,9 @@ from scripts.normalize_network_logs import (
 )
 
 
+_HAS_SAFE_OPEN = hasattr(os, "O_NOFOLLOW") and hasattr(os, "O_NONBLOCK")
+
+
 class NetworkLogNormalizerTests(unittest.TestCase):
     def test_suricata_alert_is_allowlisted_and_normalized(self):
         item = normalize_suricata({
@@ -75,6 +78,7 @@ class NetworkLogNormalizerTests(unittest.TestCase):
         with self.assertRaises(ImportErrorSafe):
             normalize_zeek({"ts": 1}, "tenant-a", "unknown", "http")
 
+    @unittest.skipUnless(_HAS_SAFE_OPEN, "requires O_NOFOLLOW and O_NONBLOCK; unsupported platforms fail closed")
     def test_duplicate_json_keys_are_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "eve.json"
@@ -82,6 +86,7 @@ class NetworkLogNormalizerTests(unittest.TestCase):
             with self.assertRaises(ImportErrorSafe):
                 read_records(source, "suricata", "tenant-a", "unknown")
 
+    @unittest.skipUnless(_HAS_SAFE_OPEN, "requires O_NOFOLLOW and O_NONBLOCK; unsupported platforms fail closed")
     def test_zeek_comment_lines_are_skipped(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "conn.log"
@@ -90,6 +95,7 @@ class NetworkLogNormalizerTests(unittest.TestCase):
             self.assertEqual(len(lines), 1)
             self.assertEqual(json.loads(lines[0])["provider_id"], "zeek")
 
+    @unittest.skipUnless(_HAS_SAFE_OPEN, "requires O_NOFOLLOW and O_NONBLOCK; unsupported platforms fail closed")
     def test_symlink_input_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "real.json"
