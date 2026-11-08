@@ -1,6 +1,13 @@
 # Device trust service integration contract
 
-Status: implementation contract for the next control-plane phase. The current `device_trust` Rust module is an in-memory policy primitive only; it is not a deployable service or durable source of truth.
+Status: next-phase implementation contract. The repository now contains both the in-memory signed device-trust policy primitive and `device_trust::durable::DurableDeviceRegistry`, an HMAC-authenticated persistent adapter with OS-lock coordination and an external monotonic-anchor interface. The durable adapter is not itself an HTTP service, identity provider, tenant RBAC engine, append-only audit sink, lease service, or production deployment. The external anti-rollback anchor and protected key-provider integration remain deployment blockers; do not describe the registry as production-ready.
+
+## Verified implementation status
+
+- **Present in the policy crate:** signed administrator enrollment/rotation/revocation commands, device proof-of-possession, tenant and key-generation binding, signed device request envelopes, request replay protection, workload/manifest/body binding, and a durable HMAC-authenticated registry adapter.
+- **Present as policy and persistence primitives:** the in-memory `Ledger` has capability-bound reservation/renew/release semantics; `DurableLedger` persists reservation state and challenge nonces in HMAC-authenticated snapshots, coordinates processes with OS file locks, supports injected integrity keys and an optional external monotonic-anchor interface, and exposes durable lease renew/release/expiry operations. `scheduling_evidence` provides signed-evidence verification and a durable reservation wrapper. These are library-level components, not an authenticated network service.
+- **Not yet delivered:** a production KMS/HSM/TPM key-provider adapter and separately hosted linearizable anti-rollback anchor; authenticated HTTP endpoints; tenant-scoped RBAC and IdP integration; a service layer that atomically authenticates the enrolled device, checks revocation/key generation, verifies the exact workload/manifest binding, and performs durable acquire/renew/release/cancel; and a durable append-only authorization audit integrated transactionally with registry and lease state. Cross-store atomicity between the device registry and reservation ledger is not implemented.
+- **Safety boundary:** no workload dispatch, remote execution, autonomous containment, or broad endpoint telemetry is authorized by this contract. Keep these disabled until the control plane and deployment trust boundary are independently reviewed.
 
 ## Trust bootstrap
 
