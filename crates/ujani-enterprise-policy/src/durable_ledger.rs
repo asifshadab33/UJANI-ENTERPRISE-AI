@@ -1224,8 +1224,8 @@ mod tests {
         assert!(restore_anchored_backup(&path, &backup).is_err());
         assert_eq!(fs::read(&target).unwrap(), b"outside data");
         assert_eq!(fs::read(&backup).unwrap(), b"verified backup");
-        cleanup(&path);
         let _ = fs::remove_file(target);
+        cleanup(&path);
     }
 
     #[cfg(unix)]
