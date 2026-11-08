@@ -21,13 +21,7 @@ pub enum OperationClass {
     StateChanging,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DataClassification {
-    Public,
-    Internal,
-    Confidential,
-    Restricted,
-}
+pub use crate::DataClassification;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProviderHealth {
