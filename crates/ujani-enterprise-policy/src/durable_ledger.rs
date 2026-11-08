@@ -157,7 +157,10 @@ impl DurableLedger {
     ///
     /// `registry_id` must be unique for this ledger within the provider namespace;
     /// do not reuse the identifier used by the device-trust registry or another
-    /// ledger sharing the same anchor, because their records would collide.
+    /// ledger sharing the same anchor, because their records would collide. The
+    /// parent directory must already exist as a real directory; anchored mode does
+    /// not create directory trees because each new ancestor would need a durable
+    /// parent sync before the external anchor could safely advance.
     pub fn open_with_anchor(
         path: impl AsRef<Path>,
         registry_id: impl Into<String>,
@@ -194,10 +197,22 @@ impl DurableLedger {
         }
 
         let path = path.as_ref().to_path_buf();
-        if let Some(parent) = path
+        let anchored = anchor.is_some();
+        let parent = path
             .parent()
             .filter(|parent| !parent.as_os_str().is_empty())
-        {
+            .unwrap_or_else(|| Path::new("."));
+        if anchored {
+            // Anchored mode requires a pre-existing ledger directory. Creating a
+            // directory tree here would require syncing every new ancestor entry
+            // before the external anchor can safely advance.
+            let metadata = fs::symlink_metadata(parent)?;
+            if !metadata.is_dir() || metadata.file_type().is_symlink() {
+                return Err(DurableLedgerError::Io(
+                    "anchored ledger parent must be an existing real directory".into(),
+                ));
+            }
+        } else {
             fs::create_dir_all(parent)?;
         }
         let (anchor_namespace, anchor) = match anchor {
@@ -950,6 +965,7 @@ mod tests {
     struct MemoryAnchor {
         records: Mutex<HashMap<String, SnapshotAnchorRecord>>,
         reject_next: std::sync::atomic::AtomicBool,
+        fail_next_without_commit: std::sync::atomic::AtomicBool,
         lose_next_response_after_commit: std::sync::atomic::AtomicBool,
     }
 
@@ -974,6 +990,12 @@ mod tests {
                 .swap(false, std::sync::atomic::Ordering::SeqCst)
             {
                 return Ok(false);
+            }
+            if self
+                .fail_next_without_commit
+                .swap(false, std::sync::atomic::Ordering::SeqCst)
+            {
+                return Err("simulated outage before commit".into());
             }
             let mut records = self
                 .records
@@ -1097,6 +1119,44 @@ mod tests {
             DurableLedgerError::AnchorMismatch
         );
         assert_eq!(fs::read(&path).unwrap(), older);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn anchored_open_rejects_a_missing_parent_directory() {
+        let path = temp_path("anchor-missing-parent");
+        let missing_parent = path.with_extension("missing-parent");
+        let ledger_path = missing_parent.join("ledger");
+        let result = open_anchored(&ledger_path, Arc::new(MemoryAnchor::default()));
+        assert!(matches!(result, Err(DurableLedgerError::Io(_))));
+        assert!(!missing_parent.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn anchor_error_without_commit_restores_previous_snapshot() {
+        let path = temp_path("anchor-error-before-commit");
+        let anchor = Arc::new(MemoryAnchor::default());
+        let ledger = open_anchored(&path, anchor.clone()).unwrap();
+        let previous_snapshot = fs::read(&path).unwrap();
+        let previous_anchor = anchor.load("registry-test-a").unwrap().unwrap();
+        anchor
+            .fail_next_without_commit
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+
+        let result = ledger.admit_and_reserve_with_lease(
+            &device(),
+            &workload("job-anchor-error-before-commit"),
+            &context(),
+            &policies(),
+            &[],
+            1_000,
+            &[0x74u8; 32],
+        );
+        assert!(matches!(result, Err(DurableLedgerError::AnchorUnavailable(_))));
+        assert_eq!(fs::read(&path).unwrap(), previous_snapshot);
+        assert!(!append_suffix(&path, ".bak").exists());
+        assert_eq!(anchor.load("registry-test-a").unwrap().unwrap(), previous_anchor);
         cleanup(&path);
     }
 
