@@ -382,6 +382,7 @@ mod tests {
         let mut registry = CapabilityRegistry::new("tenant-a").unwrap();
         let mut item = descriptor("cloud.lookup", OperationClass::ReadOnly);
         item.requires_external_service = true;
+        item.supports_offline = true;
         assert_eq!(
             registry.register(item),
             Err(RegistryError::OfflineRequiresExternalService)
