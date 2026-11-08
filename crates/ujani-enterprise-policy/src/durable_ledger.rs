@@ -351,6 +351,10 @@ impl DurableLedger {
         if bytes.len() as u64 > MAX_LEDGER_BYTES {
             return Err(DurableLedgerError::CapacityExceeded);
         }
+        // Read-only transactions do not advance the external monotonic generation.
+        if anchor_record.as_ref().is_some_and(|record| record.snapshot_sha256() == snapshot_sha256(&bytes)) {
+            return Ok(result);
+        }
 
         if let (Some(anchor), Some(namespace)) = (&self.anchor, &self.anchor_namespace) {
             persist_snapshot(&self.path, &ledger, &self.active_key_id, &active_key.key, true)?;
@@ -998,7 +1002,15 @@ mod tests {
             .reject_next
             .store(true, std::sync::atomic::Ordering::SeqCst);
         assert_eq!(
-            ledger.expire_leases(1).unwrap_err(),
+            ledger.admit_and_reserve_with_lease(
+                &device(),
+                &workload("job-conflict"),
+                &context(),
+                &policies(),
+                &[],
+                1_000,
+                &[0x72u8; 32],
+            ).unwrap_err(),
             DurableLedgerError::AnchorConflict
         );
         assert_eq!(fs::read(&path).unwrap(), committed);
