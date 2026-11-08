@@ -62,7 +62,7 @@ def parse_json_line(raw, line_number):
             parse_constant=reject_constant,
             object_pairs_hook=reject_duplicate_keys,
         )
-    except (UnicodeDecodeError, json.JSONDecodeError, ImportErrorSafe) as exc:
+    except (UnicodeDecodeError, json.JSONDecodeError, ImportErrorSafe, RecursionError) as exc:
         raise ImportErrorSafe(f"line {line_number}: invalid JSON input ({type(exc).__name__})") from None
 
 
@@ -157,6 +157,8 @@ def normalize_suricata(obj, tenant_id, provider_version):
     flow_id = scalar_text(obj.get("flow_id"))
     source_ref = f"flow:{flow_id}" if flow_id else f"line-event:{event_type}"
     severity_value = alert.get("severity")
+    if isinstance(severity_value, bool) or not isinstance(severity_value, int):
+        severity_value = None
     severity = {1: "high", 2: "medium", 3: "low"}.get(severity_value, "info")
     summary = "Suricata alert observed" if event_type == "alert" else f"Suricata {event_type} event observed"
     return make_record("suricata", tenant_id, provider_version,
