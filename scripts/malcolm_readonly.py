@@ -74,6 +74,8 @@ def build_opener(ca_bundle=None):
 
 def fetch_json(opener, url, headers):
     request = urllib.request.Request(url, headers=headers, method="GET")
+    if urlsplit(request.full_url).scheme.lower() not in ("http", "https"):
+        raise MalcolmAdapterError("Malcolm adapter permits only HTTP and HTTPS requests")
     try:
         with opener.open(request, timeout=TIMEOUT_SECONDS) as response:
             raw = response.read(MAX_RESPONSE_BYTES + 1)
