@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ujani.example/schemas/normalized-network-evidence-v1.schema.json",
+  "title": "UJANI Normalized Network Evidence v1",
+  "description": "Bounded, privacy-minimized evidence normalized from local Suricata EVE or Zeek JSON logs. It is not a detection verdict or authorization to act.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "event_id",
+    "tenant_id",
+    "provider_id",
+    "provider_version",
+    "event_type",
+    "severity",
+    "observed_at_unix_ms",
+    "source_ref",
+    "summary",
+    "data_classification",
+    "fields"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "event_id": {
+      "type": "string",
+      "pattern": "^[a-fA-F0-9]{64}$",
+      "maxLength": 64
+    },
+    "tenant_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "provider_id": {
+      "type": "string",
+      "enum": ["suricata", "zeek"]
+    },
+    "provider_version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "event_type": {
+      "type": "string",
+      "enum": [
+        "suricata.alert", "suricata.anomaly", "suricata.flow", "suricata.dns",
+        "suricata.http", "suricata.tls", "suricata.ssh", "suricata.fileinfo",
+        "suricata.stats", "suricata.netflow", "suricata.smtp", "suricata.dcerpc",
+        "suricata.smb", "suricata.ftp", "suricata.tftp", "suricata.ike",
+        "zeek.conn", "zeek.notice", "zeek.weird"
+      ]
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["info", "low", "medium", "high"]
+    },
+    "observed_at_unix_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "source_ref": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "data_classification": {
+      "const": "internal"
+    },
+    "fields": {
+      "type": "object",
+      "maxProperties": 24,
+      "propertyNames": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 96
+      },
+      "additionalProperties": {
+        "type": "string",
+        "maxLength": 512
+      }
+    }
+  }
+}
