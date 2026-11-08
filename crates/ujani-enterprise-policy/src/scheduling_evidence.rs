@@ -101,6 +101,8 @@ pub enum SchedulingEvidenceError {
     InvalidPolicySignature,
     ChallengeReplayed,
     ChallengeStoreUnavailable,
+    /// The anchor outcome is ambiguous; callers must reconcile before retrying.
+    ChallengeStoreOutcomeUnknown,
 }
 
 fn append_string(bytes: &mut Vec<u8>, value: &str) {
@@ -293,7 +295,12 @@ pub fn verify_and_consume_scheduling_context(
         .min(policy.claims.expires_unix_ms);
     let consumed = ledger
         .consume_challenge_nonce(*expected_challenge_nonce, expires_unix_ms, now_unix_ms)
-        .map_err(|_| SchedulingEvidenceError::ChallengeStoreUnavailable)?;
+        .map_err(|error| match error {
+            DurableLedgerError::AnchorUnavailable(_) => {
+                SchedulingEvidenceError::ChallengeStoreOutcomeUnknown
+            }
+            _ => SchedulingEvidenceError::ChallengeStoreUnavailable,
+        })?;
     if !consumed {
         return Err(SchedulingEvidenceError::ChallengeReplayed);
     }
