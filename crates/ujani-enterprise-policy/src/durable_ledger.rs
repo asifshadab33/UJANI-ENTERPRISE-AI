@@ -181,6 +181,26 @@ impl DurableLedger {
         keys: Vec<LedgerIntegrityKey>,
         anchor: Option<(String, Arc<dyn MonotonicSnapshotAnchor>)>,
     ) -> Result<Self, DurableLedgerError> {
+        #[cfg(unix)]
+        let sync_ancestors = sync_ancestor_directories;
+        #[cfg(not(unix))]
+        let sync_ancestors = |_path: &Path| Ok(());
+        Self::open_internal_with_ancestor_sync(
+            path,
+            active_key_id,
+            keys,
+            anchor,
+            sync_ancestors,
+        )
+    }
+
+    fn open_internal_with_ancestor_sync(
+        path: impl AsRef<Path>,
+        active_key_id: &str,
+        keys: Vec<LedgerIntegrityKey>,
+        anchor: Option<(String, Arc<dyn MonotonicSnapshotAnchor>)>,
+        sync_ancestors: impl FnOnce(&Path) -> Result<(), DurableLedgerError>,
+    ) -> Result<Self, DurableLedgerError> {
         if !valid_stored_identifier(active_key_id, 128) || keys.is_empty() {
             return Err(DurableLedgerError::InvalidRecord);
         }
@@ -212,8 +232,7 @@ impl DurableLedger {
                     "anchored ledger parent must be an existing real directory".into(),
                 ));
             }
-            #[cfg(unix)]
-            sync_ancestor_directories(parent)?;
+            sync_ancestors(parent)?;
         } else {
             fs::create_dir_all(parent)?;
         }
@@ -1133,6 +1152,23 @@ mod tests {
         );
         assert_eq!(fs::read(&path).unwrap(), older);
         cleanup(&path);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn anchored_open_fails_before_advancing_anchor_when_ancestor_sync_fails() {
+        let path = temp_path("anchor-ancestor-sync-failure");
+        let anchor = Arc::new(MemoryAnchor::default());
+        let result = DurableLedger::open_internal_with_ancestor_sync(
+            &path,
+            "test-v1",
+            vec![integrity_key("test-v1", 0xA5)],
+            Some(("registry-test-a".into(), anchor.clone())),
+            |_parent| Err(DurableLedgerError::Io("simulated ancestor sync failure".into())),
+        );
+        assert!(matches!(result, Err(DurableLedgerError::Io(_))));
+        assert!(anchor.load("registry-test-a").unwrap().is_none());
+        assert!(!path.exists());
     }
 
     #[cfg(unix)]
