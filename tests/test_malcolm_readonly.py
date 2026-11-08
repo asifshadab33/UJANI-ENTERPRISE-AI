@@ -97,6 +97,11 @@ class MalcolmReadOnlyAdapterTests(unittest.TestCase):
             "http://localhost:9443",
         )
 
+
+    def test_invalid_port_is_rejected_as_adapter_error(self):
+        with self.assertRaises(MalcolmAdapterError):
+            validate_base_url("https://malcolm.example:not-a-port")
+
     def test_url_userinfo_query_and_fragment_are_rejected(self):
         for value in (
             "https://user:pass@malcolm.example",
