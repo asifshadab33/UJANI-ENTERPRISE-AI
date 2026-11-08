@@ -118,6 +118,17 @@ class MalcolmReadOnlyAdapterTests(unittest.TestCase):
         self.assertEqual(fake.requests[0][0].get_header("Authorization"), expected)
         self.assertNotIn("secret", fake.requests[0][0].full_url)
 
+    def test_username_and_password_must_be_supplied_together(self):
+        fake = FakeOpener(self.healthy_responses())
+        with self.assertRaises(MalcolmAdapterError):
+            fetch_status(
+                "https://malcolm.example",
+                username="reader",
+                password=None,
+                opener_factory=lambda ca: fake,
+            )
+        self.assertEqual(fake.requests, [])
+
     def test_invalid_readiness_shape_is_rejected(self):
         fake = FakeOpener([{"ping": "pong"}, {"opensearch": "yes"}])
         with self.assertRaises(MalcolmAdapterError):
