@@ -152,6 +152,10 @@ impl DurableLedger {
     /// Open a V2 ledger whose snapshot digest and generation are pinned by an
     /// external linearizable monotonic anchor. Existing unanchored files are
     /// rejected; migration must be explicit and separately audited.
+    ///
+    /// `registry_id` must be unique for this ledger within the provider namespace;
+    /// do not reuse the identifier used by the device-trust registry or another
+    /// ledger sharing the same anchor, because their records would collide.
     pub fn open_with_anchor(
         path: impl AsRef<Path>,
         registry_id: impl Into<String>,
