@@ -80,11 +80,7 @@ fn push_bytes(out: &mut Vec<u8>, value: &[u8]) -> Result<(), SnapshotEncodingErr
     Ok(())
 }
 
-fn push_string(
-    out: &mut Vec<u8>,
-    value: &str,
-    max: usize,
-) -> Result<(), SnapshotEncodingError> {
+fn push_string(out: &mut Vec<u8>, value: &str, max: usize) -> Result<(), SnapshotEncodingError> {
     if value.is_empty() || value.len() > max {
         return Err(SnapshotEncodingError::InvalidRecord);
     }
@@ -295,7 +291,8 @@ impl CanonicalConsentSnapshot {
             self.audit.len(),
             idempotency.len(),
         ] {
-            let count = u32::try_from(count).map_err(|_| SnapshotEncodingError::CapacityExceeded)?;
+            let count =
+                u32::try_from(count).map_err(|_| SnapshotEncodingError::CapacityExceeded)?;
             push_bytes(&mut out, &count.to_be_bytes())?;
         }
         for record in tenants {
