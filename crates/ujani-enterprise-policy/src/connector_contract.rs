@@ -144,6 +144,7 @@ pub fn validate_evidence_page(
     page: &EvidencePage,
     expected_tenant_id: &str,
     expected_provider_id: &str,
+    requested_page_size: u16,
     now_unix_ms: u64,
     max_age_ms: u64,
 ) -> Result<Vec<EvidenceFreshness>, ConnectorError> {
@@ -156,7 +157,8 @@ pub fn validate_evidence_page(
     if page.provider_id != expected_provider_id {
         return Err(ConnectorError::ProviderBoundaryViolation);
     }
-    if page.records.len() > MAX_PAGE_SIZE as usize
+    if requested_page_size == 0
+        || page.records.len() > requested_page_size.min(MAX_PAGE_SIZE) as usize
         || page
             .next_cursor
             .as_ref()
@@ -281,13 +283,22 @@ mod tests {
         let mut item = page(vec![record()]);
         item.records[0].tenant_id = "tenant-b".into();
         assert_eq!(
-            validate_evidence_page(&item, "tenant-a", "suricata", 10_000, 1_000),
+            validate_evidence_page(&item, "tenant-a", "suricata", 100, 10_000, 1_000),
             Err(ConnectorError::TenantBoundaryViolation)
         );
         let item = page(vec![record()]);
         assert_eq!(
-            validate_evidence_page(&item, "tenant-a", "zeek", 10_000, 1_000),
+            validate_evidence_page(&item, "tenant-a", "zeek", 100, 10_000, 1_000),
             Err(ConnectorError::ProviderBoundaryViolation)
+        );
+    }
+
+    #[test]
+    fn evidence_page_cannot_exceed_requested_page_size() {
+        let item = page(vec![record(), record()]);
+        assert_eq!(
+            validate_evidence_page(&item, "tenant-a", "suricata", 1, 10_000, 1_000),
+            Err(ConnectorError::MalformedEvidence)
         );
     }
 
@@ -295,13 +306,13 @@ mod tests {
     fn stale_evidence_is_marked_and_future_timestamps_are_rejected() {
         let item = page(vec![record()]);
         assert_eq!(
-            validate_evidence_page(&item, "tenant-a", "suricata", 20_000, 1_000),
+            validate_evidence_page(&item, "tenant-a", "suricata", 100, 20_000, 1_000),
             Ok(vec![EvidenceFreshness::Stale])
         );
         let mut item = page(vec![record()]);
         item.records[0].observed_at_unix_ms = 40_001;
         assert_eq!(
-            validate_evidence_page(&item, "tenant-a", "suricata", 10_000, 1_000),
+            validate_evidence_page(&item, "tenant-a", "suricata", 100, 10_000, 1_000),
             Err(ConnectorError::FutureEvidenceTimestamp)
         );
     }
@@ -310,13 +321,13 @@ mod tests {
     fn duplicate_records_and_unbounded_fields_are_rejected() {
         let item = page(vec![record(), record()]);
         assert_eq!(
-            validate_evidence_page(&item, "tenant-a", "suricata", 10_000, 1_000),
+            validate_evidence_page(&item, "tenant-a", "suricata", 100, 10_000, 1_000),
             Err(ConnectorError::MalformedEvidence)
         );
         let mut bad = record();
         bad.fields.insert("payload".into(), "x".repeat(1025));
         assert_eq!(
-            validate_evidence_page(&page(vec![bad]), "tenant-a", "suricata", 10_000, 1_000),
+            validate_evidence_page(&page(vec![bad]), "tenant-a", "suricata", 100, 10_000, 1_000),
             Err(ConnectorError::MalformedEvidence)
         );
     }
@@ -326,7 +337,7 @@ mod tests {
         let mut bad = record();
         bad.observed_at_unix_ms = 50_000;
         assert_eq!(
-            validate_evidence_page(&page(vec![bad]), "tenant-a", "suricata", 10_000, 1_000),
+            validate_evidence_page(&page(vec![bad]), "tenant-a", "suricata", 100, 10_000, 1_000),
             Err(ConnectorError::FutureEvidenceTimestamp)
         );
     }
