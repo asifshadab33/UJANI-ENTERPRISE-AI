@@ -36,6 +36,8 @@ jobs:
           python-version: "3.12"
       - name: Validate collective-defence event schema contract
         run: python scripts/validate_security_event_schema.py
+      - name: Test local read-only network log adapters
+        run: python -m unittest discover -s tests -v
       - name: Check formatting
         run: cargo fmt --all -- --check
       - name: Check lint warnings
