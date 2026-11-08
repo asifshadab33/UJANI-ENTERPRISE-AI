@@ -99,8 +99,15 @@ def fetch_status(base_url, username=None, password=None, ca_bundle=None,
     base = validate_base_url(base_url, allow_http_local)
     if (username is None) != (password is None):
         raise MalcolmAdapterError("both Malcolm username and password must be supplied together")
-    if username is not None and (not username or len(username) > 256 or len(password) > 1024):
-        raise MalcolmAdapterError("Malcolm credentials exceed supported bounds")
+    if username is not None and (
+        not isinstance(username, str)
+        or not isinstance(password, str)
+        or not username
+        or not password
+        or len(username) > 256
+        or len(password) > 1024
+    ):
+        raise MalcolmAdapterError("Malcolm credentials must be non-empty strings within supported bounds")
     headers = {"Accept": "application/json", "User-Agent": "UJANI-Enterprise-Malcolm-ReadOnly/1"}
     if username is not None:
         token = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode("ascii")
