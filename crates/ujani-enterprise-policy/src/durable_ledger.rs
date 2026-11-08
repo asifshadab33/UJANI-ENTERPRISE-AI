@@ -917,6 +917,21 @@ mod tests {
     }
 
     #[test]
+    fn anchored_open_rejects_existing_unanchored_ledger_without_migration() {
+        let path = temp_path("anchor-reject-unanchored");
+        let legacy = open_ledger(&path).unwrap();
+        drop(legacy);
+        let original = fs::read(&path).unwrap();
+        let anchor = Arc::new(MemoryAnchor::default());
+        assert!(matches!(
+            open_anchored(&path, anchor),
+            Err(DurableLedgerError::AnchorMismatch)
+        ));
+        assert_eq!(fs::read(&path).unwrap(), original);
+        cleanup(&path);
+    }
+
+    #[test]
     fn external_anchor_rejects_rollback_to_an_older_valid_hmac_snapshot() {
         let path = temp_path("anchor-rollback");
         let anchor = Arc::new(MemoryAnchor::default());
@@ -987,7 +1002,14 @@ mod tests {
             DurableLedgerError::AnchorConflict
         );
         assert_eq!(fs::read(&path).unwrap(), committed);
-        assert_eq!(anchor.load("registry-test-a").unwrap().unwrap().generation(), 1);
+        assert_eq!(
+            anchor
+                .load("registry-test-a")
+                .unwrap()
+                .unwrap()
+                .generation(),
+            1
+        );
         cleanup(&path);
     }
 
