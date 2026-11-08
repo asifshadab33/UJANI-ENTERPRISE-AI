@@ -32,7 +32,7 @@ No universal virtual-patching guarantee is made. A network control can only insp
 
 ### Malcolm health adapter prototype
 
-The current feature branch adds `scripts/malcolm_readonly.py`, a read-only health probe for Malcolm's documented `GET /mapi/ping`, `GET /mapi/ready` and `GET /mapi/version` endpoints. It requires HTTPS by default, validates TLS certificates, rejects redirects, uses a five-second timeout and 1 MiB response bound, and can use optional Basic Auth credentials supplied through environment variables. It reports only allowlisted health/version metadata and does not query PCAP, session or document data.
+The read-only Malcolm health-probe implementation and tests are proposed separately in [PR #59](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/pull/59). They are not present in `main` or this documentation branch until that PR is merged. The implementation is intended to provide a read-only health probe for Malcolm's documented `GET /mapi/ping`, `GET /mapi/ready` and `GET /mapi/version` endpoints. It requires HTTPS by default, validates TLS certificates, rejects redirects, uses a five-second timeout and 1 MiB response bound, and can use optional Basic Auth credentials supplied through environment variables. It reports only allowlisted health/version metadata and does not query PCAP, session or document data.
 
 Example:
 
@@ -45,7 +45,7 @@ Use a dedicated least-privilege account if the Malcolm deployment requires authe
 
 ## First local import prototype
 
-The current feature branch adds `scripts/normalize_network_logs.py`. It reads local JSON-lines files and writes bounded, normalized evidence records. It supports Suricata EVE event types and Zeek JSON `conn`, `notice` and `weird` logs. It is an offline file-import tool, not a daemon, live network connector or SIEM replacement.
+The offline importer implementation and tests are proposed separately in [PR #59](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/pull/59). They are not present in `main` or this documentation branch until that PR is merged. The importer is intended to read local JSON-lines files and writes bounded, normalized evidence records. It supports Suricata EVE event types and Zeek JSON `conn`, `notice` and `weird` logs. It is an offline file-import tool, not a daemon, live network connector or SIEM replacement.
 
 Example:
 
@@ -71,10 +71,11 @@ Official provider format/API references:
 
 ## Deployment profiles
 
-1. **Read-only discovery:** inventory, connector health and configuration/evidence views. No inline traffic inspection is implied.
-2. **Lightweight monitoring:** customer-managed Suricata and/or Zeek deployments with bounded local ingestion.
-3. **Full network analysis:** optional customer-managed Malcolm deployment for organisations that have the compute and storage to operate it.
-4. **Firewall integration:** read-only visibility first. Any future change-capable connector must be separately installed, disabled by default, reviewed in a lab and guarded by a target-bound preview, human approval, revalidation and tested rollback.
+1. **Lightweight monitoring:** customer-managed Suricata and selected Zeek functions, with bounded local ingestion.
+2. **Full monitoring:** a customer-managed Zeek and Suricata deployment with a bounded local event pipeline and searchable dashboards.
+3. **Malcolm complete deployment:** an optional, independently installed Malcolm environment for organisations with sufficient compute, storage and operational capacity.
+
+Read-only discovery is the default onboarding/visibility mode, not a deployment profile. Firewall integration is a separate optional connector choice: start with read-only visibility; any future change-capable connector must be separately installed, disabled by default, reviewed in a lab and guarded by target-bound preview, human approval, revalidation and tested rollback.
 
 Profiles are choices, not bundled installers. Customer admins decide which components are installed and where data is stored.
 
