@@ -212,6 +212,12 @@ impl DurableLedger {
                     "anchored ledger parent must be an existing real directory".into(),
                 ));
             }
+            #[cfg(unix)]
+            sync_ancestor_directories(parent)?;
+            #[cfg(not(unix))]
+            return Err(DurableLedgerError::Io(
+                "anchored ledger initialization requires a supported Unix directory-sync implementation".into(),
+            ));
         } else {
             fs::create_dir_all(parent)?;
         }
@@ -497,6 +503,17 @@ fn rename_snapshot_path(
         }
         fs::rename(from, to).map_err(DurableLedgerError::from)
     }
+}
+
+/// Makes every ancestor directory entry durable before an anchored ledger is created.
+#[cfg(unix)]
+fn sync_ancestor_directories(path: &Path) -> Result<(), DurableLedgerError> {
+    let mut directory = fs::canonicalize(path)?;
+    while let Some(parent) = directory.parent() {
+        File::open(parent)?.sync_all()?;
+        directory = parent.to_path_buf();
+    }
+    Ok(())
 }
 
 /// Syncs the directory entry containing a snapshot, including paths relative to the current directory.
@@ -1119,6 +1136,16 @@ mod tests {
             DurableLedgerError::AnchorMismatch
         );
         assert_eq!(fs::read(&path).unwrap(), older);
+        cleanup(&path);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn anchored_open_syncs_existing_parent_ancestors() {
+        let path = temp_path("anchor-parent-sync");
+        let parent = path.parent().unwrap();
+        sync_ancestor_directories(parent)
+            .expect("existing ancestor directories must be durably synced");
         cleanup(&path);
     }
 
