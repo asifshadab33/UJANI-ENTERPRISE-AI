@@ -240,8 +240,20 @@ fn validate_individual_record(record: &IndividualConsentRecord) -> Result<(), Au
 
 /// Appends a length-prefixed UTF-8 string to canonical hash input.
 fn push_string(out: &mut Vec<u8>, value: &str) {
+    // All persisted fields are validated and bounded before reaching this encoder.
     out.extend_from_slice(&(value.len() as u32).to_be_bytes());
     out.extend_from_slice(value.as_bytes());
+}
+
+/// Encodes optional fields without conflating an absent value with an empty string.
+fn push_optional_string(out: &mut Vec<u8>, value: Option<&str>) {
+    match value {
+        Some(value) => {
+            out.push(1);
+            push_string(out, value);
+        }
+        None => out.push(0),
+    }
 }
 
 /// Computes the domain-separated request digest for a tenant decision.
@@ -289,8 +301,8 @@ fn audit_hash(record: &ConsentAuditRecord) -> [u8; 32] {
     bytes.extend_from_slice(&record.sequence.to_be_bytes());
     bytes.extend_from_slice(&record.event_id);
     push_string(&mut bytes, &record.tenant_id);
-    push_string(&mut bytes, record.principal_id.as_deref().unwrap_or(""));
-    push_string(&mut bytes, record.device_id.as_deref().unwrap_or(""));
+    push_optional_string(&mut bytes, record.principal_id.as_deref());
+    push_optional_string(&mut bytes, record.device_id.as_deref());
     push_string(&mut bytes, &record.action);
     bytes.extend_from_slice(&record.previous_generation.to_be_bytes());
     bytes.extend_from_slice(&record.next_generation.to_be_bytes());
@@ -795,6 +807,34 @@ mod tests {
             store.put_individual(invalid_individual, None, "bad-individual-window"),
             Err(AuthorityError::InvalidTimeWindow)
         );
+    }
+
+ 
+    /// Distinguishes absent audit scope fields from present-but-empty values.
+    #[test]
+    fn audit_hash_encodes_optional_scope_presence() {
+        let base = ConsentAuditRecord {
+            sequence: 1,
+            event_id: [7; 32],
+            tenant_id: "tenant-a".into(),
+            principal_id: None,
+            device_id: None,
+            action: "tenant.enable".into(),
+            previous_generation: 0,
+            next_generation: 1,
+            actor_key_id: "admin-key".into(),
+            committed_at_unix_ms: 100,
+            previous_hash: [0; 32],
+            record_hash: [0; 32],
+        };
+        let absent_hash = audit_hash(&base);
+        let mut present_empty_principal = base.clone();
+        present_empty_principal.principal_id = Some(String::new());
+        assert_ne!(absent_hash, audit_hash(&present_empty_principal));
+
+        let mut present_empty_device = base;
+        present_empty_device.device_id = Some(String::new());
+        assert_ne!(absent_hash, audit_hash(&present_empty_device));
     }
 
     /// Verifies appended audit records are linked and pass canonical chain verification.
