@@ -1,6 +1,12 @@
 # Device trust service integration contract
 
-Status: implementation contract for the next control-plane phase. The current `device_trust` Rust module is an in-memory policy primitive only; it is not a deployable service or durable source of truth.
+Status: next-phase implementation contract. The repository now contains both the in-memory signed device-trust policy primitive and `device_trust::durable::DurableDeviceRegistry`, an HMAC-authenticated persistent adapter with OS-lock coordination and an external monotonic-anchor interface. The durable adapter is not itself an HTTP service, identity provider, tenant RBAC engine, append-only audit sink, lease service, or production deployment. The external anti-rollback anchor and protected key-provider integration remain deployment blockers; do not describe the registry as production-ready.
+
+## Verified implementation status
+
+- **Present in the policy crate:** signed administrator enrollment/rotation/revocation commands, device proof-of-possession, tenant and key-generation binding, signed device request envelopes, request replay protection, workload/manifest/body binding, and a durable HMAC-authenticated registry adapter.
+- **Not yet delivered:** authenticated HTTP endpoints, tenant-scoped RBAC and IdP integration, protected KMS/HSM/TPM key-provider adapter, external monotonic anti-rollback anchor implementation, durable append-only audit integration, and authenticated lease acquire/renew/release service.
+- **Safety boundary:** no workload dispatch, remote execution, autonomous containment, or broad endpoint telemetry is authorized by this contract. Keep these disabled until the control plane and deployment trust boundary are independently reviewed.
 
 ## Trust bootstrap
 
