@@ -281,7 +281,7 @@ mod tests {
             requires_network: true,
             requires_external_service: false,
             external_data_egress: false,
-            supports_offline: true,
+            supports_offline: false,
             resource_budget: ResourceBudget {
                 max_cpu_millis: 500,
                 max_memory_mb: 256,
@@ -384,6 +384,26 @@ mod tests {
         item.requires_external_service = true;
         assert_eq!(
             registry.register(item),
+            Err(RegistryError::OfflineRequiresExternalService)
+        );
+    }
+
+    #[test]
+    fn offline_capabilities_cannot_require_network_or_egress() {
+        let mut registry = CapabilityRegistry::new("tenant-a").unwrap();
+        let mut network = descriptor("offline.network", OperationClass::ReadOnly);
+        network.requires_network = true;
+        network.supports_offline = true;
+        assert_eq!(
+            registry.register(network),
+            Err(RegistryError::OfflineRequiresExternalService)
+        );
+
+        let mut egress = descriptor("offline.egress", OperationClass::ReadOnly);
+        egress.external_data_egress = true;
+        egress.supports_offline = true;
+        assert_eq!(
+            registry.register(egress),
             Err(RegistryError::OfflineRequiresExternalService)
         );
     }
