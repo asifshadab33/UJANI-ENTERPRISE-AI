@@ -2,6 +2,8 @@
 
 This roadmap is a statement of intended work, not a claim that these capabilities exist today.
 
+**Primary objective:** use existing, already-powered and underutilised authorised compute to reduce avoidable dependence on central AI data centres and energy use. Never wake sleeping devices or consume resources without owner opt-in and administrator approval. Distributed execution is preferred only when equivalent successful work is demonstrably lower-energy after device, network, retry and cooling overhead.
+
 ## Phase 0 — architecture and policy foundations (current)
 - [x] Define organisation-owned/authorised hardware scope.
 - [x] Document enrolment, policy, security and threat boundaries.
@@ -18,6 +20,7 @@ This roadmap is a statement of intended work, not a claim that these capabilitie
 - [ ] No workload execution until identity and policy checks pass.
 
 ## Phase 2 — safe scheduling
+- [x] Add a pure energy-comparison policy that includes incremental device, network, retry/failure and cooling energy; requires equivalent-workload verification; labels estimated inputs; and prefers central execution on ties.
 - [ ] Workload classes, priorities and deadlines.
 - [ ] Resource reservations and per-device quotas in a live scheduler.
 - [x] File-backed local reservation policy store with OS advisory locks, crash-recovery snapshots, token-bound lease renewal/release and persisted single-use dispatch challenges (not a distributed scheduler or production database).
@@ -74,3 +77,16 @@ See [docs/OPERATOR-WORKFLOWS.md](docs/OPERATOR-WORKFLOWS.md). The dashboard desi
 - [ ] Keep dispatch and worker execution disabled until receiver-side authorization, encrypted mutual-authenticated transport, quotas and OS-enforced isolation are independently verified.
 
 The merged device-trust implementation is a policy and persistence primitive, not a production control plane. See [docs/DURABLE_DEVICE_TRUST.md](docs/DURABLE_DEVICE_TRUST.md) for its trust boundary and limitations.
+
+
+## Energy-aware distributed compute — 2026-11-07
+
+- [x] Define energy-first placement order and strict no-wake/consent/interactive/AC/thermal gates.
+- [x] Implement pure Rust comparison helper with overflow checks and measured/estimated provenance.
+- [ ] Add independent benchmark harness and cross-platform tests against central/local/distributed baselines.
+- [ ] Add read-only authenticated capability/availability agent and owner-visible pause/opt-out.
+- [ ] Implement live scheduler only after OS-enforced isolation, trusted inventory, durable reservations, signed jobs and verified receipts.
+- [ ] Pilot on two or three lab devices with external energy meters; publish negative as well as positive results.
+- [ ] Public peer network only after independent security review and reproducible net-energy advantage.
+
+See [energy-aware distributed compute](docs/ENERGY-AWARE-DISTRIBUTED-COMPUTE.md). The comparison helper is a policy primitive, not a meter, estimator, scheduler or execution gateway.
