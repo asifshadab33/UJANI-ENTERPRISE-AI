@@ -6,6 +6,8 @@
 pub mod collective_defence_authority;
 pub mod collective_defence_consent;
 pub mod collective_defence_snapshot;
+pub mod capability_registry;
+pub mod connector_contract;
 pub mod device_trust;
 pub mod energy;
 use ed25519_dalek::{Signature, VerifyingKey};
