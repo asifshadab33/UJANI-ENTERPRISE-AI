@@ -6,6 +6,7 @@
 
 use std::collections::BTreeMap;
 
+/// Version of the capability descriptor schema accepted by this registry.
 pub const CAPABILITY_SCHEMA_VERSION: u16 = 1;
 const MAX_IDENTIFIER_LEN: usize = 96;
 const MAX_PERMISSIONS: usize = 32;
@@ -14,6 +15,7 @@ const MAX_MEMORY_MB: u64 = 4 * 1024 * 1024;
 const MAX_PAYLOAD_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_TIMEOUT_MS: u64 = 24 * 60 * 60 * 1000;
 
+/// Declares whether a capability is read-only, preview-only, or state-changing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OperationClass {
     ReadOnly,
@@ -23,6 +25,7 @@ pub enum OperationClass {
 
 pub use crate::DataClassification;
 
+/// Last host-supplied health state for a provider; unknown is the default.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProviderHealth {
     Unknown,
@@ -31,6 +34,7 @@ pub enum ProviderHealth {
     Unavailable,
 }
 
+/// Hard upper bounds a host must enforce when invoking a capability.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ResourceBudget {
     pub max_cpu_millis: u32,
@@ -40,6 +44,7 @@ pub struct ResourceBudget {
     pub timeout_ms: u64,
 }
 
+/// Tenant-bound metadata describing one capability and its execution constraints.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CapabilityDescriptor {
     pub tenant_id: String,
@@ -58,6 +63,7 @@ pub struct CapabilityDescriptor {
     pub resource_budget: ResourceBudget,
 }
 
+/// Fail-closed validation and registration errors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RegistryError {
     InvalidTenantId,
@@ -91,6 +97,7 @@ fn valid_version(value: &str) -> bool {
 }
 
 impl ResourceBudget {
+    /// Returns whether every requested resource ceiling is within the registry limits.
     fn is_valid(self) -> bool {
         self.max_cpu_millis > 0
             && self.max_cpu_millis <= MAX_CPU_MILLIS
@@ -106,6 +113,7 @@ impl ResourceBudget {
 }
 
 impl CapabilityDescriptor {
+    /// Validates descriptor metadata against the selected tenant and safe-operation policy.
     fn validate_for_tenant(&self, tenant_id: &str) -> Result<(), RegistryError> {
         if self.tenant_id != tenant_id {
             return Err(RegistryError::TenantMismatch);
@@ -155,6 +163,7 @@ pub struct CapabilityRegistry {
 }
 
 impl CapabilityRegistry {
+    /// Creates an empty registry for one validated tenant identifier.
     pub fn new(tenant_id: impl Into<String>) -> Result<Self, RegistryError> {
         let tenant_id = tenant_id.into();
         if !valid_identifier(&tenant_id) {
@@ -181,17 +190,20 @@ impl CapabilityRegistry {
         Ok(())
     }
 
+    /// Returns a registered descriptor by capability ID without invoking its provider.
     pub fn get(&self, capability_id: &str) -> Option<&CapabilityDescriptor> {
         self.capabilities.get(capability_id)
     }
 
     /// Returns descriptors in stable ID order. This is inventory, not an
     /// authorization decision or proof that a provider is reachable.
+    /// Returns descriptors in stable capability-ID order.
     pub fn list(&self) -> Vec<&CapabilityDescriptor> {
         self.capabilities.values().collect()
     }
 
     /// Health is supplied by the trusted host after its own connector checks.
+    /// Updates host-supplied provider health; this does not probe or authenticate the provider.
     pub fn set_provider_health(
         &mut self,
         provider_id: &str,
@@ -205,6 +217,7 @@ impl CapabilityRegistry {
         Ok(())
     }
 
+    /// Returns the last supplied health state, or Unknown when none has been recorded.
     pub fn provider_health(&self, provider_id: &str) -> ProviderHealth {
         self.provider_health
             .get(provider_id)
@@ -214,6 +227,7 @@ impl CapabilityRegistry {
 
     /// Only healthy read-only/preview capabilities are discoverable for routing.
     /// Degraded, unknown and unavailable providers fail closed.
+    /// Returns only read-only or preview capabilities whose providers are marked Healthy.
     pub fn routable(&self) -> Vec<&CapabilityDescriptor> {
         self.capabilities
             .values()
@@ -227,6 +241,7 @@ impl CapabilityRegistry {
             .collect()
     }
 
+    /// Reports whether one registered capability currently passes the local routing policy.
     pub fn is_routable(&self, capability_id: &str) -> bool {
         self.get(capability_id).is_some_and(|descriptor| {
             self.provider_health(&descriptor.provider_id) == ProviderHealth::Healthy
@@ -237,6 +252,7 @@ impl CapabilityRegistry {
         })
     }
 
+    /// Returns the tenant boundary chosen when this registry was constructed.
     pub fn tenant_id(&self) -> &str {
         &self.tenant_id
     }
