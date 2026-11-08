@@ -450,6 +450,64 @@ fn snapshot_sha256(bytes: &[u8]) -> [u8; 32] {
     Sha256::digest(bytes).into()
 }
 
+/// Renames a snapshot and makes the directory-entry update durable when anchored.
+fn rename_snapshot_path(
+    from: &Path,
+    to: &Path,
+    require_durability: bool,
+) -> Result<(), DurableLedgerError> {
+    #[cfg(unix)]
+    {
+        fs::rename(from, to)?;
+        if require_durability {
+            let parent = to.parent().filter(|parent| !parent.as_os_str().is_empty());
+            if let Some(parent) = parent {
+                File::open(parent)?.sync_all()?;
+            }
+        }
+        Ok(())
+    }
+    #[cfg(windows)]
+    {
+        if !require_durability {
+            return fs::rename(from, to).map_err(DurableLedgerError::from);
+        }
+        use std::os::windows::ffi::OsStrExt;
+        let from_wide: Vec<u16> = from.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+        let to_wide: Vec<u16> = to.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+        const MOVEFILE_REPLACE_EXISTING: u32 = 0x1;
+        const MOVEFILE_WRITE_THROUGH: u32 = 0x8;
+        #[link(name = "Kernel32")]
+        extern "system" {
+            fn MoveFileExW(existing: *const u16, new_name: *const u16, flags: u32) -> i32;
+        }
+        // Windows does not support opening directories for FlushFileBuffers in
+        // the same way as Unix. MOVEFILE_WRITE_THROUGH is the platform-specific
+        // guarantee that the rename has been flushed before this call returns.
+        let moved = unsafe {
+            MoveFileExW(
+                from_wide.as_ptr(),
+                to_wide.as_ptr(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+            )
+        };
+        if moved == 0 {
+            Err(DurableLedgerError::from(std::io::Error::last_os_error()))
+        } else {
+            Ok(())
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        if require_durability {
+            return Err(DurableLedgerError::Io(
+                "anchored snapshot directory durability is unsupported on this platform".into(),
+            ));
+        }
+        fs::rename(from, to).map_err(DurableLedgerError::from)
+    }
+}
+
 fn sync_parent_directory(path: &Path) {
     if let Some(parent) = path
         .parent()
@@ -469,12 +527,10 @@ fn restore_anchored_backup(path: &Path, backup: &Path) -> Result<(), DurableLedg
     }
     fs::copy(backup, &temp)?;
     OpenOptions::new().write(true).open(&temp)?.sync_all()?;
-    #[cfg(windows)]
-    if path.exists() {
-        fs::remove_file(path)?;
-    }
-    fs::rename(&temp, path)?;
-    fs::remove_file(backup)?;
+    rename_snapshot_path(&temp, path, true)?;
+    // The primary snapshot is now durable and matches the anchor. A stale backup
+    // after a crash is harmless because the primary digest is checked first.
+    let _ = fs::remove_file(backup);
     sync_parent_directory(path);
     Ok(())
 }
@@ -484,11 +540,17 @@ fn restore_previous_snapshot(path: &Path) -> Result<(), DurableLedgerError> {
     let backup = append_suffix(path, ".bak");
     if backup.exists() {
         restore_anchored_backup(path, &backup)
-    } else {
-        if path.exists() {
-            fs::remove_file(path)?;
+    } else if path.exists() {
+        // Move the uncommitted candidate out of the primary name with the same
+        // durability guarantee as a rename. A leftover orphan is ignored on load.
+        let orphan = append_suffix(path, ".rollback-orphan");
+        if orphan.exists() {
+            let _ = fs::remove_file(&orphan);
         }
-        sync_parent_directory(path);
+        rename_snapshot_path(path, &orphan, true)?;
+        let _ = fs::remove_file(orphan);
+        Ok(())
+    } else {
         Ok(())
     }
 }
@@ -802,21 +864,16 @@ fn persist_snapshot(
         if backup.exists() {
             fs::remove_file(&backup)?;
         }
-        fs::rename(path, &backup)?;
+        rename_snapshot_path(path, &backup, preserve_backup)?;
     }
-    if let Err(error) = fs::rename(&temp, path) {
+    if let Err(error) = rename_snapshot_path(&temp, path, preserve_backup) {
         if backup.exists() && !path.exists() {
-            let _ = fs::rename(&backup, path);
+            let _ = rename_snapshot_path(&backup, path, preserve_backup);
         }
-        return Err(DurableLedgerError::from(error));
+        return Err(error);
     }
-    if let Some(parent) = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-    {
-        if let Ok(directory) = File::open(parent) {
-            let _ = directory.sync_all();
-        }
+    if !preserve_backup {
+        sync_parent_directory(path);
     }
     if !preserve_backup && backup.exists() {
         let _ = fs::remove_file(backup);
