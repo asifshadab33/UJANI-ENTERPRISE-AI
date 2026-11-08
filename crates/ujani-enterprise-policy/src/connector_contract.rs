@@ -137,9 +137,10 @@ pub fn validate_request(request: &ReadOnlyRequest) -> Result<(), ConnectorError>
     Ok(())
 }
 
-/// Validate untrusted provider output before it is displayed, cached or correlated.
-/// Stale records are retained with an explicit Stale marker so operators can see
-/// old telemetry; future timestamps outside the permitted skew are rejected.
+/// Validates untrusted provider output before it is displayed, cached or correlated.
+/// `requested_page_size` must be copied from the validated request and limits the
+/// returned record count. Stale records are retained with an explicit Stale marker;
+/// future timestamps outside the permitted skew are rejected.
 pub fn validate_evidence_page(
     page: &EvidencePage,
     expected_tenant_id: &str,
