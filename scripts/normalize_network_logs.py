@@ -240,7 +240,7 @@ def write_output(lines, output_path):
     parent = destination.parent
     if not parent.exists() or not parent.is_dir():
         raise ImportErrorSafe("output directory does not exist")
-    if destination.exists() and destination.is_symlink():
+    if destination.is_symlink():
         raise ImportErrorSafe("output must not be a symlink")
     temp_name = None
     try:
