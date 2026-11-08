@@ -91,6 +91,22 @@ class NetworkLogNormalizerTests(unittest.TestCase):
             with self.assertRaises(ImportErrorSafe):
                 read_records(link, "suricata", "tenant-a", "unknown")
 
+    def test_normalized_evidence_schema_matches_export_contract(self):
+        root = Path(__file__).resolve().parents[1]
+        schema = json.loads((root / "schemas/normalized-network-evidence-v1.schema.json").read_text())
+        required = set(schema["required"])
+        item = normalize_suricata({
+            "timestamp": "2026-11-08T10:00:00Z",
+            "event_type": "alert",
+            "flow_id": 1,
+            "alert": {"signature_id": 7, "severity": 2},
+        }, "tenant-a", "7.0.0")
+        self.assertEqual(set(item), required)
+        self.assertEqual(item["schema_version"], schema["properties"]["schema_version"]["const"])
+        self.assertIn(item["provider_id"], schema["properties"]["provider_id"]["enum"])
+        self.assertIn(item["severity"], schema["properties"]["severity"]["enum"])
+        self.assertLessEqual(len(item["fields"]), schema["properties"]["fields"]["maxProperties"])
+
     def test_output_is_written_atomically(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "normalized.jsonl"
