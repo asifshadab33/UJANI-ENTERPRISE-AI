@@ -10,17 +10,28 @@ use std::collections::{BTreeMap, HashSet};
 use crate::capability_registry::ProviderHealth;
 use crate::DataClassification;
 
+/// Version of the read-only connector request and evidence contract.
 pub const CONNECTOR_CONTRACT_VERSION: u16 = 1;
+/// Maximum number of filters accepted in one connector query.
 pub const MAX_QUERY_FILTERS: usize = 16;
+/// Maximum number of evidence records returned in one page.
 pub const MAX_PAGE_SIZE: u16 = 100;
+/// Maximum byte length of an opaque provider cursor.
 pub const MAX_CURSOR_BYTES: usize = 512;
+/// Maximum allowlisted fields carried by one evidence record.
 pub const MAX_EVIDENCE_FIELDS: usize = 32;
+/// Maximum byte length of an evidence field key.
 pub const MAX_FIELD_KEY_BYTES: usize = 96;
+/// Maximum byte length of an evidence field value.
 pub const MAX_FIELD_VALUE_BYTES: usize = 1024;
+/// Maximum byte length of a human-readable evidence summary.
 pub const MAX_SUMMARY_BYTES: usize = 512;
+/// Maximum byte length of a provider-local source reference.
 pub const MAX_SOURCE_REF_BYTES: usize = 256;
+/// Maximum future timestamp skew accepted for imported evidence.
 pub const MAX_CLOCK_SKEW_MS: u64 = 30_000;
 
+/// Static connector metadata; it is not proof of provider identity or health.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectorDescriptor {
     pub contract_version: u16,
@@ -31,6 +42,7 @@ pub struct ConnectorDescriptor {
     pub health: ProviderHealth,
 }
 
+/// Tenant-scoped, bounded request for read-only provider evidence.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReadOnlyRequest {
     pub contract_version: u16,
@@ -42,6 +54,7 @@ pub struct ReadOnlyRequest {
     pub cursor: Option<String>,
 }
 
+/// Privacy-minimised evidence record returned by a read-only connector.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EvidenceRecord {
     pub tenant_id: String,
@@ -54,6 +67,7 @@ pub struct EvidenceRecord {
     pub fields: BTreeMap<String, String>,
 }
 
+/// One bounded page of records from a single tenant and provider.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EvidencePage {
     pub contract_version: u16,
@@ -63,6 +77,7 @@ pub struct EvidencePage {
     pub next_cursor: Option<String>,
 }
 
+/// Fail-closed request, provider, tenant-boundary, or evidence validation errors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectorError {
     UnsupportedContractVersion,
@@ -80,12 +95,14 @@ pub enum ConnectorError {
     UnsupportedCapability,
 }
 
+/// Age classification attached to each accepted evidence record.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EvidenceFreshness {
     Fresh,
     Stale,
 }
 
+/// Synchronous read-only connector interface; host code owns auth, budgets, and audit.
 pub trait ReadOnlyConnector: Send + Sync {
     /// Returns static adapter metadata. A host must not treat this as proof of
     /// provider identity or health; those require authenticated host checks.
@@ -95,6 +112,7 @@ pub trait ReadOnlyConnector: Send + Sync {
     fn query(&self, request: &ReadOnlyRequest) -> Result<EvidencePage, ConnectorError>;
 }
 
+/// Validates contract version, tenant/capability identifiers, filters, page size, and cursor.
 pub fn validate_request(request: &ReadOnlyRequest) -> Result<(), ConnectorError> {
     if request.contract_version != CONNECTOR_CONTRACT_VERSION {
         return Err(ConnectorError::UnsupportedContractVersion);
