@@ -144,7 +144,9 @@ impl CapabilityDescriptor {
             return Err(RegistryError::InvalidResourceBudget);
         }
         if self.supports_offline
-            && (self.requires_external_service || self.requires_network || self.external_data_egress)
+            && (self.requires_external_service
+                || self.requires_network
+                || self.external_data_egress)
         {
             return Err(RegistryError::OfflineRequiresExternalService);
         }
