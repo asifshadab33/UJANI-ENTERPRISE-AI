@@ -35,9 +35,11 @@ impl SnapshotAnchorRecord {
             snapshot_sha256,
         })
     }
+    /// Returns the monotonic generation recorded by the anchor.
     pub fn generation(&self) -> u64 {
         self.generation
     }
+    /// Returns the SHA-256 digest pinned by the anchor record.
     pub fn snapshot_sha256(&self) -> [u8; 32] {
         self.snapshot_sha256
     }
@@ -57,7 +59,9 @@ impl SnapshotAnchorRecord {
 /// ledger and device-trust registry sharing a provider must use a distinct
 /// namespace identifier.
 pub trait MonotonicSnapshotAnchor: Send + Sync {
+    /// Reads the current record for a unique ledger or registry namespace.
     fn load(&self, registry_id: &str) -> Result<Option<SnapshotAnchorRecord>, String>;
+    /// Atomically creates or advances the namespace record if its generation matches.
     fn compare_and_set(
         &self,
         registry_id: &str,
@@ -120,12 +124,14 @@ pub struct DeviceTrustIntegrityKey {
     bytes: [u8; 32],
 }
 impl DeviceTrustIntegrityKey {
+    /// Creates a registry integrity key from protected key-provider material.
     pub fn new(key_id: impl Into<String>, bytes: [u8; 32]) -> Self {
         Self {
             key_id: key_id.into(),
             bytes,
         }
     }
+    /// Returns the non-secret identifier associated with this key.
     pub fn key_id(&self) -> &str {
         &self.key_id
     }
@@ -280,6 +286,7 @@ impl DurableDeviceRegistry {
         })
     }
 
+    /// Returns the number of enrolled device records in the durable registry.
     pub fn device_count(&self) -> Result<usize, DurableDeviceTrustError> {
         self.transact(|registry| Ok(registry.devices.len()))
     }
