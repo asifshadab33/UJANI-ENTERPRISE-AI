@@ -64,3 +64,12 @@ Start with a trusted internal lab and explicitly enrolled test machines. Do not 
 ## Inventory timestamp validation update
 
 The read-only inventory contract now rejects heartbeat and telemetry timestamps more than 30 seconds in the future, and rejects telemetry timestamps that are materially newer than the associated device heartbeat. A small clock skew remains tolerated; stale records continue to fail closed. This is a policy-library validation only: it does not establish an authenticated live agent heartbeat or server-side clock synchronisation.
+
+
+## Enterprise Intelligence Orchestration
+
+UJANI's proposed shared coordination architecture is documented in [Enterprise Intelligence Orchestration Layer](docs/ENTERPRISE-INTELLIGENCE-ORCHESTRATION.md). This is an architecture proposal; the registry, connectors, event pipeline, workflow coordinator and unified dashboard remain implementation work. Provider-specific implementation status and safety gates are tracked in [Connector Integration Status](docs/CONNECTOR-INTEGRATION-STATUS.md).
+
+## Legal and operational notice
+
+Read [the legal and operational notice](docs/LEGAL-DISCLAIMER.md) together with the [GNU GPL v3.0 licence](LICENSE). The notice is informational and does not replace qualified legal review or applicable law.

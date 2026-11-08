@@ -110,3 +110,21 @@ See [energy-aware distributed compute](docs/ENERGY-AWARE-DISTRIBUTED-COMPUTE.md)
 - [ ] Consider cross-tenant indicator sharing only with explicit governance and opt-in.
 
 See [the collective-defence event contract](docs/COLLECTIVE-DEFENCE-EVENTS.md). The schema and documentation are contracts only; they do not represent a live endpoint sensor, ingestion service, detection engine or response capability.
+
+
+## Enterprise Intelligence Orchestration Layer — proposed shared foundation
+
+The architecture contract is in [docs/ENTERPRISE-INTELLIGENCE-ORCHESTRATION.md](docs/ENTERPRISE-INTELLIGENCE-ORCHESTRATION.md). This is a reusable Enterprise-wide layer, not a security-only wrapper.
+
+- [ ] Define initial versioned Rust contracts for capability descriptors, provider health, read-only requests and evidence pages. Durable workflow/event schemas remain pending.
+- [ ] Add initial unit tests for descriptor bounds, tenant scope, provider health, connector request bounds, evidence provenance and freshness. Property/fuzz and cross-process tenant-isolation tests remain pending.
+- [ ] Implement an in-memory tenant-scoped capability metadata registry. A mock-backed host/runtime and visible demo fixtures remain pending.
+- [ ] Define a read-only connector trait and bounded evidence contract. Host-enforced timeout, cancellation, rate-limit and circuit-breaker runtime remain pending.
+- [ ] Implement an offline local-file import prototype for Suricata EVE JSON and Zeek JSON conn/notice/weird logs, with bounded allowlisted normalization and regression tests. A deterministic mock adapter and live event/document search adapters remain pending. A separate Malcolm health-only adapter uses documented GET endpoints.
+- [ ] Add provenance-preserving event normalisation, deduplication, bounded retention and tenant-scoped caching.
+- [ ] Add deterministic workflow routing, partial-failure handling and resource budgets.
+- [ ] Build the unified read-only operator experience with evidence, freshness, provider drill-down and visible DEMO DATA states.
+- [ ] Add preview-digest approvals, receiver-side revalidation, audit and rollback metadata before enabling any state-changing adapter.
+- [ ] Reuse the same contracts for Infrastructure Shield, compute, document/search and future enterprise integrations.
+
+**Release gate:** no remote execution, autonomous containment, firewall modification or inline enforcement until receiver-side identity, tenant isolation, exact-scope approval, replay protection, rollback, integration tests and independent security review are complete.
