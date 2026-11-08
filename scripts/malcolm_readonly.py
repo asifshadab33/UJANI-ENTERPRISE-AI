@@ -9,6 +9,7 @@ MALCOLM_API_USERNAME and MALCOLM_API_PASSWORD environment variables.
 import argparse
 import base64
 import datetime as dt
+import http.client
 import json
 import os
 import ssl
@@ -37,7 +38,11 @@ class RejectRedirects(urllib.request.HTTPRedirectHandler):
 
 
 def validate_base_url(value, allow_http_local=False):
-    parsed = urlsplit(value)
+    try:
+        parsed = urlsplit(value)
+        parsed.port  # Force validation of malformed and out-of-range ports.
+    except ValueError:
+        raise MalcolmAdapterError("base URL contains an invalid port or authority") from None
     if parsed.username or parsed.password or parsed.query or parsed.fragment:
         raise MalcolmAdapterError("base URL must not contain credentials, query or fragment")
     if not parsed.hostname:
@@ -81,7 +86,7 @@ def fetch_json(opener, url, headers):
             raw = response.read(MAX_RESPONSE_BYTES + 1)
     except MalcolmAdapterError:
         raise
-    except (urllib.error.URLError, TimeoutError, OSError):
+    except (urllib.error.URLError, http.client.HTTPException, ValueError, TimeoutError, OSError):
         raise MalcolmAdapterError("Malcolm endpoint request failed") from None
     if len(raw) > MAX_RESPONSE_BYTES:
         raise MalcolmAdapterError("Malcolm response exceeds the 1 MiB limit")
@@ -91,7 +96,7 @@ def fetch_json(opener, url, headers):
             parse_constant=reject_constant,
             object_pairs_hook=reject_duplicate_keys,
         )
-    except (UnicodeDecodeError, json.JSONDecodeError, MalcolmAdapterError, RecursionError):
+    except (ValueError, MalcolmAdapterError, RecursionError):
         raise MalcolmAdapterError("Malcolm endpoint returned invalid JSON") from None
     return value
 
