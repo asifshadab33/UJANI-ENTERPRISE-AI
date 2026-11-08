@@ -45,7 +45,7 @@ Use a dedicated least-privilege account if the Malcolm deployment requires authe
 
 ## First local import prototype
 
-The current `main` contains `scripts/normalize_network_logs.py` and its regression tests. The importer reads local JSON-lines files and writes bounded, normalized evidence records. It supports Suricata EVE event types and Zeek JSON `conn`, `notice` and `weird` logs. It is an offline file-import tool, not a daemon, live network connector or SIEM replacement.
+The current `main` contains `scripts/normalize_network_logs.py` and its regression tests. The importer reads local JSON-lines files and writes bounded, normalized evidence records. It supports Suricata EVE event types and Zeek JSON `conn`, `notice` and `weird` logs. It is an offline file-import tool, not a daemon, live network connector or SIEM replacement. Safe file opening currently requires the platform's `O_NOFOLLOW` and `O_NONBLOCK` flags; on platforms such as standard Windows Python builds where those primitives are unavailable, the importer deliberately fails closed and does not claim file-import support.
 
 Example:
 
