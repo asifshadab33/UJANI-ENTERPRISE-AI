@@ -63,9 +63,9 @@ pub enum SnapshotEncodingError {
 fn valid_identifier(value: &str, max: usize) -> bool {
     !value.is_empty()
         && value.len() <= max
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'-' | b'@'))
+        && value.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'-' | b'@')
+        })
 }
 
 fn push_bytes(out: &mut Vec<u8>, value: &[u8]) -> Result<(), SnapshotEncodingError> {
@@ -118,7 +118,9 @@ fn validate_tenant(record: &TenantConsentRecord) -> bool {
         && record.notice_sha256.iter().any(|byte| *byte != 0)
         && valid_identifier(&record.actor_key_id, MAX_IDENTIFIER_BYTES)
         && record.expires_at_unix_ms > record.updated_at_unix_ms
-        && record.expires_at_unix_ms.saturating_sub(record.updated_at_unix_ms)
+        && record
+            .expires_at_unix_ms
+            .saturating_sub(record.updated_at_unix_ms)
             <= MAX_CONSENT_TTL_MS
 }
 
@@ -134,11 +136,16 @@ fn validate_individual(record: &IndividualConsentRecord) -> bool {
         && record.notice_sha256.iter().any(|byte| *byte != 0)
         && valid_identifier(&record.actor_key_id, MAX_IDENTIFIER_BYTES)
         && record.expires_at_unix_ms > record.updated_at_unix_ms
-        && record.expires_at_unix_ms.saturating_sub(record.updated_at_unix_ms)
+        && record
+            .expires_at_unix_ms
+            .saturating_sub(record.updated_at_unix_ms)
             <= MAX_CONSENT_TTL_MS
 }
 
-fn encode_tenant(out: &mut Vec<u8>, record: &TenantConsentRecord) -> Result<(), SnapshotEncodingError> {
+fn encode_tenant(
+    out: &mut Vec<u8>,
+    record: &TenantConsentRecord,
+) -> Result<(), SnapshotEncodingError> {
     if !validate_tenant(record) {
         return Err(SnapshotEncodingError::InvalidRecord);
     }
@@ -178,14 +185,23 @@ fn encode_individual(
     push_bytes(out, &record.expires_at_unix_ms.to_be_bytes())
 }
 
-fn encode_audit(out: &mut Vec<u8>, record: &ConsentAuditRecord) -> Result<(), SnapshotEncodingError> {
+fn encode_audit(
+    out: &mut Vec<u8>,
+    record: &ConsentAuditRecord,
+) -> Result<(), SnapshotEncodingError> {
     if !valid_identifier(&record.tenant_id, MAX_IDENTIFIER_BYTES)
         || !valid_identifier(&record.action, MAX_ACTION_BYTES)
         || !valid_identifier(&record.actor_key_id, MAX_IDENTIFIER_BYTES)
         || record.next_generation <= record.previous_generation
         || record.principal_id.is_some() != record.device_id.is_some()
-        || record.principal_id.as_deref().is_some_and(|v| !valid_identifier(v, MAX_IDENTIFIER_BYTES))
-        || record.device_id.as_deref().is_some_and(|v| !valid_identifier(v, MAX_IDENTIFIER_BYTES))
+        || record
+            .principal_id
+            .as_deref()
+            .is_some_and(|v| !valid_identifier(v, MAX_IDENTIFIER_BYTES))
+        || record
+            .device_id
+            .as_deref()
+            .is_some_and(|v| !valid_identifier(v, MAX_IDENTIFIER_BYTES))
     {
         return Err(SnapshotEncodingError::InvalidRecord);
     }
@@ -223,7 +239,10 @@ impl CanonicalConsentSnapshot {
 
         let mut tenants: Vec<_> = self.tenants.iter().collect();
         tenants.sort_by(|a, b| a.tenant_id.cmp(&b.tenant_id));
-        if tenants.windows(2).any(|pair| pair[0].tenant_id == pair[1].tenant_id) {
+        if tenants
+            .windows(2)
+            .any(|pair| pair[0].tenant_id == pair[1].tenant_id)
+        {
             return Err(SnapshotEncodingError::DuplicateRecord);
         }
 
@@ -242,7 +261,10 @@ impl CanonicalConsentSnapshot {
 
         let mut audit_ids = BTreeMap::new();
         for record in &self.audit {
-            if audit_ids.insert(record.event_id, record.tenant_id.as_str()).is_some() {
+            if audit_ids
+                .insert(record.event_id, record.tenant_id.as_str())
+                .is_some()
+            {
                 return Err(SnapshotEncodingError::DuplicateRecord);
             }
         }
@@ -267,7 +289,12 @@ impl CanonicalConsentSnapshot {
         push_bytes(&mut out, SNAPSHOT_DOMAIN)?;
         push_bytes(&mut out, &self.schema_version.to_be_bytes())?;
         push_bytes(&mut out, &self.snapshot_generation.to_be_bytes())?;
-        for count in [tenants.len(), individuals.len(), self.audit.len(), idempotency.len()] {
+        for count in [
+            tenants.len(),
+            individuals.len(),
+            self.audit.len(),
+            idempotency.len(),
+        ] {
             let count = u32::try_from(count).map_err(|_| SnapshotEncodingError::CapacityExceeded)?;
             push_bytes(&mut out, &count.to_be_bytes())?;
         }
@@ -302,9 +329,7 @@ impl CanonicalConsentSnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::collective_defence_authority::{
-        ConsentAuthorityBackend, MemoryConsentAuthority,
-    };
+    use crate::collective_defence_authority::{ConsentAuthorityBackend, MemoryConsentAuthority};
 
     fn tenant(enabled: bool, generation: u64, now: u64, id: &str) -> TenantConsentRecord {
         TenantConsentRecord {
@@ -322,7 +347,12 @@ mod tests {
         }
     }
 
-    fn individual(tenant_id: &str, principal: &str, device: &str, now: u64) -> IndividualConsentRecord {
+    fn individual(
+        tenant_id: &str,
+        principal: &str,
+        device: &str,
+        now: u64,
+    ) -> IndividualConsentRecord {
         IndividualConsentRecord {
             tenant_id: tenant_id.into(),
             principal_id: principal.into(),
@@ -360,7 +390,10 @@ mod tests {
         let a = CanonicalConsentSnapshot {
             schema_version: CONSENT_SNAPSHOT_SCHEMA_VERSION,
             snapshot_generation: 1,
-            tenants: vec![tenant(true, 1, 100, "tenant-a"), tenant(true, 1, 100, "tenant-b")],
+            tenants: vec![
+                tenant(true, 1, 100, "tenant-a"),
+                tenant(true, 1, 100, "tenant-b"),
+            ],
             individuals: vec![
                 individual("tenant-b", "user-b", "device-b", 100),
                 individual("tenant-a", "user-a", "device-a", 100),
@@ -387,10 +420,16 @@ mod tests {
             idempotency,
         };
         snapshot.tenants.push(snapshot.tenants[0].clone());
-        assert_eq!(snapshot.canonical_bytes(), Err(SnapshotEncodingError::DuplicateRecord));
+        assert_eq!(
+            snapshot.canonical_bytes(),
+            Err(SnapshotEncodingError::DuplicateRecord)
+        );
         snapshot.tenants.pop();
         snapshot.schema_version = 99;
-        assert_eq!(snapshot.canonical_bytes(), Err(SnapshotEncodingError::UnsupportedVersion));
+        assert_eq!(
+            snapshot.canonical_bytes(),
+            Err(SnapshotEncodingError::UnsupportedVersion)
+        );
     }
 
     #[test]
@@ -406,11 +445,20 @@ mod tests {
         };
         audit[0].action.push_str(".tampered");
         snapshot.audit = audit;
-        assert_eq!(snapshot.canonical_bytes(), Err(SnapshotEncodingError::InvalidAuditChain));
+        assert_eq!(
+            snapshot.canonical_bytes(),
+            Err(SnapshotEncodingError::InvalidAuditChain)
+        );
         snapshot.audit = vec![];
-        assert_eq!(snapshot.canonical_bytes(), Err(SnapshotEncodingError::OrphanIdempotencyRecord));
+        assert_eq!(
+            snapshot.canonical_bytes(),
+            Err(SnapshotEncodingError::OrphanIdempotencyRecord)
+        );
         snapshot.audit = audit_fixture().0;
         snapshot.idempotency[0].audit_event_id = [9; 32];
-        assert_eq!(snapshot.canonical_bytes(), Err(SnapshotEncodingError::OrphanIdempotencyRecord));
+        assert_eq!(
+            snapshot.canonical_bytes(),
+            Err(SnapshotEncodingError::OrphanIdempotencyRecord)
+        );
     }
 }
