@@ -127,7 +127,8 @@ pub struct DurableLedger {
 
 impl std::fmt::Debug for DurableLedger {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.debug_struct("DurableLedger")
+        formatter
+            .debug_struct("DurableLedger")
             .field("path", &self.path)
             .field("active_key_id", &self.active_key_id)
             .field("anchor_enabled", &self.anchor.is_some())
@@ -187,7 +188,10 @@ impl DurableLedger {
         }
 
         let path = path.as_ref().to_path_buf();
-        if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+        if let Some(parent) = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
             fs::create_dir_all(parent)?;
         }
         let (anchor_namespace, anchor) = match anchor {
@@ -322,9 +326,16 @@ impl DurableLedger {
         &self,
         operation: impl FnOnce(&mut Ledger) -> Result<T, DurableLedgerError>,
     ) -> Result<T, DurableLedgerError> {
-        let _thread_guard = self.thread_lock.lock().map_err(|_| DurableLedgerError::LockPoisoned)?;
+        let _thread_guard = self
+            .thread_lock
+            .lock()
+            .map_err(|_| DurableLedgerError::LockPoisoned)?;
         let mut lock_options = OpenOptions::new();
-        lock_options.create(true).truncate(false).read(true).write(true);
+        lock_options
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true);
         #[cfg(unix)]
         {
             use std::os::unix::fs::OpenOptionsExt;
@@ -334,7 +345,8 @@ impl DurableLedger {
         lock_file.lock()?;
 
         let anchor_record = match (&self.anchor, &self.anchor_namespace) {
-            (Some(anchor), Some(namespace)) => anchor.load(namespace)
+            (Some(anchor), Some(namespace)) => anchor
+                .load(namespace)
                 .map_err(DurableLedgerError::AnchorUnavailable)?,
             (None, None) => None,
             _ => return Err(DurableLedgerError::AnchorMismatch),
@@ -345,7 +357,9 @@ impl DurableLedger {
             load_or_recover(&self.path, &self.integrity_keys)?
         };
         let result = operation(&mut ledger)?;
-        let active_key = self.integrity_keys.get(&self.active_key_id)
+        let active_key = self
+            .integrity_keys
+            .get(&self.active_key_id)
             .ok_or(DurableLedgerError::InvalidRecord)?;
         let bytes = serialize_snapshot(&ledger, &self.active_key_id, &active_key.key);
         if bytes.len() as u64 > MAX_LEDGER_BYTES {
