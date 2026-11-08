@@ -43,9 +43,19 @@ impl SnapshotAnchorRecord {
     }
 }
 
-/// External monotonic anchor contract. compare_and_set must atomically create
-/// generation 1 when expected_generation is None, or advance exactly one
-/// generation when it is Some(n). It must never accept a stale generation.
+/// External monotonic anchor contract.
+///
+/// `compare_and_set` must atomically create generation 1 when
+/// `expected_generation` is `None`, or advance exactly one generation when it
+/// is `Some(n)`. It must never accept a stale generation. Implementations must
+/// enforce bounded timeouts for every call: the ledger invokes `load`,
+/// `compare_and_set`, and ambiguous-result read-back synchronously while holding
+/// both its in-process mutex and OS file lock, including for read-only snapshots.
+/// Before returning an error from `compare_and_set`, a provider must settle or
+/// fence every in-flight update for that request so it cannot commit later;
+/// otherwise the ledger cannot safely roll back its candidate snapshot. Each
+/// ledger and device-trust registry sharing a provider must use a distinct
+/// namespace identifier.
 pub trait MonotonicSnapshotAnchor: Send + Sync {
     fn load(&self, registry_id: &str) -> Result<Option<SnapshotAnchorRecord>, String>;
     fn compare_and_set(
