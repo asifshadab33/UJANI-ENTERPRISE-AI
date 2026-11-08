@@ -82,7 +82,9 @@ Categories:
 
 Display supported read-only capabilities, deployment model, upstream vendor and current connector implementation status. Distinguish implemented, experimental and planned integrations.
 
-### Step 2 — Select provider and deployment
+### Step 2 — Discover and select provider/deployment
+- Offer opt-in discovery of locally installed providers; show detected installations separately from the catalogue of supported adapters.
+- Let the administrator select a discovered installation or manually select a supported provider when discovery is unavailable or not desired.
 - Provider/product and version
 - Local agent, on-premises API or vendor-hosted API
 - Site/device group scope
@@ -122,7 +124,7 @@ Display:
 - Query frequency, quotas and estimated resource use
 - Revocation and deletion behaviour
 
-Require explicit organisation administrator approval. For individual/device telemetry, require the applicable individual opt-in before collection. If required consent is absent or revoked, collection must not begin or must stop.
+Require explicit organisation administrator approval. Telemetry processing is local-only by default. Collection requires applicable individual consent where required. Sharing telemetry with the enterprise requires a separate, explicit individual opt-in; administrator approval does not replace that individual choice. Revoking collection consent stops the corresponding collection. Revoking enterprise-sharing consent stops sharing and returns any otherwise-authorised processing to local-only. If collection consent is absent or revoked, collection must not begin or must stop.
 
 ### Step 6 — Preview
 Show a bounded sample with secrets and personal data redacted. Show source provenance, tenant mapping, normalisation outcome, event-time handling, deduplication key and expected data volume. Do not retain preview samples unless the administrator explicitly confirms the connection.
@@ -222,7 +224,7 @@ For each connector show:
 6. Only read-only capabilities are enabled; no action tokens or write scopes are requested.
 7. Provider status distinguishes implemented from prototype/planned integrations.
 8. Stale, conflicting, missing and malformed evidence is shown accurately.
-9. Tests cover tenant-crossing attempts, role denial, consent revocation, token expiry, replay/duplicate events, oversized responses, timeout, rate limits, stale data and audit provenance.
+9. Tests cover tenant-crossing attempts, role denial, consent revocation, token expiry, replay/duplicate events, oversized responses, timeout, rate limits, stale data and audit provenance. Windows Security Center discovery, Defender status and Windows Firewall status require mocked contract tests plus supported Windows CI or manual host tests.
 10. No new heavyweight core dependency or always-on AI inference is introduced.
 11. Existing PR #48/#49 architecture and connector work is reused rather than duplicated.
 12. Remote execution, inline IPS, firewall writes and autonomous containment remain disabled.
