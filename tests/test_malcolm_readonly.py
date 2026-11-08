@@ -153,6 +153,13 @@ class MalcolmReadOnlyAdapterTests(unittest.TestCase):
         with self.assertRaises(MalcolmAdapterError):
             fetch_status("https://malcolm.example", opener_factory=lambda ca: fake)
 
+    def test_unrelated_readiness_values_do_not_change_required_service_health(self):
+        responses = self.healthy_responses()
+        responses[1]["optional_extension"] = {"not": "a required service state"}
+        fake = FakeOpener(responses)
+        result = fetch_status("https://malcolm.example", opener_factory=lambda ca: fake)
+        self.assertEqual(result["status"], "healthy")
+
     def test_ping_mismatch_stops_before_other_endpoints(self):
         fake = FakeOpener([{"ping": "not-pong"}])
         with self.assertRaises(MalcolmAdapterError):
