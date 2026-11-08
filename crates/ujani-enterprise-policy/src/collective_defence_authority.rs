@@ -809,7 +809,7 @@ mod tests {
         );
     }
 
- 
+
     /// Distinguishes absent audit scope fields from present-but-empty values.
     #[test]
     fn audit_hash_encodes_optional_scope_presence() {
