@@ -31,6 +31,11 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
       - name: Run workspace tests
         run: cargo test --workspace --locked
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # pinned setup-python action
+        with:
+          python-version: "3.12"
+      - name: Validate collective-defence event schema contract
+        run: python scripts/validate_security_event_schema.py
       - name: Check formatting
         run: cargo fmt --all -- --check
       - name: Check lint warnings
