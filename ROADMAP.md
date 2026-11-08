@@ -116,11 +116,11 @@ See [the collective-defence event contract](docs/COLLECTIVE-DEFENCE-EVENTS.md). 
 
 The architecture contract is in [docs/ENTERPRISE-INTELLIGENCE-ORCHESTRATION.md](docs/ENTERPRISE-INTELLIGENCE-ORCHESTRATION.md). This is a reusable Enterprise-wide layer, not a security-only wrapper.
 
-- [ ] Define versioned schemas for capability descriptors, connector health, normalised evidence and workflow state.
-- [ ] Add strict schema, bounds, compatibility and tenant-isolation tests.
-- [ ] Implement a local mock-backed capability registry with demo-only fixtures.
-- [ ] Define a read-only connector SDK with health, cancellation, timeout, rate-limit and circuit-breaker contracts.
-- [ ] Implement one mock adapter and one real read-only adapter after upstream API and licence review.
+- [x] Define initial versioned Rust contracts for capability descriptors, provider health, read-only requests and evidence pages. Durable workflow/event schemas remain pending.
+- [x] Add initial unit tests for descriptor bounds, tenant scope, provider health, connector request bounds, evidence provenance and freshness. Property/fuzz and cross-process tenant-isolation tests remain pending.
+- [x] Implement an in-memory tenant-scoped capability metadata registry. A mock-backed host/runtime and visible demo fixtures remain pending.
+- [x] Define a read-only connector trait and bounded evidence contract. Host-enforced timeout, cancellation, rate-limit and circuit-breaker runtime remain pending.
+- [ ] Implement a deterministic mock adapter and contract test harness; then implement one real read-only adapter after upstream API and licence review.
 - [ ] Add provenance-preserving event normalisation, deduplication, bounded retention and tenant-scoped caching.
 - [ ] Add deterministic workflow routing, partial-failure handling and resource budgets.
 - [ ] Build the unified read-only operator experience with evidence, freshness, provider drill-down and visible DEMO DATA states.
