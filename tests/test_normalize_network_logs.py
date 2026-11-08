@@ -63,7 +63,7 @@ class NetworkLogNormalizerTests(unittest.TestCase):
         self.assertNotIn("payload", item["fields"])
 
     def test_oversized_json_integer_is_reported_as_safe_import_error(self):
-        raw = (b'{"timestamp":"2026-11-08T10:00:00Z","event_type":"alert","value":' + b"9" * 5000 + b"}\\n")
+        raw = (b'{"timestamp":"2026-11-08T10:00:00Z","event_type":"alert","value":' + b"9" * 5000 + b"}")
         with self.assertRaises(ImportErrorSafe):
             parse_json_line(raw, 1)
 
