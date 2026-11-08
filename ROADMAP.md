@@ -72,7 +72,8 @@ See [docs/OPERATOR-WORKFLOWS.md](docs/OPERATOR-WORKFLOWS.md). The dashboard desi
 - [x] Serialize cross-process operations with OS advisory locking; use bounded parsing and fail closed on malformed, oversized, duplicate or MAC-invalid state.
 - [x] Test restart persistence, request replay after restart, tamper detection and concurrent registry handles.
 - [ ] Integrate a production KMS/HSM/TPM-backed integrity-key provider, key rotation and disaster recovery.
-- [x] Add the `MonotonicSnapshotAnchor` compare-and-set interface and anchored registry mode, including rollback-to-older-valid-HMAC tests (in-memory test provider only; no production anchor service).\n- [ ] Integrate a production KMS/HSM/TPM-backed or separately hosted linearizable anchor provider with authenticated tenant scoping, recovery and outage tests; do not use a local sidecar file as the anchor.
+- [x] Add the `MonotonicSnapshotAnchor` compare-and-set interface and anchored registry mode, including rollback-to-older-valid-HMAC tests (in-memory test provider only; no production anchor service).
+- [ ] Integrate a production KMS/HSM/TPM-backed or separately hosted linearizable anchor provider with authenticated tenant scoping, recovery and outage tests; do not use a local sidecar file as the anchor.
 - [ ] Expose authenticated enrollment/request/lease endpoints with tenant RBAC, replay/clock-skew enforcement and durable authorization audit.
 - [ ] Keep dispatch and worker execution disabled until receiver-side authorization, encrypted mutual-authenticated transport, quotas and OS-enforced isolation are independently verified.
 
@@ -90,3 +91,20 @@ The merged device-trust implementation is a policy and persistence primitive, no
 - [ ] Public peer network only after independent security review and reproducible net-energy advantage.
 
 See [energy-aware distributed compute](docs/ENERGY-AWARE-DISTRIBUTED-COMPUTE.md). The comparison helper is a policy primitive, not a meter, estimator, scheduler or execution gateway.
+
+
+## Collective cyber-defence foundation — 2026-11-08
+
+- [x] Define a versioned, privacy-minimised endpoint security event schema (v1).
+- [x] Document authentication, replay protection, tenant isolation, retention, poisoning resistance and read-only response boundaries.
+- [x] Add dependency-free schema contract regression checks to CI (valid/invalid fixtures, strict unknown-field rejection and privacy/response-field guardrails).
+- [ ] Add full JSON Schema conformance and fuzz/property tests in the policy crate.
+- [ ] Implement an opt-in read-only sensor prototype with local bounded queue; no remote response.
+- [ ] Implement authenticated tenant-scoped ingestion using existing device-trust primitives.
+- [ ] Add durable event storage, deduplication, sequence enforcement and retention.
+- [ ] Add deterministic cross-device correlation with explainable evidence and confidence.
+- [ ] Build analyst incident timeline and alert dashboard.
+- [ ] Add approval-gated, reversible containment only after receiver-side authorization and independent security review.
+- [ ] Consider cross-tenant indicator sharing only with explicit governance and opt-in.
+
+See [the collective-defence event contract](docs/COLLECTIVE-DEFENCE-EVENTS.md). The schema and documentation are contracts only; they do not represent a live endpoint sensor, ingestion service, detection engine or response capability.
