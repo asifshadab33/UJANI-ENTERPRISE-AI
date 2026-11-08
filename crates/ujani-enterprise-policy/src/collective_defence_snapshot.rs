@@ -244,8 +244,11 @@ impl CanonicalConsentSnapshot {
 
         let mut individuals: Vec<_> = self.individuals.iter().collect();
         individuals.sort_by(|a, b| {
-            (&a.tenant_id, &a.principal_id, &a.device_id)
-                .cmp(&(&b.tenant_id, &b.principal_id, &b.device_id))
+            (&a.tenant_id, &a.principal_id, &a.device_id).cmp(&(
+                &b.tenant_id,
+                &b.principal_id,
+                &b.device_id,
+            ))
         });
         if individuals.windows(2).any(|pair| {
             pair[0].tenant_id == pair[1].tenant_id
