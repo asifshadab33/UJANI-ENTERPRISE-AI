@@ -419,7 +419,7 @@ impl DurableLedger {
                             if backup.exists() {
                                 let _ = fs::remove_file(backup);
                             }
-                            sync_parent_directory(&self.path);
+                            let _ = sync_parent_directory(&self.path);
                         }
                         Ok(_) => {
                             restore_previous_snapshot(&self.path)?;
@@ -876,6 +876,13 @@ mod tests {
     use sha2::Digest;
     use std::thread;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[cfg(unix)]
+    #[test]
+    fn relative_snapshot_path_syncs_current_directory() {
+        sync_parent_directory(Path::new("ledger"))
+            .expect("the current directory must be synced for a relative snapshot path");
+    }
 
     fn device() -> Device {
         Device {
