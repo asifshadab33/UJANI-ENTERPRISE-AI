@@ -103,7 +103,7 @@ def validate(value, schema, path="$"):
         # JSON Schema numbers are finite. Python's json module accepts NaN and
         # Infinity by default, so reject them explicitly rather than allowing
         # NaN to bypass both the minimum and maximum comparisons.
-        if not math.isfinite(value):
+        if isinstance(value, float) and not math.isfinite(value):
             errors.append(f"{path}: numeric value must be finite")
         elif value < schema.get("minimum", float("-inf")) or value > schema.get("maximum", float("inf")):
             errors.append(f"{path}: numeric value out of bounds")
@@ -227,6 +227,8 @@ def main():
     cases.append(("non-finite NaN confidence", nan_confidence))
     infinite_confidence = sample_event(); infinite_confidence["evidence"]["confidence"] = float("inf")
     cases.append(("infinite confidence", infinite_confidence))
+    huge_integer_confidence = sample_event(); huge_integer_confidence["evidence"]["confidence"] = 10 ** 400
+    cases.append(("oversized integer confidence", huge_integer_confidence))
     bad_sequence = sample_event(); bad_sequence["sequence"] = 0
     cases.append(("zero sequence", bad_sequence))
     missing_source = sample_event(); del missing_source["source"]["sensor_id"]
