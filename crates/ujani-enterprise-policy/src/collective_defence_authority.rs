@@ -691,6 +691,37 @@ mod tests {
         );
     }
 
+    /// Keeps consent for a different principal/device tuple valid after one device withdraws.
+    #[test]
+    fn individual_withdrawal_does_not_revoke_another_device() {
+        let store = MemoryConsentAuthority::default();
+        store.put_tenant(tenant(true, 1, 100), None, "t-1").unwrap();
+
+        let device_a = individual(true, 1, 1, 101);
+        store
+            .put_individual(device_a, None, "device-a-opt-in")
+            .unwrap();
+
+        let mut device_b = individual(true, 1, 1, 102);
+        device_b.principal_id = "user-b".into();
+        device_b.device_id = "device-b".into();
+        store
+            .put_individual(device_b, None, "device-b-opt-in")
+            .unwrap();
+
+        store
+            .put_individual(individual(false, 1, 2, 103), Some(1), "device-a-withdraw")
+            .unwrap();
+
+        assert_eq!(
+            store.authorization_snapshot("tenant-a", "user-a", "device-a", 104),
+            Err(AuthorityError::IndividualNotEnabled)
+        );
+        assert!(store
+            .authorization_snapshot("tenant-a", "user-b", "device-b", 104)
+            .is_ok());
+    }
+
     /// Keeps the user's withdrawal path available after the tenant disables sharing.
     #[test]
     fn individual_withdrawal_remains_available_after_tenant_disable() {
