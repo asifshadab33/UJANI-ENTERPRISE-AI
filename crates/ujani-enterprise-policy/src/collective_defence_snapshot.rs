@@ -2,6 +2,8 @@
 //!
 //! This module defines deterministic bytes for a future storage/anchor adapter.
 //! It does not persist data, authenticate callers, or provide rollback protection.
+//! The envelope is a whole-authority snapshot, not a tenant-facing export; access
+//! control and tenant filtering remain the responsibility of the authenticated service.
 
 use crate::collective_defence_authority::{
     verify_audit_chain, ConsentAuditRecord, IndividualConsentRecord, TenantConsentRecord,
