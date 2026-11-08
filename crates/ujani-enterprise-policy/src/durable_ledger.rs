@@ -888,6 +888,7 @@ mod tests {
     struct MemoryAnchor {
         records: Mutex<HashMap<String, SnapshotAnchorRecord>>,
         reject_next: std::sync::atomic::AtomicBool,
+        lose_next_response_after_commit: std::sync::atomic::AtomicBool,
     }
 
     impl MonotonicSnapshotAnchor for MemoryAnchor {
@@ -925,6 +926,12 @@ mod tests {
                 return Ok(false);
             }
             records.insert(registry_id.to_string(), next);
+            if self
+                .lose_next_response_after_commit
+                .swap(false, std::sync::atomic::Ordering::SeqCst)
+            {
+                return Err("simulated lost compare-and-set response".into());
+            }
             Ok(true)
         }
     }
@@ -1012,6 +1019,40 @@ mod tests {
             DurableLedgerError::AnchorMismatch
         );
         assert_eq!(fs::read(&path).unwrap(), older);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn ambiguous_anchor_response_is_resolved_by_reading_back_committed_record() {
+        let path = temp_path("anchor-ambiguous-response");
+        let anchor = Arc::new(MemoryAnchor::default());
+        let ledger = open_anchored(&path, anchor.clone()).unwrap();
+        anchor
+            .lose_next_response_after_commit
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+
+        assert_eq!(
+            ledger
+                .admit_and_reserve_with_lease(
+                    &device(),
+                    &workload("job-ambiguous-anchor"),
+                    &context(),
+                    &policies(),
+                    &[],
+                    1_000,
+                    &[0x73u8; 32],
+                )
+                .unwrap(),
+            Admission::Accept
+        );
+
+        let committed = anchor.load("registry-test-a").unwrap().unwrap();
+        assert_eq!(committed.generation(), 2);
+        assert_eq!(
+            snapshot_sha256(&fs::read(&path).unwrap()),
+            committed.snapshot_sha256()
+        );
+        assert!(!append_suffix(&path, ".bak").exists());
         cleanup(&path);
     }
 
