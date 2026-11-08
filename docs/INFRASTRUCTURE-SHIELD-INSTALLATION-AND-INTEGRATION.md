@@ -114,3 +114,7 @@ Acceptance requires that UJANI remains functional with no security components in
 ## Current implementation status
 
 This document records a proposed design only. The current Enterprise README describes the repository as early prototype/pre-alpha and does not claim a production fleet control plane, security sensor, monitoring dashboard, or enforcement service. No integration described here should be represented as implemented until code, tests, installer behaviour, and release evidence demonstrate it.
+
+## Legal and customer deployment notice
+
+This is a proposed technical design, not a customer contract, SLA, certification, warranty, security guarantee or professional advice. Deployment decisions, lawful monitoring authority, third-party licence compliance, safety assessment, testing, backups and approvals remain the responsibility of the deploying organisation. Read [the UJANI Enterprise AI legal and operational notice](LEGAL-DISCLAIMER.md) and the applicable [GPLv3 licence](../LICENSE). The notice is informational, does not create a managed-service commitment, and cannot exclude rights or liabilities that applicable law does not permit to be excluded.
