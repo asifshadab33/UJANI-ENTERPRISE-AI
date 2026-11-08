@@ -197,9 +197,13 @@ def read_records(input_path, provider, tenant_id, provider_version, log_kind=Non
 
     output = []
     output_bytes = 0
+    input_bytes = 0
     try:
         with path.open("rb") as stream:
             for line_number, raw in enumerate(stream, start=1):
+                input_bytes += len(raw)
+                if input_bytes > MAX_INPUT_BYTES:
+                    raise ImportErrorSafe("input grew beyond the 256 MiB import limit")
                 if len(raw) > MAX_LINE_BYTES:
                     raise ImportErrorSafe(f"line {line_number}: exceeds the 1 MiB line limit")
                 if not raw.strip() or (provider == "zeek" and raw.lstrip().startswith(b"#")):
@@ -266,6 +270,17 @@ def main(argv=None):
         parser.error("--zeek-log-kind is required for Zeek imports")
     if args.provider == "suricata" and args.zeek_log_kind:
         parser.error("--zeek-log-kind is only valid with --provider zeek")
+    if args.output != "-":
+        source = Path(args.input)
+        destination = Path(args.output)
+        try:
+            same_path = source.resolve() == destination.resolve()
+            if source.exists() and destination.exists():
+                same_path = same_path or os.path.samefile(source, destination)
+        except OSError:
+            parser.error("input/output path relationship cannot be verified")
+        if same_path:
+            parser.error("output must not overwrite the input log")
     try:
         lines = read_records(args.input, args.provider, args.tenant_id,
                              args.provider_version, args.zeek_log_kind)
