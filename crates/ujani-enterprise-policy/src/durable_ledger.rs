@@ -469,41 +469,12 @@ fn rename_snapshot_path(
     }
     #[cfg(windows)]
     {
-        if !require_durability {
-            return fs::rename(from, to).map_err(DurableLedgerError::from);
+        if require_durability {
+            return Err(DurableLedgerError::Io(
+                "anchored snapshot durability is unavailable on Windows in this safe-code build; the external anchor was not advanced".into(),
+            ));
         }
-        use std::os::windows::ffi::OsStrExt;
-        let from_wide: Vec<u16> = from
-            .as_os_str()
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect();
-        let to_wide: Vec<u16> = to
-            .as_os_str()
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect();
-        const MOVEFILE_REPLACE_EXISTING: u32 = 0x1;
-        const MOVEFILE_WRITE_THROUGH: u32 = 0x8;
-        #[link(name = "Kernel32")]
-        extern "system" {
-            fn MoveFileExW(existing: *const u16, new_name: *const u16, flags: u32) -> i32;
-        }
-        // Windows does not support opening directories for FlushFileBuffers in
-        // the same way as Unix. MOVEFILE_WRITE_THROUGH is the platform-specific
-        // guarantee that the rename has been flushed before this call returns.
-        let moved = unsafe {
-            MoveFileExW(
-                from_wide.as_ptr(),
-                to_wide.as_ptr(),
-                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-            )
-        };
-        if moved == 0 {
-            Err(DurableLedgerError::from(std::io::Error::last_os_error()))
-        } else {
-            Ok(())
-        }
+        fs::rename(from, to).map_err(DurableLedgerError::from)
     }
     #[cfg(not(any(unix, windows)))]
     {
@@ -848,6 +819,15 @@ fn persist_snapshot(
     key: &[u8; 32],
     preserve_backup: bool,
 ) -> Result<(), DurableLedgerError> {
+    // This crate forbids unsafe code. Until a reviewed safe Windows durability
+    // adapter is available, do not write a candidate that could be anchored
+    // before its directory entry is known to be durable.
+    #[cfg(windows)]
+    if preserve_backup {
+        return Err(DurableLedgerError::Io(
+            "anchored snapshot writes are disabled on Windows until a safe durable-rename adapter is available".into(),
+        ));
+    }
     let temp = append_suffix(path, ".tmp");
     let backup = append_suffix(path, ".bak");
     if temp.exists() {
@@ -1058,6 +1038,22 @@ mod tests {
         cleanup(&path);
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn anchored_mode_fails_closed_without_safe_directory_durability_adapter() {
+        let path = temp_path("anchor-windows-fail-closed");
+        let anchor = Arc::new(MemoryAnchor::default());
+        let error = open_anchored(&path, anchor.clone()).unwrap_err();
+        assert!(matches!(
+            error,
+            DurableLedgerError::Io(message) if message.contains("Windows")
+        ));
+        assert!(anchor.load("registry-test-a").unwrap().is_none());
+        assert!(!path.exists());
+        cleanup(&path);
+    }
+
+    #[cfg(unix)]
     #[test]
     fn external_anchor_rejects_rollback_to_an_older_valid_hmac_snapshot() {
         let path = temp_path("anchor-rollback");
@@ -1097,6 +1093,7 @@ mod tests {
         cleanup(&path);
     }
 
+    #[cfg(unix)]
     #[test]
     fn ambiguous_anchor_response_is_resolved_by_reading_back_committed_record() {
         let path = temp_path("anchor-ambiguous-response");
@@ -1131,6 +1128,7 @@ mod tests {
         cleanup(&path);
     }
 
+    #[cfg(unix)]
     #[test]
     fn anchored_open_restores_only_a_backup_matching_the_external_digest() {
         let path = temp_path("anchor-backup");
@@ -1149,6 +1147,7 @@ mod tests {
         cleanup(&path);
     }
 
+    #[cfg(unix)]
     #[test]
     fn anchor_conflict_rolls_back_the_unanchored_local_candidate() {
         let path = temp_path("anchor-conflict");
