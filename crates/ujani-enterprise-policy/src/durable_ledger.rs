@@ -232,6 +232,15 @@ impl DurableLedger {
                     "anchored ledger parent must be an existing real directory".into(),
                 ));
             }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if metadata.permissions().mode() & 0o022 != 0 {
+                    return Err(DurableLedgerError::Io(
+                        "anchored ledger directory must not be group- or world-writable".into(),
+                    ));
+                }
+            }
             sync_ancestors(parent)?;
         } else {
             fs::create_dir_all(parent)?;
@@ -544,11 +553,39 @@ fn sync_parent_directory(path: &Path) -> Result<(), DurableLedgerError> {
 /// Restore the backup whose digest was already verified against the anchor.
 fn restore_anchored_backup(path: &Path, backup: &Path) -> Result<(), DurableLedgerError> {
     let temp = append_suffix(path, ".anchor-restore.tmp");
-    if temp.exists() {
-        fs::remove_file(&temp)?;
+    match fs::symlink_metadata(&temp) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            return Err(DurableLedgerError::Io(
+                "anchored restore temporary path must not be a symlink".into(),
+            ));
+        }
+        Ok(metadata) if metadata.is_file() => fs::remove_file(&temp)?,
+        Ok(_) => {
+            return Err(DurableLedgerError::Io(
+                "anchored restore temporary path must be a regular file".into(),
+            ));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
     }
-    fs::copy(backup, &temp)?;
-    OpenOptions::new().write(true).open(&temp)?.sync_all()?;
+    let backup_metadata = fs::symlink_metadata(backup)?;
+    if !backup_metadata.is_file() || backup_metadata.file_type().is_symlink() {
+        return Err(DurableLedgerError::Io(
+            "anchored backup must be a regular file".into(),
+        ));
+    }
+    let mut source = File::open(backup)?;
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut restore_file = options.open(&temp)?;
+    std::io::copy(&mut source, &mut restore_file)?;
+    restore_file.sync_all()?;
+    drop(restore_file);
     rename_snapshot_path(&temp, path, true)?;
     // The primary snapshot is now durable and matches the anchor. A stale backup
     // after a crash is harmless because the primary digest is checked first.
@@ -1070,18 +1107,36 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        std::env::temp_dir().join(format!(
-            "ujani-enterprise-{label}-{}-{nonce}.ledger",
+        let directory = std::env::temp_dir().join(format!(
+            "ujani-enterprise-{label}-{}-{nonce}",
             std::process::id()
-        ))
+        ));
+        fs::create_dir(&directory).expect("create private ledger test directory");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))
+                .expect("restrict ledger test directory permissions");
+        }
+        directory.join("ledger")
     }
 
     fn cleanup(path: &Path) {
-        for suffix in [".lock", ".tmp", ".bak", ".corrupt"] {
+        for suffix in [
+            ".lock",
+            ".tmp",
+            ".bak",
+            ".corrupt",
+            ".anchor-restore.tmp",
+            ".rollback-orphan",
+        ] {
             let candidate = append_suffix(path, suffix);
             let _ = fs::remove_file(candidate);
         }
         let _ = fs::remove_file(path);
+        if let Some(parent) = path.parent() {
+            let _ = fs::remove_dir(parent);
+        }
     }
 
     #[test]
@@ -1156,6 +1211,25 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn anchored_restore_rejects_symlinked_temporary_path() {
+        use std::os::unix::fs::symlink;
+        let path = temp_path("anchor-restore-symlink");
+        let backup = append_suffix(&path, ".bak");
+        let temp = append_suffix(&path, ".anchor-restore.tmp");
+        let target = path.with_extension("outside");
+        fs::write(&backup, b"verified backup").unwrap();
+        fs::write(&target, b"outside data").unwrap();
+        symlink(&target, &temp).unwrap();
+
+        assert!(restore_anchored_backup(&path, &backup).is_err());
+        assert_eq!(fs::read(&target).unwrap(), b"outside data");
+        assert_eq!(fs::read(&backup).unwrap(), b"verified backup");
+        cleanup(&path);
+        let _ = fs::remove_file(target);
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn anchored_open_fails_before_advancing_anchor_when_ancestor_sync_fails() {
         let path = temp_path("anchor-ancestor-sync-failure");
         let anchor = Arc::new(MemoryAnchor::default());
@@ -1189,6 +1263,7 @@ mod tests {
         let result = open_anchored(&ledger_path, Arc::new(MemoryAnchor::default()));
         assert!(matches!(result, Err(DurableLedgerError::Io(_))));
         assert!(!missing_parent.exists());
+        cleanup(&path);
     }
 
     #[cfg(unix)]
