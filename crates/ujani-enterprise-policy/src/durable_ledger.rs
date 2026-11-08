@@ -158,9 +158,13 @@ impl DurableLedger {
     /// `registry_id` must be unique for this ledger within the provider namespace;
     /// do not reuse the identifier used by the device-trust registry or another
     /// ledger sharing the same anchor, because their records would collide. The
-    /// parent directory must already exist as a real directory; anchored mode does
-    /// not create directory trees because each new ancestor would need a durable
-    /// parent sync before the external anchor could safely advance.
+    /// parent directory must already exist as a real, non-group/world-writable
+    /// directory; anchored mode canonicalizes and syncs its ancestor chain.
+    ///
+    /// Callers sharing a ledger must also hold an external per-ledger coordinator
+    /// from before a potentially ambiguous operation until reconciliation completes.
+    /// After `AnchorUnavailable`, drop/reopen and reconcile before starting another
+    /// operation; the internal OS lock covers one transaction, not that full interval.
     pub fn open_with_anchor(
         path: impl AsRef<Path>,
         registry_id: impl Into<String>,
