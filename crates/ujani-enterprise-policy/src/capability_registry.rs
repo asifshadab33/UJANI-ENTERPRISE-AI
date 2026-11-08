@@ -83,17 +83,17 @@ pub enum RegistryError {
 fn valid_identifier(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= MAX_IDENTIFIER_LEN
-        && value.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-')
-        })
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
 }
 
 fn valid_version(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 64
-        && value.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'+' | b'-' | b'_')
-        })
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'+' | b'-' | b'_'))
 }
 
 impl ResourceBudget {
@@ -174,10 +174,7 @@ impl CapabilityRegistry {
     }
 
     /// Registers metadata only; this does not authenticate or connect to a provider.
-    pub fn register(
-        &mut self,
-        descriptor: CapabilityDescriptor,
-    ) -> Result<(), RegistryError> {
+    pub fn register(&mut self, descriptor: CapabilityDescriptor) -> Result<(), RegistryError> {
         descriptor.validate_for_tenant(&self.tenant_id)?;
         let capability_id = descriptor.capability_id.clone();
         if self.capabilities.contains_key(&capability_id) {
