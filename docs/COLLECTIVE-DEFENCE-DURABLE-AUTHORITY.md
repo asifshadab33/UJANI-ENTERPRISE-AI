@@ -2,7 +2,7 @@
 
 ## Status
 
-Design specification for the next implementation phase. This document does not claim that durable consent storage, a production key provider, a control-plane service, or an event-ingestion endpoint exists. The current `collective_defence_consent` module remains a side-effect-free verification and authorization primitive.
+Design specification for the next implementation phase. Current `main` contains a side-effect-free `collective_defence_consent` signature-verification primitive and a `MemoryConsentAuthority` reference backend implementing typed tenant/individual records, generation compare-and-set, idempotent updates, and an append-only hash-linked audit chain under a process-local mutex. The reference backend is not durable, does not survive restart, is not cross-process linearizable, and is not rollback-resistant. A production database, external monotonic anchor, protected key provider, authenticated control-plane service, and event-ingestion endpoint do not yet exist.
 
 ## Security invariants
 
@@ -16,7 +16,7 @@ Design specification for the next implementation phase. This document does not c
 
 ## Authority records
 
-The first implementation should use explicit, versioned records rather than serializing Rust structs implicitly.
+The current reference backend defines the typed Rust records below. Persistent storage still needs explicit, versioned canonical encoding; do not serialize Rust structs implicitly or treat an in-memory hash representation as a durable wire format.
 
 - **TenantConsentRecord**: tenant ID, enabled state, monotonically increasing tenant generation, purpose, event schema version, retention ceiling, signing key ID, notice/policy version, issued/updated timestamps, expiry, and record schema version.
 - **IndividualConsentRecord**: tenant ID, principal ID, device ID, enabled state, monotonically increasing individual generation, tenant generation accepted by the user, purpose, notice version and SHA-256 digest, signing key ID, timestamps, expiry, and record schema version.
@@ -27,7 +27,7 @@ Identifiers must be validated and bounded. Unknown fields and unsupported schema
 
 ## Storage and anti-rollback contract
 
-Build the consent authority as a separate module over a narrow persistence interface. Do not silently reuse the device registry's local HMAC key or treat a local database as a rollback-resistant trust anchor.
+The code now defines the `ConsentAuthorityBackend` persistence contract and `MemoryConsentAuthority` reference implementation. The memory backend provides process-local atomicity for tests only; it does not satisfy restart persistence, cross-process serialization, or anti-rollback requirements. Build the production adapter over this narrow interface. Do not silently reuse the device registry's local HMAC key or treat a local database as a rollback-resistant trust anchor.
 
 The storage interface must provide:
 
@@ -90,8 +90,8 @@ The API must return a committed generation and audit event ID only after durable
 
 ## Delivery sequence
 
-1. Implement storage traits, canonical record encoding, and in-memory reference backend with deterministic tests.
-2. Implement crash-safe durable backend and external monotonic-anchor adapter behind injected interfaces.
+1. [x] Define the storage trait and in-memory reference backend with typed records, generation compare-and-set, idempotency, and hash-linked audit tests.
+2. [ ] Define canonical persistent record/snapshot encoding and implement a crash-safe durable backend plus external monotonic-anchor adapter behind injected interfaces.
 3. Add fault-injection, concurrency, restart, rollback, and revocation-race tests.
 4. Add authenticated control-plane endpoints and tenant-isolated RBAC only after the storage contract is reviewed.
 5. Add user/admin consent and withdrawal UI with the exact notice digest wired to the signed decision.
