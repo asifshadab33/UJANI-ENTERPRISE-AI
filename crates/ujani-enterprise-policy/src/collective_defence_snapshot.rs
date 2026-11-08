@@ -275,7 +275,8 @@ impl CanonicalConsentSnapshot {
         let mut idempotency_keys = BTreeSet::new();
         for record in &idempotency {
             if !valid_identifier(&record.tenant_id, MAX_IDENTIFIER_BYTES)
-                || !valid_identifier(&record.idempotency_key, MAX_IDENTIFIER_BYTES)
+                || record.idempotency_key.is_empty()
+                || record.idempotency_key.len() > MAX_IDENTIFIER_BYTES
                 || record.request_sha256.iter().all(|byte| *byte == 0)
                 || !idempotency_keys.insert((&record.tenant_id, &record.idempotency_key))
                 || audit_ids.get(&record.audit_event_id) != Some(&record.tenant_id.as_str())
@@ -406,6 +407,28 @@ mod tests {
         b.individuals.reverse();
         assert_eq!(a.canonical_bytes().unwrap(), b.canonical_bytes().unwrap());
         assert_eq!(a.sha256().unwrap(), b.sha256().unwrap());
+    }
+
+    #[test]
+    fn canonical_encoding_accepts_authority_idempotency_keys_with_spaces() {
+        let store = MemoryConsentAuthority::default();
+        let audit = store
+            .put_tenant(tenant(true, 1, 100, "tenant-a"), None, "request 1")
+            .unwrap();
+        let snapshot = CanonicalConsentSnapshot {
+            schema_version: CONSENT_SNAPSHOT_SCHEMA_VERSION,
+            snapshot_generation: 1,
+            tenants: vec![tenant(true, 1, 100, "tenant-a")],
+            individuals: vec![],
+            audit: vec![audit.clone()],
+            idempotency: vec![CanonicalIdempotencyRecord {
+                tenant_id: "tenant-a".into(),
+                idempotency_key: "request 1".into(),
+                request_sha256: [8; 32],
+                audit_event_id: audit.event_id,
+            }],
+        };
+        assert!(snapshot.canonical_bytes().is_ok());
     }
 
     #[test]
