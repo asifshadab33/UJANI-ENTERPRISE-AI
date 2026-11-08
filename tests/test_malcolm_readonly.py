@@ -160,6 +160,12 @@ class MalcolmReadOnlyAdapterTests(unittest.TestCase):
         result = fetch_status("https://malcolm.example", opener_factory=lambda ca: fake)
         self.assertEqual(result["status"], "healthy")
 
+    def test_fetch_json_rejects_non_http_schemes_before_opening(self):
+        fake = FakeOpener([])
+        with self.assertRaises(MalcolmAdapterError):
+            fetch_json(fake, "file:///etc/passwd", {})
+        self.assertEqual(fake.requests, [])
+
     def test_ping_mismatch_stops_before_other_endpoints(self):
         fake = FakeOpener([{"ping": "not-pong"}])
         with self.assertRaises(MalcolmAdapterError):
