@@ -62,7 +62,7 @@ def parse_json_line(raw, line_number):
             parse_constant=reject_constant,
             object_pairs_hook=reject_duplicate_keys,
         )
-    except (UnicodeDecodeError, json.JSONDecodeError, ImportErrorSafe, RecursionError) as exc:
+    except (UnicodeDecodeError, ValueError, ImportErrorSafe, RecursionError) as exc:
         raise ImportErrorSafe(f"line {line_number}: invalid JSON input ({type(exc).__name__})") from None
 
 
@@ -80,9 +80,13 @@ def timestamp_to_ms(value, provider):
     else:
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise ImportErrorSafe("Zeek ts must be a numeric Unix timestamp")
-        if not math.isfinite(float(value)) or value < 0:
+        try:
+            seconds = float(value)
+        except (OverflowError, ValueError):
+            raise ImportErrorSafe("invalid Zeek timestamp") from None
+        if not math.isfinite(seconds) or seconds < 0:
             raise ImportErrorSafe("invalid Zeek timestamp")
-        result = float(value) * 1000
+        result = seconds * 1000
     if not math.isfinite(result) or result < 0 or result > 9_007_199_254_740_991:
         raise ImportErrorSafe("timestamp is outside supported bounds")
     return int(result)
