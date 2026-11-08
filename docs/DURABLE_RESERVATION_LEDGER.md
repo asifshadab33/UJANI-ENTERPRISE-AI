@@ -28,7 +28,9 @@ In anchored mode, each transaction:
 4. Advances the external anchor by exactly one generation with compare-and-set.
 5. Deletes the rollback file only after the anchor confirms the new digest. If the anchor rejects the generation, the local candidate is rolled back. Ambiguous anchor responses are read back before deciding whether to roll back.
 
-Unanchored `open_with_integrity_keys` remains available for tests and local prototypes, but its HMAC still does **not** prevent rollback to an older valid snapshot. Existing unanchored files are rejected by `open_with_anchor`; migration requires a separately audited process that establishes the initial external anchor. The repository provides the contract and test adapter only—not a production KMS/control-plane anchor implementation.
+Unanchored `open_with_integrity_keys` remains available for tests and local prototypes, but its HMAC still does **not** prevent rollback to an older valid snapshot. Existing unanchored files are rejected by `open_with_anchor`; migration requires a separately audited process that establishes the initial external anchor. The repository provides the contract and test adapter only—not a production KMS/control-plane anchor implementation. Each ledger and the device-trust registry must use a distinct `registry_id` when sharing an anchor provider; reusing an identifier causes their records to collide and produces `AnchorMismatch`.
+
+The provider contract is synchronous. `load`, `compare_and_set`, and ambiguous-result read-back execute while the ledger holds both its in-process mutex and OS file lock, including for read-only snapshots. Providers must therefore enforce bounded timeouts. Before returning an error from `compare_and_set`, the provider must settle or fence the request's in-flight update so it cannot commit after the ledger has rolled back its candidate snapshot.
 
 ## Security properties and limits
 
