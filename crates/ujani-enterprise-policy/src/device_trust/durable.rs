@@ -35,19 +35,43 @@ impl SnapshotAnchorRecord {
             snapshot_sha256,
         })
     }
+    /// Returns the monotonic generation recorded by the anchor.
     pub fn generation(&self) -> u64 {
         self.generation
     }
+    /// Returns the SHA-256 digest pinned by the anchor record.
     pub fn snapshot_sha256(&self) -> [u8; 32] {
         self.snapshot_sha256
     }
 }
 
-/// External monotonic anchor contract. compare_and_set must atomically create
-/// generation 1 when expected_generation is None, or advance exactly one
-/// generation when it is Some(n). It must never accept a stale generation.
+/// External monotonic anchor contract.
+///
+/// `load` must be linearizable with `compare_and_set`: a load started after a
+/// completed compare-and-set must observe that record or a later generation;
+/// stale reads are not permitted. `compare_and_set` must atomically create
+/// generation 1 when `expected_generation` is `None`, or advance exactly one
+/// generation when it is `Some(n)`. It must never accept a stale generation.
+/// Implementations must
+/// enforce bounded timeouts for every call: the ledger invokes `load`,
+/// `compare_and_set`, and ambiguous-result read-back synchronously while holding
+/// both its in-process mutex and OS file lock, including for read-only snapshots.
+/// Before returning an error from `compare_and_set`, a provider must settle or
+/// fence every in-flight update for that request so it cannot commit later;
+/// otherwise the ledger cannot safely roll back its candidate snapshot. Each
+/// ledger and device-trust registry sharing a provider must use a distinct
+/// namespace identifier.
 pub trait MonotonicSnapshotAnchor: Send + Sync {
+    /// Reads the latest linearizable record for a unique ledger or registry namespace.
+    /// A completed compare-and-set must be visible to every subsequent load. Each load
+    /// must also act as a quiescence barrier: before returning, it must settle or fence
+    /// every earlier in-flight compare-and-set for this namespace, including requests
+    /// left pending by a crashed caller, so an old update cannot commit after recovery.
     fn load(&self, registry_id: &str) -> Result<Option<SnapshotAnchorRecord>, String>;
+    /// Atomically creates or advances the namespace record if its generation matches.
+    ///
+    /// Before returning `Err`, the provider must settle or fence the request so an
+    /// in-flight update cannot commit after the caller has rolled back local state.
     fn compare_and_set(
         &self,
         registry_id: &str,
@@ -110,12 +134,14 @@ pub struct DeviceTrustIntegrityKey {
     bytes: [u8; 32],
 }
 impl DeviceTrustIntegrityKey {
+    /// Creates a registry integrity key from protected key-provider material.
     pub fn new(key_id: impl Into<String>, bytes: [u8; 32]) -> Self {
         Self {
             key_id: key_id.into(),
             bytes,
         }
     }
+    /// Returns the non-secret identifier associated with this key.
     pub fn key_id(&self) -> &str {
         &self.key_id
     }
@@ -270,6 +296,7 @@ impl DurableDeviceRegistry {
         })
     }
 
+    /// Returns the number of enrolled device records in the durable registry.
     pub fn device_count(&self) -> Result<usize, DurableDeviceTrustError> {
         self.transact(|registry| Ok(registry.devices.len()))
     }
