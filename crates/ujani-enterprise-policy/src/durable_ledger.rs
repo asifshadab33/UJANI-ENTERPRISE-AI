@@ -352,21 +352,34 @@ impl DurableLedger {
             return Err(DurableLedgerError::CapacityExceeded);
         }
         // Read-only transactions do not advance the external monotonic generation.
-        if anchor_record.as_ref().is_some_and(|record| record.snapshot_sha256() == snapshot_sha256(&bytes)) {
+        if anchor_record
+            .as_ref()
+            .is_some_and(|record| record.snapshot_sha256() == snapshot_sha256(&bytes))
+        {
             return Ok(result);
         }
 
         if let (Some(anchor), Some(namespace)) = (&self.anchor, &self.anchor_namespace) {
-            persist_snapshot(&self.path, &ledger, &self.active_key_id, &active_key.key, true)?;
+            persist_snapshot(
+                &self.path,
+                &ledger,
+                &self.active_key_id,
+                &active_key.key,
+                true,
+            )?;
             let expected_generation = anchor_record.as_ref().map(SnapshotAnchorRecord::generation);
-            let generation = expected_generation.unwrap_or(0).checked_add(1)
+            let generation = expected_generation
+                .unwrap_or(0)
+                .checked_add(1)
                 .ok_or(DurableLedgerError::AnchorGenerationExhausted)?;
             let next = SnapshotAnchorRecord::new(generation, snapshot_sha256(&bytes))
                 .ok_or(DurableLedgerError::AnchorGenerationExhausted)?;
             match anchor.compare_and_set(namespace, expected_generation, next.clone()) {
                 Ok(true) => {
                     let backup = append_suffix(&self.path, ".bak");
-                    if backup.exists() { let _ = fs::remove_file(backup); }
+                    if backup.exists() {
+                        let _ = fs::remove_file(backup);
+                    }
                     sync_parent_directory(&self.path);
                 }
                 Ok(false) => {
@@ -379,7 +392,9 @@ impl DurableLedger {
                     match anchor.load(namespace) {
                         Ok(Some(observed)) if observed == next => {
                             let backup = append_suffix(&self.path, ".bak");
-                            if backup.exists() { let _ = fs::remove_file(backup); }
+                            if backup.exists() {
+                                let _ = fs::remove_file(backup);
+                            }
                             sync_parent_directory(&self.path);
                         }
                         Ok(_) => {
@@ -395,7 +410,13 @@ impl DurableLedger {
                 }
             }
         } else {
-            persist_snapshot(&self.path, &ledger, &self.active_key_id, &active_key.key, false)?;
+            persist_snapshot(
+                &self.path,
+                &ledger,
+                &self.active_key_id,
+                &active_key.key,
+                false,
+            )?;
         }
         Ok(result)
     }
@@ -407,8 +428,13 @@ fn snapshot_sha256(bytes: &[u8]) -> [u8; 32] {
 }
 
 fn sync_parent_directory(path: &Path) {
-    if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
-        if let Ok(directory) = File::open(parent) { let _ = directory.sync_all(); }
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        if let Ok(directory) = File::open(parent) {
+            let _ = directory.sync_all();
+        }
     }
 }
 
@@ -436,7 +462,9 @@ fn restore_previous_snapshot(path: &Path) -> Result<(), DurableLedgerError> {
     if backup.exists() {
         restore_anchored_backup(path, &backup)
     } else {
-        if path.exists() { fs::remove_file(path)?; }
+        if path.exists() {
+            fs::remove_file(path)?;
+        }
         sync_parent_directory(path);
         Ok(())
     }
@@ -1002,15 +1030,17 @@ mod tests {
             .reject_next
             .store(true, std::sync::atomic::Ordering::SeqCst);
         assert_eq!(
-            ledger.admit_and_reserve_with_lease(
-                &device(),
-                &workload("job-conflict"),
-                &context(),
-                &policies(),
-                &[],
-                1_000,
-                &[0x72u8; 32],
-            ).unwrap_err(),
+            ledger
+                .admit_and_reserve_with_lease(
+                    &device(),
+                    &workload("job-conflict"),
+                    &context(),
+                    &policies(),
+                    &[],
+                    1_000,
+                    &[0x72u8; 32],
+                )
+                .unwrap_err(),
             DurableLedgerError::AnchorConflict
         );
         assert_eq!(fs::read(&path).unwrap(), committed);
