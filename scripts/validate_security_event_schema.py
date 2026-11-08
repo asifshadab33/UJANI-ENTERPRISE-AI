@@ -7,6 +7,7 @@ weakening without adding a runtime dependency to the Rust policy crate.
 """
 import json
 import math
+import random
 import re
 import sys
 import uuid
@@ -168,6 +169,78 @@ def reject_duplicate_json_keys(pairs):
     return result
 
 
+def set_nested_value(document, dotted_path, value):
+    """Set a nested event property for deterministic schema mutation tests."""
+    parts = dotted_path.split(".")
+    target = document
+    for part in parts[:-1]:
+        target = target[part]
+    target[parts[-1]] = value
+
+
+def run_deterministic_property_checks(schema):
+    """Exercise numeric boundaries, generated values, enums, and JSON type edges."""
+    rng = random.Random(20261108)
+    numeric_fields = (
+        ("sequence", 1, 9007199254740991, True),
+        ("evidence.confidence", 0.0, 1.0, False),
+        ("evidence.count", 0, 1000000, True),
+        ("evidence.window_seconds", 1, 86400, True),
+    )
+    checks = 0
+    for dotted_path, lower, upper, integer in numeric_fields:
+        for boundary in (lower, upper):
+            candidate = sample_event()
+            set_nested_value(candidate, dotted_path, boundary)
+            if validate(candidate, schema):
+                raise SystemExit(f"schema rejected valid boundary for {dotted_path}: {boundary}")
+            checks += 1
+        for invalid in (lower - 1, upper + 1):
+            candidate = sample_event()
+            set_nested_value(candidate, dotted_path, invalid)
+            if not validate(candidate, schema):
+                raise SystemExit(f"schema accepted out-of-range value for {dotted_path}: {invalid}")
+            checks += 1
+        for _ in range(64):
+            if integer:
+                value = rng.randint(lower, upper)
+            else:
+                value = rng.uniform(lower, upper)
+            candidate = sample_event()
+            set_nested_value(candidate, dotted_path, value)
+            if validate(candidate, schema):
+                raise SystemExit(f"schema rejected generated in-range value for {dotted_path}")
+            checks += 1
+
+    for dotted_path in ("sequence", "evidence.confidence", "evidence.count", "evidence.window_seconds"):
+        candidate = sample_event()
+        set_nested_value(candidate, dotted_path, True)
+        if not validate(candidate, schema):
+            raise SystemExit(f"schema accepted boolean as numeric field: {dotted_path}")
+        checks += 1
+
+    def visit(node, prefix=""):
+        for name, child in node.get("properties", {}).items():
+            path = f"{prefix}.{name}" if prefix else name
+            if "enum" in child:
+                yield path, child["enum"]
+            yield from visit(child, path)
+
+    for dotted_path, allowed_values in visit(schema):
+        for allowed in allowed_values:
+            candidate = sample_event()
+            set_nested_value(candidate, dotted_path, allowed)
+            if validate(candidate, schema):
+                raise SystemExit(f"schema rejected declared enum value for {dotted_path}: {allowed}")
+            checks += 1
+        candidate = sample_event()
+        set_nested_value(candidate, dotted_path, "__not_a_declared_value__")
+        if not validate(candidate, schema):
+            raise SystemExit(f"schema accepted undeclared enum value for {dotted_path}")
+        checks += 1
+    return checks
+
+
 def main():
     """Run valid, invalid, format, privacy, and nested-schema contract fixtures."""
     try:
@@ -207,6 +280,7 @@ def main():
             raise SystemExit(f"schema pattern rejected valid {label} fixture")
         if re.search(pattern, valid_value + chr(10)) is not None:
             raise SystemExit(f"schema pattern accepted trailing newline for {label}")
+    property_checks = run_deterministic_property_checks(schema)
     event = sample_event()
     failures = validate(event, schema)
     if failures:
@@ -289,7 +363,7 @@ def main():
         raise SystemExit("privacy/remote-execution fields entered the event contract")
     if schema.get("additionalProperties") is not False:
         raise SystemExit("root event schema must reject unknown fields")
-    print(f"security-event-v1 schema contract checks passed ({len(cases) + 1} fixtures)")
+    print(f"security-event-v1 schema contract checks passed ({len(cases) + 1} fixtures, {property_checks} deterministic property checks)")
 
 if __name__ == "__main__":
     main()
