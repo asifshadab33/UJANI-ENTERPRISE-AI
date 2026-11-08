@@ -192,12 +192,24 @@ def normalize_zeek(obj, tenant_id, provider_version, log_kind):
 
 def read_records(input_path, provider, tenant_id, provider_version, log_kind=None):
     path = Path(input_path)
-    no_follow = getattr(os, "O_NOFOLLOW", None)
-    non_blocking = getattr(os, "O_NONBLOCK", None)
-    if no_follow is None or non_blocking is None:
-        raise ImportErrorSafe("this platform cannot safely open network-log inputs without following links")
-    flags = os.O_RDONLY | no_follow | non_blocking | getattr(os, "O_CLOEXEC", 0)
     descriptor = None
+    if os.name == "nt":
+        # Windows does not expose O_NOFOLLOW. Reject reparse points with lstat,
+        # then compare the opened handle's file identity to close the swap race.
+        try:
+            path_info = os.lstat(path)
+        except OSError:
+            raise ImportErrorSafe("input file could not be inspected") from None
+        reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+        if stat.S_ISLNK(path_info.st_mode) or (getattr(path_info, "st_file_attributes", 0) & reparse_flag):
+            raise ImportErrorSafe("input must be a regular file, not a symlink or reparse point")
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOINHERIT", 0)
+    else:
+        no_follow = getattr(os, "O_NOFOLLOW", None)
+        non_blocking = getattr(os, "O_NONBLOCK", None)
+        if no_follow is None or non_blocking is None:
+            raise ImportErrorSafe("this platform cannot safely open network-log inputs without following links")
+        flags = os.O_RDONLY | no_follow | non_blocking | getattr(os, "O_CLOEXEC", 0)
     output = []
     output_bytes = 0
     input_bytes = 0
@@ -206,6 +218,11 @@ def read_records(input_path, provider, tenant_id, provider_version, log_kind=Non
         info = os.fstat(descriptor)
         if not stat.S_ISREG(info.st_mode):
             raise ImportErrorSafe("input must be a regular file, not a symlink")
+        if os.name == "nt" and (
+            not path_info.st_ino or not info.st_ino
+            or (path_info.st_dev, path_info.st_ino) != (info.st_dev, info.st_ino)
+        ):
+            raise ImportErrorSafe("input path changed during safe open or file identity is unavailable")
         if info.st_size > MAX_INPUT_BYTES:
             raise ImportErrorSafe("input file exceeds the 256 MiB import limit")
         stream = os.fdopen(descriptor, "rb")
