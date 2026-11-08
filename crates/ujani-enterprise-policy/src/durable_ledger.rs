@@ -473,8 +473,16 @@ fn rename_snapshot_path(
             return fs::rename(from, to).map_err(DurableLedgerError::from);
         }
         use std::os::windows::ffi::OsStrExt;
-        let from_wide: Vec<u16> = from.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
-        let to_wide: Vec<u16> = to.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+        let from_wide: Vec<u16> = from
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let to_wide: Vec<u16> = to
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
         const MOVEFILE_REPLACE_EXISTING: u32 = 0x1;
         const MOVEFILE_WRITE_THROUGH: u32 = 0x8;
         #[link(name = "Kernel32")]
