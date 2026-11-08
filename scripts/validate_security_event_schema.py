@@ -6,6 +6,7 @@ published schema remains normative; this test catches accidental contract
 weakening without adding a runtime dependency to the Rust policy crate.
 """
 import json
+import math
 import re
 import sys
 import uuid
@@ -99,7 +100,12 @@ def validate(value, schema, path="$"):
                 except ValueError:
                     errors.append(f"{path}: invalid RFC 3339 date-time")
     if isinstance(value, (int, float)) and not isinstance(value, bool):
-        if value < schema.get("minimum", float("-inf")) or value > schema.get("maximum", float("inf")):
+        # JSON Schema numbers are finite. Python's json module accepts NaN and
+        # Infinity by default, so reject them explicitly rather than allowing
+        # NaN to bypass both the minimum and maximum comparisons.
+        if not math.isfinite(value):
+            errors.append(f"{path}: numeric value must be finite")
+        elif value < schema.get("minimum", float("-inf")) or value > schema.get("maximum", float("inf")):
             errors.append(f"{path}: numeric value out of bounds")
     if isinstance(value, dict):
         missing = set(schema.get("required", [])) - set(value)
@@ -147,9 +153,20 @@ def collect_property_names(schema):
     return names
 
 
+def reject_non_finite_json_constant(value):
+    """Reject Python json extensions that are not valid JSON numbers."""
+    raise ValueError(f"non-finite JSON numeric constant is not permitted: {value}")
+
+
 def main():
     """Run valid, invalid, format, privacy, and nested-schema contract fixtures."""
-    schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+    try:
+        schema = json.loads(
+            SCHEMA_PATH.read_text(encoding="utf-8"),
+            parse_constant=reject_non_finite_json_constant,
+        )
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise SystemExit(f"invalid JSON Schema document: {exc}") from exc
     ensure_supported_keywords(schema)
     # JSON Schema pattern uses search semantics; exercise each anchored pattern
     # directly so a final newline cannot slip past the schema's end assertion.
@@ -206,6 +223,10 @@ def main():
     cases.append(("sensor identifier trailing newline", newline_sensor))
     bad_confidence = sample_event(); bad_confidence["evidence"]["confidence"] = 1.5
     cases.append(("out-of-range confidence", bad_confidence))
+    nan_confidence = sample_event(); nan_confidence["evidence"]["confidence"] = float("nan")
+    cases.append(("non-finite NaN confidence", nan_confidence))
+    infinite_confidence = sample_event(); infinite_confidence["evidence"]["confidence"] = float("inf")
+    cases.append(("infinite confidence", infinite_confidence))
     bad_sequence = sample_event(); bad_sequence["sequence"] = 0
     cases.append(("zero sequence", bad_sequence))
     missing_source = sample_event(); del missing_source["source"]["sensor_id"]
@@ -233,6 +254,12 @@ def main():
     for label, candidate in cases:
         if not validate(candidate, schema):
             raise SystemExit(f"invalid fixture unexpectedly accepted: {label}")
+    for token in ("NaN", "Infinity", "-Infinity"):
+        try:
+            json.loads(token, parse_constant=reject_non_finite_json_constant)
+        except ValueError:
+            continue
+        raise SystemExit(f"non-standard JSON numeric constant unexpectedly accepted: {token}")
     forbidden = {
         "file_contents", "document_contents", "credentials", "token", "raw_command",
         "command", "command_line", "file_path", "memory_dump", "conversation",
