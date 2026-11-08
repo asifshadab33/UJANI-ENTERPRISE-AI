@@ -220,7 +220,7 @@ impl DurableLedger {
             return Err(DurableLedgerError::InvalidRecord);
         }
 
-        let path = path.as_ref().to_path_buf();
+        let mut path = path.as_ref().to_path_buf();
         let anchored = anchor.is_some();
         let parent = path
             .parent()
