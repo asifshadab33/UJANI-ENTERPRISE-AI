@@ -182,3 +182,10 @@ Security-sensitive changes require threat-model updates and review. Production c
 ## 10. Current implementation status
 
 This document is an architecture proposal only. The existing Enterprise repository contains policy and storage prototypes, not this production orchestration runtime. Registry, adapters, event ingestion, correlation, workflow execution, unified dashboard and production approval service remain implementation work. Do not mark a milestone complete until code, automated tests and required review evidence are present.
+
+
+## 10. Prototype implementation status (8 November 2026)
+
+The current Enterprise policy crate contains an initial in-memory tenant-scoped capability registry and a versioned read-only connector/evidence contract. The registry validates descriptor bounds and tenant binding, tracks provider health separately, and exposes only healthy read-only/preview capabilities for routing. State-changing capability descriptors are rejected by default. The connector contract bounds request filters, pagination, evidence fields and cursors; validates tenant/provider provenance, duplicate record IDs and future timestamps; and labels stale evidence rather than presenting it as current.
+
+These are local policy and contract primitives only. They do not authenticate callers or providers, establish network connections, discover installed tools, store events durably, enforce timeouts in a host runtime, provide a dashboard, or invoke any external solution. See [Connector Integration Status](CONNECTOR-INTEGRATION-STATUS.md) for the planned Suricata, Zeek, Malcolm, firewall and vulnerability-intelligence integration sequence and explicit safety gates.
