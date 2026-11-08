@@ -143,7 +143,9 @@ impl CapabilityDescriptor {
         if !self.resource_budget.is_valid() {
             return Err(RegistryError::InvalidResourceBudget);
         }
-        if self.supports_offline && self.requires_external_service {
+        if self.supports_offline
+            && (self.requires_external_service || self.requires_network || self.external_data_egress)
+        {
             return Err(RegistryError::OfflineRequiresExternalService);
         }
         if self.operation == OperationClass::StateChanging {
