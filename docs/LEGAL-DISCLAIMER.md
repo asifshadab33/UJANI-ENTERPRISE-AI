@@ -1,6 +1,6 @@
 # UJANI Enterprise AI — legal and operational notice
 
-**Project status:** open-source pre-alpha software. This notice is informational and must be reviewed by qualified counsel for the jurisdictions and distribution model in which the project is used. It is not legal advice and does not replace the applicable open-source licence.
+**Project status:** open-source pre-alpha software. **Do not deploy this pre-alpha software to production infrastructure or employee endpoints, regardless of testing or professional review.** This notice is informational and must be reviewed by qualified counsel for the jurisdictions and distribution model in which the project is used. It is not legal advice and does not replace the applicable open-source licence.
 
 ## No warranty; no service commitment
 
