@@ -53,9 +53,9 @@ Prefer native provider scheduling/workflow features where they are sufficient. U
 
 ### External software evaluation
 
-- **DailyOS** (MIT, early beta) is a useful local-first reference for daily planning and source-linked commitments. Evaluate only as an optional bridge/reference; do not transplant its single-user assumptions into the Enterprise control plane. Confirm provider coverage, security, authentication, data residency, maintenance and dependency/licence fit.
-- **Open Assistant** is published under BSL 1.1 and is not a default redistribution/reuse choice without legal review.
-- **n8n** uses a Sustainable Use License; it may be a customer-operated external system, but embedded/hosted/redistributed use needs licence review.
+- **[DailyOS](https://github.com/stadimeti19/DailyOS)** (MIT, early beta) is a useful local-first reference. Its repository currently marks Gmail and Google Calendar integrations as implemented but warns that live-account integration is not yet fully validated; weekday morning schedules require an explicit foreground worker, and native OS keychain support/additional providers remain planned. Evaluate it only as an optional bridge/reference; do not transplant its single-user assumptions into the Enterprise control plane.
+- **[Open Assistant](https://open-assistant.org/)** is published under BSL 1.1; commercial reuse or distribution needs a separate licence agreement. It may be recommended as an independently installed product only after the customer's own licence and data-handling review.
+- **[n8n](https://n8n.io/)** uses a Sustainable Use License. It may be suitable as an independently operated customer workflow system in some configurations, but customer-facing workflow building/configuration through an embedded UI, API, MCP or agent requires a commercial licence under its official FAQ. Do not bundle, host or expose workflow authoring from UJANI without written licence clearance.
 - Prefer documented provider APIs, CalDAV and narrowly scoped MCP contracts. A connector must be independently disableable and must not bypass tenant policy.
 
 Third-party availability, licensing and provider API support must be rechecked before a production integration. A product recommendation does not imply UJANI has installed, authenticated or enabled it.
