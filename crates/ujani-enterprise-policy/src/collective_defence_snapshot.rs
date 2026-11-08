@@ -26,6 +26,7 @@ const MAX_ACTION_BYTES: usize = 64;
 /// Canonical idempotency outcome reference. The audit record itself is stored once
 /// in the audit sequence; this record binds a tenant-scoped retry key to its
 /// request digest and committed audit event.
+/// Canonical record binding a tenant-scoped idempotency key to its request digest and audit event.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CanonicalIdempotencyRecord {
     pub tenant_id: String,
@@ -38,6 +39,7 @@ pub struct CanonicalIdempotencyRecord {
 ///
 /// Records are sorted by their stable scope keys during encoding. Audit records
 /// remain in sequence order because their hash links are order-dependent.
+/// Deterministic, versioned snapshot of tenant consent, individual consent, audit, and idempotency state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CanonicalConsentSnapshot {
     pub schema_version: u16,
@@ -49,6 +51,7 @@ pub struct CanonicalConsentSnapshot {
 }
 
 /// Fail-closed canonical encoding errors.
+/// Validation failures that prevent a consent snapshot from being canonically encoded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SnapshotEncodingError {
     UnsupportedVersion,
