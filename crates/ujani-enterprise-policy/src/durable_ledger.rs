@@ -404,7 +404,7 @@ impl DurableLedger {
                     if backup.exists() {
                         let _ = fs::remove_file(backup);
                     }
-                    sync_parent_directory(&self.path);
+                    let _ = sync_parent_directory(&self.path);
                 }
                 Ok(false) => {
                     restore_previous_snapshot(&self.path)?;
@@ -460,10 +460,7 @@ fn rename_snapshot_path(
     {
         fs::rename(from, to)?;
         if require_durability {
-            let parent = to.parent().filter(|parent| !parent.as_os_str().is_empty());
-            if let Some(parent) = parent {
-                File::open(parent)?.sync_all()?;
-            }
+            sync_parent_directory(to)?;
         }
         Ok(())
     }
@@ -487,15 +484,14 @@ fn rename_snapshot_path(
     }
 }
 
-fn sync_parent_directory(path: &Path) {
-    if let Some(parent) = path
+/// Syncs the directory entry containing a snapshot, including paths relative to the current directory.
+fn sync_parent_directory(path: &Path) -> Result<(), DurableLedgerError> {
+    let parent = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
-    {
-        if let Ok(directory) = File::open(parent) {
-            let _ = directory.sync_all();
-        }
-    }
+        .unwrap_or_else(|| Path::new("."));
+    File::open(parent)?.sync_all()?;
+    Ok(())
 }
 
 /// Restore the backup whose digest was already verified against the anchor.
@@ -510,7 +506,7 @@ fn restore_anchored_backup(path: &Path, backup: &Path) -> Result<(), DurableLedg
     // The primary snapshot is now durable and matches the anchor. A stale backup
     // after a crash is harmless because the primary digest is checked first.
     let _ = fs::remove_file(backup);
-    sync_parent_directory(path);
+    sync_parent_directory(path)?;
     Ok(())
 }
 
@@ -860,8 +856,12 @@ fn persist_snapshot(
         }
         return Err(error);
     }
-    if !preserve_backup {
-        sync_parent_directory(path);
+    if preserve_backup {
+        // The caller advances the external monotonic anchor only after this succeeds.
+        sync_parent_directory(path)?;
+    } else {
+        // Unanchored operation retains best-effort durability behavior.
+        let _ = sync_parent_directory(path);
     }
     if !preserve_backup && backup.exists() {
         let _ = fs::remove_file(backup);
