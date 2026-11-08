@@ -63,7 +63,10 @@ impl SnapshotAnchorRecord {
 /// namespace identifier.
 pub trait MonotonicSnapshotAnchor: Send + Sync {
     /// Reads the latest linearizable record for a unique ledger or registry namespace.
-    /// A completed compare-and-set must be visible to every subsequent load.
+    /// A completed compare-and-set must be visible to every subsequent load. Each load
+    /// must also act as a quiescence barrier: before returning, it must settle or fence
+    /// every earlier in-flight compare-and-set for this namespace, including requests
+    /// left pending by a crashed caller, so an old update cannot commit after recovery.
     fn load(&self, registry_id: &str) -> Result<Option<SnapshotAnchorRecord>, String>;
     /// Atomically creates or advances the namespace record if its generation matches.
     ///
