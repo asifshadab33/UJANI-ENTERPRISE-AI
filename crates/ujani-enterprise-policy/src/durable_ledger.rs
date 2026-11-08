@@ -1211,6 +1211,19 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn anchored_open_rejects_group_or_world_writable_directory() {
+        use std::os::unix::fs::PermissionsExt;
+        let path = temp_path("anchor-insecure-directory");
+        let parent = path.parent().unwrap();
+        fs::set_permissions(parent, fs::Permissions::from_mode(0o777)).unwrap();
+        let result = open_anchored(&path, Arc::new(MemoryAnchor::default()));
+        assert!(matches!(result, Err(DurableLedgerError::Io(_))));
+        fs::set_permissions(parent, fs::Permissions::from_mode(0o700)).unwrap();
+        cleanup(&path);
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn anchored_restore_rejects_symlinked_temporary_path() {
         use std::os::unix::fs::symlink;
         let path = temp_path("anchor-restore-symlink");
