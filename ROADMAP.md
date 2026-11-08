@@ -98,6 +98,7 @@ See [energy-aware distributed compute](docs/ENERGY-AWARE-DISTRIBUTED-COMPUTE.md)
 - [x] Define a versioned, privacy-minimised endpoint security event schema (v1).
 - [x] Document authentication, replay protection, tenant isolation, retention, poisoning resistance and read-only response boundaries.
 - [x] Add dependency-free schema contract regression checks to CI (valid/invalid fixtures, strict unknown-field rejection and privacy/response-field guardrails).
+- [x] Add deterministic property checks to the CI validator for numeric boundaries, seeded in-range values, boolean-vs-number typing and every declared enum value; this supplements but does not replace full JSON Schema conformance.
 - [x] Add an in-memory Collective Defence consent-authority reference backend with typed records, tenant/individual generation CAS, idempotent decisions and a hash-linked audit chain; reference-only, not durable or rollback-resistant.
 - [ ] Add full JSON Schema conformance and fuzz/property tests in the policy crate.
 - [ ] Implement an opt-in read-only sensor prototype with local bounded queue; no remote response.
