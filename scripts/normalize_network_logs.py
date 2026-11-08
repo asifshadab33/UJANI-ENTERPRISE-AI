@@ -241,7 +241,7 @@ def read_records(input_path, provider, tenant_id, provider_version, log_kind=Non
     return output
 
 def write_output(lines, output_path):
-    \"\"\"Atomically replace output; the symlink precheck is advisory, while os.replace replaces the directory entry rather than following it. The new file keeps the temporary file's restrictive 0600 permissions.\"\"\"
+    """Atomically replace output; the symlink precheck is advisory, while os.replace replaces the directory entry rather than following it. The new file keeps the temporary file's restrictive 0600 permissions."""
     payload = ("\n".join(lines) + ("\n" if lines else "")).encode("utf-8")
     if output_path == "-":
         sys.stdout.buffer.write(payload)
