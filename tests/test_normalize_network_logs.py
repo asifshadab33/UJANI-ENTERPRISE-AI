@@ -8,7 +8,9 @@ from scripts.normalize_network_logs import (
     ImportErrorSafe,
     normalize_suricata,
     normalize_zeek,
+    parse_json_line,
     read_records,
+    timestamp_to_ms,
     write_output,
 )
 
@@ -59,6 +61,15 @@ class NetworkLogNormalizerTests(unittest.TestCase):
         self.assertEqual(item["fields"]["id.orig_h"], "10.0.0.1")
         self.assertNotIn("password", item["fields"])
         self.assertNotIn("payload", item["fields"])
+
+    def test_oversized_json_integer_is_reported_as_safe_import_error(self):
+        raw = (b'{"timestamp":"2026-11-08T10:00:00Z","event_type":"alert","value":' + b"9" * 5000 + b"}\\n")
+        with self.assertRaises(ImportErrorSafe):
+            parse_json_line(raw, 1)
+
+    def test_zeek_timestamp_integer_overflow_is_reported_safely(self):
+        with self.assertRaises(ImportErrorSafe):
+            timestamp_to_ms(int("9" * 400), "zeek")
 
     def test_zeek_requires_explicit_log_kind(self):
         with self.assertRaises(ImportErrorSafe):
