@@ -835,6 +835,52 @@ mod tests {
         )
     }
 
+    #[derive(Default)]
+    struct MemoryAnchor {
+        records: Mutex<HashMap<String, SnapshotAnchorRecord>>,
+        reject_next: std::sync::atomic::AtomicBool,
+    }
+
+    impl MonotonicSnapshotAnchor for MemoryAnchor {
+        fn load(&self, registry_id: &str) -> Result<Option<SnapshotAnchorRecord>, String> {
+            Ok(self.records.lock().map_err(|_| "anchor lock poisoned".to_string())?
+                .get(registry_id).cloned())
+        }
+
+        fn compare_and_set(
+            &self,
+            registry_id: &str,
+            expected_generation: Option<u64>,
+            next: SnapshotAnchorRecord,
+        ) -> Result<bool, String> {
+            if self.reject_next.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                return Ok(false);
+            }
+            let mut records = self.records.lock().map_err(|_| "anchor lock poisoned".to_string())?;
+            let current = records.get(registry_id).map(SnapshotAnchorRecord::generation);
+            if current != expected_generation
+                || next.generation() != expected_generation.unwrap_or(0).saturating_add(1)
+            {
+                return Ok(false);
+            }
+            records.insert(registry_id.to_string(), next);
+            Ok(true)
+        }
+    }
+
+    fn open_anchored(
+        path: &Path,
+        anchor: Arc<dyn MonotonicSnapshotAnchor>,
+    ) -> Result<DurableLedger, DurableLedgerError> {
+        DurableLedger::open_with_anchor(
+            path,
+            "registry-test-a",
+            "test-v1",
+            vec![integrity_key("test-v1", 0xA5)],
+            anchor,
+        )
+    }
+
     fn temp_path(label: &str) -> PathBuf {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -852,6 +898,59 @@ mod tests {
             let _ = fs::remove_file(candidate);
         }
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn external_anchor_rejects_rollback_to_an_older_valid_hmac_snapshot() {
+        let path = temp_path("anchor-rollback");
+        let anchor = Arc::new(MemoryAnchor::default());
+        let ledger = open_anchored(&path, anchor.clone()).unwrap();
+        let older = fs::read(&path).unwrap();
+        assert_eq!(anchor.load("registry-test-a").unwrap().unwrap().generation(), 1);
+        assert_eq!(
+            ledger.admit_and_reserve_with_lease(
+                &device(), &workload("job-anchored"), &context(), &policies(), &[],
+                1_000, &[0x71u8; 32],
+            ).unwrap(),
+            Admission::Accept
+        );
+        let current = fs::read(&path).unwrap();
+        assert_ne!(older, current);
+        fs::write(&path, &older).unwrap();
+        assert_eq!(ledger.snapshot().unwrap_err(), DurableLedgerError::AnchorMismatch);
+        assert_eq!(fs::read(&path).unwrap(), older);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn anchored_open_restores_only_a_backup_matching_the_external_digest() {
+        let path = temp_path("anchor-backup");
+        let anchor = Arc::new(MemoryAnchor::default());
+        let ledger = open_anchored(&path, anchor.clone()).unwrap();
+        let committed = fs::read(&path).unwrap();
+        let backup = append_suffix(&path, ".bak");
+        fs::write(&backup, &committed).unwrap();
+        fs::write(&path, b"stale or corrupt primary").unwrap();
+        drop(ledger);
+
+        let restored = open_anchored(&path, anchor).unwrap();
+        assert_eq!(restored.snapshot().unwrap().active_jobs, 0);
+        assert_eq!(fs::read(&path).unwrap(), committed);
+        assert!(!backup.exists());
+        cleanup(&path);
+    }
+
+    #[test]
+    fn anchor_conflict_rolls_back_the_unanchored_local_candidate() {
+        let path = temp_path("anchor-conflict");
+        let anchor = Arc::new(MemoryAnchor::default());
+        let ledger = open_anchored(&path, anchor.clone()).unwrap();
+        let committed = fs::read(&path).unwrap();
+        anchor.reject_next.store(true, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(ledger.expire_leases(1).unwrap_err(), DurableLedgerError::AnchorConflict);
+        assert_eq!(fs::read(&path).unwrap(), committed);
+        assert_eq!(anchor.load("registry-test-a").unwrap().unwrap().generation(), 1);
+        cleanup(&path);
     }
 
     #[test]
