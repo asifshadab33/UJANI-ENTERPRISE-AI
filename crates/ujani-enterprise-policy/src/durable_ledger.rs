@@ -241,7 +241,14 @@ impl DurableLedger {
                     ));
                 }
             }
-            sync_ancestors(parent)?;
+            let file_name = path
+                .file_name()
+                .ok_or(DurableLedgerError::InvalidRecord)?
+                .to_os_string();
+            let canonical_parent = fs::canonicalize(parent)?;
+            sync_ancestors(&canonical_parent)?;
+            // Use the canonical, checked directory path for all subsequent file operations.
+            path = canonical_parent.join(file_name);
         } else {
             fs::create_dir_all(parent)?;
         }
@@ -532,8 +539,26 @@ fn rename_snapshot_path(
 /// Makes every ancestor directory entry durable before an anchored ledger is created.
 #[cfg(unix)]
 fn sync_ancestor_directories(path: &Path) -> Result<(), DurableLedgerError> {
+    use std::os::unix::fs::PermissionsExt;
     let mut directory = fs::canonicalize(path)?;
-    while let Some(parent) = directory.parent() {
+    loop {
+        let metadata = fs::symlink_metadata(&directory)?;
+        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+            return Err(DurableLedgerError::Io(
+                "anchored ledger path contains a non-directory ancestor".into(),
+            ));
+        }
+        let mode = metadata.permissions().mode();
+        // A sticky shared parent (for example /tmp) protects entries owned by
+        // another user; ordinary group/world-writable ancestors do not.
+        if mode & 0o022 != 0 && mode & 0o1000 == 0 {
+            return Err(DurableLedgerError::Io(
+                "anchored ledger ancestors must not be group- or world-writable unless sticky".into(),
+            ));
+        }
+        let Some(parent) = directory.parent() else {
+            break;
+        };
         File::open(parent)?.sync_all()?;
         directory = parent.to_path_buf();
     }
