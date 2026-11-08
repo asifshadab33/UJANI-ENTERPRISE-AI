@@ -13,6 +13,8 @@ It is designed for controlled internal use, not a public marketplace for strange
 - Only explicitly enrolled, organisation-authorised devices participate.
 - No silent use of employee devices. Device owners and administrators must receive clear disclosure and control.
 - Administrators define workloads, data boundaries, operating windows, quotas and permitted resource types.
+- **Primary objective:** use already-powered, underutilised authorised hardware to reduce avoidable central AI data-centre dependence and energy use.
+- Distributed work is considered only after consent, trust, availability, isolation, data policy and equivalent-workload energy checks; sleeping devices are never awakened.
 - Local execution and data locality are preferred where feasible.
 - Workloads are isolated, attributable, cancellable and auditable.
 - Resource use respects interactive user activity, thermal state, power and administrator budgets.
@@ -30,7 +32,7 @@ It is designed for controlled internal use, not a public marketplace for strange
 
 ## Architecture
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/SECURITY.md](docs/SECURITY.md), [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md) and [ROADMAP.md](ROADMAP.md).
+See [energy-aware distributed compute](docs/ENERGY-AWARE-DISTRIBUTED-COMPUTE.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/SECURITY.md](docs/SECURITY.md), [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md) and [ROADMAP.md](ROADMAP.md).
 
 ## Initial prototype
 
