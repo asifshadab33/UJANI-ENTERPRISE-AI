@@ -68,7 +68,7 @@ The read-only inventory contract now rejects heartbeat and telemetry timestamps 
 
 ## Enterprise Intelligence Orchestration
 
-UJANI's proposed shared coordination architecture is documented in [Enterprise Intelligence Orchestration Layer](docs/ENTERPRISE-INTELLIGENCE-ORCHESTRATION.md). This is an architecture proposal; the registry, connectors, event pipeline, workflow coordinator and unified dashboard remain implementation work.
+UJANI's proposed shared coordination architecture is documented in [Enterprise Intelligence Orchestration Layer](docs/ENTERPRISE-INTELLIGENCE-ORCHESTRATION.md). This is an architecture proposal; the registry, connectors, event pipeline, workflow coordinator and unified dashboard remain implementation work. Provider-specific implementation status and safety gates are tracked in [Connector Integration Status](docs/CONNECTOR-INTEGRATION-STATUS.md).
 
 ## Legal and operational notice
 
