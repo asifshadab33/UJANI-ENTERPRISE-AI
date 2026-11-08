@@ -1153,10 +1153,16 @@ mod tests {
             1_000,
             &[0x74u8; 32],
         );
-        assert!(matches!(result, Err(DurableLedgerError::AnchorUnavailable(_))));
+        assert!(matches!(
+            result,
+            Err(DurableLedgerError::AnchorUnavailable(_))
+        ));
         assert_eq!(fs::read(&path).unwrap(), previous_snapshot);
         assert!(!append_suffix(&path, ".bak").exists());
-        assert_eq!(anchor.load("registry-test-a").unwrap().unwrap(), previous_anchor);
+        assert_eq!(
+            anchor.load("registry-test-a").unwrap().unwrap(),
+            previous_anchor
+        );
         cleanup(&path);
     }
 
