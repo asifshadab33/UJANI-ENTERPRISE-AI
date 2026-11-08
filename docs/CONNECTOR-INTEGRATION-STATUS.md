@@ -32,7 +32,7 @@ No universal virtual-patching guarantee is made. A network control can only insp
 
 ### Malcolm health adapter prototype
 
-The read-only Malcolm health-probe implementation and tests are proposed separately in [PR #59](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/pull/59). They are not present in `main` or this documentation branch until that PR is merged. The implementation is intended to provide a read-only health probe for Malcolm's documented `GET /mapi/ping`, `GET /mapi/ready` and `GET /mapi/version` endpoints. It requires HTTPS by default, validates TLS certificates, rejects redirects, uses a five-second timeout and 1 MiB response bound, and can use optional Basic Auth credentials supplied through environment variables. It reports only allowlisted health/version metadata and does not query PCAP, session or document data.
+The current `main` contains `scripts/malcolm_readonly.py` and its regression tests. This is a read-only health-probe prototype for Malcolm's documented `GET /mapi/ping`, `GET /mapi/ready` and `GET /mapi/version` endpoints. It requires HTTPS by default, validates TLS certificates, rejects redirects, uses a five-second timeout and 1 MiB response bound, and can use optional Basic Auth credentials supplied through environment variables. It reports only allowlisted health/version metadata and does not query PCAP, session or document data.
 
 Example:
 
@@ -45,7 +45,7 @@ Use a dedicated least-privilege account if the Malcolm deployment requires authe
 
 ## First local import prototype
 
-The offline importer implementation and tests are proposed separately in [PR #59](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/pull/59). They are not present in `main` or this documentation branch until that PR is merged. The importer is intended to read local JSON-lines files and writes bounded, normalized evidence records. It supports Suricata EVE event types and Zeek JSON `conn`, `notice` and `weird` logs. It is an offline file-import tool, not a daemon, live network connector or SIEM replacement.
+The current `main` contains `scripts/normalize_network_logs.py` and its regression tests. The importer reads local JSON-lines files and writes bounded, normalized evidence records. It supports Suricata EVE event types and Zeek JSON `conn`, `notice` and `weird` logs. It is an offline file-import tool, not a daemon, live network connector or SIEM replacement.
 
 Example:
 
