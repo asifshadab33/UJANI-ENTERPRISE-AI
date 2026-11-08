@@ -89,7 +89,7 @@ def fetch_json(opener, url, headers):
             parse_constant=reject_constant,
             object_pairs_hook=reject_duplicate_keys,
         )
-    except (UnicodeDecodeError, json.JSONDecodeError, MalcolmAdapterError):
+    except (UnicodeDecodeError, json.JSONDecodeError, MalcolmAdapterError, RecursionError):
         raise MalcolmAdapterError("Malcolm endpoint returned invalid JSON") from None
     return value
 
