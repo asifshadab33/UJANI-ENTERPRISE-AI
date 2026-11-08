@@ -19,14 +19,41 @@ These are policy/contract primitives. They do not yet provide connector discover
 
 | Provider / solution | Intended UJANI role | First integration | Not implemented yet |
 |---|---|---|---|
-| Suricata | IDS/IPS alert and rule telemetry; optional separately approved enforcement provider | Read-only alert/event ingestion and health | Live adapter, rule management, inline IPS, virtual-patch deployment |
-| Zeek | Network metadata, protocol observations and notices | Read-only logs/events and health | Live adapter, parsing pipeline, event store |
+| Suricata | IDS/IPS alert and rule telemetry; optional separately approved enforcement provider | Local EVE JSONL import prototype with an explicit field allowlist | Live service/API adapter, health polling, rule management, inline IPS, virtual-patch deployment |
+| Zeek | Network metadata, protocol observations and notices | Local JSON log import prototype for conn, notice and weird streams | Live adapter, health polling, TSV parser, event store |
 | Malcolm | Optional higher-capability network-analysis deployment using its own specialist stack | Read-only status and evidence links; avoid duplicating its engines | Deployment automation, API adapter, indexing or PCAP pipeline |
 | Customer firewall (including OPNsense or other supported products) | Existing network policy enforcement point | Read-only inventory, configuration posture and status where supported | Any configuration change, policy push, restart or rule deployment |
 | CISA KEV / NVD | External vulnerability intelligence | Fetch and cache public advisories with source, version and retrieval time | Feed scheduler, normalisation and asset matching |
 | MISP / OpenCTI | Optional threat-intelligence exchange and knowledge systems | Read-only indicator/context lookup after customer selection | Live connectors, sync, write-back or feed publication |
 
 No universal virtual-patching guarantee is made. A network control can only inspect or block traffic that actually traverses the enforcement point and is covered by a validated rule. Passive monitoring observes; it does not block. Neither approach repairs unsupported firmware or protects management-plane attacks, local access, bypass traffic or vulnerabilities outside the inspected protocols.
+
+
+## First local import prototype
+
+The current feature branch adds `scripts/normalize_network_logs.py`. It reads local JSON-lines files and writes bounded, normalized evidence records. It supports Suricata EVE event types and Zeek JSON `conn`, `notice` and `weird` logs. It is an offline file-import tool, not a daemon, live network connector or SIEM replacement.
+
+Example:
+
+```sh
+python scripts/normalize_network_logs.py \
+  --provider suricata --tenant-id tenant-a \
+  --provider-version 7.0.0 --input /var/log/suricata/eve.json \
+  --output ./suricata-normalized.jsonl
+
+python scripts/normalize_network_logs.py \
+  --provider zeek --zeek-log-kind conn --tenant-id tenant-a \
+  --provider-version 7.0.0 --input ./conn.log \
+  --output ./zeek-normalized.jsonl
+```
+
+The importer rejects symlink inputs, oversized files/lines/record counts, duplicate JSON keys, invalid timestamps and unsafe output-overwrite paths. It emits only selected metadata fields; packet payloads, credentials and arbitrary application content are not copied. The normalizer does not assign a threat verdict. Every imported record is marked `internal`, and downstream host policy must still enforce tenant, role, retention and freshness requirements.
+
+Official provider format/API references:
+- [Suricata EVE JSON output](https://docs.suricata.io/en/latest/output/eve/eve-json-output.html) and [EVE JSON format](https://docs.suricata.io/en/latest/output/eve/eve-json-format.html)
+- [Zeek logging framework](https://docs.zeek.org/en/lts/frameworks/logging.html) and [Zeek JSON logs quickstart](https://github.com/zeek/zeek-docs/blob/master/quickstart.rst)
+- [Malcolm REST API](https://malcolm.fyi/docs/api.html)
+- [OPNsense API reference](https://docs.opnsense.org/development/api.html) and [firewall API](https://docs.opnsense.org/development/api/core/firewall.html)
 
 ## Deployment profiles
 
