@@ -5,6 +5,7 @@ from urllib.request import Request
 
 from scripts.malcolm_readonly import (
     MalcolmAdapterError,
+    fetch_json,
     fetch_status,
     validate_base_url,
 )
