@@ -362,6 +362,8 @@ impl DurableLedger {
         anchor_record: Option<&SnapshotAnchorRecord>,
     ) -> Result<Ledger, DurableLedgerError> {
         let backup = append_suffix(&self.path, ".bak");
+        ensure_regular_file_if_present(&self.path, "primary snapshot")?;
+        ensure_regular_file_if_present(&backup, "backup snapshot")?;
         match anchor_record {
             Some(record) => {
                 if self.path.exists() {
@@ -499,6 +501,18 @@ impl DurableLedger {
             )?;
         }
         Ok(result)
+    }
+}
+
+/// Rejects symlinked or non-regular snapshot paths before any anchored read or recovery.
+fn ensure_regular_file_if_present(path: &Path, label: &str) -> Result<(), DurableLedgerError> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => Ok(()),
+        Ok(_) => Err(DurableLedgerError::Io(format!(
+            "anchored {label} must be a regular, non-symlink file"
+        ))),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
     }
 }
 
@@ -1166,6 +1180,46 @@ mod tests {
         if let Some(parent) = path.parent() {
             let _ = fs::remove_dir(parent);
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn anchored_open_observes_ancestor_sync_and_stops_before_anchor_on_sync_failure() {
+        let path = temp_path("anchor-ancestor-sync-failure");
+        let anchor = Arc::new(MemoryAnchor::default());
+        let observed = std::sync::atomic::AtomicBool::new(false);
+        let result = DurableLedger::open_internal_with_ancestor_sync(
+            &path,
+            "test-v1",
+            vec![integrity_key("test-v1", 0xA5)],
+            Some(("registry-test-a".into(), anchor.clone())),
+            |_parent| {
+                observed.store(true, std::sync::atomic::Ordering::SeqCst);
+                Err(DurableLedgerError::Io("injected ancestor sync failure".into()))
+            },
+        );
+        assert!(observed.load(std::sync::atomic::Ordering::SeqCst));
+        assert!(matches!(result, Err(DurableLedgerError::Io(_))));
+        assert!(anchor.load("registry-test-a").unwrap().is_none());
+        assert!(!path.exists());
+        cleanup(&path);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn anchored_open_rejects_symlinked_primary_snapshot() {
+        use std::os::unix::fs::symlink;
+        let path = temp_path("anchor-primary-symlink");
+        let target = path.with_extension("outside");
+        fs::write(&target, b"not a ledger").unwrap();
+        symlink(&target, &path).unwrap();
+        let anchor = Arc::new(MemoryAnchor::default());
+        let result = open_anchored(&path, anchor.clone());
+        assert!(matches!(result, Err(DurableLedgerError::Io(_))));
+        assert_eq!(fs::read(&target).unwrap(), b"not a ledger");
+        assert!(anchor.load("registry-test-a").unwrap().is_none());
+        let _ = fs::remove_file(&target);
+        cleanup(&path);
     }
 
     #[test]
