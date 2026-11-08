@@ -15,7 +15,7 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-const AUDIT_DOMAIN: &[u8] = b"UJANI-COLLECTIVE-DEFENCE-CONSENT-AUDIT-V1\0";
+const AUDIT_DOMAIN: &[u8] = b"UJANI-COLLECTIVE-DEFENCE-CONSENT-AUDIT-V2\0";
 const RECORD_DOMAIN: &[u8] = b"UJANI-COLLECTIVE-DEFENCE-CONSENT-RECORD-V1\0";
 const MAX_AUDIT_RECORDS: usize = 100_000;
 const MAX_IDEMPOTENCY_KEYS: usize = 100_000;
