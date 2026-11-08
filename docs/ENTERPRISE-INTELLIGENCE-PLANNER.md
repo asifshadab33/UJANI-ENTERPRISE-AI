@@ -106,7 +106,7 @@ Use deterministic scheduling for timezones, recurrence, duplicate reconciliation
 2. Add a read-only calendar adapter using tenant policy, authenticated per-user OAuth and dual consent.
 3. Add approved task/project connectors and Zoom meeting metadata.
 4. Add optional user-authorised email-derived follow-ups and renewal suggestions with confirmation.
-5. Add user-specific daily briefings and carefully scoped team views.
+5. Add reminder delivery alongside user-specific daily briefings and carefully scoped team views.
 6. Add external planner/workflow bridges only after licence, security and operational review.
 
 ## 9. Test and release gates
