@@ -5,7 +5,8 @@ Status: next-phase implementation contract. The repository now contains both the
 ## Verified implementation status
 
 - **Present in the policy crate:** signed administrator enrollment/rotation/revocation commands, device proof-of-possession, tenant and key-generation binding, signed device request envelopes, request replay protection, workload/manifest/body binding, and a durable HMAC-authenticated registry adapter.
-- **Not yet delivered:** authenticated HTTP endpoints, tenant-scoped RBAC and IdP integration, protected KMS/HSM/TPM key-provider adapter, external monotonic anti-rollback anchor implementation, durable append-only audit integration, and authenticated lease acquire/renew/release service.
+- **Present only as an in-memory policy primitive:** the crate's `Ledger` has capability-bound lease reservation, renew and release semantics. These are process-local and are not durable, multi-instance or exposed through authenticated APIs.
+- **Not yet delivered:** authenticated HTTP endpoints, tenant-scoped RBAC and IdP integration, protected KMS/HSM/TPM key-provider adapter, external monotonic anti-rollback anchor implementation, durable append-only audit integration, and a transactional authenticated lease service with durable acquire/renew/release/cancel.
 - **Safety boundary:** no workload dispatch, remote execution, autonomous containment, or broad endpoint telemetry is authorized by this contract. Keep these disabled until the control plane and deployment trust boundary are independently reviewed.
 
 ## Trust bootstrap
