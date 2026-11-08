@@ -99,19 +99,20 @@ pub fn validate_request(request: &ReadOnlyRequest) -> Result<(), ConnectorError>
     if request.contract_version != CONNECTOR_CONTRACT_VERSION {
         return Err(ConnectorError::UnsupportedContractVersion);
     }
-    if !valid_identifier(&request.tenant_id)
-        || !valid_identifier(&request.capability_id)
-    {
+    if !valid_identifier(&request.tenant_id) || !valid_identifier(&request.capability_id) {
         return Err(ConnectorError::InvalidIdentifier);
     }
-    if request.page_size == 0 || request.page_size > MAX_PAGE_SIZE
+    if request.page_size == 0
+        || request.page_size > MAX_PAGE_SIZE
         || request.filters.len() > MAX_QUERY_FILTERS
-        || request.filters.iter().any(|(key, value)| {
-            !valid_identifier(key) || value.len() > MAX_FIELD_VALUE_BYTES
-        })
-        || request.cursor.as_ref().is_some_and(|cursor| {
-            cursor.is_empty() || cursor.len() > MAX_CURSOR_BYTES
-        })
+        || request
+            .filters
+            .iter()
+            .any(|(key, value)| !valid_identifier(key) || value.len() > MAX_FIELD_VALUE_BYTES)
+        || request
+            .cursor
+            .as_ref()
+            .is_some_and(|cursor| cursor.is_empty() || cursor.len() > MAX_CURSOR_BYTES)
     {
         return Err(ConnectorError::InvalidRequest);
     }
@@ -138,9 +139,10 @@ pub fn validate_evidence_page(
         return Err(ConnectorError::ProviderBoundaryViolation);
     }
     if page.records.len() > MAX_PAGE_SIZE as usize
-        || page.next_cursor.as_ref().is_some_and(|cursor| {
-            cursor.is_empty() || cursor.len() > MAX_CURSOR_BYTES
-        })
+        || page
+            .next_cursor
+            .as_ref()
+            .is_some_and(|cursor| cursor.is_empty() || cursor.len() > MAX_CURSOR_BYTES)
     {
         return Err(ConnectorError::MalformedEvidence);
     }
@@ -171,11 +173,13 @@ pub fn validate_evidence_page(
         if record.observed_at_unix_ms > now_unix_ms.saturating_add(MAX_CLOCK_SKEW_MS) {
             return Err(ConnectorError::FutureEvidenceTimestamp);
         }
-        freshness.push(if now_unix_ms.saturating_sub(record.observed_at_unix_ms) > max_age_ms {
-            EvidenceFreshness::Stale
-        } else {
-            EvidenceFreshness::Fresh
-        });
+        freshness.push(
+            if now_unix_ms.saturating_sub(record.observed_at_unix_ms) > max_age_ms {
+                EvidenceFreshness::Stale
+            } else {
+                EvidenceFreshness::Fresh
+            },
+        );
     }
     Ok(freshness)
 }
@@ -191,8 +195,8 @@ fn valid_identifier(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        validate_evidence_page, validate_request, ConnectorError, EvidenceFreshness,
-        EvidencePage, EvidenceRecord, ReadOnlyRequest, CONNECTOR_CONTRACT_VERSION,
+        validate_evidence_page, validate_request, ConnectorError, EvidenceFreshness, EvidencePage,
+        EvidenceRecord, ReadOnlyRequest, CONNECTOR_CONTRACT_VERSION,
     };
     use crate::DataClassification;
     use std::collections::BTreeMap;
