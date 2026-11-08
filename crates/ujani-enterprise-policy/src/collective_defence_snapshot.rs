@@ -406,11 +406,8 @@ mod tests {
         snapshot.audit = audit;
         assert_eq!(snapshot.canonical_bytes(), Err(SnapshotEncodingError::InvalidAuditChain));
         snapshot.audit = vec![];
-        assert_eq!(snapshot.canonical_bytes(), Err(SnapshotEncodingError::InvalidAuditChain));
-        snapshot.audit = idempotency
-            .first()
-            .map(|_| audit_fixture().0)
-            .unwrap_or_default();
+        assert_eq!(snapshot.canonical_bytes(), Err(SnapshotEncodingError::OrphanIdempotencyRecord));
+        snapshot.audit = audit_fixture().0;
         snapshot.idempotency[0].audit_event_id = [9; 32];
         assert_eq!(snapshot.canonical_bytes(), Err(SnapshotEncodingError::OrphanIdempotencyRecord));
     }
