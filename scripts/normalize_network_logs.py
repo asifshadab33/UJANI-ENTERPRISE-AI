@@ -192,20 +192,25 @@ def normalize_zeek(obj, tenant_id, provider_version, log_kind):
 
 def read_records(input_path, provider, tenant_id, provider_version, log_kind=None):
     path = Path(input_path)
-    try:
-        info = path.lstat()
-    except OSError:
-        raise ImportErrorSafe("input file cannot be accessed") from None
-    if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
-        raise ImportErrorSafe("input must be a regular file, not a symlink")
-    if info.st_size > MAX_INPUT_BYTES:
-        raise ImportErrorSafe("input file exceeds the 256 MiB import limit")
-
+    no_follow = getattr(os, "O_NOFOLLOW", None)
+    non_blocking = getattr(os, "O_NONBLOCK", None)
+    if no_follow is None or non_blocking is None:
+        raise ImportErrorSafe("this platform cannot safely open network-log inputs without following links")
+    flags = os.O_RDONLY | no_follow | non_blocking | getattr(os, "O_CLOEXEC", 0)
+    descriptor = None
     output = []
     output_bytes = 0
     input_bytes = 0
     try:
-        with path.open("rb") as stream:
+        descriptor = os.open(path, flags)
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode):
+            raise ImportErrorSafe("input must be a regular file, not a symlink")
+        if info.st_size > MAX_INPUT_BYTES:
+            raise ImportErrorSafe("input file exceeds the 256 MiB import limit")
+        stream = os.fdopen(descriptor, "rb")
+        descriptor = None
+        with stream:
             for line_number, raw in enumerate(stream, start=1):
                 input_bytes += len(raw)
                 if input_bytes > MAX_INPUT_BYTES:
@@ -226,12 +231,17 @@ def read_records(input_path, provider, tenant_id, provider_version, log_kind=Non
                 if output_bytes > MAX_OUTPUT_BYTES:
                     raise ImportErrorSafe("normalized output exceeds the 256 MiB limit")
                 output.append(encoded)
+    except ImportErrorSafe:
+        raise
     except OSError:
         raise ImportErrorSafe("input file read failed") from None
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
     return output
 
-
 def write_output(lines, output_path):
+    \"\"\"Atomically replace output; the symlink precheck is advisory, while os.replace replaces the directory entry rather than following it. The new file keeps the temporary file's restrictive 0600 permissions.\"\"\"
     payload = ("\n".join(lines) + ("\n" if lines else "")).encode("utf-8")
     if output_path == "-":
         sys.stdout.buffer.write(payload)
