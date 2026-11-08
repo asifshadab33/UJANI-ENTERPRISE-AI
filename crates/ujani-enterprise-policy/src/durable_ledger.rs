@@ -83,6 +83,7 @@ pub struct LedgerIntegrityKey {
 }
 
 impl LedgerIntegrityKey {
+    /// Creates an integrity key from a protected key-provider result.
     pub fn new(key_id: impl Into<String>, key: [u8; 32]) -> Self {
         Self {
             key_id: key_id.into(),
@@ -90,6 +91,7 @@ impl LedgerIntegrityKey {
         }
     }
 
+    /// Returns the non-secret identifier associated with this key.
     pub fn key_id(&self) -> &str {
         &self.key_id
     }
@@ -254,6 +256,7 @@ impl DurableLedger {
         })
     }
 
+    /// Renews a workload lease only when the supplied capability matches.
     pub fn renew_lease(
         &self,
         workload_id: &str,
@@ -263,6 +266,7 @@ impl DurableLedger {
         self.transact(|ledger| Ok(ledger.renew_lease(workload_id, lease_token, now_unix_ms)))
     }
 
+    /// Releases a workload lease only when the supplied capability matches.
     pub fn release_lease(
         &self,
         workload_id: &str,
@@ -271,6 +275,7 @@ impl DurableLedger {
         self.transact(|ledger| Ok(ledger.release_lease(workload_id, lease_token)))
     }
 
+    /// Removes expired leases and returns the number of removed jobs.
     pub fn expire_leases(&self, now_unix_ms: u64) -> Result<usize, DurableLedgerError> {
         self.transact(|ledger| {
             let before = ledger.jobs.len();
@@ -279,6 +284,7 @@ impl DurableLedger {
         })
     }
 
+    /// Returns aggregate reservations from the latest committed ledger snapshot.
     pub fn snapshot(&self) -> Result<DurableLedgerSnapshot, DurableLedgerError> {
         self.transact(|ledger| {
             let mut cpu = 0u64;
