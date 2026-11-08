@@ -214,10 +214,6 @@ impl DurableLedger {
             }
             #[cfg(unix)]
             sync_ancestor_directories(parent)?;
-            #[cfg(not(unix))]
-            return Err(DurableLedgerError::Io(
-                "anchored ledger initialization requires a supported Unix directory-sync implementation".into(),
-            ));
         } else {
             fs::create_dir_all(parent)?;
         }
