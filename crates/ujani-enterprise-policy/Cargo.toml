@@ -12,5 +12,5 @@ path = "src/lib.rs"
 ed25519-dalek = "3"
 serde = { version = "1", features = ["derive"] }
 sha2 = "0.10"
-hmac = "0.12"
+hmac = "0.13"
 zeroize = "1"
