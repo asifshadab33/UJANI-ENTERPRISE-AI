@@ -8,8 +8,12 @@ use crate::{
     admit_with_context, Admission, ClassPolicy, Device, DurableLedger, DurableLedgerError, Ledger,
     RejectReason, SchedulingContext, VerifiedAdminApproval, Workload,
 };
+use crate::cpu_capacity::{evaluate_cpu_placement, CpuPlacementRejection, CpuPlacementRequest, CpuWorkerSnapshot};
 use ed25519_dalek::{Signature, VerifyingKey};
 
+// Replaced original imports below.
+/*
+};
 const TELEMETRY_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-WORKER-TELEMETRY-V1\0";
 const POLICY_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-SCHEDULING-POLICY-V1\0";
 const CLOCK_SKEW_TOLERANCE_MS: u64 = 30_000;
@@ -27,6 +31,14 @@ pub struct WorkerTelemetryClaims {
     pub on_ac_power: bool,
     pub device_already_running: bool,
     pub thermal_state_safe: bool,
+    pub user_paused: bool,
+    pub os_isolation_ready: bool,
+    pub effective_cpu_capacity_millis: u32,
+    pub available_cpu_millis: u32,
+    pub system_reserved_cpu_millis: u32,
+    pub total_memory_mb: u64,
+    pub available_memory_mb: u64,
+    pub system_reserved_memory_mb: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,6 +77,7 @@ pub struct VerifiedSchedulingContext {
     workload_id: String,
     manifest_sha256: [u8; 32],
     expires_at_unix_ms: u64,
+    cpu_worker_snapshot: CpuWorkerSnapshot,
 }
 
 impl VerifiedSchedulingContext {
@@ -121,6 +134,14 @@ fn worker_telemetry_bytes(claims: &WorkerTelemetryClaims) -> Vec<u8> {
     bytes.push(u8::from(claims.on_ac_power));
     bytes.push(u8::from(claims.device_already_running));
     bytes.push(u8::from(claims.thermal_state_safe));
+    bytes.push(u8::from(claims.user_paused));
+    bytes.push(u8::from(claims.os_isolation_ready));
+    bytes.extend_from_slice(&claims.effective_cpu_capacity_millis.to_be_bytes());
+    bytes.extend_from_slice(&claims.available_cpu_millis.to_be_bytes());
+    bytes.extend_from_slice(&claims.system_reserved_cpu_millis.to_be_bytes());
+    bytes.extend_from_slice(&claims.total_memory_mb.to_be_bytes());
+    bytes.extend_from_slice(&claims.available_memory_mb.to_be_bytes());
+    bytes.extend_from_slice(&claims.system_reserved_memory_mb.to_be_bytes());
     bytes
 }
 
@@ -167,7 +188,7 @@ fn valid_time_window(issued: u64, expires: u64, now: u64, max_ttl: u64) -> bool 
 /// must come from an authenticated, non-caller-controlled enrollment registry;
 /// supplying attacker-controlled keys defeats the trust guarantee. Device CPU/RAM
 /// capacity and workload-class allowlists must also come from trusted inventory;
-/// these signatures attest runtime gates and admin policy, not hardware telemetry.
+/// these signed claims attest runtime gates and resource capacity telemetry.
 /// This crate does not persist enrollment, revocation or the registry's root of trust.
 #[allow(clippy::too_many_arguments)] // Keep both trust roots and the dispatch challenge explicit.
 pub(crate) fn verify_scheduling_context(
@@ -259,6 +280,23 @@ pub(crate) fn verify_scheduling_context(
         device_id: device.device_id.clone(),
         workload_id: workload.workload_id.clone(),
         manifest_sha256: workload.manifest_sha256,
+        cpu_worker_snapshot: CpuWorkerSnapshot {
+            sampled_at_unix_ms: telemetry_claims.issued_at_unix_ms,
+            effective_cpu_capacity_millis: telemetry_claims.effective_cpu_capacity_millis,
+            available_cpu_millis: telemetry_claims.available_cpu_millis,
+            system_reserved_cpu_millis: telemetry_claims.system_reserved_cpu_millis,
+            total_memory_mb: telemetry_claims.total_memory_mb,
+            available_memory_mb: telemetry_claims.available_memory_mb,
+            system_reserved_memory_mb: telemetry_claims.system_reserved_memory_mb,
+            powered_on: telemetry_claims.device_already_running,
+            owner_opted_in: telemetry_claims.owner_opted_in,
+            interactive_user_present: telemetry_claims.interactive_user_present,
+            user_paused: telemetry_claims.user_paused,
+            on_ac_power: telemetry_claims.on_ac_power,
+            thermal_state_safe: telemetry_claims.thermal_state_safe,
+            telemetry_authenticated: true,
+            os_isolation_ready: telemetry_claims.os_isolation_ready,
+        },
         expires_at_unix_ms: telemetry_claims
             .expires_unix_ms
             .min(policy_claims.expires_unix_ms),
@@ -307,6 +345,29 @@ pub fn verify_and_consume_scheduling_context(
     Ok(verified)
 }
 
+fn capacity_rejection(
+    snapshot: &CpuWorkerSnapshot,
+    workload: &Workload,
+    now_unix_ms: u64,
+) -> Option<RejectReason> {
+    let request = CpuPlacementRequest::from(workload);
+    evaluate_cpu_placement(snapshot, request, now_unix_ms, MAX_WORKER_TELEMETRY_TTL_MS)
+        .err()
+        .map(|reason| match reason {
+            CpuPlacementRejection::CpuHeadroomInsufficient => RejectReason::CpuBudget,
+            CpuPlacementRejection::MemoryHeadroomInsufficient => RejectReason::MemoryBudget,
+            CpuPlacementRejection::IsolationUnavailable => RejectReason::WorkerIsolationUnavailable,
+            CpuPlacementRejection::StaleTelemetry | CpuPlacementRejection::FutureTelemetry
+            | CpuPlacementRejection::UnauthenticatedTelemetry => RejectReason::TelemetryStale,
+            CpuPlacementRejection::DevicePoweredOff => RejectReason::DeviceNotRunning,
+            CpuPlacementRejection::OwnerOptOut | CpuPlacementRejection::UserPaused => RejectReason::OwnerOptInMissing,
+            CpuPlacementRejection::InteractiveUse => RejectReason::InteractiveUserPresent,
+            CpuPlacementRejection::BatteryPower => RejectReason::OnBattery,
+            CpuPlacementRejection::ThermalUnsafe => RejectReason::ThermalUnsafe,
+            CpuPlacementRejection::InvalidCapacity | CpuPlacementRejection::InvalidRequest => RejectReason::DeviceUnavailable,
+        })
+}
+
 /// Evaluate policy using only cryptographically verified scheduling evidence.
 pub fn admit_with_verified_context(
     device: &Device,
@@ -317,6 +378,9 @@ pub fn admit_with_verified_context(
     now_unix_ms: u64,
 ) -> Admission {
     if let Some(reason) = context.rejection_for(device, workload, now_unix_ms) {
+        return Admission::Reject(reason);
+    }
+    if let Some(reason) = capacity_rejection(&context.cpu_worker_snapshot, workload, now_unix_ms) {
         return Admission::Reject(reason);
     }
     admit_with_context(
@@ -343,6 +407,14 @@ pub fn admit_and_reserve_durably_with_verified_lease(
 ) -> Result<Admission, DurableLedgerError> {
     if let Some(reason) = context.rejection_for(device, workload, now_unix_ms) {
         return Ok(Admission::Reject(reason));
+    }
+    let admission = admit_with_verified_context(device, workload, &context, policies, approvals, now_unix_ms);
+    if admission != Admission::Accept {
+        return Ok(admission);
+    }
+    let admission = admit_with_verified_context(device, workload, &context, policies, approvals, now_unix_ms);
+    if admission != Admission::Accept {
+        return admission;
     }
     ledger.admit_and_reserve_with_lease(
         device,
@@ -436,6 +508,14 @@ mod tests {
             on_ac_power: true,
             device_already_running: true,
             thermal_state_safe: true,
+            user_paused: false,
+            os_isolation_ready: true,
+            effective_cpu_capacity_millis: 8_000,
+            available_cpu_millis: 6_000,
+            system_reserved_cpu_millis: 2_000,
+            total_memory_mb: 32_768,
+            available_memory_mb: 20_000,
+            system_reserved_memory_mb: 4_096,
         };
         let telemetry = SignedWorkerTelemetry {
             signature: device_key
