@@ -11,9 +11,6 @@ use crate::{
 use crate::cpu_capacity::{evaluate_cpu_placement, CpuPlacementRejection, CpuPlacementRequest, CpuWorkerSnapshot};
 use ed25519_dalek::{Signature, VerifyingKey};
 
-// Replaced original imports below.
-/*
-};
 const TELEMETRY_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-WORKER-TELEMETRY-V1\0";
 const POLICY_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-SCHEDULING-POLICY-V1\0";
 const CLOCK_SKEW_TOLERANCE_MS: u64 = 30_000;
