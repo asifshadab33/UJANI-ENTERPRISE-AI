@@ -367,7 +367,7 @@ fn capacity_rejection(
             CpuPlacementRejection::BatteryPower => RejectReason::OnBattery,
             CpuPlacementRejection::ThermalUnsafe => RejectReason::ThermalUnsafe,
             CpuPlacementRejection::InvalidCapacity => RejectReason::DeviceUnavailable,
-            CpuPlacementRejection::InvalidRequest => RejectReason::ZeroBudget
+            CpuPlacementRejection::InvalidRequest => RejectReason::ZeroBudget,
         })
 }
 
