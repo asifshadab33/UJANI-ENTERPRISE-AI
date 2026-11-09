@@ -1,0 +1,50 @@
+name: One-shot HMAC 0.13 compatibility validation
+
+on:
+  push:
+    branches:
+      - dependabot/cargo/hmac-0.13.0
+    paths:
+      - crates/ujani-enterprise-policy/Cargo.toml
+      - .github/workflows/one-shot-hmac-compat.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: hmac-013-lock-remediation
+  cancel-in-progress: false
+
+jobs:
+  regenerate-and-validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: true
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+        with:
+          components: clippy
+      - name: Regenerate lockfile for compatible HMAC and SHA-2
+        run: cargo update --manifest-path crates/ujani-enterprise-policy/Cargo.toml -p sha2 --precise 0.11.0
+      - name: Verify unified digest dependency
+        run: cargo tree --manifest-path crates/ujani-enterprise-policy/Cargo.toml -i digest@0.11.3
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Run workspace tests
+        run: cargo test --workspace --locked
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: Audit workspace dependencies
+        run: cargo audit
+      - name: Commit validated lockfile and remove this one-shot workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/one-shot-hmac-compat.yml
+          git add Cargo.lock
+          git commit -m "fix(deps): align HMAC and SHA-2 digest versions"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
