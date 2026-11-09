@@ -366,9 +366,8 @@ fn capacity_rejection(
             CpuPlacementRejection::InteractiveUse => RejectReason::InteractiveUserPresent,
             CpuPlacementRejection::BatteryPower => RejectReason::OnBattery,
             CpuPlacementRejection::ThermalUnsafe => RejectReason::ThermalUnsafe,
-            CpuPlacementRejection::InvalidCapacity | CpuPlacementRejection::InvalidRequest => {
-                RejectReason::DeviceUnavailable
-            }
+            CpuPlacementRejection::InvalidCapacity => RejectReason::DeviceUnavailable,
+            CpuPlacementRejection::InvalidRequest => RejectReason::ZeroBudget
         })
 }
 
@@ -609,6 +608,28 @@ mod tests {
         assert_eq!(
             admit_with_verified_context(&d, &w, &verified, &[], &[], 2_000),
             Admission::Reject(RejectReason::CpuBudget)
+        );
+
+        let challenge = [0x44u8; 16];
+        let (mut telemetry, policy, device_key, admin_key) = signed_evidence(challenge, 1_000);
+        telemetry.claims.available_memory_mb = 5_000;
+        telemetry.signature = device_key
+            .sign(&worker_telemetry_bytes(&telemetry.claims))
+            .to_bytes();
+        let verified = verify_scheduling_context(
+            &d,
+            &w,
+            &telemetry,
+            &policy,
+            &[("worker-01".into(), device_key.verifying_key())],
+            &[("admin-key-01".into(), admin_key.verifying_key())],
+            &challenge,
+            2_000,
+        )
+        .unwrap();
+        assert_eq!(
+            admit_with_verified_context(&d, &w, &verified, &[], &[], 2_000),
+            Admission::Reject(RejectReason::MemoryBudget)
         );
 
         let challenge = [0x43u8; 16];
