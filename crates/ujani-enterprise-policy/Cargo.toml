@@ -11,6 +11,6 @@ path = "src/lib.rs"
 [dependencies]
 ed25519-dalek = "3"
 serde = { version = "1", features = ["derive"] }
-sha2 = "0.10"
+sha2 = "0.11"
 hmac = "0.13"
 zeroize = "1"
