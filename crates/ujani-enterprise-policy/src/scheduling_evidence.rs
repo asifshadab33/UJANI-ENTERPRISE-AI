@@ -23,6 +23,8 @@ pub const MAX_SCHEDULING_POLICY_TTL_MS: u64 = 5 * 60 * 1000;
 pub struct WorkerTelemetryClaims {
     pub device_id: String,
     pub challenge_nonce: [u8; 16],
+    /// Strictly increasing per-device counter from the enrolled worker agent.
+    pub sample_generation: u64,
     pub issued_at_unix_ms: u64,
     pub expires_unix_ms: u64,
     pub owner_opted_in: bool,
@@ -126,6 +128,7 @@ fn worker_telemetry_bytes(claims: &WorkerTelemetryClaims) -> Vec<u8> {
     let mut bytes = TELEMETRY_DOMAIN.to_vec();
     append_string(&mut bytes, &claims.device_id);
     bytes.extend_from_slice(&claims.challenge_nonce);
+    bytes.extend_from_slice(&claims.sample_generation.to_be_bytes());
     bytes.extend_from_slice(&claims.issued_at_unix_ms.to_be_bytes());
     bytes.extend_from_slice(&claims.expires_unix_ms.to_be_bytes());
     bytes.push(u8::from(claims.owner_opted_in));
@@ -224,6 +227,9 @@ pub(crate) fn verify_scheduling_context(
         || policy_claims.challenge_nonce != *expected_challenge_nonce
     {
         return Err(SchedulingEvidenceError::ChallengeMismatch);
+    }
+    if telemetry_claims.sample_generation == 0 {
+        return Err(SchedulingEvidenceError::InvalidTimeWindow);
     }
     if !valid_time_window(
         telemetry_claims.issued_at_unix_ms,
@@ -331,7 +337,13 @@ pub fn verify_and_consume_scheduling_context(
         .expires_unix_ms
         .min(policy.claims.expires_unix_ms);
     let consumed = ledger
-        .consume_challenge_nonce(*expected_challenge_nonce, expires_unix_ms, now_unix_ms)
+        .consume_telemetry_challenge(
+            &telemetry.claims.device_id,
+            telemetry.claims.sample_generation,
+            *expected_challenge_nonce,
+            expires_unix_ms,
+            now_unix_ms,
+        )
         .map_err(|error| match error {
             DurableLedgerError::AnchorUnavailable(_) => {
                 SchedulingEvidenceError::ChallengeStoreOutcomeUnknown
@@ -531,6 +543,7 @@ mod tests {
         let telemetry_claims = WorkerTelemetryClaims {
             device_id: "worker-01".into(),
             challenge_nonce: challenge,
+            sample_generation: 1,
             issued_at_unix_ms: now,
             expires_unix_ms: now + MAX_WORKER_TELEMETRY_TTL_MS,
             owner_opted_in: true,
