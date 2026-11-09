@@ -371,6 +371,20 @@ fn capacity_rejection(
         })
 }
 
+/// Constrain the ledger's cumulative reservation budget to authenticated worker
+/// headroom after protecting the configured OS/service reserve. Ledger reservation
+/// accounting then subtracts all existing jobs under its transaction lock.
+fn device_with_signed_headroom(device: &Device, snapshot: &CpuWorkerSnapshot) -> Device {
+    let mut bounded = device.clone();
+    bounded.remaining_cpu_millis = bounded.remaining_cpu_millis.min(
+        snapshot.available_cpu_millis.saturating_sub(snapshot.system_reserved_cpu_millis),
+    );
+    bounded.remaining_memory_mb = bounded.remaining_memory_mb.min(
+        snapshot.available_memory_mb.saturating_sub(snapshot.system_reserved_memory_mb),
+    );
+    bounded
+}
+
 /// Evaluate policy using only cryptographically verified scheduling evidence.
 pub fn admit_with_verified_context(
     device: &Device,
@@ -416,8 +430,12 @@ pub fn admit_and_reserve_durably_with_verified_lease(
     if admission != Admission::Accept {
         return Ok(admission);
     }
+    // Bound the ledger's per-device reservation ceiling to the signed free
+    // headroom. The ledger applies this ceiling while holding its transaction
+    // lock, so concurrent/sequential reservations cannot each reuse one sample.
+    let reservation_device = device_with_signed_headroom(device, &context.cpu_worker_snapshot);
     ledger.admit_and_reserve_with_lease(
-        device,
+        &reservation_device,
         workload,
         &context.context,
         policies,
@@ -448,8 +466,11 @@ pub fn admit_and_reserve_with_verified_lease(
     if admission != Admission::Accept {
         return admission;
     }
+    // The in-memory ledger uses the same cumulative per-device ceiling;
+    // production callers must use the durable transactional ledger wrapper.
+    let reservation_device = device_with_signed_headroom(device, &context.cpu_worker_snapshot);
     ledger.admit_and_reserve_with_lease(
-        device,
+        &reservation_device,
         workload,
         &context.context,
         policies,
@@ -560,6 +581,123 @@ mod tests {
             claims: policy_claims,
         };
         (telemetry, policy, device_key, admin_key)
+    }
+
+    fn verified_context_for(
+        workload: &Workload,
+        challenge: [u8; 16],
+        now: u64,
+        available_cpu_millis: u32,
+    ) -> VerifiedSchedulingContext {
+        let (mut telemetry, mut policy, device_key, admin_key) = signed_evidence(challenge, now);
+        telemetry.claims.available_cpu_millis = available_cpu_millis;
+        telemetry.signature = device_key
+            .sign(&worker_telemetry_bytes(&telemetry.claims))
+            .to_bytes();
+        policy.claims.workload_id = workload.workload_id.clone();
+        policy.claims.manifest_sha256 = workload.manifest_sha256;
+        policy.claims.challenge_nonce = challenge;
+        policy.signature = admin_key
+            .sign(&scheduling_policy_bytes(&policy.claims))
+            .to_bytes();
+        verify_scheduling_context(
+            &device(),
+            workload,
+            &telemetry,
+            &policy,
+            &[("worker-01".into(), device_key.verifying_key())],
+            &[("admin-key-01".into(), admin_key.verifying_key())],
+            &challenge,
+            now + 1_000,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn signed_headroom_is_cumulative_in_both_reservation_wrappers() {
+        let d = device();
+        let first_workload = workload();
+        let mut second_workload = workload();
+        second_workload.workload_id = "job-02".into();
+
+        // 3,500 free CPU minus the 2,000 system reserve leaves 1,500.
+        // Each job requests 1,000, so the first fits and the second must not.
+        let mut memory_ledger = Ledger::default();
+        let first_context = verified_context_for(&first_workload, [0x51; 16], 1_000, 3_500);
+        assert_eq!(
+            admit_and_reserve_with_verified_lease(
+                &mut memory_ledger,
+                &d,
+                &first_workload,
+                first_context,
+                &[],
+                &[],
+                2_000,
+                &[0x51; 32],
+            ),
+            Admission::Accept
+        );
+        let second_context = verified_context_for(&second_workload, [0x52; 16], 1_000, 3_500);
+        assert_eq!(
+            admit_and_reserve_with_verified_lease(
+                &mut memory_ledger,
+                &d,
+                &second_workload,
+                second_context,
+                &[],
+                &[],
+                2_000,
+                &[0x52; 32],
+            ),
+            Admission::Reject(RejectReason::CpuBudget)
+        );
+
+        let path = std::env::temp_dir().join(format!(
+            "ujani-signed-headroom-{}.ledger",
+            std::process::id()
+        ));
+        let durable = DurableLedger::open_with_integrity_keys(
+            &path,
+            "test-key",
+            vec![LedgerIntegrityKey::new("test-key", [0x71; 32])],
+        )
+        .unwrap();
+        let first_context = verified_context_for(&first_workload, [0x61; 16], 1_000, 3_500);
+        assert_eq!(
+            admit_and_reserve_durably_with_verified_lease(
+                &durable,
+                &d,
+                &first_workload,
+                first_context,
+                &[],
+                &[],
+                2_000,
+                &[0x61; 32],
+            )
+            .unwrap(),
+            Admission::Accept
+        );
+        let second_context = verified_context_for(&second_workload, [0x62; 16], 1_000, 3_500);
+        assert_eq!(
+            admit_and_reserve_durably_with_verified_lease(
+                &durable,
+                &d,
+                &second_workload,
+                second_context,
+                &[],
+                &[],
+                2_000,
+                &[0x62; 32],
+            )
+            .unwrap(),
+            Admission::Reject(RejectReason::CpuBudget)
+        );
+        assert_eq!(durable.snapshot().unwrap().reserved_cpu_millis, 1_000);
+        drop(durable);
+        let mut lock_path = path.as_os_str().to_os_string();
+        lock_path.push(".lock");
+        let _ = std::fs::remove_file(std::path::PathBuf::from(lock_path));
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]
