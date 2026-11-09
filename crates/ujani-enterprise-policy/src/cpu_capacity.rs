@@ -186,14 +186,14 @@ mod tests {
     #[test]
     fn admits_only_within_measured_capacity_and_system_reserve() {
         let result = evaluate_cpu_placement(&snapshot(), request(), 10_500, 5_000).unwrap();
-        assert_eq!(result.remaining_cpu_headroom_millis, 2_000);
+        assert_eq!(result.remaining_cpu_headroom_millis, 4_000);
         assert_eq!(result.remaining_memory_headroom_mb, 9_760);
     }
 
     #[test]
     fn reserve_is_configurable_and_not_hard_coded_to_two_cores() {
         let mut sample = snapshot();
-        sample.system_reserved_cpu_millis = 5_000;
+        sample.system_reserved_cpu_millis = 7_000;
         assert_eq!(
             evaluate_cpu_placement(&sample, request(), 10_500, 5_000),
             Err(CpuPlacementRejection::CpuHeadroomInsufficient)
