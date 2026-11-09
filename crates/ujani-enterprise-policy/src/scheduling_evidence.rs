@@ -619,6 +619,12 @@ mod tests {
         let first_workload = workload();
         let mut second_workload = workload();
         second_workload.workload_id = "job-02".into();
+        let class_policies = [ClassPolicy {
+            class: "inference".into(),
+            requires_admin_approval: false,
+            max_cpu_millis: 4_000,
+            max_memory_mb: 8_192,
+        }];
 
         // 3,500 free CPU minus the 2,000 system reserve leaves 1,500.
         // Each job requests 1,000, so the first fits and the second must not.
@@ -630,7 +636,7 @@ mod tests {
                 &d,
                 &first_workload,
                 first_context,
-                &[],
+                &class_policies,
                 &[],
                 2_000,
                 &[0x51; 32],
@@ -644,7 +650,7 @@ mod tests {
                 &d,
                 &second_workload,
                 second_context,
-                &[],
+                &class_policies,
                 &[],
                 2_000,
                 &[0x52; 32],
@@ -669,7 +675,7 @@ mod tests {
                 &d,
                 &first_workload,
                 first_context,
-                &[],
+                &class_policies,
                 &[],
                 2_000,
                 &[0x61; 32],
@@ -684,7 +690,7 @@ mod tests {
                 &d,
                 &second_workload,
                 second_context,
-                &[],
+                &class_policies,
                 &[],
                 2_000,
                 &[0x62; 32],
