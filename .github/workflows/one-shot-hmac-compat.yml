@@ -27,7 +27,7 @@ jobs:
         with:
           components: clippy
       - name: Regenerate lockfile for compatible HMAC and SHA-2
-        run: cargo update --manifest-path crates/ujani-enterprise-policy/Cargo.toml -p sha2 --precise 0.11.0
+        run: cargo update --manifest-path crates/ujani-enterprise-policy/Cargo.toml -p sha2@0.10.9 --precise 0.11.1
       - name: Verify unified digest dependency
         run: cargo tree --manifest-path crates/ujani-enterprise-policy/Cargo.toml -i digest@0.11.3
       - name: Check formatting
