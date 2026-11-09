@@ -9,7 +9,7 @@
   "properties": {
     "schema_version": { "const": 1 },
     "generated_at_unix_ms": { "type": "integer", "minimum": 1 },
-    "device_ref": { "type": ["string", "null"], "maxLength": 128, "pattern": "^[A-Za-z0-9._:-]*$" },
+    "device_ref": { "type": ["string", "null"], "maxLength": 128, "pattern": "^[A-Za-z0-9._:-]+$" },
     "platform": { "type": "object", "additionalProperties": false, "required": ["os", "architecture"], "properties": {
       "os": { "type": "string", "minLength": 1, "maxLength": 32 },
       "os_version": { "type": ["string", "null"], "maxLength": 64 },
