@@ -600,6 +600,85 @@ mod tests {
         (telemetry, policy, device_key, admin_key)
     }
 
+    #[test]
+    fn durable_ledger_rejects_replayed_or_regressed_worker_telemetry_generations() {
+        let path = std::env::temp_dir().join(format!(
+            "ujani-telemetry-generation-{}.ledger",
+            std::process::id()
+        ));
+        let open = || {
+            DurableLedger::open_with_integrity_keys(
+                &path,
+                "test-key",
+                vec![LedgerIntegrityKey::new("test-key", [0x79; 32])],
+            )
+            .unwrap()
+        };
+        let device = device();
+        let workload = workload();
+        let device_keys = [("worker-01".to_owned(), SigningKey::from_bytes(&[5u8; 32]).verifying_key())];
+        let admin_keys = [("admin-key-01".to_owned(), SigningKey::from_bytes(&[6u8; 32]).verifying_key())];
+
+        {
+            let ledger = open();
+            let challenge = [0x81; 16];
+            let (telemetry, policy, _, _) = signed_evidence(challenge, 1_000);
+            assert!(verify_and_consume_scheduling_context(
+                &ledger, &device, &workload, &telemetry, &policy,
+                &device_keys, &admin_keys, &challenge, 2_000,
+            ).is_ok());
+
+            // A fresh challenge cannot make the same or an older signed sample current.
+            let challenge = [0x82; 16];
+            let (mut telemetry, policy, device_key, _) = signed_evidence(challenge, 2_000);
+            telemetry.claims.sample_generation = 1;
+            telemetry.signature = device_key
+                .sign(&worker_telemetry_bytes(&telemetry.claims))
+                .to_bytes();
+            assert_eq!(
+                verify_and_consume_scheduling_context(
+                    &ledger, &device, &workload, &telemetry, &policy,
+                    &device_keys, &admin_keys, &challenge, 3_000,
+                ),
+                Err(SchedulingEvidenceError::ChallengeReplayed)
+            );
+
+            let challenge = [0x83; 16];
+            let (mut telemetry, policy, device_key, _) = signed_evidence(challenge, 3_000);
+            telemetry.claims.sample_generation = 2;
+            telemetry.signature = device_key
+                .sign(&worker_telemetry_bytes(&telemetry.claims))
+                .to_bytes();
+            assert!(verify_and_consume_scheduling_context(
+                &ledger, &device, &workload, &telemetry, &policy,
+                &device_keys, &admin_keys, &challenge, 4_000,
+            ).is_ok());
+        }
+
+        // Generation state survives reopening the authenticated ledger.
+        {
+            let ledger = open();
+            let challenge = [0x84; 16];
+            let (mut telemetry, policy, device_key, _) = signed_evidence(challenge, 4_000);
+            telemetry.claims.sample_generation = 2;
+            telemetry.signature = device_key
+                .sign(&worker_telemetry_bytes(&telemetry.claims))
+                .to_bytes();
+            assert_eq!(
+                verify_and_consume_scheduling_context(
+                    &ledger, &device, &workload, &telemetry, &policy,
+                    &device_keys, &admin_keys, &challenge, 5_000,
+                ),
+                Err(SchedulingEvidenceError::ChallengeReplayed)
+            );
+        }
+
+        let mut lock_path = path.as_os_str().to_os_string();
+        lock_path.push(".lock");
+        let _ = std::fs::remove_file(std::path::PathBuf::from(lock_path));
+        let _ = std::fs::remove_file(path);
+    }
+
     fn verified_context_for(
         workload: &Workload,
         challenge: [u8; 16],
