@@ -8,12 +8,14 @@ This roadmap is a statement of intended work, not a claim that these capabilitie
 - [x] Define organisation-owned/authorised hardware scope.
 - [x] Document enrolment, policy, security and threat boundaries.
 - [x] Add initial Rust policy types and admission tests.
+- [x] Add a pure CPU-capacity admission helper with configurable OS headroom, memory reserve, authenticated/fresh telemetry, owner opt-in, interactive-use, power/thermal and isolation gates (no live sensor or scheduler yet).
 - [ ] Agree a versioned task/capability protocol with UJANI Public AI.
 
 ## Phase 1 — trusted lab prototype
 - [x] Signed administrator device-enrollment command primitives with proof of possession and tenant binding (policy library only; no authenticated service endpoint).
 - [x] Signed device-key rotation/revocation primitives with monotonic per-device key generations and replay checks (policy library only; protected key provider and live service lifecycle remain pending).
-- [ ] Read-only CPU/RAM/GPU/NPU/runtime inventory.
+- [ ] Read-only CPU/RAM/GPU/NPU/runtime inventory and authenticated heartbeat collection.
+- [x] Define CPU-only worker capacity admission inputs and fail-closed policy evaluation; wire it to live telemetry and durable reservations in the service phase.
 - [ ] Device heartbeat and availability reporting.
 - [x] Policy-library verification of dual-signed worker telemetry and administrator scheduling decisions bound to the exact workload manifest and a single-use dispatch challenge (trusted enrollment registry remains external).
 - [ ] Admin UI showing enrolled devices and policy state.
@@ -22,6 +24,7 @@ This roadmap is a statement of intended work, not a claim that these capabilitie
 ## Phase 2 — safe scheduling
 - [x] Add a pure energy-comparison policy that includes incremental device, network, retry/failure and cooling energy; requires equivalent-workload verification; labels estimated inputs; and prefers central execution on ties.
 - [ ] Workload classes, priorities and deadlines.
+- [ ] Implement the authenticated control-plane service that atomically joins device trust, tenant RBAC, workload/manifest verification, durable lease acquire/renew/release/cancel and append-only audit.
 - [ ] Resource reservations and per-device quotas in a live scheduler.
 - [x] File-backed local reservation policy store with OS advisory locks, crash-recovery snapshots, token-bound lease renewal/release and persisted single-use dispatch challenges (not a distributed scheduler or production database).
 - [ ] Idle/interactive-aware scheduling with user-visible opt-out.
