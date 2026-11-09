@@ -1733,10 +1733,10 @@ mod tests {
     #[test]
     fn v2_snapshots_migrate_and_v3_round_trips_telemetry_generations() {
         let key = integrity_key("test-v1", 0xA5);
-        let legacy_body = format!("{LEGACY_LEDGER_HEADER}\\n");
+        let legacy_body = format!("{LEGACY_LEDGER_HEADER}\n");
         let legacy_mac = ledger_mac(&key.key, "test-v1", legacy_body.as_bytes());
         let legacy_bytes = format!(
-            "{legacy_body}M\\ttest-v1\\t{}\\n",
+            "{legacy_body}M\ttest-v1\t{}\n",
             hex_encode(&legacy_mac)
         );
         let keys = HashMap::from([("test-v1".to_string(), key.clone())]);
@@ -1747,7 +1747,7 @@ mod tests {
             .telemetry_generations
             .insert("worker-01".into(), 7);
         let encoded = serialize_snapshot(&migrated, "test-v1", &key.key);
-        assert!(String::from_utf8_lossy(&encoded).starts_with("UJANI-ENTERPRISE-LEDGER-V3\\n"));
+        assert!(String::from_utf8_lossy(&encoded).starts_with("UJANI-ENTERPRISE-LEDGER-V3\n"));
         let restored = deserialize_snapshot(&encoded, &keys).unwrap();
         assert_eq!(restored.telemetry_generations.get("worker-01"), Some(&7));
     }
