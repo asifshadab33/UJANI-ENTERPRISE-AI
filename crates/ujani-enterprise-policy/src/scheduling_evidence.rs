@@ -409,10 +409,6 @@ pub fn admit_and_reserve_durably_with_verified_lease(
     if admission != Admission::Accept {
         return Ok(admission);
     }
-    let admission = admit_with_verified_context(device, workload, &context, policies, approvals, now_unix_ms);
-    if admission != Admission::Accept {
-        return admission;
-    }
     ledger.admit_and_reserve_with_lease(
         device,
         workload,
@@ -439,6 +435,10 @@ pub fn admit_and_reserve_with_verified_lease(
 ) -> Admission {
     if let Some(reason) = context.rejection_for(device, workload, now_unix_ms) {
         return Admission::Reject(reason);
+    }
+    let admission = admit_with_verified_context(device, workload, &context, policies, approvals, now_unix_ms);
+    if admission != Admission::Accept {
+        return admission;
     }
     ledger.admit_and_reserve_with_lease(
         device,
