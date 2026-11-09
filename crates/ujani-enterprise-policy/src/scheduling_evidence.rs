@@ -877,10 +877,10 @@ mod tests {
         );
 
         // Even a correctly signed zero generation is invalid.
+        telemetry.claims.sample_generation = 0;
         telemetry.signature = device_key
             .sign(&worker_telemetry_bytes(&telemetry.claims))
             .to_bytes();
-        telemetry.claims.sample_generation = 0;
         assert_eq!(
             verify_scheduling_context(
                 &d,
