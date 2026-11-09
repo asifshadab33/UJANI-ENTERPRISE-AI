@@ -918,7 +918,10 @@ fn deserialize_snapshot(
                     .map_err(|_| DurableLedgerError::InvalidRecord)?;
                 if !valid_stored_identifier(&device_id, 128)
                     || generation == 0
-                    || ledger.telemetry_generations.insert(device_id, generation).is_some()
+                    || ledger
+                        .telemetry_generations
+                        .insert(device_id, generation)
+                        .is_some()
                 {
                     return Err(DurableLedgerError::InvalidRecord);
                 }
@@ -1735,17 +1738,12 @@ mod tests {
         let key = integrity_key("test-v1", 0xA5);
         let legacy_body = format!("{LEGACY_LEDGER_HEADER}\n");
         let legacy_mac = ledger_mac(&key.key, "test-v1", legacy_body.as_bytes());
-        let legacy_bytes = format!(
-            "{legacy_body}M\ttest-v1\t{}\n",
-            hex_encode(&legacy_mac)
-        );
+        let legacy_bytes = format!("{legacy_body}M\ttest-v1\t{}\n", hex_encode(&legacy_mac));
         let keys = HashMap::from([("test-v1".to_string(), key.clone())]);
         let mut migrated = deserialize_snapshot(legacy_bytes.as_bytes(), &keys).unwrap();
         assert!(migrated.telemetry_generations.is_empty());
 
-        migrated
-            .telemetry_generations
-            .insert("worker-01".into(), 7);
+        migrated.telemetry_generations.insert("worker-01".into(), 7);
         let encoded = serialize_snapshot(&migrated, "test-v1", &key.key);
         assert!(String::from_utf8_lossy(&encoded).starts_with("UJANI-ENTERPRISE-LEDGER-V3\n"));
         let restored = deserialize_snapshot(&encoded, &keys).unwrap();
