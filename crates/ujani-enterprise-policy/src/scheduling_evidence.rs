@@ -4,11 +4,13 @@
 //! network-egress and data-classification decisions are signed by an enrolled
 //! administrator key and bound to the exact workload manifest. Callers cannot
 //! construct a VerifiedSchedulingContext directly.
+use crate::cpu_capacity::{
+    evaluate_cpu_placement, CpuPlacementRejection, CpuPlacementRequest, CpuWorkerSnapshot,
+};
 use crate::{
     admit_with_context, Admission, ClassPolicy, Device, DurableLedger, DurableLedgerError, Ledger,
     RejectReason, SchedulingContext, VerifiedAdminApproval, Workload,
 };
-use crate::cpu_capacity::{evaluate_cpu_placement, CpuPlacementRejection, CpuPlacementRequest, CpuWorkerSnapshot};
 use ed25519_dalek::{Signature, VerifyingKey};
 
 const TELEMETRY_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-WORKER-TELEMETRY-V1\0";
@@ -354,14 +356,19 @@ fn capacity_rejection(
             CpuPlacementRejection::CpuHeadroomInsufficient => RejectReason::CpuBudget,
             CpuPlacementRejection::MemoryHeadroomInsufficient => RejectReason::MemoryBudget,
             CpuPlacementRejection::IsolationUnavailable => RejectReason::WorkerIsolationUnavailable,
-            CpuPlacementRejection::StaleTelemetry | CpuPlacementRejection::FutureTelemetry
+            CpuPlacementRejection::StaleTelemetry
+            | CpuPlacementRejection::FutureTelemetry
             | CpuPlacementRejection::UnauthenticatedTelemetry => RejectReason::TelemetryStale,
             CpuPlacementRejection::DevicePoweredOff => RejectReason::DeviceNotRunning,
-            CpuPlacementRejection::OwnerOptOut | CpuPlacementRejection::UserPaused => RejectReason::OwnerOptInMissing,
+            CpuPlacementRejection::OwnerOptOut | CpuPlacementRejection::UserPaused => {
+                RejectReason::OwnerOptInMissing
+            },
             CpuPlacementRejection::InteractiveUse => RejectReason::InteractiveUserPresent,
             CpuPlacementRejection::BatteryPower => RejectReason::OnBattery,
             CpuPlacementRejection::ThermalUnsafe => RejectReason::ThermalUnsafe,
-            CpuPlacementRejection::InvalidCapacity | CpuPlacementRejection::InvalidRequest => RejectReason::DeviceUnavailable,
+            CpuPlacementRejection::InvalidCapacity | CpuPlacementRejection::InvalidRequest => {
+                RejectReason::DeviceUnavailable
+            },
         })
 }
 
@@ -405,7 +412,8 @@ pub fn admit_and_reserve_durably_with_verified_lease(
     if let Some(reason) = context.rejection_for(device, workload, now_unix_ms) {
         return Ok(Admission::Reject(reason));
     }
-    let admission = admit_with_verified_context(device, workload, &context, policies, approvals, now_unix_ms);
+    let admission =
+        admit_with_verified_context(device, workload, &context, policies, approvals, now_unix_ms);
     if admission != Admission::Accept {
         return Ok(admission);
     }
