@@ -272,8 +272,7 @@ mod tests {
             evaluate_cpu_placement(&sample, oversized, 10_500, 5_000),
             Err(CpuPlacementRejection::CpuHeadroomInsufficient)
         );
-        let placement =
-            evaluate_cpu_placement(&sample, request(), 10_500, 5_000).unwrap();
+        let placement = evaluate_cpu_placement(&sample, request(), 10_500, 5_000).unwrap();
         assert_eq!(placement.remaining_cpu_headroom_millis, 0);
     }
 
