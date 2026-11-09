@@ -377,10 +377,14 @@ fn capacity_rejection(
 fn device_with_signed_headroom(device: &Device, snapshot: &CpuWorkerSnapshot) -> Device {
     let mut bounded = device.clone();
     bounded.remaining_cpu_millis = bounded.remaining_cpu_millis.min(
-        snapshot.available_cpu_millis.saturating_sub(snapshot.system_reserved_cpu_millis),
+        snapshot
+            .available_cpu_millis
+            .saturating_sub(snapshot.system_reserved_cpu_millis),
     );
     bounded.remaining_memory_mb = bounded.remaining_memory_mb.min(
-        snapshot.available_memory_mb.saturating_sub(snapshot.system_reserved_memory_mb),
+        snapshot
+            .available_memory_mb
+            .saturating_sub(snapshot.system_reserved_memory_mb),
     );
     bounded
 }
