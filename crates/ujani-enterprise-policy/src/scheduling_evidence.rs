@@ -555,6 +555,77 @@ mod tests {
     }
 
     #[test]
+    fn resource_capacity_claims_are_bound_to_the_worker_signature() {
+        let d = device();
+        let w = workload();
+        let challenge = [0x41u8; 16];
+        let (mut telemetry, policy, device_key, admin_key) = signed_evidence(challenge, 1_000);
+        telemetry.claims.available_cpu_millis = 3_000;
+        assert_eq!(
+            verify_scheduling_context(
+                &d,
+                &w,
+                &telemetry,
+                &policy,
+                &[("worker-01".into(), device_key.verifying_key())],
+                &[("admin-key-01".into(), admin_key.verifying_key())],
+                &challenge,
+                2_000,
+            ),
+            Err(SchedulingEvidenceError::InvalidWorkerSignature)
+        );
+    }
+
+    #[test]
+    fn signed_worker_capacity_and_isolation_gate_admission() {
+        let d = device();
+        let w = workload();
+        let challenge = [0x42u8; 16];
+        let (mut telemetry, policy, device_key, admin_key) = signed_evidence(challenge, 1_000);
+        telemetry.claims.available_cpu_millis = 2_999;
+        telemetry.signature = device_key
+            .sign(&worker_telemetry_bytes(&telemetry.claims))
+            .to_bytes();
+        let verified = verify_scheduling_context(
+            &d,
+            &w,
+            &telemetry,
+            &policy,
+            &[("worker-01".into(), device_key.verifying_key())],
+            &[("admin-key-01".into(), admin_key.verifying_key())],
+            &challenge,
+            2_000,
+        )
+        .unwrap();
+        assert_eq!(
+            admit_with_verified_context(&d, &w, &verified, &[], &[], 2_000),
+            Admission::Reject(RejectReason::CpuBudget)
+        );
+
+        let challenge = [0x43u8; 16];
+        let (mut telemetry, policy, device_key, admin_key) = signed_evidence(challenge, 1_000);
+        telemetry.claims.os_isolation_ready = false;
+        telemetry.signature = device_key
+            .sign(&worker_telemetry_bytes(&telemetry.claims))
+            .to_bytes();
+        let verified = verify_scheduling_context(
+            &d,
+            &w,
+            &telemetry,
+            &policy,
+            &[("worker-01".into(), device_key.verifying_key())],
+            &[("admin-key-01".into(), admin_key.verifying_key())],
+            &challenge,
+            2_000,
+        )
+        .unwrap();
+        assert_eq!(
+            admit_with_verified_context(&d, &w, &verified, &[], &[], 2_000),
+            Admission::Reject(RejectReason::WorkerIsolationUnavailable)
+        );
+    }
+
+    #[test]
     fn accepts_fresh_dual_signed_challenge_bound_context() {
         let d = device();
         let w = workload();
