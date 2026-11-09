@@ -22,7 +22,7 @@ No new third-party runtime dependency is added by this milestone.
 
 ## CPU capacity and safe placement
 
-The Rust policy crate exposes cpu_capacity::evaluate_cpu_placement. It accepts a trusted, authenticated and timestamped worker snapshot and a CPU/memory request. It fails closed for stale/future telemetry, powered-off devices, missing owner opt-in, interactive use, user pause, battery operation, unsafe thermal state, unauthenticated telemetry, unavailable OS isolation, invalid measurements or insufficient headroom.
+The Rust policy crate exposes cpu_capacity::evaluate_cpu_placement. The signed scheduling-evidence path now includes the CPU/RAM capacity, reserve, owner-pause and OS-isolation fields in the worker's Ed25519-signed telemetry claims. The verifier constructs the snapshot only after signature verification, then checks it against the workload's CPU/memory request. It fails closed for stale/future telemetry, powered-off devices, missing owner opt-in, interactive use, user pause, battery operation, unsafe thermal state, unauthenticated telemetry, unavailable OS isolation, invalid measurements or insufficient headroom.
 
 CPU capacity is expressed in milli-cores (1,000 = one logical CPU's worth of quota). The worker reports the effective quota visible to its process/container/job object, not just host core count. A configurable CPU reserve protects OS/network services; the policy deliberately does not hard-code "leave two cores unused". Memory reserve is likewise configurable. The caller supplies the maximum telemetry age.
 
