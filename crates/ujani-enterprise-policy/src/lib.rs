@@ -314,6 +314,7 @@ pub enum RejectReason {
     InvalidLeaseToken,
     SchedulingEvidenceMismatch,
     SchedulingEvidenceExpired,
+    WorkerIsolationUnavailable,
 }
 impl RejectReason {
     pub fn as_str(&self) -> &'static str {
@@ -348,6 +349,7 @@ impl RejectReason {
                 "verified scheduling evidence does not match this device and workload"
             }
             Self::SchedulingEvidenceExpired => "verified scheduling evidence has expired",
+            Self::WorkerIsolationUnavailable => "required OS workload isolation is unavailable",
         }
     }
 }
