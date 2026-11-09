@@ -156,6 +156,8 @@ pub fn evaluate_cpu_placement(
 mod tests {
     use super::*;
 
+    type WorkerStateCase = (fn(&mut CpuWorkerSnapshot), CpuPlacementRejection);
+
     fn snapshot() -> CpuWorkerSnapshot {
         CpuWorkerSnapshot {
             sampled_at_unix_ms: 10_000,
@@ -216,7 +218,7 @@ mod tests {
 
     #[test]
     fn rejects_untrusted_or_disruptive_worker_states() {
-        let cases: [(fn(&mut CpuWorkerSnapshot), CpuPlacementRejection); 8] = [
+        let cases: [WorkerStateCase; 8] = [
             (
                 |s| s.powered_on = false,
                 CpuPlacementRejection::DevicePoweredOff,
