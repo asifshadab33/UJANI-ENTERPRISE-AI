@@ -544,7 +544,8 @@ impl Ledger {
         if !self.consume_challenge_nonce(nonce, expires_unix_ms, now_unix_ms) {
             return false;
         }
-        self.telemetry_generations.insert(device_id.to_owned(), generation);
+        self.telemetry_generations
+            .insert(device_id.to_owned(), generation);
         true
     }
 
