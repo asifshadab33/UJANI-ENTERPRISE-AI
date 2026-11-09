@@ -804,6 +804,63 @@ mod tests {
     }
 
     #[test]
+    fn capacity_rejection_is_enforced_by_both_verified_reservation_wrappers() {
+        let d = device();
+        let w = workload();
+
+        // 2,999 available CPU minus the 2,000 system reserve leaves 999,
+        // one millicore below this workload's 1,000-millicore request.
+        let mut memory_ledger = Ledger::default();
+        let memory_context = verified_context_for(&w, [0x71; 16], 1_000, 2_999);
+        assert_eq!(
+            admit_and_reserve_with_verified_lease(
+                &mut memory_ledger,
+                &d,
+                &w,
+                memory_context,
+                &[],
+                &[],
+                2_000,
+                &[0x71; 32],
+            ),
+            Admission::Reject(RejectReason::CpuBudget)
+        );
+        assert!(memory_ledger.jobs.is_empty());
+
+        let path = std::env::temp_dir().join(format!(
+            "ujani-wrapper-capacity-reject-{}.ledger",
+            std::process::id()
+        ));
+        let durable = DurableLedger::open_with_integrity_keys(
+            &path,
+            "test-key",
+            vec![LedgerIntegrityKey::new("test-key", [0x72; 32])],
+        )
+        .unwrap();
+        let durable_context = verified_context_for(&w, [0x72; 16], 1_000, 2_999);
+        assert_eq!(
+            admit_and_reserve_durably_with_verified_lease(
+                &durable,
+                &d,
+                &w,
+                durable_context,
+                &[],
+                &[],
+                2_000,
+                &[0x72; 32],
+            )
+            .unwrap(),
+            Admission::Reject(RejectReason::CpuBudget)
+        );
+        assert_eq!(durable.snapshot().unwrap().active_jobs, 0);
+        drop(durable);
+        let mut lock_path = path.as_os_str().to_os_string();
+        lock_path.push(".lock");
+        let _ = std::fs::remove_file(std::path::PathBuf::from(lock_path));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
     fn accepts_fresh_dual_signed_challenge_bound_context() {
         let d = device();
         let w = workload();
