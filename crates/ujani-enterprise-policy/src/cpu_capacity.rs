@@ -217,14 +217,35 @@ mod tests {
     #[test]
     fn rejects_untrusted_or_disruptive_worker_states() {
         let cases: [(fn(&mut CpuWorkerSnapshot), CpuPlacementRejection); 8] = [
-            (|s| s.powered_on = false, CpuPlacementRejection::DevicePoweredOff),
-            (|s| s.owner_opted_in = false, CpuPlacementRejection::OwnerOptOut),
-            (|s| s.interactive_user_present = true, CpuPlacementRejection::InteractiveUse),
+            (
+                |s| s.powered_on = false,
+                CpuPlacementRejection::DevicePoweredOff,
+            ),
+            (
+                |s| s.owner_opted_in = false,
+                CpuPlacementRejection::OwnerOptOut,
+            ),
+            (
+                |s| s.interactive_user_present = true,
+                CpuPlacementRejection::InteractiveUse,
+            ),
             (|s| s.user_paused = true, CpuPlacementRejection::UserPaused),
-            (|s| s.on_ac_power = false, CpuPlacementRejection::BatteryPower),
-            (|s| s.thermal_state_safe = false, CpuPlacementRejection::ThermalUnsafe),
-            (|s| s.telemetry_authenticated = false, CpuPlacementRejection::UnauthenticatedTelemetry),
-            (|s| s.os_isolation_ready = false, CpuPlacementRejection::IsolationUnavailable),
+            (
+                |s| s.on_ac_power = false,
+                CpuPlacementRejection::BatteryPower,
+            ),
+            (
+                |s| s.thermal_state_safe = false,
+                CpuPlacementRejection::ThermalUnsafe,
+            ),
+            (
+                |s| s.telemetry_authenticated = false,
+                CpuPlacementRejection::UnauthenticatedTelemetry,
+            ),
+            (
+                |s| s.os_isolation_ready = false,
+                CpuPlacementRejection::IsolationUnavailable,
+            ),
         ];
         for (mutate, expected) in cases {
             let mut sample = snapshot();
