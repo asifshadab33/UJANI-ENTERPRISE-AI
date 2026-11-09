@@ -362,13 +362,13 @@ fn capacity_rejection(
             CpuPlacementRejection::DevicePoweredOff => RejectReason::DeviceNotRunning,
             CpuPlacementRejection::OwnerOptOut | CpuPlacementRejection::UserPaused => {
                 RejectReason::OwnerOptInMissing
-            },
+            }
             CpuPlacementRejection::InteractiveUse => RejectReason::InteractiveUserPresent,
             CpuPlacementRejection::BatteryPower => RejectReason::OnBattery,
             CpuPlacementRejection::ThermalUnsafe => RejectReason::ThermalUnsafe,
             CpuPlacementRejection::InvalidCapacity | CpuPlacementRejection::InvalidRequest => {
                 RejectReason::DeviceUnavailable
-            },
+            }
         })
 }
 
@@ -444,7 +444,8 @@ pub fn admit_and_reserve_with_verified_lease(
     if let Some(reason) = context.rejection_for(device, workload, now_unix_ms) {
         return Admission::Reject(reason);
     }
-    let admission = admit_with_verified_context(device, workload, &context, policies, approvals, now_unix_ms);
+    let admission =
+        admit_with_verified_context(device, workload, &context, policies, approvals, now_unix_ms);
     if admission != Admission::Accept {
         return admission;
     }
