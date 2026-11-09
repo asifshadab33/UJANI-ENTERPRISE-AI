@@ -3,8 +3,8 @@
 //! This planner evaluates existing fail-closed admission policy only. It does not
 //! reserve resources, create leases, dispatch work or execute a workload.
 use crate::{
-    admit_with_context, validate_workload_manifest, Admission, ClassPolicy, Device,
-    ManifestError, SchedulingContext, VerifiedAdminApproval, WorkloadManifest,
+    admit_with_context, validate_workload_manifest, Admission, ClassPolicy, Device, ManifestError,
+    SchedulingContext, VerifiedAdminApproval, WorkloadManifest,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -182,14 +182,9 @@ mod tests {
         let mut stale = candidate("stale", 2000, 4096, true);
         stale.context.telemetry_fresh = false;
 
-        let plan = plan_local_first_placement(
-            &manifest(),
-            &[no_consent, stale],
-            &policies(),
-            &[],
-            10_000,
-        )
-        .unwrap();
+        let plan =
+            plan_local_first_placement(&manifest(), &[no_consent, stale], &policies(), &[], 10_000)
+                .unwrap();
 
         assert!(plan.selected_device_id.is_none());
         assert_eq!(plan.rejected.len(), 2);
