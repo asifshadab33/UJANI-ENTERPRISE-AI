@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ujani:model-runtime-inventory:v1",
+  "title": "UJANI Model and Runtime Inventory",
+  "description": "Privacy-minimised, read-only metadata about locally available model runtimes and models. This contract does not authorise inference, installation, dispatch, or data transfer.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "generated_at_unix_ms", "platform", "hardware", "runtimes", "models"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "generated_at_unix_ms": { "type": "integer", "minimum": 1 },
+    "device_ref": { "type": ["string", "null"], "maxLength": 128, "pattern": "^[A-Za-z0-9._:-]*$" },
+    "platform": { "type": "object", "additionalProperties": false, "required": ["os", "architecture"], "properties": {
+      "os": { "type": "string", "minLength": 1, "maxLength": 32 },
+      "os_version": { "type": ["string", "null"], "maxLength": 64 },
+      "architecture": { "type": "string", "minLength": 1, "maxLength": 32 }
+    }},
+    "hardware": { "type": "object", "additionalProperties": false, "required": ["cpu_logical_cores", "memory_total_mb", "memory_available_mb", "accelerators"], "properties": {
+      "cpu_logical_cores": { "type": ["integer", "null"], "minimum": 1, "maximum": 65535 },
+      "memory_total_mb": { "type": ["integer", "null"], "minimum": 1 },
+      "memory_available_mb": { "type": ["integer", "null"], "minimum": 0 },
+      "storage_free_mb": { "type": ["integer", "null"], "minimum": 0 },
+      "accelerators": { "type": "array", "maxItems": 32, "items": { "type": "object", "additionalProperties": false, "required": ["kind", "vendor", "evidence"], "properties": {
+        "kind": { "enum": ["gpu", "npu", "other"] },
+        "vendor": { "type": ["string", "null"], "maxLength": 64 },
+        "device_family": { "type": ["string", "null"], "maxLength": 96 },
+        "memory_mb": { "type": ["integer", "null"], "minimum": 0 },
+        "runtime_api": { "type": ["string", "null"], "maxLength": 64 },
+        "evidence": { "$ref": "#/$defs/evidence" }
+      }}}
+    }},
+    "runtimes": { "type": "array", "maxItems": 16, "items": { "type": "object", "additionalProperties": false, "required": ["runtime_id", "provider", "version", "availability", "network_scope", "evidence"], "properties": {
+      "runtime_id": { "type": "string", "minLength": 1, "maxLength": 96, "pattern": "^[A-Za-z0-9._:-]+$" },
+      "provider": { "type": "string", "minLength": 1, "maxLength": 64 },
+      "version": { "type": ["string", "null"], "maxLength": 64 },
+      "availability": { "enum": ["available", "unavailable", "unknown"] },
+      "network_scope": { "enum": ["loopback_only", "local_socket", "enterprise_internal", "not_applicable", "unknown"] },
+      "evidence": { "$ref": "#/$defs/evidence" }
+    }}},
+    "models": { "type": "array", "maxItems": 512, "items": { "type": "object", "additionalProperties": false, "required": ["model_ref", "runtime_id", "display_name", "availability", "size_bytes", "capabilities", "evidence"], "properties": {
+      "model_ref": { "type": "string", "minLength": 1, "maxLength": 160 },
+      "runtime_id": { "type": "string", "minLength": 1, "maxLength": 96, "pattern": "^[A-Za-z0-9._:-]+$" },
+      "display_name": { "type": "string", "minLength": 1, "maxLength": 160 },
+      "family": { "type": ["string", "null"], "maxLength": 96 },
+      "version": { "type": ["string", "null"], "maxLength": 64 },
+      "availability": { "enum": ["installed", "downloadable", "unavailable", "unknown"] },
+      "size_bytes": { "type": ["integer", "null"], "minimum": 0 },
+      "context_length_tokens": { "type": ["integer", "null"], "minimum": 1 },
+      "estimated_min_memory_mb": { "type": ["integer", "null"], "minimum": 0 },
+      "capabilities": { "type": "array", "uniqueItems": true, "maxItems": 16, "items": { "enum": ["chat", "reasoning", "coding", "vision", "embeddings", "tool_use", "streaming", "audio_input", "audio_output", "unknown"] }},
+      "evidence": { "$ref": "#/$defs/evidence" }
+    }}},
+    "privacy": { "type": "object", "additionalProperties": false, "properties": {
+      "contains_prompts": { "const": false },
+      "contains_user_files": { "const": false },
+      "contains_local_paths": { "const": false },
+      "contains_credentials": { "const": false }
+    }}
+  },
+  "$defs": { "evidence": { "type": "object", "additionalProperties": false, "required": ["source", "confidence", "observed_at_unix_ms"], "properties": {
+    "source": { "enum": ["runtime_api", "os_api", "runtime_metadata", "signed_catalogue", "published_catalogue", "estimate", "unknown"] },
+    "confidence": { "enum": ["verified", "reported", "estimated", "unknown"] },
+    "observed_at_unix_ms": { "type": ["integer", "null"], "minimum": 1 }
+  }}}
+}
