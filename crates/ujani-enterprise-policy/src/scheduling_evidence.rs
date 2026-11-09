@@ -616,8 +616,14 @@ mod tests {
         };
         let device = device();
         let workload = workload();
-        let device_keys = [("worker-01".to_owned(), SigningKey::from_bytes(&[5u8; 32]).verifying_key())];
-        let admin_keys = [("admin-key-01".to_owned(), SigningKey::from_bytes(&[6u8; 32]).verifying_key())];
+        let device_keys = [(
+            "worker-01".to_owned(),
+            SigningKey::from_bytes(&[5u8; 32]).verifying_key(),
+        )];
+        let admin_keys = [(
+            "admin-key-01".to_owned(),
+            SigningKey::from_bytes(&[6u8; 32]).verifying_key(),
+        )];
 
         {
             let ledger = open();
