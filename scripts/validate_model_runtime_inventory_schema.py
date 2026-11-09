@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 
 SCHEMA_PATH = Path(__file__).resolve().parents[1] / "schemas/model-runtime-inventory-v1.schema.json"
@@ -20,7 +19,7 @@ def main() -> None:
     }
     device_ref = schema["properties"]["device_ref"]
     assert device_ref["type"] == ["string", "null"]
-    assert re.fullmatch(r"\^\[A-Za-z0-9._:-\]\+\$", device_ref["pattern"])
+    assert device_ref["pattern"] == "^[A-Za-z0-9._:-]+$"
     assert schema["properties"]["runtimes"]["maxItems"] <= 16
     assert schema["properties"]["models"]["maxItems"] <= 512
     assert schema["properties"]["hardware"]["properties"]["accelerators"]["maxItems"] <= 32
