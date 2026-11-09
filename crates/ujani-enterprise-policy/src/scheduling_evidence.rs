@@ -858,6 +858,42 @@ mod tests {
             ),
             Err(SchedulingEvidenceError::InvalidWorkerSignature)
         );
+
+        // The monotonic generation is part of the signed payload, not caller metadata.
+        telemetry.claims.available_cpu_millis = 6_000;
+        telemetry.claims.sample_generation = 2;
+        assert_eq!(
+            verify_scheduling_context(
+                &d,
+                &w,
+                &telemetry,
+                &policy,
+                &[("worker-01".into(), device_key.verifying_key())],
+                &[("admin-key-01".into(), admin_key.verifying_key())],
+                &challenge,
+                2_000,
+            ),
+            Err(SchedulingEvidenceError::InvalidWorkerSignature)
+        );
+
+        // Even a correctly signed zero generation is invalid.
+        telemetry.signature = device_key
+            .sign(&worker_telemetry_bytes(&telemetry.claims))
+            .to_bytes();
+        telemetry.claims.sample_generation = 0;
+        assert_eq!(
+            verify_scheduling_context(
+                &d,
+                &w,
+                &telemetry,
+                &policy,
+                &[("worker-01".into(), device_key.verifying_key())],
+                &[("admin-key-01".into(), admin_key.verifying_key())],
+                &challenge,
+                2_000,
+            ),
+            Err(SchedulingEvidenceError::InvalidTimeWindow)
+        );
     }
 
     #[test]
