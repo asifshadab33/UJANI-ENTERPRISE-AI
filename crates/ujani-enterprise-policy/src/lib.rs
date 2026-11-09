@@ -11,6 +11,8 @@ pub mod connector_contract;
 pub mod cpu_capacity;
 pub mod device_trust;
 pub mod energy;
+pub mod local_first_placement;
+pub use local_first_placement::{plan_local_first_placement, CandidateRejection, LocalFirstPlacementPlan, PlacementCandidate};
 use ed25519_dalek::{Signature, VerifyingKey};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
