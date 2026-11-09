@@ -368,6 +368,8 @@ pub struct Ledger {
     consumed_approvals: std::collections::HashSet<String>,
     /// Short-lived, single-use dispatch challenges persisted by DurableLedger.
     consumed_challenges: std::collections::HashMap<[u8; 16], u64>,
+    /// Highest accepted signed worker telemetry generation per enrolled device.
+    telemetry_generations: std::collections::HashMap<String, u64>,
     /// Domain-separated SHA-256 digests of caller-generated 256-bit lease capabilities.
     lease_token_hashes: std::collections::HashMap<String, [u8; 32]>,
 }
@@ -518,6 +520,31 @@ impl Ledger {
             return false;
         }
         self.consumed_challenges.insert(nonce, expires_unix_ms);
+        true
+    }
+
+    /// Atomically consume a challenge and advance the device's signed telemetry
+    /// generation. A fresh challenge cannot make an older signed sample current.
+    pub(crate) fn consume_telemetry_challenge(
+        &mut self,
+        device_id: &str,
+        generation: u64,
+        nonce: [u8; 16],
+        expires_unix_ms: u64,
+        now_unix_ms: u64,
+    ) -> bool {
+        if generation == 0
+            || self
+                .telemetry_generations
+                .get(device_id)
+                .is_some_and(|previous| generation <= *previous)
+        {
+            return false;
+        }
+        if !self.consume_challenge_nonce(nonce, expires_unix_ms, now_unix_ms) {
+            return false;
+        }
+        self.telemetry_generations.insert(device_id.to_owned(), generation);
         true
     }
 
