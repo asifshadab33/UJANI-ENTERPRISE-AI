@@ -30,6 +30,7 @@ pub struct LocalFirstPlacementPlan {
 }
 
 /// Evaluate trusted organisation-owned candidates and choose a deterministic best fit.
+///
 /// Candidates must already be backed by authenticated inventory/evidence from the caller.
 pub fn plan_local_first_placement(
     manifest: &WorkloadManifest,
@@ -53,6 +54,7 @@ pub fn plan_local_first_placement(
             });
             continue;
         }
+
         match admit_with_context(
             &candidate.device,
             &workload,
@@ -64,9 +66,13 @@ pub fn plan_local_first_placement(
             Admission::Accept => {
                 // Best-fit packing: prefer the smallest remaining CPU capacity that
                 // still satisfies the request, then memory slack, then stable ID.
-                let cpu_slack = candidate.device.remaining_cpu_millis
+                let cpu_slack = candidate
+                    .device
+                    .remaining_cpu_millis
                     .saturating_sub(workload.requested_cpu_millis);
-                let memory_slack = candidate.device.remaining_memory_mb
+                let memory_slack = candidate
+                    .device
+                    .remaining_memory_mb
                     .saturating_sub(workload.requested_memory_mb);
                 eligible.push((cpu_slack, memory_slack, id));
             }
@@ -78,8 +84,12 @@ pub fn plan_local_first_placement(
     }
 
     eligible.sort();
-    let eligible_device_ids = eligible.iter().map(|(_, _, id)| id.clone()).collect::<Vec<_>>();
+    let eligible_device_ids = eligible
+        .iter()
+        .map(|(_, _, id)| id.clone())
+        .collect::<Vec<_>>();
     let selected_device_id = eligible_device_ids.first().cloned();
+
     Ok(LocalFirstPlacementPlan {
         selected_device_id,
         eligible_device_ids,
@@ -111,15 +121,23 @@ mod tests {
     fn candidate(id: &str, cpu: u32, memory: u64, available: bool) -> PlacementCandidate {
         PlacementCandidate {
             device: Device {
-                device_id: id.into(), enrolled: true, admin_approved: true, available,
+                device_id: id.into(),
+                enrolled: true,
+                admin_approved: true,
+                available,
                 allowed_workload_classes: vec!["interactive-low-priority".into()],
-                remaining_cpu_millis: cpu, remaining_memory_mb: memory,
+                remaining_cpu_millis: cpu,
+                remaining_memory_mb: memory,
             },
             context: SchedulingContext {
-                owner_opted_in: true, within_admin_schedule: true,
-                interactive_user_present: false, on_ac_power: true,
-                device_already_running: true, thermal_state_safe: true,
-                network_policy_allows: true, data_classification_allows: true,
+                owner_opted_in: true,
+                within_admin_schedule: true,
+                interactive_user_present: false,
+                on_ac_power: true,
+                device_already_running: true,
+                thermal_state_safe: true,
+                network_policy_allows: true,
+                data_classification_allows: true,
                 telemetry_fresh: true,
             },
         }
@@ -127,8 +145,10 @@ mod tests {
 
     fn policies() -> Vec<ClassPolicy> {
         vec![ClassPolicy {
-            class: "interactive-low-priority".into(), requires_admin_approval: false,
-            max_cpu_millis: 2000, max_memory_mb: 8192,
+            class: "interactive-low-priority".into(),
+            requires_admin_approval: false,
+            max_cpu_millis: 2000,
+            max_memory_mb: 8192,
         }]
     }
 
@@ -136,11 +156,21 @@ mod tests {
     fn selects_best_fit_from_eligible_internal_devices_without_reserving() {
         let plan = plan_local_first_placement(
             &manifest(),
-            &[candidate("roomy", 4000, 8192, true), candidate("best-fit", 700, 2048, true)],
-            &policies(), &[], 10_000,
-        ).unwrap();
+            &[
+                candidate("roomy", 4000, 8192, true),
+                candidate("best-fit", 700, 2048, true),
+            ],
+            &policies(),
+            &[],
+            10_000,
+        )
+        .unwrap();
+
         assert_eq!(plan.selected_device_id.as_deref(), Some("best-fit"));
-        assert_eq!(plan.eligible_device_ids, vec!["best-fit".to_string(), "roomy".to_string()]);
+        assert_eq!(
+            plan.eligible_device_ids,
+            vec!["best-fit".to_string(), "roomy".to_string()]
+        );
         assert!(!plan.execution_started);
         assert!(!plan.resources_reserved);
     }
@@ -151,24 +181,51 @@ mod tests {
         no_consent.context.owner_opted_in = false;
         let mut stale = candidate("stale", 2000, 4096, true);
         stale.context.telemetry_fresh = false;
+
         let plan = plan_local_first_placement(
-            &manifest(), &[no_consent, stale], &policies(), &[], 10_000,
-        ).unwrap();
+            &manifest(),
+            &[no_consent, stale],
+            &policies(),
+            &[],
+            10_000,
+        )
+        .unwrap();
+
         assert!(plan.selected_device_id.is_none());
         assert_eq!(plan.rejected.len(), 2);
-        assert!(plan.rejected.iter().any(|r| r.reason == RejectReason::OwnerOptInMissing.as_str()));
-        assert!(plan.rejected.iter().any(|r| r.reason == RejectReason::TelemetryStale.as_str()));
+        assert!(plan
+            .rejected
+            .iter()
+            .any(|r| r.reason == RejectReason::OwnerOptInMissing.as_str()));
+        assert!(plan
+            .rejected
+            .iter()
+            .any(|r| r.reason == RejectReason::TelemetryStale.as_str()));
     }
 
     #[test]
     fn rejects_duplicate_candidate_ids_and_unavailable_devices() {
         let plan = plan_local_first_placement(
             &manifest(),
-            &[candidate("same", 2000, 4096, true), candidate("same", 2000, 4096, true), candidate("offline", 2000, 4096, false)],
-            &policies(), &[], 10_000,
-        ).unwrap();
+            &[
+                candidate("same", 2000, 4096, true),
+                candidate("same", 2000, 4096, true),
+                candidate("offline", 2000, 4096, false),
+            ],
+            &policies(),
+            &[],
+            10_000,
+        )
+        .unwrap();
+
         assert_eq!(plan.eligible_device_ids, vec!["same".to_string()]);
-        assert!(plan.rejected.iter().any(|r| r.reason == "duplicate device candidate"));
-        assert!(plan.rejected.iter().any(|r| r.reason == RejectReason::DeviceUnavailable.as_str()));
+        assert!(plan
+            .rejected
+            .iter()
+            .any(|r| r.reason == "duplicate device candidate"));
+        assert!(plan
+            .rejected
+            .iter()
+            .any(|r| r.reason == RejectReason::DeviceUnavailable.as_str()));
     }
 }
