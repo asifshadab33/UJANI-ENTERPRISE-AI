@@ -483,7 +483,7 @@ pub fn admit_and_reserve_with_verified_lease(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{workload_from_manifest, DataClassification, WorkloadManifest};
+    use crate::{workload_from_manifest, DataClassification, LedgerIntegrityKey, WorkloadManifest};
     use ed25519_dalek::{Signer, SigningKey};
 
     fn device() -> Device {
