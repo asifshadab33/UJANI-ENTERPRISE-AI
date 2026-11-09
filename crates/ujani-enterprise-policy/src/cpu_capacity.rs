@@ -7,34 +7,57 @@
 
 use crate::Workload;
 
+/// Maximum accepted clock skew for a worker telemetry sample, in milliseconds.
 pub const MAX_TELEMETRY_FUTURE_SKEW_MS: u64 = 30_000;
 
+/// Authenticated resource and consent snapshot supplied by an enrolled worker.
+///
+/// CPU quantities use milli-cores (1,000 = one core of schedulable quota).
+/// Memory quantities use MiB. `available_*` fields describe currently free
+/// resources before the UJANI system reserve is deducted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CpuWorkerSnapshot {
+    /// Unix timestamp in milliseconds when this snapshot was collected.
     pub sampled_at_unix_ms: u64,
     /// Effective CPU quota visible to this worker, in milli-cores.
     /// Use cgroup/job-object limits, not only host logical-core count.
     pub effective_cpu_capacity_millis: u32,
+    /// CPU headroom currently free, in milli-cores, before system reserve.
     pub available_cpu_millis: u32,
     /// Configurable capacity reserved for OS/network and non-UJANI services.
+    /// CPU headroom, in milli-cores, that UJANI must leave to the OS/services.
     pub system_reserved_cpu_millis: u32,
+    /// Total memory visible to the worker, in MiB.
     pub total_memory_mb: u64,
+    /// Memory currently free, in MiB, before system reserve.
     pub available_memory_mb: u64,
+    /// Memory, in MiB, that UJANI must leave to the OS/services.
     pub system_reserved_memory_mb: u64,
     /// UJANI must never wake a sleeping or powered-off device for a job.
+    /// Whether the device is already powered on; UJANI never wakes it.
     pub powered_on: bool,
+    /// Whether the device owner explicitly opted into this workload class/window.
     pub owner_opted_in: bool,
+    /// Whether interactive user activity is currently detected.
     pub interactive_user_present: bool,
+    /// Whether the owner has paused or opted out of workload participation.
     pub user_paused: bool,
+    /// Whether the worker is connected to AC power.
     pub on_ac_power: bool,
+    /// Whether the trusted thermal monitor reports a safe operating state.
     pub thermal_state_safe: bool,
+    /// Whether this snapshot is authenticated and bound to the enrolled device.
     pub telemetry_authenticated: bool,
+    /// Whether required OS-level workload isolation is available.
     pub os_isolation_ready: bool,
 }
 
+/// CPU and memory resources requested by one workload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CpuPlacementRequest {
+    /// Requested CPU quota in milli-cores (1,000 = one core).
     pub requested_cpu_millis: u32,
+    /// Requested memory in MiB.
     pub requested_memory_mb: u64,
 }
 
@@ -47,30 +70,53 @@ impl From<&Workload> for CpuPlacementRequest {
     }
 }
 
+/// Successful, non-reserving estimate of the worker headroom after admission.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CpuPlacement {
+    /// CPU quota admitted for the workload, in milli-cores.
     pub admitted_cpu_millis: u32,
+    /// Memory admitted for the workload, in MiB.
     pub admitted_memory_mb: u64,
+    /// Remaining CPU headroom after this request and system reserve, in milli-cores.
     pub remaining_cpu_headroom_millis: u32,
+    /// Remaining memory headroom after this request and system reserve, in MiB.
     pub remaining_memory_headroom_mb: u64,
     pub telemetry_sampled_at_unix_ms: u64,
 }
 
+/// Fail-closed reason a worker snapshot or workload request was rejected.
+///
+/// Rejections are evaluated in declaration order: request/capacity validity,
+/// telemetry time, device/owner state, safety and isolation, then CPU and memory.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CpuPlacementRejection {
+    /// Resource measurements are inconsistent or exceed physical/effective capacity.
     InvalidCapacity,
+    /// Requested CPU or memory is zero.
     InvalidRequest,
+    /// Telemetry timestamp is too far in the future.
     FutureTelemetry,
+    /// Telemetry is older than the caller's freshness limit.
     StaleTelemetry,
+    /// Device is not already powered on.
     DevicePoweredOff,
+    /// Device owner has not opted in.
     OwnerOptOut,
+    /// Interactive user activity takes priority over batch work.
     InteractiveUse,
+    /// Device owner has paused workload participation.
     UserPaused,
+    /// Worker is not connected to AC power.
     BatteryPower,
+    /// Thermal state is not safe.
     ThermalUnsafe,
+    /// Snapshot is not authenticated for the enrolled device.
     UnauthenticatedTelemetry,
+    /// Required OS-level isolation is unavailable.
     IsolationUnavailable,
+    /// Request would consume the protected CPU reserve or exceed free CPU.
     CpuHeadroomInsufficient,
+    /// Request would consume the protected memory reserve or exceed free memory.
     MemoryHeadroomInsufficient,
 }
 
@@ -80,6 +126,28 @@ pub enum CpuPlacementRejection {
 /// fails closed for stale/future or unauthenticated measurements. It does not
 /// reserve capacity: acquire the durable lease before dispatch, then enforce
 /// CPU/RAM limits using OS controls on the worker.
+///
+/// # Example
+/// ```
+/// # use ujani_enterprise_policy::cpu_capacity::{
+/// #     evaluate_cpu_placement, CpuPlacementRequest, CpuWorkerSnapshot,
+/// # };
+/// # let snapshot = CpuWorkerSnapshot {
+/// #     sampled_at_unix_ms: 10_000, effective_cpu_capacity_millis: 8_000,
+/// #     available_cpu_millis: 6_000, system_reserved_cpu_millis: 2_000,
+/// #     total_memory_mb: 32_768, available_memory_mb: 20_000,
+/// #     system_reserved_memory_mb: 4_096, powered_on: true,
+/// #     owner_opted_in: true, interactive_user_present: false,
+/// #     user_paused: false, on_ac_power: true, thermal_state_safe: true,
+/// #     telemetry_authenticated: true, os_isolation_ready: true,
+/// # };
+/// let request = CpuPlacementRequest {
+///     requested_cpu_millis: 2_000,
+///     requested_memory_mb: 6_144,
+/// };
+/// let placement = evaluate_cpu_placement(&snapshot, request, 10_500, 5_000);
+/// assert!(placement.is_ok());
+/// ```
 pub fn evaluate_cpu_placement(
     snapshot: &CpuWorkerSnapshot,
     request: CpuPlacementRequest,
@@ -132,7 +200,7 @@ pub fn evaluate_cpu_placement(
     // Respect measured free capacity and the explicit system reserve.
     let cpu_headroom = snapshot
         .available_cpu_millis
-        .min(snapshot.effective_cpu_capacity_millis - snapshot.system_reserved_cpu_millis);
+        .saturating_sub(snapshot.system_reserved_cpu_millis);
     if request.requested_cpu_millis > cpu_headroom {
         return Err(CpuPlacementRejection::CpuHeadroomInsufficient);
     }
@@ -188,8 +256,25 @@ mod tests {
     #[test]
     fn admits_only_within_measured_capacity_and_system_reserve() {
         let result = evaluate_cpu_placement(&snapshot(), request(), 10_500, 5_000).unwrap();
-        assert_eq!(result.remaining_cpu_headroom_millis, 4_000);
+        assert_eq!(result.remaining_cpu_headroom_millis, 2_000);
         assert_eq!(result.remaining_memory_headroom_mb, 9_760);
+    }
+
+    #[test]
+    fn existing_ujani_cpu_usage_cannot_consume_the_system_reserve() {
+        let mut sample = snapshot();
+        // Other work has already consumed 2,000 milli-cores, reducing free
+        // CPU below effective capacity minus the reserve.
+        sample.available_cpu_millis = 4_000;
+        let mut oversized = request();
+        oversized.requested_cpu_millis = 2_001;
+        assert_eq!(
+            evaluate_cpu_placement(&sample, oversized, 10_500, 5_000),
+            Err(CpuPlacementRejection::CpuHeadroomInsufficient)
+        );
+        let placement =
+            evaluate_cpu_placement(&sample, request(), 10_500, 5_000).unwrap();
+        assert_eq!(placement.remaining_cpu_headroom_millis, 0);
     }
 
     #[test]
@@ -262,7 +347,7 @@ mod tests {
     #[test]
     fn rejects_cpu_and_memory_overcommit() {
         let mut cpu = request();
-        cpu.requested_cpu_millis = 6_001;
+        cpu.requested_cpu_millis = 4_001;
         assert_eq!(
             evaluate_cpu_placement(&snapshot(), cpu, 10_500, 5_000),
             Err(CpuPlacementRejection::CpuHeadroomInsufficient)
