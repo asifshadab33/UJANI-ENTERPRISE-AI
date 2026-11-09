@@ -296,17 +296,6 @@ impl DurableLedger {
         })
     }
 
-    pub(crate) fn consume_challenge_nonce(
-        &self,
-        nonce: [u8; 16],
-        expires_unix_ms: u64,
-        now_unix_ms: u64,
-    ) -> Result<bool, DurableLedgerError> {
-        self.transact(|ledger| {
-            Ok(ledger.consume_challenge_nonce(nonce, expires_unix_ms, now_unix_ms))
-        })
-    }
-
     /// Consume a dispatch challenge and advance the enrolled worker's signed
     /// telemetry generation in one durable transaction.
     pub(crate) fn consume_telemetry_challenge(
@@ -783,7 +772,7 @@ fn serialize_snapshot(ledger: &Ledger, key_id: &str, key: &[u8; 32]) -> Vec<u8> 
         body.push_str(&format!("C\t{}\t{}\n", hex_encode(nonce), expires));
     }
     let mut telemetry_generations = ledger.telemetry_generations.iter().collect::<Vec<_>>();
-    telemetry_generations.sort_by(|(left, _), (right, _)| left.cmp(right));
+    telemetry_generations.sort_by_key(|(device_id, _)| *device_id);
     for (device_id, generation) in telemetry_generations {
         body.push_str(&format!(
             "G\t{}\t{}\n",
