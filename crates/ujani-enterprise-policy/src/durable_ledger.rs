@@ -16,7 +16,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use zeroize::Zeroize;
 
-const LEDGER_HEADER: &str = "UJANI-ENTERPRISE-LEDGER-V2";
+const LEDGER_HEADER: &str = "UJANI-ENTERPRISE-LEDGER-V3";
+const LEGACY_LEDGER_HEADER: &str = "UJANI-ENTERPRISE-LEDGER-V2";
 const LEDGER_MAC_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-LEDGER-HMAC-SHA256-V2\0";
 const MAX_LEDGER_BYTES: u64 = 16 * 1024 * 1024;
 
@@ -303,6 +304,27 @@ impl DurableLedger {
     ) -> Result<bool, DurableLedgerError> {
         self.transact(|ledger| {
             Ok(ledger.consume_challenge_nonce(nonce, expires_unix_ms, now_unix_ms))
+        })
+    }
+
+    /// Consume a dispatch challenge and advance the enrolled worker's signed
+    /// telemetry generation in one durable transaction.
+    pub(crate) fn consume_telemetry_challenge(
+        &self,
+        device_id: &str,
+        generation: u64,
+        nonce: [u8; 16],
+        expires_unix_ms: u64,
+        now_unix_ms: u64,
+    ) -> Result<bool, DurableLedgerError> {
+        self.transact(|ledger| {
+            Ok(ledger.consume_telemetry_challenge(
+                device_id,
+                generation,
+                nonce,
+                expires_unix_ms,
+                now_unix_ms,
+            ))
         })
     }
 
@@ -760,6 +782,15 @@ fn serialize_snapshot(ledger: &Ledger, key_id: &str, key: &[u8; 32]) -> Vec<u8> 
     for (nonce, expires) in challenges {
         body.push_str(&format!("C\t{}\t{}\n", hex_encode(nonce), expires));
     }
+    let mut telemetry_generations = ledger.telemetry_generations.iter().collect::<Vec<_>>();
+    telemetry_generations.sort_by(|(left, _), (right, _)| left.cmp(right));
+    for (device_id, generation) in telemetry_generations {
+        body.push_str(&format!(
+            "G\t{}\t{}\n",
+            hex_encode(device_id.as_bytes()),
+            generation,
+        ));
+    }
     let mac = ledger_mac(key, key_id, body.as_bytes());
     body.push_str(&format!("M\t{}\t{}\n", key_id, hex_encode(&mac)));
     body.into_bytes()
@@ -797,9 +828,12 @@ fn deserialize_snapshot(
     }
 
     let mut lines = body.lines();
-    if lines.next() != Some(LEDGER_HEADER) {
-        return Err(DurableLedgerError::CorruptState);
-    }
+    let snapshot_header = lines.next();
+    let is_v3 = match snapshot_header {
+        Some(LEDGER_HEADER) => true,
+        Some(LEGACY_LEDGER_HEADER) => false,
+        _ => return Err(DurableLedgerError::CorruptState),
+    };
     let mut ledger = Ledger::default();
     let mut token_hashes = HashSet::new();
     for line in lines {
@@ -874,6 +908,18 @@ fn deserialize_snapshot(
                     .parse::<u64>()
                     .map_err(|_| DurableLedgerError::InvalidRecord)?;
                 if expires == 0 || ledger.consumed_challenges.insert(nonce, expires).is_some() {
+                    return Err(DurableLedgerError::InvalidRecord);
+                }
+            }
+            Some("G") if is_v3 && fields.len() == 3 => {
+                let device_id = decode_hex_string(fields[1])?;
+                let generation = fields[2]
+                    .parse::<u64>()
+                    .map_err(|_| DurableLedgerError::InvalidRecord)?;
+                if !valid_stored_identifier(&device_id, 128)
+                    || generation == 0
+                    || ledger.telemetry_generations.insert(device_id, generation).is_some()
+                {
                     return Err(DurableLedgerError::InvalidRecord);
                 }
             }
@@ -1693,7 +1739,7 @@ mod tests {
 
         let mut bytes = fs::read(&path).unwrap();
         let text = String::from_utf8(bytes.clone()).unwrap();
-        assert!(text.starts_with("UJANI-ENTERPRISE-LEDGER-V2\n"));
+        assert!(text.starts_with("UJANI-ENTERPRISE-LEDGER-V3\n"));
         // Even a writer who knows the file format and can recompute SHA-256
         // cannot produce the required MAC without the external integrity key.
         let mac_line = text.rfind("M\t").unwrap();
