@@ -26,7 +26,9 @@ The Rust policy crate exposes cpu_capacity::evaluate_cpu_placement. The signed s
 
 CPU capacity is expressed in milli-cores (1,000 = one logical CPU's worth of quota). The worker reports the effective quota visible to its process/container/job object, not just host core count. A configurable CPU reserve protects OS/network services; the policy deliberately does not hard-code "leave two cores unused". Memory reserve is likewise configurable. The caller supplies the maximum telemetry age.
 
-This helper only evaluates admission. It does not reserve resources, read sensors, authenticate transport, create a sandbox or enforce CPU/RAM limits. Production flow must:
+The signed snapshot is verified and checked before the existing reservation call, but the current file-backed ledger does not atomically pin a telemetry generation and resource headroom to that reservation. The ledger serializes its own reservation transactions, yet it is not a distributed scheduler and cannot guarantee that separately sampled capacity evidence cannot become stale or race across service instances. The authenticated control-plane service must add per-device monotonic telemetry sequencing and a transactional resource-budget reservation before any worker pilot.
+
+This helper does not itself reserve resources, read sensors, authenticate transport, create a sandbox or enforce CPU/RAM limits. Production flow must:
 
 1. Authenticate the enrolled device and verify telemetry freshness/signature.
 2. Validate the signed workload manifest and tenant/data classification.
