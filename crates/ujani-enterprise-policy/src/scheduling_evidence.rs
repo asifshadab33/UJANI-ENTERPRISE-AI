@@ -624,9 +624,17 @@ mod tests {
             let challenge = [0x81; 16];
             let (telemetry, policy, _, _) = signed_evidence(challenge, 1_000);
             assert!(verify_and_consume_scheduling_context(
-                &ledger, &device, &workload, &telemetry, &policy,
-                &device_keys, &admin_keys, &challenge, 2_000,
-            ).is_ok());
+                &ledger,
+                &device,
+                &workload,
+                &telemetry,
+                &policy,
+                &device_keys,
+                &admin_keys,
+                &challenge,
+                2_000,
+            )
+            .is_ok());
 
             // A fresh challenge cannot make the same or an older signed sample current.
             let challenge = [0x82; 16];
@@ -637,8 +645,15 @@ mod tests {
                 .to_bytes();
             assert_eq!(
                 verify_and_consume_scheduling_context(
-                    &ledger, &device, &workload, &telemetry, &policy,
-                    &device_keys, &admin_keys, &challenge, 3_000,
+                    &ledger,
+                    &device,
+                    &workload,
+                    &telemetry,
+                    &policy,
+                    &device_keys,
+                    &admin_keys,
+                    &challenge,
+                    3_000,
                 ),
                 Err(SchedulingEvidenceError::ChallengeReplayed)
             );
@@ -650,9 +665,17 @@ mod tests {
                 .sign(&worker_telemetry_bytes(&telemetry.claims))
                 .to_bytes();
             assert!(verify_and_consume_scheduling_context(
-                &ledger, &device, &workload, &telemetry, &policy,
-                &device_keys, &admin_keys, &challenge, 4_000,
-            ).is_ok());
+                &ledger,
+                &device,
+                &workload,
+                &telemetry,
+                &policy,
+                &device_keys,
+                &admin_keys,
+                &challenge,
+                4_000,
+            )
+            .is_ok());
         }
 
         // Generation state survives reopening the authenticated ledger.
@@ -666,8 +689,15 @@ mod tests {
                 .to_bytes();
             assert_eq!(
                 verify_and_consume_scheduling_context(
-                    &ledger, &device, &workload, &telemetry, &policy,
-                    &device_keys, &admin_keys, &challenge, 5_000,
+                    &ledger,
+                    &device,
+                    &workload,
+                    &telemetry,
+                    &policy,
+                    &device_keys,
+                    &admin_keys,
+                    &challenge,
+                    5_000,
                 ),
                 Err(SchedulingEvidenceError::ChallengeReplayed)
             );
