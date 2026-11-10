@@ -102,7 +102,8 @@ class SecurityEventStore:
             raise StoreError("unsupported schema or data classification")
         if event["tenant_id"] != tenant_id or event["provider_id"] != provider_id:
             raise StoreError("tenant or provider boundary violation")
-        if not IDENTIFIER.fullmatch(tenant_id) or provider_id not in PROVIDERS:
+        if (not isinstance(tenant_id, str) or not IDENTIFIER.fullmatch(tenant_id)
+                or not isinstance(provider_id, str) or provider_id not in PROVIDERS):
             raise StoreError("invalid tenant or unsupported provider")
         if not isinstance(event["event_id"], str) or not re.fullmatch(r"[a-f0-9]{64}", event["event_id"]):
             raise StoreError("event_id must be a SHA-256 hex digest")
@@ -110,7 +111,7 @@ class SecurityEventStore:
             raise StoreError("invalid provider version")
         if not isinstance(event["event_type"], str) or not 1 <= len(event["event_type"]) <= 96:
             raise StoreError("invalid event type")
-        if event["severity"] not in SEVERITIES:
+        if not isinstance(event["severity"], str) or event["severity"] not in SEVERITIES:
             raise StoreError("invalid severity")
         observed = event["observed_at_unix_ms"]
         if isinstance(observed, bool) or not isinstance(observed, int) or observed < 0:
@@ -189,7 +190,7 @@ class SecurityEventStore:
                until_ms: int | None = None, after: tuple[int, str] | None = None,
                limit: int = 50) -> list[dict[str, Any]]:
         """Search a single tenant using indexed filters and keyset pagination."""
-        if not IDENTIFIER.fullmatch(tenant_id):
+        if not isinstance(tenant_id, str) or not IDENTIFIER.fullmatch(tenant_id):
             raise StoreError("a valid tenant scope is required")
         if not 1 <= limit <= MAX_PAGE:
             raise StoreError("limit must be between 1 and 100")
