@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 from scripts.live_network_log_ingest import ingest_once
+from scripts.normalize_network_logs import ImportErrorSafe
 from scripts.security_event_store import SecurityEventStore
 
 
@@ -73,7 +74,7 @@ class LiveNetworkLogIngestTests(unittest.TestCase):
         self.log.write_text(zeek_line(2.0), encoding="utf-8")
         ingest_once(log_path=self.log, database=self.db, checkpoint=self.cursor,
                     provider="zeek", tenant_id="tenant-a", from_start=True, now_ms=10_000)
-        with self.assertRaises(Exception):
+        with self.assertRaises(ImportErrorSafe):
             ingest_once(log_path=self.log, database=self.db, checkpoint=self.cursor,
                         provider="zeek", tenant_id="tenant-b", now_ms=10_000)
 
