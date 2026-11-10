@@ -1,0 +1,81 @@
+import tempfile
+import unittest
+from pathlib import Path
+
+from scripts.trusted_device_ingest_auth import (
+    AuthenticationError, authenticate_envelope, sign_envelope,
+)
+
+
+class TrustedDeviceAuthenticationTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.replay = Path(self.temp.name) / "replay.sqlite3"
+        self.secret = b"x" * 32
+        self.registry = {
+            "device-01": {"tenant_id": "tenant-a", "secret": self.secret, "revoked": False},
+        }
+        self.body = b'{"events":[]}'
+        self.timestamp = 1_000_000
+        self.nonce = "abcdefghijklmnopqrstuvwx12345678"
+        self.signature = sign_envelope(self.secret, self.timestamp, self.nonce, self.body)
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def call_auth(self, **overrides):
+        args = {
+            "device_id": "device-01", "timestamp": self.timestamp,
+            "nonce": self.nonce, "body": self.body, "signature": self.signature,
+            "registry": self.registry, "replay_database": self.replay,
+            "now_seconds": self.timestamp,
+        }
+        args.update(overrides)
+        return authenticate_envelope(**args)
+
+    def test_returns_tenant_from_registry_not_request_body(self):
+        self.assertEqual(self.call_auth(), "tenant-a")
+
+    def test_rejects_replay(self):
+        self.call_auth()
+        with self.assertRaises(AuthenticationError):
+            self.call_auth()
+
+    def test_rejects_revoked_device(self):
+        self.registry["device-01"]["revoked"] = True
+        with self.assertRaises(AuthenticationError):
+            self.call_auth()
+
+    def test_rejects_bad_signature_and_tampered_body(self):
+        with self.assertRaises(AuthenticationError):
+            self.call_auth(signature="0" * 64)
+        with self.assertRaises(AuthenticationError):
+            self.call_auth(body=b'{"events":[1]}')
+
+    def test_rejects_stale_timestamp(self):
+        with self.assertRaises(AuthenticationError):
+            self.call_auth(now_seconds=self.timestamp + 301)
+
+    def test_rejects_short_key_and_oversized_body(self):
+        self.registry["device-01"]["secret"] = b"short"
+        with self.assertRaises(AuthenticationError):
+            self.call_auth()
+        self.registry["device-01"]["secret"] = self.secret
+        with self.assertRaises(AuthenticationError):
+            self.call_auth(body=b"x" * (256 * 1024 + 1))
+
+    def test_rejects_unknown_device(self):
+        with self.assertRaises(AuthenticationError):
+            self.call_auth(device_id="not-registered")
+
+    def test_rejects_symlink_replay_database(self):
+        target = Path(self.temp.name) / "real.sqlite3"
+        target.touch()
+        link = Path(self.temp.name) / "link.sqlite3"
+        link.symlink_to(target)
+        with self.assertRaises(AuthenticationError):
+            self.call_auth(replay_database=link)
+
+
+if __name__ == "__main__":
+    unittest.main()
