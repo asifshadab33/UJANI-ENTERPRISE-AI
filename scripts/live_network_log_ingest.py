@@ -20,7 +20,7 @@ from scripts.normalize_network_logs import (
 )
 from scripts.security_event_store import SecurityEventStore, StoreError
 
-MAX_LINE_BYTES = 1024 *  1024
+MAX_LINE_BYTES = 1024 * 1024
 MAX_BATCH_RECORDS = 250
 MAX_BATCH_LINES = 1000
 TENANT_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
