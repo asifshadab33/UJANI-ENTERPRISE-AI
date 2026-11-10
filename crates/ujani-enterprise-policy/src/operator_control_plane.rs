@@ -7,7 +7,7 @@
 //! the upstream identity-provider response before minting a session, provide a
 //! durable tenant-isolated repository and append-only audit sink, and expose
 //! this service only behind HTTPS with secure session cookies and CSRF controls.
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -391,7 +391,7 @@ mod tests {
     #[derive(Default)]
     struct TestAudit { events: Mutex<Vec<OperatorAuditEvent>>, fail: bool }
     impl OperatorAuditSink for TestAudit {
-        fn append(&self, event: &OperatorAuditEvent) -> Result<(), ()> {
+        fn append(&self, event: &OperatorAuditEvent) -> Result<(), OperatorAuditError> {
             if self.fail { return Err(OperatorAuditError::Unavailable); }
             self.events.lock().unwrap().push(event.clone()); Ok(())
         }
