@@ -199,16 +199,14 @@ pub enum ModelInventoryValidationError {
 }
 
 fn bounded_text(value: &str, max_bytes: usize) -> bool {
-    !value.trim().is_empty()
-        && value.len() <= max_bytes
-        && !value.chars().any(char::is_control)
+    !value.trim().is_empty() && value.len() <= max_bytes && !value.chars().any(char::is_control)
 }
 
 fn valid_identifier(value: &str, max_bytes: usize) -> bool {
     bounded_text(value, max_bytes)
-        && value.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'-')
-        })
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'-'))
 }
 
 fn valid_model_ref(value: &str) -> bool {
@@ -701,8 +699,8 @@ mod tests {
 
         let mut value = inventory();
         value.models[0].estimated_min_memory_mb = None;
-        let result = match_model_to_task(&value, "qwen2.5:7b", &requirements(), 1_100, 10_000)
-            .unwrap();
+        let result =
+            match_model_to_task(&value, "qwen2.5:7b", &requirements(), 1_100, 10_000).unwrap();
         assert!(result
             .reasons
             .contains(&ModelFitReason::MemoryEstimateUnknown));
@@ -714,8 +712,8 @@ mod tests {
         let mut value = inventory();
         value.models[0].capabilities = vec![ModelCapability::Chat];
         value.models[0].context_length_tokens = Some(8_192);
-        let result = match_model_to_task(&value, "qwen2.5:7b", &requirements(), 1_100, 10_000)
-            .unwrap();
+        let result =
+            match_model_to_task(&value, "qwen2.5:7b", &requirements(), 1_100, 10_000).unwrap();
         assert_eq!(result.status, ModelFitStatus::Incompatible);
         assert!(result
             .reasons
@@ -762,8 +760,8 @@ mod tests {
     fn downloadable_models_are_not_eligible_for_installed_model_matching() {
         let mut value = inventory();
         value.models[0].availability = ModelAvailability::Downloadable;
-        let result = match_model_to_task(&value, "qwen2.5:7b", &requirements(), 1_100, 10_000)
-            .unwrap();
+        let result =
+            match_model_to_task(&value, "qwen2.5:7b", &requirements(), 1_100, 10_000).unwrap();
         assert_eq!(result.status, ModelFitStatus::Incompatible);
         assert!(result.reasons.contains(&ModelFitReason::ModelNotInstalled));
     }
