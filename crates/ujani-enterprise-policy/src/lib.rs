@@ -1559,7 +1559,6 @@ pub use inventory::{
 };
 pub mod model_inventory;
 pub use model_inventory::{
-    match_model_to_task, validate_model_runtime_inventory, ModelCapabilityMatch,
-    ModelFitReason, ModelFitStatus, ModelInventoryValidationError, ModelRuntimeInventory,
-    ModelTaskRequirements,
+    match_model_to_task, validate_model_runtime_inventory, ModelCapabilityMatch, ModelFitReason,
+    ModelFitStatus, ModelInventoryValidationError, ModelRuntimeInventory, ModelTaskRequirements,
 };
