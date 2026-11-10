@@ -6,6 +6,10 @@ The Enterprise policy crate contains a local file-backed DurableLedger prototype
 
 The ledger currently supports:
 
+- Authenticated V4 snapshots with migration from V2/V3, per-device reservation revisions, per-lease commit revisions, telemetry generations and signed reservation watermarks.
+- Reservation revision increments on lease acquisition, release and expiry. The challenge issuer obtains the current revision through `DurableLedger::reservation_revision` and binds it into both worker telemetry and the administrator-signed scheduling policy.
+- Capacity reconciliation that adds back only active leases already reflected in the signed sample; reservations committed after that watermark remain charged against the sample's free CPU/memory headroom. A newer accepted telemetry generation supersedes an older verified context before reservation.
+
 - Capacity admission and reservation against the supplied device capacity and class policy.
 - Opaque 256-bit lease capabilities. Callers must generate them with an OS cryptographically secure random generator. The raw capability is not persisted; only a domain-separated SHA-256 digest is stored.
 - Lease renewal and release only when the caller supplies the matching capability.
@@ -39,7 +43,7 @@ The ancestor sync follows the canonicalized path and cannot guarantee durability
 ## Security properties and limits
 
 - The OS advisory lock coordinates cooperating processes using the same lock path. It is not a distributed lock service.
-- The V2 snapshot is authenticated with HMAC-SHA256. The key is injected through LedgerIntegrityKey by the trusted caller and is not written to the ledger or its companion files. A writer who can modify the ledger directory but cannot access the external key cannot forge a valid snapshot. The key provider is not implemented by this crate: production callers must retrieve keys from an OS keyring, TPM-backed service or HSM and must not store them beside the ledger.
+- The V4 snapshot is authenticated with HMAC-SHA256. V2/V3 snapshots are accepted for migration and rewritten as V4 on the next state-changing transaction. The key is injected through LedgerIntegrityKey by the trusted caller and is not written to the ledger or its companion files. A writer who can modify the ledger directory but cannot access the external key cannot forge a valid snapshot. The key provider is not implemented by this crate: production callers must retrieve keys from an OS keyring, TPM-backed service or HSM and must not store them beside the ledger.
 - The ledger is not encrypted at rest. Unix files created by the implementation request mode 0600, but parent-directory permissions, ownership and deployment ACLs remain the operator's responsibility. Windows ACLs must be provisioned by the host service.
 - Lease-token hashes are safe only when the control plane supplies high-entropy 32-byte tokens from an OS CSPRNG and protects the raw token from workloads and logs.
 - The ledger is single-host and file-backed. It does not provide replication, multi-node consensus, database transactions across services, or high availability.
