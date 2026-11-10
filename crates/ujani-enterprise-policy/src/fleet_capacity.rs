@@ -58,14 +58,8 @@ pub fn summarize_fleet_capacity(
     approvals: &[VerifiedAdminApproval],
     now_unix_ms: u64,
 ) -> Result<FleetCapacitySummary, FleetCapacityError> {
-    let plan = plan_local_first_placement(
-        manifest,
-        candidates,
-        policies,
-        approvals,
-        now_unix_ms,
-    )
-    .map_err(FleetCapacityError::Manifest)?;
+    let plan = plan_local_first_placement(manifest, candidates, policies, approvals, now_unix_ms)
+        .map_err(FleetCapacityError::Manifest)?;
 
     // Match the planner's first-candidate-wins duplicate-ID behaviour.
     let mut unique_devices = BTreeMap::<String, Device>::new();
@@ -210,7 +204,10 @@ mod tests {
 
         assert_eq!(summary.aggregate_eligible_memory_mb, 4_096);
         assert_eq!(
-            summary.selected_device_capacity.unwrap().remaining_memory_mb,
+            summary
+                .selected_device_capacity
+                .unwrap()
+                .remaining_memory_mb,
             2_048
         );
     }
@@ -237,8 +234,7 @@ mod tests {
 
     #[test]
     fn empty_fleet_has_zero_capacity_and_no_selected_worker() {
-        let summary =
-            summarize_fleet_capacity(&manifest(), &[], &policies(), &[], 10_000).unwrap();
+        let summary = summarize_fleet_capacity(&manifest(), &[], &policies(), &[], 10_000).unwrap();
         assert_eq!(summary.candidate_device_count, 0);
         assert_eq!(summary.eligible_device_count, 0);
         assert_eq!(summary.aggregate_eligible_cpu_millis, 0);
