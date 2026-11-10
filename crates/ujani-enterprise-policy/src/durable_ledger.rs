@@ -344,7 +344,11 @@ impl DurableLedger {
         }
         self.transact(|ledger| {
             ledger.expire(now_unix_ms);
-            Ok(ledger.reservation_revisions.get(device_id).copied().unwrap_or(0))
+            Ok(ledger
+                .reservation_revisions
+                .get(device_id)
+                .copied()
+                .unwrap_or(0))
         })
     }
 
@@ -849,7 +853,10 @@ fn serialize_snapshot(ledger: &Ledger, key_id: &str, key: &[u8; 32]) -> Vec<u8> 
             revision,
         ));
     }
-    let mut telemetry_watermarks = ledger.telemetry_reservation_watermarks.iter().collect::<Vec<_>>();
+    let mut telemetry_watermarks = ledger
+        .telemetry_reservation_watermarks
+        .iter()
+        .collect::<Vec<_>>();
     telemetry_watermarks.sort_by_key(|(device_id, _)| *device_id);
     for (device_id, revision) in telemetry_watermarks {
         body.push_str(&format!(
@@ -1011,7 +1018,10 @@ fn deserialize_snapshot(
                     .map_err(|_| DurableLedgerError::InvalidRecord)?;
                 if !valid_stored_identifier(&device_id, 128)
                     || revision == 0
-                    || ledger.reservation_revisions.insert(device_id, revision).is_some()
+                    || ledger
+                        .reservation_revisions
+                        .insert(device_id, revision)
+                        .is_some()
                 {
                     return Err(DurableLedgerError::InvalidRecord);
                 }
@@ -1040,13 +1050,23 @@ fn deserialize_snapshot(
             .ok_or(DurableLedgerError::InvalidRecord)?
             .0;
         if *reservation_revision
-            > ledger.reservation_revisions.get(device_id).copied().unwrap_or(0)
+            > ledger
+                .reservation_revisions
+                .get(device_id)
+                .copied()
+                .unwrap_or(0)
         {
             return Err(DurableLedgerError::InvalidRecord);
         }
     }
     for (device_id, watermark) in &ledger.telemetry_reservation_watermarks {
-        if *watermark > ledger.reservation_revisions.get(device_id).copied().unwrap_or(0) {
+        if *watermark
+            > ledger
+                .reservation_revisions
+                .get(device_id)
+                .copied()
+                .unwrap_or(0)
+        {
             return Err(DurableLedgerError::InvalidRecord);
         }
     }
@@ -1879,13 +1899,18 @@ mod tests {
 
         migrated.telemetry_generations.insert("worker-01".into(), 7);
         migrated.reservation_revisions.insert("worker-01".into(), 3);
-        migrated.telemetry_reservation_watermarks.insert("worker-01".into(), 2);
+        migrated
+            .telemetry_reservation_watermarks
+            .insert("worker-01".into(), 2);
         let encoded = serialize_snapshot(&migrated, "test-v1", &key.key);
         assert!(String::from_utf8_lossy(&encoded).starts_with("UJANI-ENTERPRISE-LEDGER-V4\n"));
         let restored = deserialize_snapshot(&encoded, &keys).unwrap();
         assert_eq!(restored.telemetry_generations.get("worker-01"), Some(&7));
         assert_eq!(restored.reservation_revisions.get("worker-01"), Some(&3));
-        assert_eq!(restored.telemetry_reservation_watermarks.get("worker-01"), Some(&2));
+        assert_eq!(
+            restored.telemetry_reservation_watermarks.get("worker-01"),
+            Some(&2)
+        );
     }
 
     #[test]
@@ -1915,7 +1940,12 @@ mod tests {
         let second_token = [0x74u8; 32];
         {
             let ledger = open_ledger(&path).unwrap();
-            assert_eq!(ledger.reservation_revision("worker-durable-01", 1_000).unwrap(), 0);
+            assert_eq!(
+                ledger
+                    .reservation_revision("worker-durable-01", 1_000)
+                    .unwrap(),
+                0
+            );
             assert_eq!(
                 ledger
                     .admit_and_reserve_with_lease(
@@ -1930,15 +1960,30 @@ mod tests {
                     .unwrap(),
                 Admission::Accept
             );
-            assert_eq!(ledger.reservation_revision("worker-durable-01", 2_000).unwrap(), 1);
+            assert_eq!(
+                ledger
+                    .reservation_revision("worker-durable-01", 2_000)
+                    .unwrap(),
+                1
+            );
         }
         {
             let ledger = open_ledger(&path).unwrap();
-            assert_eq!(ledger.reservation_revision("worker-durable-01", 3_000).unwrap(), 1);
+            assert_eq!(
+                ledger
+                    .reservation_revision("worker-durable-01", 3_000)
+                    .unwrap(),
+                1
+            );
             assert!(ledger
                 .release_lease("job-release-revision", &first_token)
                 .unwrap());
-            assert_eq!(ledger.reservation_revision("worker-durable-01", 3_000).unwrap(), 2);
+            assert_eq!(
+                ledger
+                    .reservation_revision("worker-durable-01", 3_000)
+                    .unwrap(),
+                2
+            );
             assert_eq!(
                 ledger
                     .admit_and_reserve_with_lease(
@@ -1953,7 +1998,12 @@ mod tests {
                     .unwrap(),
                 Admission::Accept
             );
-            assert_eq!(ledger.reservation_revision("worker-durable-01", 4_000).unwrap(), 3);
+            assert_eq!(
+                ledger
+                    .reservation_revision("worker-durable-01", 4_000)
+                    .unwrap(),
+                3
+            );
             assert_eq!(ledger.expire_leases(4_000 + crate::LEASE_MS).unwrap(), 1);
             assert_eq!(
                 ledger
