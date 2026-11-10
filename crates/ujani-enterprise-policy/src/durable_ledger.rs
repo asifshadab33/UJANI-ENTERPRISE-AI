@@ -1187,6 +1187,7 @@ mod tests {
     use sha2::Digest;
     use std::hash::{BuildHasher, Hash, Hasher};
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::OnceLock;
     use std::thread;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -1269,7 +1270,12 @@ mod tests {
     }
 
     fn integrity_key(id: &str, byte: u8) -> LedgerIntegrityKey {
-        LedgerIntegrityKey::new(id, [byte; 32])
+        static BASE_KEY: OnceLock<[u8; 32]> = OnceLock::new();
+        let mut key = *BASE_KEY.get_or_init(fresh_test_token);
+        for (index, value) in key.iter_mut().enumerate() {
+            *value ^= byte.wrapping_add(index as u8);
+        }
+        LedgerIntegrityKey::new(id, key)
     }
 
     fn open_ledger(path: &Path) -> Result<DurableLedger, DurableLedgerError> {
@@ -1485,7 +1491,7 @@ mod tests {
                     &policies(),
                     &[],
                     1_000,
-                    &[0x71u8; 32],
+                    &fresh_test_token(),
                 )
                 .unwrap(),
             Admission::Accept
@@ -1594,7 +1600,7 @@ mod tests {
             &policies(),
             &[],
             1_000,
-            &[0x74u8; 32],
+            &fresh_test_token(),
         );
         assert!(matches!(
             result,
@@ -1628,7 +1634,7 @@ mod tests {
                     &policies(),
                     &[],
                     1_000,
-                    &[0x73u8; 32],
+                    &fresh_test_token(),
                 )
                 .unwrap(),
             Admission::Accept
@@ -1682,7 +1688,7 @@ mod tests {
                     &policies(),
                     &[],
                     1_000,
-                    &[0x72u8; 32],
+                    &fresh_test_token(),
                 )
                 .unwrap_err(),
             DurableLedgerError::AnchorConflict
@@ -1702,7 +1708,7 @@ mod tests {
     #[test]
     fn reservation_and_capability_survive_process_restart() {
         let path = temp_path("restart");
-        let token = [0x51u8; 32];
+        let token = fresh_test_token();
         {
             let ledger = open_ledger(&path).unwrap();
             assert_eq!(
@@ -1724,7 +1730,7 @@ mod tests {
         {
             let ledger = open_ledger(&path).unwrap();
             assert!(ledger.renew_lease("job-restart", &token, 2_000).unwrap());
-            assert!(!ledger.release_lease("job-restart", &[0x33u8; 32]).unwrap());
+            assert!(!ledger.release_lease("job-restart", &fresh_test_token()).unwrap());
             assert!(ledger.release_lease("job-restart", &token).unwrap());
             assert_eq!(ledger.snapshot().unwrap().active_jobs, 0);
         }
@@ -1734,7 +1740,7 @@ mod tests {
     #[test]
     fn corrupt_current_snapshot_recovers_last_committed_backup() {
         let path = temp_path("backup");
-        let token = [0x52u8; 32];
+        let token = fresh_test_token();
         {
             let ledger = open_ledger(&path).unwrap();
             assert_eq!(
@@ -1772,12 +1778,13 @@ mod tests {
                 .consumed_approvals
                 .insert(format!("{prefix}-{index:06}"));
         }
+        let key = fresh_test_token();
         assert!(
-            serialize_snapshot(&ledger, "test-v1", &[0xA5; 32]).len() as u64 > MAX_LEDGER_BYTES
+            serialize_snapshot(&ledger, "test-v1", &key).len() as u64 > MAX_LEDGER_BYTES
         );
 
         assert_eq!(
-            persist_snapshot(&path, &ledger, "test-v1", &[0xA5; 32], false),
+            persist_snapshot(&path, &ledger, "test-v1", &key, false),
             Err(DurableLedgerError::CapacityExceeded)
         );
         assert_eq!(fs::read(&path).unwrap(), b"previous committed snapshot");
@@ -1789,6 +1796,8 @@ mod tests {
         let path = temp_path("concurrent");
         let first = open_ledger(&path).unwrap();
         let second = open_ledger(&path).unwrap();
+        let first_token = fresh_test_token();
+        let second_token = fresh_test_token();
         let first_thread = thread::spawn(move || {
             first
                 .admit_and_reserve_with_lease(
@@ -1798,7 +1807,7 @@ mod tests {
                     &policies(),
                     &[],
                     1_000,
-                    &[0x61u8; 32],
+                    &fresh_test_token(),
                 )
                 .unwrap()
         });
@@ -1811,7 +1820,7 @@ mod tests {
                     &policies(),
                     &[],
                     1_000,
-                    &[0x62u8; 32],
+                    &fresh_test_token(),
                 )
                 .unwrap()
         });
