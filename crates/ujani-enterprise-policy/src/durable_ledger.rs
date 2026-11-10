@@ -1185,8 +1185,31 @@ mod tests {
     use super::*;
     use crate::{workload_from_manifest, DataClassification, WorkloadManifest};
     use sha2::Digest;
+    use std::hash::{BuildHasher, Hash, Hasher};
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::thread;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn fresh_test_token() -> [u8; 32] {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        let sequence = NEXT.fetch_add(1, Ordering::Relaxed);
+        let mut token = Vec::with_capacity(32);
+        for block in 0..4 {
+            let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+            sequence.hash(&mut hasher);
+            std::process::id().hash(&mut hasher);
+            block.hash(&mut hasher);
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+                .hash(&mut hasher);
+            token.extend_from_slice(&hasher.finish().to_le_bytes());
+        }
+        token
+            .try_into()
+            .expect("four 8-byte test hashes produce a 32-byte token")
+    }
 
     #[cfg(unix)]
     #[test]
@@ -1935,9 +1958,9 @@ mod tests {
     #[test]
     fn reservation_revisions_advance_on_acquire_renew_release_and_expiry() {
         let path = temp_path("reservation-revisions");
-        let first_token = [0x73u8; 32];
-        let invalid_token = [0x75u8; 32];
-        let second_token = [0x74u8; 32];
+        let first_token = fresh_test_token();
+        let invalid_token = fresh_test_token();
+        let second_token = fresh_test_token();
         {
             let ledger = open_ledger(&path).unwrap();
             assert_eq!(
