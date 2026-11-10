@@ -109,7 +109,7 @@ class LiveNetworkLogIngestTests(unittest.TestCase):
         self.assertEqual((inserted, read_count), (1, 1))
         store = SecurityEventStore(self.db)
         try:
-            events, _ = store.search(tenant_id="tenant-a", limit=10)
+            events = store.search(tenant_id="tenant-a", limit=10)
         finally:
             store.close()
         self.assertEqual({item["event_type"] for item in events}, {"zeek.notice", "zeek.weird"})
