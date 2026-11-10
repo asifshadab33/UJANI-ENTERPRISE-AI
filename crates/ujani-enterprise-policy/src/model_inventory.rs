@@ -457,9 +457,9 @@ pub fn match_model_to_task(
     if requirements.required_capabilities.len() > MAX_CAPABILITIES {
         return Err(ModelInventoryValidationError::InvalidRequirements);
     }
-    let mut required = HashSet::with_capacity(requirements.required_capabilities.len());
+    let mut seen_required = HashSet::with_capacity(requirements.required_capabilities.len());
     if requirements.required_capabilities.iter().any(|capability| {
-        *capability == ModelCapability::Unknown || !required.insert(*capability)
+        *capability == ModelCapability::Unknown || !seen_required.insert(*capability)
     }) {
         return Err(ModelInventoryValidationError::InvalidRequirements);
     }
@@ -507,8 +507,8 @@ pub fn match_model_to_task(
 
     let capability_evidence_usable =
         evidence_is_usable(&model.evidence, now_unix_ms, max_age_ms);
-    for capability in required {
-        if model.capabilities.contains(&capability) {
+    for capability in &requirements.required_capabilities {
+        if model.capabilities.contains(capability) {
             if !capability_evidence_usable {
                 unknown = true;
             }
