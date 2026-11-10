@@ -1,3 +1,5 @@
+import hashlib
+import json
 import subprocess
 import sys
 import tempfile
@@ -5,8 +7,12 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+from scripts.security_event_store import SecurityEventStore
 from scripts.trusted_device_ingest_auth import (
     AuthenticationError, authenticate_envelope, sign_envelope,
+)
+from scripts.trusted_network_event_ingest import (
+    IngestionEnvelopeError, authenticate_and_ingest,
 )
 
 
@@ -94,6 +100,64 @@ except AuthenticationError:
         outcomes = [stdout.strip() for stdout, _stderr in results]
         self.assertEqual(outcomes.count("accepted"), 1, results)
         self.assertEqual(outcomes.count("rejected"), 7, results)
+
+    def test_authenticated_identity_overrides_untrusted_event_scope(self):
+        store = SecurityEventStore(":memory:")
+        event = {
+            "schema_version": "1.0",
+            "event_id": hashlib.sha256(b"stable-event").hexdigest(),
+            "tenant_id": "attacker-tenant",
+            "provider_id": "misp",
+            "provider_version": "test",
+            "event_type": "notice",
+            "severity": "high",
+            "observed_at_unix_ms": self.timestamp * 1000,
+            "source_ref": "trusted-agent:test",
+            "summary": "bounded test event",
+            "data_classification": "internal",
+            "fields": {},
+        }
+        body = json.dumps({"events": [event]}, separators=(",", ":")).encode()
+        signature = sign_envelope(self.secret, self.timestamp, self.nonce, body)
+        try:
+            inserted = authenticate_and_ingest(
+                device_id="device-01",
+                timestamp=self.timestamp,
+                nonce=self.nonce,
+                body=body,
+                signature=signature,
+                registry=self.registry,
+                replay_database=self.replay,
+                store=store,
+                provider_id="zeek",
+                now_seconds=self.timestamp,
+                now_ms=self.timestamp * 1000,
+            )
+            self.assertEqual(inserted, 1)
+            self.assertEqual(len(store.search(tenant_id="tenant-a", provider_id="zeek")), 1)
+            self.assertEqual(len(store.search(tenant_id="attacker-tenant")), 0)
+            self.assertEqual(len(store.search(tenant_id="tenant-a", provider_id="misp")), 0)
+        finally:
+            store.close()
+
+    def test_authentication_precedes_event_body_parsing(self):
+        store = SecurityEventStore(":memory:")
+        try:
+            with self.assertRaises(AuthenticationError):
+                authenticate_and_ingest(
+                    device_id="device-01",
+                    timestamp=self.timestamp,
+                    nonce=self.nonce,
+                    body=b"not-json",
+                    signature="0" * 64,
+                    registry=self.registry,
+                    replay_database=self.replay,
+                    store=store,
+                    provider_id="zeek",
+                    now_seconds=self.timestamp,
+                )
+        finally:
+            store.close()
 
     def test_rejects_revoked_device(self):
         self.registry["device-01"]["revoked"] = True
