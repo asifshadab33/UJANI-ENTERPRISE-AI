@@ -97,3 +97,40 @@ For industrial/OT environments, start with passive observation and an approved a
 ## Explicitly deferred
 
 No remote execution, employee-device workload dispatch, autonomous containment, firewall modification, inline IPS enablement, automatic rule installation, or autonomous OT action is enabled by this integration plan. Such work remains blocked on production identity, protected key custody, authenticated receiver-side authorization, tenant isolation, OS-enforced isolation where applicable, exact-scope approval, replay protection, rollback, independent security review and operational sign-off.
+
+
+## Tenant-scoped searchable evidence store prototype (10 November 2026)
+
+The branch `feat/tenant-scoped-security-event-store-2026-11` adds `scripts/security_event_store.py`, a local SQLite storage primitive for the normalized Suricata/Zeek evidence format and future read-only providers (Malcolm, OPNsense and MISP). It requires the caller to supply an explicit tenant scope, validates the provider and normalized event contract, rejects cross-tenant/provider records and implausibly future timestamps, applies bounded batch/page sizes, makes duplicate event IDs idempotent, and supports indexed tenant-scoped filters with keyset pagination. Retention and per-tenant record caps are configurable. The persistent database file is restricted to owner read/write permissions on platforms where chmod is supported.
+
+Regression coverage is added in `tests/test_security_event_store.py` for tenant isolation, provider mismatch, idempotency, atomic batch rejection, filtering/pagination, retention and record caps. These are automated tests to be run by the existing Enterprise CI workflow; until a fresh workflow run passes, this is an implementation branch, not a validated release capability.
+
+**Important boundary:** this module is not a live listener, authenticated connector transport, event broker, UI or durable multi-node service. Authentication and tenant selection must happen in a trusted host service before calling it. The initial store is a single-process/local SQLite prototype; production deployment still needs service identity, secret handling, concurrency/load testing, backup/recovery, retention governance and authenticated connector adapters. No live Malcolm, OPNsense or MISP API calls are implemented by this batch.
+
+
+## Local live log-follow prototype (10 November 2026)
+
+The stacked branch `feat/live-network-log-ingestion-2026-11` adds `scripts/live_network_log_ingest.py`. It follows a customer-selected local Zeek JSON `conn` log or Suricata EVE JSONL file and writes normalized records into the tenant-scoped SQLite store from the preceding evidence-store branch. It uses no-follow regular-file opening where supported, bounded line and batch sizes, an atomic owner-only cursor file, file identity checks for rotation, and at-least-once delivery. The database commit occurs before cursor advancement; a crash in between is handled by idempotent event IDs. It starts at the end of an existing file unless `--from-start` is explicitly selected.
+
+Example (Zeek):
+
+```sh
+python -m scripts.live_network_log_ingest \
+  --provider zeek --tenant-id tenant-a --input /var/log/zeek/current/conn.log \
+  --database /var/lib/ujani/events.sqlite3 \
+  --checkpoint /var/lib/ujani/cursors/zeek-conn.json --provider-version 7.0.0
+```
+
+Example (Suricata):
+
+```sh
+python -m scripts.live_network_log_ingest \
+  --provider suricata --tenant-id tenant-a --input /var/log/suricata/eve.json \
+  --database /var/lib/ujani/events.sqlite3 \
+  --checkpoint /var/lib/ujani/cursors/suricata-eve.json --provider-version 7.0.0
+```
+
+This is a local single-process log follower, not a network listener, authenticated event receiver or production service manager. One process must own each cursor file. Deployment still requires a trusted service wrapper to authenticate and derive tenant scope, provision directories/permissions, supervise restarts and configure retention. The first version supports Zeek `conn` records and Suricata EVE records; Zeek `notice`/`weird` streams, log rotation across all platform variants, Windows file identity guarantees and real sensor-lab validation remain separate acceptance items. Existing unit tests exercise append, partial-line, rotation and tenant-bound cursor behavior; CI results must pass before treating this branch as validated.
+
+
+CI note: PR #81 targets `main` so the repository's pull-request validation workflow applies to the combined store-and-follower change. The branch remains draft pending fresh CI and real-provider lab verification.
