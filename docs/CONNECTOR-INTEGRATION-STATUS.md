@@ -131,3 +131,6 @@ python -m scripts.live_network_log_ingest \
 ```
 
 This is a local single-process log follower, not a network listener, authenticated event receiver or production service manager. One process must own each cursor file. Deployment still requires a trusted service wrapper to authenticate and derive tenant scope, provision directories/permissions, supervise restarts and configure retention. The first version supports Zeek `conn` records and Suricata EVE records; Zeek `notice`/`weird` streams, log rotation across all platform variants, Windows file identity guarantees and real sensor-lab validation remain separate acceptance items. Existing unit tests exercise append, partial-line, rotation and tenant-bound cursor behavior; CI results must pass before treating this branch as validated.
+
+
+CI note: PR #81 targets `main` so the repository's pull-request validation workflow applies to the combined store-and-follower change. The branch remains draft pending fresh CI and real-provider lab verification.
