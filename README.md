@@ -42,6 +42,12 @@ The Rust crate in `crates/ujani-enterprise-policy` contains device/workload poli
 
 See [the workload manifest contract](docs/WORKLOAD-MANIFEST.md), [the durable reservation ledger boundary](docs/DURABLE_RESERVATION_LEDGER.md), [the CPU-only inference integration profile](docs/CPU-ONLY-INFERENCE-ADAPTER.md) and [the Personal-to-Enterprise integration draft](docs/INTEGRATION_CONTRACT_DRAFT.md).
 
+## Operator console and authenticated service core
+
+A read-only browser operator console is being developed under `apps/operator-console`. The policy crate now also contains a transport-independent operator control-plane service core with short-lived HMAC-authenticated tenant sessions, tenant-bound overview retrieval, overview contract validation, JSON serialization and fail-closed audit-sink integration. The durable device-trust registry exposes a tenant-scoped, non-secret device identity projection.
+
+These are application foundations, not a deployed control plane: the repository still needs a real OIDC/SAML identity adapter, an authenticated HTTPS HTTP server, a durable tenant-isolated inventory/telemetry/workload repository, a durable append-only audit backend, protected key provisioning/rotation, and deployment/browser integration. The console intentionally shows no live data until these services are connected. See [Operator Control Plane](docs/OPERATOR-CONTROL-PLANE.md) for exact boundaries and production gates.
+
 Run tests:
 
 ```sh
