@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate the shared UJANI model/runtime inventory v1 contract."""
+"""Validate the shared UJANI model/runtime inventory and task contracts."""
 from __future__ import annotations
 
 import json
@@ -29,6 +29,9 @@ def main() -> None:
         "verified", "reported", "estimated", "unknown"
     ]
     print("Model/runtime inventory v1 schema checks passed.")
+
+    from validate_personal_enterprise_task_contract import main as validate_task_contract
+    validate_task_contract()
 
 
 if __name__ == "__main__":
