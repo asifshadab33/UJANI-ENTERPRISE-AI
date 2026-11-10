@@ -6,7 +6,7 @@ UJANI Enterprise AI is an open-source project concept for coordinating an organi
 
 It is designed for controlled internal use, not a public marketplace for strangers' devices.
 
-> **Project status: early prototype / pre-alpha.** This repository currently provides architecture, policy contracts and a small illustrative Rust policy crate. It is not a production fleet manager, scheduler, endpoint agent or security product.
+> **Project status: pre-alpha policy and control-plane prototype.** The repository now contains substantial Rust policy and persistence foundations, authenticated telemetry/admission and reservation primitives, and a read-only operator console with a transport-independent authenticated service core. It is not a deployed fleet manager, production scheduler, endpoint agent or security product: no live HTTP/identity-provider integration, production key custody, durable multi-tenant service backend, OS-enforced workload isolation or remote worker execution is enabled. See [Operator Control Plane](docs/OPERATOR-CONTROL-PLANE.md), [Device Trust Integration](docs/DEVICE-TRUST-SERVICE-INTEGRATION.md) and [Release Gates](docs/RELEASE-GATES.md).
 
 ## Product principles
 
