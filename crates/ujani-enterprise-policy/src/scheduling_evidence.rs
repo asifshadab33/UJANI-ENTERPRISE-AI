@@ -9,7 +9,7 @@ use crate::cpu_capacity::{
 };
 use crate::{
     admit_with_context, Admission, ClassPolicy, Device, DurableLedger, DurableLedgerError, Ledger,
-    RejectReason, SchedulingContext, VerifiedAdminApproval, Workload,
+    RejectReason, SchedulingContext, TelemetryChallengeError, VerifiedAdminApproval, Workload,
 };
 use ed25519_dalek::{Signature, VerifyingKey};
 
@@ -25,6 +25,8 @@ pub struct WorkerTelemetryClaims {
     pub challenge_nonce: [u8; 16],
     /// Strictly increasing per-device counter from the enrolled worker agent.
     pub sample_generation: u64,
+    /// Ledger reservation revision already reflected in the signed free-capacity sample.
+    pub reservation_revision: u64,
     pub issued_at_unix_ms: u64,
     pub expires_unix_ms: u64,
     pub owner_opted_in: bool,
@@ -78,6 +80,10 @@ pub struct VerifiedSchedulingContext {
     workload_id: String,
     manifest_sha256: [u8; 32],
     expires_at_unix_ms: u64,
+    sample_generation: u64,
+    reservation_revision: u64,
+    challenge_nonce: [u8; 16],
+    challenge_consumed: bool,
     cpu_worker_snapshot: CpuWorkerSnapshot,
 }
 
@@ -114,6 +120,7 @@ pub enum SchedulingEvidenceError {
     InvalidWorkerSignature,
     InvalidPolicySignature,
     ChallengeReplayed,
+    InvalidReservationWatermark,
     ChallengeStoreUnavailable,
     /// The anchor outcome is ambiguous; callers must reconcile before retrying.
     ChallengeStoreOutcomeUnknown,
@@ -129,6 +136,7 @@ fn worker_telemetry_bytes(claims: &WorkerTelemetryClaims) -> Vec<u8> {
     append_string(&mut bytes, &claims.device_id);
     bytes.extend_from_slice(&claims.challenge_nonce);
     bytes.extend_from_slice(&claims.sample_generation.to_be_bytes());
+    bytes.extend_from_slice(&claims.reservation_revision.to_be_bytes());
     bytes.extend_from_slice(&claims.issued_at_unix_ms.to_be_bytes());
     bytes.extend_from_slice(&claims.expires_unix_ms.to_be_bytes());
     bytes.push(u8::from(claims.owner_opted_in));
@@ -305,6 +313,10 @@ pub(crate) fn verify_scheduling_context(
         expires_at_unix_ms: telemetry_claims
             .expires_unix_ms
             .min(policy_claims.expires_unix_ms),
+        sample_generation: telemetry_claims.sample_generation,
+        reservation_revision: telemetry_claims.reservation_revision,
+        challenge_nonce: telemetry_claims.challenge_nonce,
+        challenge_consumed: false,
     })
 }
 
@@ -340,6 +352,7 @@ pub fn verify_and_consume_scheduling_context(
         .consume_telemetry_challenge(
             &telemetry.claims.device_id,
             telemetry.claims.sample_generation,
+            telemetry.claims.reservation_revision,
             *expected_challenge_nonce,
             expires_unix_ms,
             now_unix_ms,
@@ -350,9 +363,17 @@ pub fn verify_and_consume_scheduling_context(
             }
             _ => SchedulingEvidenceError::ChallengeStoreUnavailable,
         })?;
-    if !consumed {
-        return Err(SchedulingEvidenceError::ChallengeReplayed);
+    match consumed {
+        Ok(()) => {}
+        Err(TelemetryChallengeError::Replayed) => {
+            return Err(SchedulingEvidenceError::ChallengeReplayed);
+        }
+        Err(TelemetryChallengeError::InvalidReservationWatermark) => {
+            return Err(SchedulingEvidenceError::InvalidReservationWatermark);
+        }
     }
+    let mut verified = verified;
+    verified.challenge_consumed = true;
     Ok(verified)
 }
 
@@ -383,22 +404,18 @@ fn capacity_rejection(
         })
 }
 
-/// Constrain the ledger's cumulative reservation budget to authenticated worker
-/// headroom after protecting the configured OS/service reserve. Ledger reservation
-/// accounting then subtracts all existing jobs under its transaction lock.
-fn device_with_signed_headroom(device: &Device, snapshot: &CpuWorkerSnapshot) -> Device {
-    let mut bounded = device.clone();
-    bounded.remaining_cpu_millis = bounded.remaining_cpu_millis.min(
+/// Return authenticated free headroom after protecting OS/service reserves.
+/// The durable ledger reconciles this against leases already reflected in the
+/// signed sample and charges only newer reservations against the remaining budget.
+fn signed_headroom(snapshot: &CpuWorkerSnapshot) -> (u32, u64) {
+    (
         snapshot
             .available_cpu_millis
             .saturating_sub(snapshot.system_reserved_cpu_millis),
-    );
-    bounded.remaining_memory_mb = bounded.remaining_memory_mb.min(
         snapshot
             .available_memory_mb
             .saturating_sub(snapshot.system_reserved_memory_mb),
-    );
-    bounded
+    )
 }
 
 /// Evaluate policy using only cryptographically verified scheduling evidence.
@@ -441,23 +458,28 @@ pub fn admit_and_reserve_durably_with_verified_lease(
     if let Some(reason) = context.rejection_for(device, workload, now_unix_ms) {
         return Ok(Admission::Reject(reason));
     }
+    if !context.challenge_consumed {
+        return Ok(Admission::Reject(RejectReason::SchedulingEvidenceMismatch));
+    }
     let admission =
         admit_with_verified_context(device, workload, &context, policies, approvals, now_unix_ms);
     if admission != Admission::Accept {
         return Ok(admission);
     }
-    // Bound the ledger's per-device reservation ceiling to the signed free
-    // headroom. The ledger applies this ceiling while holding its transaction
-    // lock, so concurrent/sequential reservations cannot each reuse one sample.
-    let reservation_device = device_with_signed_headroom(device, &context.cpu_worker_snapshot);
-    ledger.admit_and_reserve_with_lease(
-        &reservation_device,
+    let (signed_cpu_headroom_millis, signed_memory_headroom_mb) =
+        signed_headroom(&context.cpu_worker_snapshot);
+    ledger.admit_and_reserve_with_lease_and_watermark(
+        device,
         workload,
         &context.context,
         policies,
         approvals,
         now_unix_ms,
         lease_token,
+        context.sample_generation,
+        context.reservation_revision,
+        signed_cpu_headroom_millis,
+        signed_memory_headroom_mb,
     )
 }
 
@@ -477,22 +499,44 @@ pub fn admit_and_reserve_with_verified_lease(
     if let Some(reason) = context.rejection_for(device, workload, now_unix_ms) {
         return Admission::Reject(reason);
     }
+    if context.challenge_consumed {
+        return Admission::Reject(RejectReason::TelemetrySuperseded);
+    }
+    match ledger.consume_telemetry_challenge(
+        &device.device_id,
+        context.sample_generation,
+        context.reservation_revision,
+        context.challenge_nonce,
+        context.expires_at_unix_ms,
+        now_unix_ms,
+    ) {
+        Ok(()) => {}
+        Err(TelemetryChallengeError::Replayed) => {
+            return Admission::Reject(RejectReason::TelemetrySuperseded);
+        }
+        Err(TelemetryChallengeError::InvalidReservationWatermark) => {
+            return Admission::Reject(RejectReason::TelemetryWatermarkInvalid);
+        }
+    }
     let admission =
         admit_with_verified_context(device, workload, &context, policies, approvals, now_unix_ms);
     if admission != Admission::Accept {
         return admission;
     }
-    // The in-memory ledger uses the same cumulative per-device ceiling;
-    // production callers must use the durable transactional ledger wrapper.
-    let reservation_device = device_with_signed_headroom(device, &context.cpu_worker_snapshot);
-    ledger.admit_and_reserve_with_lease(
-        &reservation_device,
+    let (signed_cpu_headroom_millis, signed_memory_headroom_mb) =
+        signed_headroom(&context.cpu_worker_snapshot);
+    ledger.admit_and_reserve_with_lease_and_watermark(
+        device,
         workload,
         &context.context,
         policies,
         approvals,
         now_unix_ms,
         lease_token,
+        context.sample_generation,
+        context.reservation_revision,
+        signed_cpu_headroom_millis,
+        signed_memory_headroom_mb,
     )
 }
 
@@ -564,6 +608,7 @@ mod tests {
             device_id: "worker-01".into(),
             challenge_nonce: challenge,
             sample_generation: 1,
+            reservation_revision: 0,
             issued_at_unix_ms: now,
             expires_unix_ms: now + MAX_WORKER_TELEMETRY_TTL_MS,
             owner_opted_in: true,
