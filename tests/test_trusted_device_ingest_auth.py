@@ -1,3 +1,5 @@
+import subprocess
+import sys
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
@@ -54,6 +56,44 @@ class TrustedDeviceAuthenticationTests(unittest.TestCase):
         with ThreadPoolExecutor(max_workers=8) as pool:
             outcomes = list(pool.map(attempt, range(8)))
         self.assertEqual(sum(outcomes), 1)
+
+    def test_concurrent_replay_is_single_use_across_processes(self):
+        # Separate processes prove that SQLite, not only a Python thread lock,
+        # serializes nonce consumption across independent receiver workers.
+        repo_root = Path(__file__).resolve().parents[1]
+        script = """
+import sys
+sys.path.insert(0, sys.argv[1])
+from scripts.trusted_device_ingest_auth import AuthenticationError, authenticate_envelope, sign_envelope
+secret = b"x" * 32
+timestamp = 1000000
+nonce = "abcdefghijklmnopqrstuvwx12345678"
+body = b'{"events":[]}'
+registry = {"device-01": {"tenant_id": "tenant-a", "secret": secret, "revoked": False}}
+signature = sign_envelope(secret, timestamp, nonce, body)
+try:
+    authenticate_envelope(device_id="device-01", timestamp=timestamp, nonce=nonce,
+        body=body, signature=signature, registry=registry,
+        replay_database=sys.argv[2], now_seconds=timestamp)
+    print("accepted")
+except AuthenticationError:
+    print("rejected")
+"""
+        processes = [
+            subprocess.Popen(
+                [sys.executable, "-c", script, str(repo_root), str(self.replay)],
+                cwd=repo_root,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            for _ in range(8)
+        ]
+        results = [process.communicate(timeout=15) for process in processes]
+        self.assertTrue(all(process.returncode == 0 for process in processes), results)
+        outcomes = [stdout.strip() for stdout, _stderr in results]
+        self.assertEqual(outcomes.count("accepted"), 1, results)
+        self.assertEqual(outcomes.count("rejected"), 7, results)
 
     def test_rejects_revoked_device(self):
         self.registry["device-01"]["revoked"] = True
