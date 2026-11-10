@@ -8,6 +8,7 @@ A single process must own a given checkpoint file.
 import argparse
 import json
 import os
+import re
 import stat
 import sys
 import tempfile
@@ -21,6 +22,8 @@ from scripts.security_event_store import SecurityEventStore, StoreError
 
 MAX_LINE_BYTES = 1024 * 1024
 MAX_BATCH_RECORDS = 250
+MAX_BATCH_LINES = 1000
+TENANT_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 
 
 def _safe_open(path):
@@ -74,13 +77,13 @@ def _load_checkpoint(path, tenant_id, provider_id):
         raise
     except (OSError, UnicodeDecodeError, ValueError):
         raise ImportErrorSafe("checkpoint is unreadable or malformed") from None
-    expected = {"schema_version", "tenant_id", "provider_id", "device", "inode", "offset"}
+    expected = {"schema_version", "tenant_id", "provider_id", "device", "inode", "offset", "size"}
     if not isinstance(value, dict) or set(value) != expected or value["schema_version"] != 1:
         raise ImportErrorSafe("checkpoint contract mismatch")
     if value["tenant_id"] != tenant_id or value["provider_id"] != provider_id:
         raise ImportErrorSafe("checkpoint tenant/provider scope mismatch")
     if any(isinstance(value[k], bool) or not isinstance(value[k], int) or value[k] < 0
-           for k in ("device", "inode", "offset")):
+           for k in ("device", "inode", "offset", "size")):
         raise ImportErrorSafe("checkpoint cursor is invalid")
     return value
 
@@ -114,7 +117,7 @@ def ingest_once(*, log_path, database, checkpoint, provider, tenant_id,
                 provider_version="unknown", from_start=False, now_ms=None):
     if provider not in ("zeek", "suricata"):
         raise ImportErrorSafe("provider must be zeek or suricata")
-    if not tenant_id or len(tenant_id) > 128:
+    if not isinstance(tenant_id, str) or not TENANT_RE.fullmatch(tenant_id):
         raise ImportErrorSafe("invalid tenant identifier")
     cursor = _load_checkpoint(checkpoint, tenant_id, provider)
     fd, info = _safe_open(log_path)
@@ -122,7 +125,7 @@ def ingest_once(*, log_path, database, checkpoint, provider, tenant_id,
         identity = (int(info.st_dev), int(info.st_ino))
         if cursor is None:
             offset = 0 if from_start else int(info.st_size)
-        elif (cursor["device"], cursor["inode"]) != identity or cursor["offset"] > info.st_size:
+        elif ((cursor["device"], cursor["inode"]) != identity or info.st_size < cursor["size"] or cursor["offset"] > info.st_size):
             # Rotation or truncation: begin at the new file's start.
             offset = 0
         else:
@@ -133,10 +136,12 @@ def ingest_once(*, log_path, database, checkpoint, provider, tenant_id,
         with stream:
             stream.seek(offset)
             next_offset = offset
-            while len(records) < MAX_BATCH_RECORDS:
+            lines_read = 0
+            while len(records) < MAX_BATCH_RECORDS and lines_read < MAX_BATCH_LINES:
                 raw = stream.readline(MAX_LINE_BYTES + 1)
                 if not raw:
                     break
+                lines_read += 1
                 if len(raw) > MAX_LINE_BYTES:
                     raise ImportErrorSafe("log line exceeds the 1 MiB limit")
                 if not raw.endswith(b"\n"):
@@ -162,6 +167,7 @@ def ingest_once(*, log_path, database, checkpoint, provider, tenant_id,
         checkpoint_value = {
             "schema_version": 1, "tenant_id": tenant_id, "provider_id": provider,
             "device": identity[0], "inode": identity[1], "offset": next_offset,
+            "size": int(info.st_size),
         }
         _save_checkpoint(checkpoint, checkpoint_value)
         return inserted, len(records), next_offset
