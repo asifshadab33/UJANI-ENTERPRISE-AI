@@ -11,6 +11,8 @@ use crate::{
     admit_with_context, Admission, ClassPolicy, Device, DurableLedger, DurableLedgerError, Ledger,
     RejectReason, SchedulingContext, TelemetryChallengeError, VerifiedAdminApproval, Workload,
 };
+use crate::device_trust::durable::{DurableDeviceRegistry, DurableDeviceTrustError};
+use crate::device_trust::DeviceTrustError;
 use ed25519_dalek::{Signature, VerifyingKey};
 
 const TELEMETRY_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-WORKER-TELEMETRY-V1\0";
@@ -124,6 +126,8 @@ pub enum SchedulingEvidenceError {
     ChallengeReplayed,
     InvalidReservationWatermark,
     ChallengeStoreUnavailable,
+    /// The trusted device registry could not be read or authenticated.
+    TrustedRegistryUnavailable,
     /// The anchor outcome is ambiguous; callers must reconcile before retrying.
     ChallengeStoreOutcomeUnknown,
 }
@@ -381,6 +385,50 @@ pub fn verify_and_consume_scheduling_context(
     let mut verified = verified;
     verified.challenge_consumed = true;
     Ok(verified)
+}
+
+/// Verify worker telemetry using the current enrolled device key and trusted admin keys
+/// from the durable registry, then consume its challenge/generation in the durable ledger.
+///
+/// The registry read lock is held while the ledger consumes the challenge, so key rotation
+/// or revocation cannot race between signature verification and replay-state advancement.
+/// This is a transport-independent trust boundary, not an HTTP listener: the host must
+/// still authenticate the signed route/body request and supply a server-issued challenge.
+pub fn verify_and_consume_scheduling_context_from_registry(
+    registry: &DurableDeviceRegistry,
+    ledger: &DurableLedger,
+    tenant_id: &str,
+    device: &Device,
+    workload: &Workload,
+    telemetry: &SignedWorkerTelemetry,
+    policy: &SignedSchedulingPolicy,
+    expected_challenge_nonce: &[u8; 16],
+    now_unix_ms: u64,
+) -> Result<VerifiedSchedulingContext, SchedulingEvidenceError> {
+    let verified = registry
+        .with_trusted_keys(tenant_id, &telemetry.claims.device_id, |device_key, admin_keys| {
+            let device_keys = [(telemetry.claims.device_id.clone(), device_key.clone())];
+            verify_and_consume_scheduling_context(
+                ledger,
+                device,
+                workload,
+                telemetry,
+                policy,
+                &device_keys,
+                admin_keys,
+                expected_challenge_nonce,
+                now_unix_ms,
+            )
+        })
+        .map_err(|error| match error {
+            DurableDeviceTrustError::Trust(
+                DeviceTrustError::DeviceNotFound
+                | DeviceTrustError::TenantMismatch
+                | DeviceTrustError::DeviceNotEnrolled,
+            ) => SchedulingEvidenceError::UnknownDeviceKey,
+            _ => SchedulingEvidenceError::TrustedRegistryUnavailable,
+        })?;
+    verified
 }
 
 fn capacity_rejection(
