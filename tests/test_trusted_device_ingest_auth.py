@@ -52,6 +52,10 @@ class TrustedDeviceAuthenticationTests(unittest.TestCase):
         with self.assertRaises(AuthenticationError):
             self.call_auth(body=b'{"events":[1]}')
 
+    def test_rejects_negative_timestamp(self):
+        with self.assertRaises(AuthenticationError):
+            self.call_auth(timestamp=-1)
+
     def test_rejects_stale_timestamp(self):
         with self.assertRaises(AuthenticationError):
             self.call_auth(now_seconds=self.timestamp + 301)
