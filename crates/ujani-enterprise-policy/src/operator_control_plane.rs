@@ -684,12 +684,25 @@ mod tests {
     #[test]
     fn tenant_scope_is_enforced_before_overview_is_returned() {
         let auth = auth();
-        let token = auth.mint_after_identity_verification(&claims("tenant-a"), 10_000).unwrap();
-        let repo = Arc::new(TestRepo { values: Mutex::new(HashMap::from([("tenant-a".into(), empty_overview("tenant-b"))])) });
+        let token = auth
+            .mint_after_identity_verification(&claims("tenant-a"), 10_000)
+            .unwrap();
+        let repo = Arc::new(TestRepo {
+            values: Mutex::new(HashMap::from([(
+                "tenant-a".into(),
+                empty_overview("tenant-b"),
+            )])),
+        });
         let audit = Arc::new(TestAudit::default());
         let service = OperatorControlPlane::new(auth, repo, audit.clone());
-        assert_eq!(service.get_overview(&token, 10_100), Err(OperatorServiceError::InvalidTenantBoundary));
-        assert_eq!(audit.events.lock().unwrap()[0].outcome, OperatorAuditOutcome::InvalidOverview);
+        assert_eq!(
+            service.get_overview(&token, 10_100),
+            Err(OperatorServiceError::InvalidTenantBoundary)
+        );
+        assert_eq!(
+            audit.events.lock().unwrap()[0].outcome,
+            OperatorAuditOutcome::InvalidOverview
+        );
     }
     #[test]
     fn overview_json_matches_console_contract_and_escapes_untrusted_text() {
