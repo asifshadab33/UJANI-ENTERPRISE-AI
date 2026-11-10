@@ -1915,7 +1915,7 @@ mod tests {
         let second_token = [0x74u8; 32];
         {
             let ledger = open_ledger(&path).unwrap();
-            assert_eq!(ledger.reservation_revision("worker-01", 1_000).unwrap(), 0);
+            assert_eq!(ledger.reservation_revision("worker-durable-01", 1_000).unwrap(), 0);
             assert_eq!(
                 ledger
                     .admit_and_reserve_with_lease(
@@ -1930,15 +1930,15 @@ mod tests {
                     .unwrap(),
                 Admission::Accept
             );
-            assert_eq!(ledger.reservation_revision("worker-01", 2_000).unwrap(), 1);
+            assert_eq!(ledger.reservation_revision("worker-durable-01", 2_000).unwrap(), 1);
         }
         {
             let ledger = open_ledger(&path).unwrap();
-            assert_eq!(ledger.reservation_revision("worker-01", 3_000).unwrap(), 1);
+            assert_eq!(ledger.reservation_revision("worker-durable-01", 3_000).unwrap(), 1);
             assert!(ledger
                 .release_lease("job-release-revision", &first_token)
                 .unwrap());
-            assert_eq!(ledger.reservation_revision("worker-01", 3_000).unwrap(), 2);
+            assert_eq!(ledger.reservation_revision("worker-durable-01", 3_000).unwrap(), 2);
             assert_eq!(
                 ledger
                     .admit_and_reserve_with_lease(
@@ -1953,11 +1953,11 @@ mod tests {
                     .unwrap(),
                 Admission::Accept
             );
-            assert_eq!(ledger.reservation_revision("worker-01", 4_000).unwrap(), 3);
+            assert_eq!(ledger.reservation_revision("worker-durable-01", 4_000).unwrap(), 3);
             assert_eq!(ledger.expire_leases(4_000 + crate::LEASE_MS).unwrap(), 1);
             assert_eq!(
                 ledger
-                    .reservation_revision("worker-01", 4_000 + crate::LEASE_MS)
+                    .reservation_revision("worker-durable-01", 4_000 + crate::LEASE_MS)
                     .unwrap(),
                 4
             );
@@ -1965,7 +1965,7 @@ mod tests {
         let reopened = open_ledger(&path).unwrap();
         assert_eq!(
             reopened
-                .reservation_revision("worker-01", 5_000 + crate::LEASE_MS)
+                .reservation_revision("worker-durable-01", 5_000 + crate::LEASE_MS)
                 .unwrap(),
             4
         );
