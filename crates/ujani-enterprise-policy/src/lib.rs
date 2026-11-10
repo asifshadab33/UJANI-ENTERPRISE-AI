@@ -456,7 +456,10 @@ impl Ledger {
             self.jobs.remove(workload_id)
         {
             self.job_reservation_revisions.remove(workload_id);
-            let revision = self.reservation_revisions.entry(device_id.clone()).or_insert(0);
+            let revision = self
+                .reservation_revisions
+                .entry(device_id.clone())
+                .or_insert(0);
             if let Some(next) = revision.checked_add(1) {
                 *revision = next;
             }
@@ -577,7 +580,11 @@ impl Ledger {
         {
             return Err(TelemetryChallengeError::Replayed);
         }
-        let current_revision = self.reservation_revisions.get(device_id).copied().unwrap_or(0);
+        let current_revision = self
+            .reservation_revisions
+            .get(device_id)
+            .copied()
+            .unwrap_or(0);
         if reservation_revision > current_revision
             || self
                 .telemetry_reservation_watermarks
@@ -621,7 +628,11 @@ impl Ledger {
         {
             return Admission::Reject(RejectReason::TelemetrySuperseded);
         }
-        let current_revision = self.reservation_revisions.get(&device.device_id).copied().unwrap_or(0);
+        let current_revision = self
+            .reservation_revisions
+            .get(&device.device_id)
+            .copied()
+            .unwrap_or(0);
         if reservation_revision > current_revision {
             return Admission::Reject(RejectReason::TelemetryWatermarkInvalid);
         }
