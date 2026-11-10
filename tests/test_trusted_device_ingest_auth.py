@@ -159,6 +159,27 @@ except AuthenticationError:
         finally:
             store.close()
 
+    def test_rejects_duplicate_json_keys_after_authentication(self):
+        store = SecurityEventStore(":memory:")
+        body = b'{"events":[],"events":[]}'
+        signature = sign_envelope(self.secret, self.timestamp, self.nonce, body)
+        try:
+            with self.assertRaises(IngestionEnvelopeError):
+                authenticate_and_ingest(
+                    device_id="device-01",
+                    timestamp=self.timestamp,
+                    nonce=self.nonce,
+                    body=body,
+                    signature=signature,
+                    registry=self.registry,
+                    replay_database=self.replay,
+                    store=store,
+                    provider_id="zeek",
+                    now_seconds=self.timestamp,
+                )
+        finally:
+            store.close()
+
     def test_rejects_revoked_device(self):
         self.registry["device-01"]["revoked"] = True
         with self.assertRaises(AuthenticationError):
