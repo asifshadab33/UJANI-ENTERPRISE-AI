@@ -70,6 +70,11 @@ class SecurityEventStoreTests(unittest.TestCase):
         self.store.ingest(rows, tenant_id="tenant-a", provider_id="zeek", now_ms=3000)
         self.assertEqual(self.store.count(tenant_id="tenant-a"), 3)
 
+    def test_rejects_events_outside_retention_window(self):
+        with self.assertRaises(StoreError):
+            self.store.ingest([event(ts=1)], tenant_id="tenant-a", provider_id="zeek", now_ms=100_000)
+        self.assertEqual(self.store.count(tenant_id="tenant-a"), 0)
+
     def test_rejects_missing_tenant_and_bad_limits(self):
         with self.assertRaises(StoreError):
             self.store.search(tenant_id="../other")
