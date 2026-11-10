@@ -29,19 +29,21 @@ class AuthenticationError(ValueError):
 
 def _open_replay_db(path: str | os.PathLike[str]) -> sqlite3.Connection:
     target = Path(path)
-    if target.exists() and target.is_symlink():
-        raise AuthenticationError("replay database path is unsafe")
-    if not target.parent.exists() or not target.parent.is_dir():
-        raise AuthenticationError("replay database parent must exist")
+    db: sqlite3.Connection | None = None
     try:
+        if target.exists() and target.is_symlink():
+            raise AuthenticationError("replay database path is unsafe")
+        if not target.parent.exists() or not target.parent.is_dir():
+            raise AuthenticationError("replay database parent must exist")
         db = sqlite3.connect(str(target), timeout=5.0, isolation_level=None)
+        # Restrict the main database before enabling WAL, which may create
+        # companion files. The containing directory must still be protected
+        # from untrusted writers by the host deployment.
+        os.chmod(target, 0o600)
         db.execute("PRAGMA trusted_schema=OFF")
         db.execute("PRAGMA busy_timeout=5000")
-        # The nonce store uses short, serialized writes; rollback-journal mode avoids
-        # persistent WAL/SHM sidecars and their Windows file-handle cleanup hazards.
-        db.execute("PRAGMA journal_mode=DELETE")
+        db.execute("PRAGMA journal_mode=WAL")
         db.execute("PRAGMA synchronous=FULL")
-        os.chmod(target, 0o600)
         db.execute("""
             CREATE TABLE IF NOT EXISTS consumed_nonces (
                 device_id TEXT NOT NULL,
@@ -51,7 +53,16 @@ def _open_replay_db(path: str | os.PathLike[str]) -> sqlite3.Connection:
             )
         """)
         return db
+    except AuthenticationError:
+        if db is not None:
+            db.close()
+        raise
     except (OSError, sqlite3.Error):
+        if db is not None:
+            try:
+                db.close()
+            except sqlite3.Error:
+                pass
         raise AuthenticationError("replay protection storage unavailable") from None
 
 
