@@ -24,7 +24,7 @@ These are policy/contract primitives. They do not yet provide connector discover
 | Malcolm | Optional higher-capability network-analysis deployment using its own specialist stack | Read-only health adapter prototype using documented GET ping/ready/version endpoints | Event/document search adapter, deployment automation, indexing or PCAP pipeline |
 | Customer firewall (including OPNsense or other supported products) | Existing network policy enforcement point | Read-only inventory, configuration posture and status where supported | Any configuration change, policy push, restart or rule deployment |
 | CISA KEV / NVD | External vulnerability intelligence | Fetch and cache public advisories with source, version and retrieval time | Feed scheduler, normalisation and asset matching |
-| MISP / OpenCTI | Optional threat-intelligence exchange and knowledge systems | Read-only indicator/context lookup after customer selection | Live connectors, sync, write-back or feed publication |
+| MISP / OpenCTI | Optional threat-intelligence exchange and knowledge systems | MISP read-only exact indicator lookup prototype using `attributes/restSearch` | Authenticated production host integration, tenant-derived scope, real MISP lab validation; OpenCTI remains unimplemented |
 
 No universal virtual-patching guarantee is made. A network control can only inspect or block traffic that actually traverses the enforcement point and is covered by a validated rule. Passive monitoring observes; it does not block. Neither approach repairs unsupported firmware or protects management-plane attacks, local access, bypass traffic or vulnerabilities outside the inspected protocols.
 
@@ -134,3 +134,27 @@ This is a local single-process log follower, not a network listener, authenticat
 
 
 CI note: PR #81 targets `main` so the repository's pull-request validation workflow applies to the combined store-and-follower change. The branch remains draft pending fresh CI and real-provider lab verification.
+
+
+### MISP read-only indicator lookup prototype
+
+The current feature branch adds `scripts/misp_readonly.py` and offline mocked tests. It queries only the documented `POST /attributes/restSearch` search endpoint; this is a read-only search operation, not a provider mutation. The request body is generated internally and contains only the exact indicator, bounded page size and page number. The adapter exports a small allowlist of indicator metadata and marks it `internal`.
+
+Security boundaries:
+- HTTPS and certificate verification are required by default; a custom CA bundle may be supplied.
+- Redirects are rejected and ambient environment proxies are disabled so an API key is not forwarded to an unconfigured proxy.
+- API key is supplied through `UJANI_MISP_API_KEY`, sent only in the Authorization header, and never placed in a URL or output.
+- Fixed endpoint only; no event creation, publication, edit, delete, sync or feed push operation exists.
+- Request timeout is eight seconds; response size is limited to 1 MiB; page size is at most 100 and page count at most five.
+- Only supported indicator types and allowlisted metadata fields are returned. Raw attachments, arbitrary attributes and unrelated event fields are not exported.
+- This script is a connector prototype, not the authenticated Enterprise service. A trusted host must authenticate the operator, derive tenant scope and apply retention/permission policy before evidence is stored.
+
+Example:
+
+```sh
+UJANI_MISP_API_KEY='read-only-api-key' \\
+  python scripts/misp_readonly.py \\
+  --base-url https://misp.example --indicator 198.51.100.7
+```
+
+Do not grant this integration a MISP account with write or publishing privileges. Validate the exact API response shape and permissions against the customer's MISP version in an isolated lab before enabling it in the control plane.
