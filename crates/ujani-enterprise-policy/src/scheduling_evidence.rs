@@ -553,6 +553,7 @@ mod tests {
     use ed25519_dalek::{Signer, SigningKey};
     use std::hash::{BuildHasher, Hash, Hasher};
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::OnceLock;
 
     // Test-only unpredictable challenge values avoid embedding fixed nonces in
     // signed-message fixtures. Production challenges are issued by the trust service.
@@ -584,6 +585,16 @@ mod tests {
     fn next_test_generation() -> u64 {
         static NEXT: AtomicU64 = AtomicU64::new(1);
         NEXT.fetch_add(1, Ordering::Relaxed)
+    }
+
+    fn test_signing_keys() -> (SigningKey, SigningKey) {
+        static KEYS: OnceLock<([u8; 32], [u8; 32])> = OnceLock::new();
+        let (device_key, admin_key) =
+            KEYS.get_or_init(|| (fresh_test_lease_token(), fresh_test_lease_token()));
+        (
+            SigningKey::from_bytes(device_key),
+            SigningKey::from_bytes(admin_key),
+        )
     }
 
     fn device() -> Device {
@@ -637,8 +648,7 @@ mod tests {
         SigningKey,
         SigningKey,
     ) {
-        let device_key = SigningKey::from_bytes(&[5u8; 32]);
-        let admin_key = SigningKey::from_bytes(&[6u8; 32]);
+        let (device_key, admin_key) = test_signing_keys();
         let telemetry_claims = WorkerTelemetryClaims {
             device_id: "worker-01".into(),
             challenge_nonce: challenge,
@@ -707,11 +717,12 @@ mod tests {
             "ujani-telemetry-generation-{}.ledger",
             std::process::id()
         ));
+        let integrity_key = fresh_test_lease_token();
         let open = || {
             DurableLedger::open_with_integrity_keys(
                 &path,
                 "test-key",
-                vec![LedgerIntegrityKey::new("test-key", [0x79; 32])],
+                vec![LedgerIntegrityKey::new("test-key", integrity_key)],
             )
             .unwrap()
         };
@@ -719,11 +730,11 @@ mod tests {
         let workload = workload();
         let device_keys = [(
             "worker-01".to_owned(),
-            SigningKey::from_bytes(&[5u8; 32]).verifying_key(),
+            test_signing_keys().0.verifying_key(),
         )];
         let admin_keys = [(
             "admin-key-01".to_owned(),
-            SigningKey::from_bytes(&[6u8; 32]).verifying_key(),
+            test_signing_keys().1.verifying_key(),
         )];
 
         {
@@ -901,7 +912,7 @@ mod tests {
         // 3,500 free CPU minus the 2,000 system reserve leaves 1,500.
         // Each job requests 1,000, so the first fits and the second must not.
         let mut memory_ledger = Ledger::default();
-        let first_context = verified_context_for(&first_workload, [0x51; 16], 1_000, 3_500);
+        let first_context = verified_context_for(&first_workload, fresh_test_challenge(), 1_000, 3_500);
         assert_eq!(
             admit_and_reserve_with_verified_lease(
                 &mut memory_ledger,
@@ -911,11 +922,11 @@ mod tests {
                 &class_policies,
                 &[],
                 2_000,
-                &[0x51; 32],
+                &fresh_test_lease_token(),
             ),
             Admission::Accept
         );
-        let second_context = verified_context_for(&second_workload, [0x52; 16], 1_000, 3_500);
+        let second_context = verified_context_for(&second_workload, fresh_test_challenge(), 1_000, 3_500);
         assert_eq!(
             admit_and_reserve_with_verified_lease(
                 &mut memory_ledger,
@@ -925,7 +936,7 @@ mod tests {
                 &class_policies,
                 &[],
                 2_000,
-                &[0x52; 32],
+                &fresh_test_lease_token(),
             ),
             Admission::Reject(RejectReason::CpuBudget)
         );
@@ -937,13 +948,13 @@ mod tests {
         let durable = DurableLedger::open_with_integrity_keys(
             &path,
             "test-key",
-            vec![LedgerIntegrityKey::new("test-key", [0x71; 32])],
+            vec![LedgerIntegrityKey::new("test-key", fresh_test_lease_token())],
         )
         .unwrap();
         let first_context = verified_context_for_durable(
             &durable,
             &first_workload,
-            [0x61; 16],
+            fresh_test_challenge(),
             1_000,
             3_500,
             20_000,
@@ -958,7 +969,7 @@ mod tests {
                 &class_policies,
                 &[],
                 2_000,
-                &[0x61; 32],
+                &fresh_test_lease_token(),
             )
             .unwrap(),
             Admission::Accept
@@ -966,7 +977,7 @@ mod tests {
         let second_context = verified_context_for_durable(
             &durable,
             &second_workload,
-            [0x62; 16],
+            fresh_test_challenge(),
             1_000,
             3_500,
             20_000,
@@ -981,7 +992,7 @@ mod tests {
                 &class_policies,
                 &[],
                 2_000,
-                &[0x62; 32],
+                &fresh_test_lease_token(),
             )
             .unwrap(),
             Admission::Reject(RejectReason::CpuBudget)
@@ -1003,18 +1014,18 @@ mod tests {
         let ledger = DurableLedger::open_with_integrity_keys(
             &path,
             "test-key",
-            vec![LedgerIntegrityKey::new("test-key", [0x7A; 32])],
+            vec![LedgerIntegrityKey::new("test-key", fresh_test_lease_token())],
         )
         .unwrap();
         let d = device();
         let w = workload();
         let device_keys = [(
             "worker-01".to_owned(),
-            SigningKey::from_bytes(&[5u8; 32]).verifying_key(),
+            test_signing_keys().0.verifying_key(),
         )];
         let admin_keys = [(
             "admin-key-01".to_owned(),
-            SigningKey::from_bytes(&[6u8; 32]).verifying_key(),
+            test_signing_keys().1.verifying_key(),
         )];
 
         // A sample cannot claim a reservation revision the service has not committed.
@@ -1101,7 +1112,7 @@ mod tests {
                 &policies,
                 &[],
                 2_000,
-                &[0x71; 32],
+                &fresh_test_lease_token(),
             )
             .unwrap(),
             Admission::Reject(RejectReason::TelemetrySuperseded)
@@ -1115,7 +1126,7 @@ mod tests {
                 &policies,
                 &[],
                 2_000,
-                &[0x72; 32],
+                &fresh_test_lease_token(),
             )
             .unwrap(),
             Admission::Accept
@@ -1195,7 +1206,7 @@ mod tests {
         let cpu_ledger = DurableLedger::open_with_integrity_keys(
             &cpu_path,
             "test-key",
-            vec![LedgerIntegrityKey::new("test-key", [0x7B; 32])],
+            vec![LedgerIntegrityKey::new("test-key", fresh_test_lease_token())],
         )
         .unwrap();
         let d = device();
@@ -1204,7 +1215,7 @@ mod tests {
         let first_context = verified_context_for_durable(
             &cpu_ledger,
             &cpu_first,
-            [0x71; 16],
+            fresh_test_challenge(),
             1_000,
             6_000,
             20_000,
@@ -1219,7 +1230,7 @@ mod tests {
                 &policies,
                 &[],
                 2_000,
-                &[0x71; 32],
+                &fresh_test_lease_token(),
             )
             .unwrap(),
             Admission::Accept
@@ -1231,7 +1242,7 @@ mod tests {
         let second_context = verified_context_for_durable(
             &cpu_ledger,
             &cpu_second,
-            [0x72; 16],
+            fresh_test_challenge(),
             3_000,
             5_000,
             20_000,
@@ -1246,7 +1257,7 @@ mod tests {
                 &policies,
                 &[],
                 4_000,
-                &[0x72; 32],
+                &fresh_test_lease_token(),
             )
             .unwrap(),
             Admission::Accept
@@ -1267,7 +1278,7 @@ mod tests {
         let memory_ledger = DurableLedger::open_with_integrity_keys(
             &memory_path,
             "test-key",
-            vec![LedgerIntegrityKey::new("test-key", [0x7C; 32])],
+            vec![LedgerIntegrityKey::new("test-key", fresh_test_lease_token())],
         )
         .unwrap();
         let memory_first = workload_with_resources("memory-first", 1_000, 7_000);
@@ -1275,7 +1286,7 @@ mod tests {
         let first_context = verified_context_for_durable(
             &memory_ledger,
             &memory_first,
-            [0x73; 16],
+            fresh_test_challenge(),
             1_000,
             6_000,
             20_000,
@@ -1290,7 +1301,7 @@ mod tests {
                 &policies,
                 &[],
                 2_000,
-                &[0x73; 32],
+                &fresh_test_lease_token(),
             )
             .unwrap(),
             Admission::Accept
@@ -1298,7 +1309,7 @@ mod tests {
         let second_context = verified_context_for_durable(
             &memory_ledger,
             &memory_second,
-            [0x74; 16],
+            fresh_test_challenge(),
             3_000,
             6_000,
             10_000,
@@ -1313,7 +1324,7 @@ mod tests {
                 &policies,
                 &[],
                 4_000,
-                &[0x74; 32],
+                &fresh_test_lease_token(),
             )
             .unwrap(),
             Admission::Accept
@@ -1330,7 +1341,7 @@ mod tests {
     fn resource_capacity_claims_are_bound_to_the_worker_signature() {
         let d = device();
         let w = workload();
-        let challenge = [0x41u8; 16];
+        let challenge = fresh_test_challenge();
         let (mut telemetry, policy, device_key, admin_key) = signed_evidence(challenge, 1_000);
         telemetry.claims.available_cpu_millis = 3_000;
         assert_eq!(
@@ -1388,7 +1399,7 @@ mod tests {
     fn signed_worker_capacity_and_isolation_gate_admission() {
         let d = device();
         let w = workload();
-        let challenge = [0x42u8; 16];
+        let challenge = fresh_test_challenge();
         let (mut telemetry, policy, device_key, admin_key) = signed_evidence(challenge, 1_000);
         telemetry.claims.available_cpu_millis = 2_999;
         telemetry.signature = device_key
@@ -1410,7 +1421,7 @@ mod tests {
             Admission::Reject(RejectReason::CpuBudget)
         );
 
-        let challenge = [0x44u8; 16];
+        let challenge = fresh_test_challenge();
         let (mut telemetry, policy, device_key, admin_key) = signed_evidence(challenge, 1_000);
         telemetry.claims.available_memory_mb = 5_000;
         telemetry.signature = device_key
@@ -1432,7 +1443,7 @@ mod tests {
             Admission::Reject(RejectReason::MemoryBudget)
         );
 
-        let challenge = [0x43u8; 16];
+        let challenge = fresh_test_challenge();
         let (mut telemetry, policy, device_key, admin_key) = signed_evidence(challenge, 1_000);
         telemetry.claims.os_isolation_ready = false;
         telemetry.signature = device_key
@@ -1568,7 +1579,7 @@ mod tests {
         let durable = DurableLedger::open_with_integrity_keys(
             &path,
             "test-key",
-            vec![LedgerIntegrityKey::new("test-key", [0x72; 32])],
+            vec![LedgerIntegrityKey::new("test-key", fresh_test_lease_token())],
         )
         .unwrap();
         let durable_cpu_challenge = fresh_test_challenge();
@@ -1656,7 +1667,7 @@ mod tests {
     fn verified_context_is_bound_to_device_manifest_and_expiry() {
         let d = device();
         let w = workload();
-        let challenge = [0x31u8; 16];
+        let challenge = fresh_test_challenge();
         let (telemetry, policy, device_key, admin_key) = signed_evidence(challenge, 1_000);
         let verified = verify_scheduling_context(
             &d,
@@ -1711,12 +1722,12 @@ mod tests {
         let ledger = DurableLedger::open_with_integrity_keys(
             &path,
             "test-v1",
-            vec![crate::LedgerIntegrityKey::new("test-v1", [0xA5; 32])],
+            vec![crate::LedgerIntegrityKey::new("test-v1", fresh_test_lease_token())],
         )
         .unwrap();
         let d = device();
         let w = workload();
-        let challenge = [0x32u8; 16];
+        let challenge = fresh_test_challenge();
         let (telemetry, policy, device_key, admin_key) = signed_evidence(challenge, 1_000);
         let keys = [("worker-01".into(), device_key.verifying_key())];
         let admins = [("admin-key-01".into(), admin_key.verifying_key())];
@@ -1735,7 +1746,7 @@ mod tests {
             &[],
             &[],
             2_000,
-            &[0x41u8; 32],
+            &fresh_test_lease_token(),
         )
         .unwrap();
         assert_eq!(
@@ -1844,12 +1855,12 @@ mod tests {
         let ledger = DurableLedger::open_with_integrity_keys(
             &path,
             "test-v1",
-            vec![crate::LedgerIntegrityKey::new("test-v1", [0xA5; 32])],
+            vec![crate::LedgerIntegrityKey::new("test-v1", fresh_test_lease_token())],
         )
         .unwrap();
         let d = device();
         let w = workload();
-        let challenge = [0x77u8; 16];
+        let challenge = fresh_test_challenge();
         let (telemetry, policy, device_key, admin_key) = signed_evidence(challenge, 1_000);
         let keys = [("worker-01".into(), device_key.verifying_key())];
         let admins = [("admin-key-01".into(), admin_key.verifying_key())];
