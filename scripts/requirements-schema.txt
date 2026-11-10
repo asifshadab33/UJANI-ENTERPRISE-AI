@@ -1,3 +1,4 @@
+# CI-only Draft 2020-12 validator toolchain; keep every direct and transitive dependency pinned.
 attrs==25.3.0
 jsonschema==4.25.1
 jsonschema-specifications==2025.9.1
