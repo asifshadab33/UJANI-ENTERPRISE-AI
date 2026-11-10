@@ -9,6 +9,7 @@ use crate::{
     Admission, ClassPolicy, Device, Ledger, SchedulingContext, TelemetryChallengeError,
     VerifiedAdminApproval, Workload,
 };
+use hmac::KeyInit;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
