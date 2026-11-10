@@ -581,6 +581,11 @@ mod tests {
         token
     }
 
+    fn next_test_generation() -> u64 {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    }
+
     fn device() -> Device {
         Device {
             device_id: "worker-01".into(),
@@ -818,7 +823,7 @@ mod tests {
         available_cpu_millis: u32,
     ) -> VerifiedSchedulingContext {
         let (mut telemetry, mut policy, device_key, admin_key) = signed_evidence(challenge, now);
-        telemetry.claims.sample_generation = u64::from(challenge[0]) + 256;
+        telemetry.claims.sample_generation = next_test_generation();
         telemetry.claims.available_cpu_millis = available_cpu_millis;
         telemetry.signature = device_key
             .sign(&worker_telemetry_bytes(&telemetry.claims))
@@ -852,7 +857,7 @@ mod tests {
         reservation_revision: u64,
     ) -> VerifiedSchedulingContext {
         let (mut telemetry, mut policy, device_key, admin_key) = signed_evidence(challenge, now);
-        telemetry.claims.sample_generation = u64::from(challenge[0]) + 256;
+        telemetry.claims.sample_generation = next_test_generation();
         telemetry.claims.reservation_revision = reservation_revision;
         telemetry.claims.available_cpu_millis = available_cpu_millis;
         telemetry.claims.available_memory_mb = available_memory_mb;
@@ -1456,7 +1461,7 @@ mod tests {
         now: u64,
     ) -> VerifiedSchedulingContext {
         let (mut telemetry, mut policy, device_key, admin_key) = signed_evidence(challenge, now);
-        telemetry.claims.sample_generation = u64::from(challenge[0]) + 256;
+        telemetry.claims.sample_generation = next_test_generation();
         telemetry.claims.os_isolation_ready = false;
         telemetry.signature = device_key
             .sign(&worker_telemetry_bytes(&telemetry.claims))
@@ -1487,7 +1492,7 @@ mod tests {
         now: u64,
     ) -> VerifiedSchedulingContext {
         let (mut telemetry, mut policy, device_key, admin_key) = signed_evidence(challenge, now);
-        telemetry.claims.sample_generation = u64::from(challenge[0]) + 256;
+        telemetry.claims.sample_generation = next_test_generation();
         telemetry.claims.os_isolation_ready = false;
         telemetry.signature = device_key
             .sign(&worker_telemetry_bytes(&telemetry.claims))
