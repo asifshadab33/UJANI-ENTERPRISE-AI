@@ -49,6 +49,11 @@ def main() -> None:
     states = status["properties"]["state"]["enum"]
     assert {"awaiting_approval", "queued", "reserved", "running", "completed", "failed", "cancelled", "timed_out", "rejected", "expired"} <= set(states)
     assert status["properties"]["sequence"]["minimum"] == 1
+    consent_state = status["properties"]["consent_state"]["properties"]
+    assert "revoked" in consent_state["user"]["enum"]
+    assert "revoked" in consent_state["organization_admin"]["enum"]
+    assert "revoked" in consent_state["worker_device_owner"]["enum"]
+    assert "consent_revoked" in status["properties"]["reason_code"]["enum"]
     assert receipt["properties"]["input_sha256"]["$ref"] == "#/$defs/sha256"
     assert receipt["properties"]["worker"]["additionalProperties"] is False
     assert receipt["properties"]["consent_refs"]["required"] == [
