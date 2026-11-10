@@ -90,8 +90,8 @@ class MISPReadOnlyAdapterTests(unittest.TestCase):
             page_size=1, max_pages=5, opener_factory=lambda ca: fake,
         )
         self.assertEqual(result["result_count"], 2)
-        self.assertEqual(len(fake.requests), 2)
-        self.assertEqual(json.loads(fake.requests[1][0].data)["page"], 2)
+        self.assertEqual(len(fake.requests), 3)
+        self.assertEqual(json.loads(fake.requests[2][0].data)["page"], 3)
 
     def test_unsupported_attribute_types_are_not_exported(self):
         self.assertIsNone(normalize_attribute(attribute(type="attachment")))
