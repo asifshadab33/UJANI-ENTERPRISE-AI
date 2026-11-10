@@ -597,8 +597,13 @@ pub fn admit_and_reserve_with_verified_lease(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::device_trust::durable::{DeviceTrustIntegrityKey, DurableDeviceRegistry};
+    use crate::device_trust::{
+        admin_command_bytes, enrollment_proof_bytes, DeviceCommandAction, SignedDeviceAdminCommand,
+    };
     use crate::{workload_from_manifest, DataClassification, LedgerIntegrityKey, WorkloadManifest};
     use ed25519_dalek::{Signer, SigningKey};
+    use std::path::{Path, PathBuf};
     use std::hash::{BuildHasher, Hash, Hasher};
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::OnceLock;
@@ -643,6 +648,23 @@ mod tests {
             SigningKey::from_bytes(device_key),
             SigningKey::from_bytes(admin_key),
         )
+    }
+
+    fn unique_test_path(label: &str) -> PathBuf {
+        let nonce = fresh_test_challenge();
+        let suffix = u128::from_be_bytes(nonce);
+        std::env::temp_dir().join(format!(
+            "ujani-{label}-{}-{suffix}.db",
+            std::process::id()
+        ))
+    }
+
+    fn cleanup_test_path(path: &Path) {
+        for suffix in ["", ".lock", ".bak", ".tmp", ".corrupt", ".anchor-restore.tmp"] {
+            let mut value = path.as_os_str().to_os_string();
+            value.push(suffix);
+            let _ = std::fs::remove_file(PathBuf::from(value));
+        }
     }
 
     fn device() -> Device {
@@ -2008,4 +2030,118 @@ mod tests {
             SchedulingEvidenceError::UnknownAdminKey
         );
     }
+    #[test]
+    fn durable_registry_binds_worker_telemetry_to_current_tenant_scoped_keys() {
+        let (device_key, admin_key) = test_signing_keys();
+        let registry_path = unique_test_path("trusted-worker-registry");
+        let ledger_path = unique_test_path("trusted-worker-ledger");
+        let registry = DurableDeviceRegistry::open(
+            &registry_path,
+            vec![("admin-key-01".into(), admin_key.verifying_key())],
+            DeviceTrustIntegrityKey::new("registry-integrity-test", fresh_test_lease_token()),
+        )
+        .unwrap();
+
+        let mut command = SignedDeviceAdminCommand {
+            action: DeviceCommandAction::Enroll,
+            tenant_id: "tenant-a".into(),
+            device_id: "worker-01".into(),
+            admin_key_id: "admin-key-01".into(),
+            target_key_id: "device-key-01".into(),
+            target_public_key: Some(device_key.verifying_key().to_bytes()),
+            issued_at_unix_ms: 1_000,
+            expires_at_unix_ms: 10_000,
+            nonce: fresh_test_challenge(),
+            signature: [0; 64],
+            old_device_signature: None,
+            new_device_signature: None,
+        };
+        command.new_device_signature =
+            Some(device_key.sign(&enrollment_proof_bytes(&command)).to_bytes());
+        command.signature = admin_key.sign(&admin_command_bytes(&command)).to_bytes();
+        registry.apply_admin_command(&command, 1_100).unwrap();
+
+        let ledger = DurableLedger::open_with_integrity_keys(
+            &ledger_path,
+            "ledger-integrity-test",
+            vec![LedgerIntegrityKey::new(
+                "ledger-integrity-test",
+                fresh_test_lease_token(),
+            )],
+        )
+        .unwrap();
+
+        let challenge = fresh_test_challenge();
+        let (telemetry, policy, _, _) = signed_evidence(challenge, 1_200);
+        let verified = verify_and_consume_scheduling_context_from_registry(
+            &registry,
+            &ledger,
+            "tenant-a",
+            &device(),
+            &workload(),
+            &telemetry,
+            &policy,
+            &challenge,
+            1_300,
+        )
+        .unwrap();
+        assert!(verified.challenge_consumed);
+        assert_eq!(verified.sample_generation, 1);
+
+        assert_eq!(
+            verify_and_consume_scheduling_context_from_registry(
+                &registry,
+                &ledger,
+                "tenant-a",
+                &device(),
+                &workload(),
+                &telemetry,
+                &policy,
+                &challenge,
+                1_301,
+            ),
+            Err(SchedulingEvidenceError::ChallengeReplayed)
+        );
+
+        // A tenant mismatch must not consume the fresh sample's challenge or generation.
+        let challenge = fresh_test_challenge();
+        let (mut telemetry, policy, signing_key, _) = signed_evidence(challenge, 1_400);
+        telemetry.claims.sample_generation = 2;
+        telemetry.signature = signing_key
+            .sign(&worker_telemetry_bytes(&telemetry.claims))
+            .to_bytes();
+        assert_eq!(
+            verify_and_consume_scheduling_context_from_registry(
+                &registry,
+                &ledger,
+                "tenant-b",
+                &device(),
+                &workload(),
+                &telemetry,
+                &policy,
+                &challenge,
+                1_500,
+            ),
+            Err(SchedulingEvidenceError::UnknownDeviceKey)
+        );
+        assert!(verify_and_consume_scheduling_context_from_registry(
+            &registry,
+            &ledger,
+            "tenant-a",
+            &device(),
+            &workload(),
+            &telemetry,
+            &policy,
+            &challenge,
+            1_501,
+        )
+        .is_ok());
+
+        drop(ledger);
+        drop(registry);
+        cleanup_test_path(&registry_path);
+        cleanup_test_path(&ledger_path);
+    }
+
+
 }
