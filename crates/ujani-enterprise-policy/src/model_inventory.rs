@@ -665,7 +665,7 @@ mod tests {
 
     #[test]
     fn rejects_future_stale_and_privacy_violating_snapshots() {
-        let mut value = inventory();
+        let value = inventory();
         value.generated_at_unix_ms = 50_000;
         assert_eq!(
             validate_model_runtime_inventory(&value, 1_000, 10_000),
