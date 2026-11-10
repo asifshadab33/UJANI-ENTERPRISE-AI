@@ -6,7 +6,8 @@
 //! persisted; only its domain-separated digest is stored.
 use crate::device_trust::durable::{MonotonicSnapshotAnchor, SnapshotAnchorRecord};
 use crate::{
-    Admission, ClassPolicy, Device, Ledger, SchedulingContext, VerifiedAdminApproval, Workload,
+    Admission, ClassPolicy, Device, Ledger, SchedulingContext, TelemetryChallengeError,
+    VerifiedAdminApproval, Workload,
 };
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
@@ -16,8 +17,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use zeroize::Zeroize;
 
-const LEDGER_HEADER: &str = "UJANI-ENTERPRISE-LEDGER-V3";
-const LEGACY_LEDGER_HEADER: &str = "UJANI-ENTERPRISE-LEDGER-V2";
+const LEDGER_HEADER: &str = "UJANI-ENTERPRISE-LEDGER-V4";
+const LEGACY_LEDGER_HEADER_V3: &str = "UJANI-ENTERPRISE-LEDGER-V4";
+const LEGACY_LEDGER_HEADER_V2_V2: &str = "UJANI-ENTERPRISE-LEDGER-V2";
 const LEDGER_MAC_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-LEDGER-HMAC-SHA256-V2\0";
 const MAX_LEDGER_BYTES: u64 = 16 * 1024 * 1024;
 
@@ -296,20 +298,72 @@ impl DurableLedger {
         })
     }
 
+    /// Reserve against the latest consumed signed sample while reconciling
+    /// reservations committed after that sample's reservation watermark.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn admit_and_reserve_with_lease_and_watermark(
+        &self,
+        device: &Device,
+        workload: &Workload,
+        context: &SchedulingContext,
+        policies: &[ClassPolicy],
+        approvals: &[VerifiedAdminApproval],
+        now_unix_ms: u64,
+        lease_token: &[u8; 32],
+        sample_generation: u64,
+        reservation_revision: u64,
+        signed_cpu_headroom_millis: u32,
+        signed_memory_headroom_mb: u64,
+    ) -> Result<Admission, DurableLedgerError> {
+        self.transact(|ledger| {
+            Ok(ledger.admit_and_reserve_with_lease_and_watermark(
+                device,
+                workload,
+                context,
+                policies,
+                approvals,
+                now_unix_ms,
+                lease_token,
+                sample_generation,
+                reservation_revision,
+                signed_cpu_headroom_millis,
+                signed_memory_headroom_mb,
+            ))
+        })
+    }
+
+    /// Return the current device reservation revision after expiring leases.
+    /// The challenge issuer must include this value in the signed worker sample.
+    pub fn reservation_revision(
+        &self,
+        device_id: &str,
+        now_unix_ms: u64,
+    ) -> Result<u64, DurableLedgerError> {
+        if !valid_stored_identifier(device_id, 128) {
+            return Err(DurableLedgerError::InvalidRecord);
+        }
+        self.transact(|ledger| {
+            ledger.expire(now_unix_ms);
+            Ok(ledger.reservation_revisions.get(device_id).copied().unwrap_or(0))
+        })
+    }
+
     /// Consume a dispatch challenge and advance the enrolled worker's signed
     /// telemetry generation in one durable transaction.
     pub(crate) fn consume_telemetry_challenge(
         &self,
         device_id: &str,
         generation: u64,
+        reservation_revision: u64,
         nonce: [u8; 16],
         expires_unix_ms: u64,
         now_unix_ms: u64,
-    ) -> Result<bool, DurableLedgerError> {
+    ) -> Result<Result<(), TelemetryChallengeError>, DurableLedgerError> {
         self.transact(|ledger| {
             Ok(ledger.consume_telemetry_challenge(
                 device_id,
                 generation,
+                reservation_revision,
                 nonce,
                 expires_unix_ms,
                 now_unix_ms,
@@ -750,8 +804,13 @@ fn serialize_snapshot(ledger: &Ledger, key_id: &str, key: &[u8; 32]) -> Vec<u8> 
             .get(workload_id)
             .map(|value| hex_encode(value))
             .unwrap_or_else(|| "-".into());
+        let reservation_revision = ledger
+            .job_reservation_revisions
+            .get(workload_id)
+            .copied()
+            .unwrap_or(0);
         body.push_str(&format!(
-            "J\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            "J\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
             hex_encode(workload_id.as_bytes()),
             hex_encode(device_id.as_bytes()),
             cpu,
@@ -759,6 +818,7 @@ fn serialize_snapshot(ledger: &Ledger, key_id: &str, key: &[u8; 32]) -> Vec<u8> 
             expires,
             approval,
             token,
+            reservation_revision,
         ));
     }
     let mut approvals = ledger.consumed_approvals.iter().collect::<Vec<_>>();
@@ -778,6 +838,24 @@ fn serialize_snapshot(ledger: &Ledger, key_id: &str, key: &[u8; 32]) -> Vec<u8> 
             "G\t{}\t{}\n",
             hex_encode(device_id.as_bytes()),
             generation,
+        ));
+    }
+    let mut reservation_revisions = ledger.reservation_revisions.iter().collect::<Vec<_>>();
+    reservation_revisions.sort_by_key(|(device_id, _)| *device_id);
+    for (device_id, revision) in reservation_revisions {
+        body.push_str(&format!(
+            "R\t{}\t{}\n",
+            hex_encode(device_id.as_bytes()),
+            revision,
+        ));
+    }
+    let mut telemetry_watermarks = ledger.telemetry_reservation_watermarks.iter().collect::<Vec<_>>();
+    telemetry_watermarks.sort_by_key(|(device_id, _)| *device_id);
+    for (device_id, revision) in telemetry_watermarks {
+        body.push_str(&format!(
+            "W\t{}\t{}\n",
+            hex_encode(device_id.as_bytes()),
+            revision,
         ));
     }
     let mac = ledger_mac(key, key_id, body.as_bytes());
@@ -818,9 +896,10 @@ fn deserialize_snapshot(
 
     let mut lines = body.lines();
     let snapshot_header = lines.next();
-    let is_v3 = match snapshot_header {
-        Some(LEDGER_HEADER) => true,
-        Some(LEGACY_LEDGER_HEADER) => false,
+    let (is_v4, is_v3) = match snapshot_header {
+        Some(LEDGER_HEADER) => (true, true),
+        Some(LEGACY_LEDGER_HEADER_V3) => (false, true),
+        Some(LEGACY_LEDGER_HEADER_V2_V2) => (false, false),
         _ => return Err(DurableLedgerError::CorruptState),
     };
     let mut ledger = Ledger::default();
@@ -828,7 +907,7 @@ fn deserialize_snapshot(
     for line in lines {
         let fields = line.split('\t').collect::<Vec<_>>();
         match fields.first().copied() {
-            Some("J") if fields.len() == 8 => {
+            Some("J") if (is_v4 && fields.len() == 9) || (!is_v4 && fields.len() == 8) => {
                 let workload_id = decode_hex_string(fields[1])?;
                 let device_id = decode_hex_string(fields[2])?;
                 let cpu = fields[3]
@@ -844,6 +923,13 @@ fn deserialize_snapshot(
                     None
                 } else {
                     Some(decode_hex_string(fields[6])?)
+                };
+                let reservation_revision = if is_v4 {
+                    fields[8]
+                        .parse::<u64>()
+                        .map_err(|_| DurableLedgerError::InvalidRecord)?
+                } else {
+                    0
                 };
                 if !valid_stored_identifier(&workload_id, 128)
                     || !valid_stored_identifier(&device_id, 128)
@@ -861,6 +947,9 @@ fn deserialize_snapshot(
                     workload_id.clone(),
                     (device_id.clone(), cpu, memory, expires, approval_id),
                 );
+                ledger
+                    .job_reservation_revisions
+                    .insert(workload_id.clone(), reservation_revision);
                 let used = ledger.used.entry(device_id).or_insert((0, 0));
                 used.0 = used
                     .0
@@ -915,7 +1004,50 @@ fn deserialize_snapshot(
                     return Err(DurableLedgerError::InvalidRecord);
                 }
             }
+            Some("R") if is_v4 && fields.len() == 3 => {
+                let device_id = decode_hex_string(fields[1])?;
+                let revision = fields[2]
+                    .parse::<u64>()
+                    .map_err(|_| DurableLedgerError::InvalidRecord)?;
+                if !valid_stored_identifier(&device_id, 128)
+                    || revision == 0
+                    || ledger.reservation_revisions.insert(device_id, revision).is_some()
+                {
+                    return Err(DurableLedgerError::InvalidRecord);
+                }
+            }
+            Some("W") if is_v4 && fields.len() == 3 => {
+                let device_id = decode_hex_string(fields[1])?;
+                let revision = fields[2]
+                    .parse::<u64>()
+                    .map_err(|_| DurableLedgerError::InvalidRecord)?;
+                if !valid_stored_identifier(&device_id, 128)
+                    || ledger
+                        .telemetry_reservation_watermarks
+                        .insert(device_id, revision)
+                        .is_some()
+                {
+                    return Err(DurableLedgerError::InvalidRecord);
+                }
+            }
             _ => return Err(DurableLedgerError::InvalidRecord),
+        }
+    }
+    for (workload_id, reservation_revision) in &ledger.job_reservation_revisions {
+        let device_id = &ledger
+            .jobs
+            .get(workload_id)
+            .ok_or(DurableLedgerError::InvalidRecord)?
+            .0;
+        if *reservation_revision
+            > ledger.reservation_revisions.get(device_id).copied().unwrap_or(0)
+        {
+            return Err(DurableLedgerError::InvalidRecord);
+        }
+    }
+    for (device_id, watermark) in &ledger.telemetry_reservation_watermarks {
+        if *watermark > ledger.reservation_revisions.get(device_id).copied().unwrap_or(0) {
+            return Err(DurableLedgerError::InvalidRecord);
         }
     }
     Ok(ledger)
@@ -1723,7 +1855,7 @@ mod tests {
         cleanup(&path);
     }
     #[test]
-    fn v2_snapshots_migrate_and_v3_round_trips_telemetry_generations() {
+    fn v2_snapshots_migrate_and_v4_round_trips_telemetry_and_reservation_revisions() {
         // This fixture key is generated per test process rather than embedded as
         // a reusable cryptographic constant. It is never used outside test data.
         let key_material = Sha256::digest(
@@ -1738,7 +1870,7 @@ mod tests {
             .as_bytes(),
         );
         let key = LedgerIntegrityKey::new("test-v1", key_material.into());
-        let legacy_body = format!("{LEGACY_LEDGER_HEADER}\n");
+        let legacy_body = format!("{LEGACY_LEDGER_HEADER_V2}\n");
         let legacy_mac = ledger_mac(&key.key, "test-v1", legacy_body.as_bytes());
         let legacy_bytes = format!("{legacy_body}M\ttest-v1\t{}\n", hex_encode(&legacy_mac));
         let keys = HashMap::from([("test-v1".to_string(), key.clone())]);
@@ -1746,10 +1878,14 @@ mod tests {
         assert!(migrated.telemetry_generations.is_empty());
 
         migrated.telemetry_generations.insert("worker-01".into(), 7);
+        migrated.reservation_revisions.insert("worker-01".into(), 3);
+        migrated.telemetry_reservation_watermarks.insert("worker-01".into(), 2);
         let encoded = serialize_snapshot(&migrated, "test-v1", &key.key);
-        assert!(String::from_utf8_lossy(&encoded).starts_with("UJANI-ENTERPRISE-LEDGER-V3\n"));
+        assert!(String::from_utf8_lossy(&encoded).starts_with("UJANI-ENTERPRISE-LEDGER-V4\n"));
         let restored = deserialize_snapshot(&encoded, &keys).unwrap();
         assert_eq!(restored.telemetry_generations.get("worker-01"), Some(&7));
+        assert_eq!(restored.reservation_revisions.get("worker-01"), Some(&3));
+        assert_eq!(restored.telemetry_reservation_watermarks.get("worker-01"), Some(&2));
     }
 
     #[test]
@@ -1761,7 +1897,7 @@ mod tests {
 
         let mut bytes = fs::read(&path).unwrap();
         let text = String::from_utf8(bytes.clone()).unwrap();
-        assert!(text.starts_with("UJANI-ENTERPRISE-LEDGER-V3\n"));
+        assert!(text.starts_with("UJANI-ENTERPRISE-LEDGER-V4\n"));
         // Even a writer who knows the file format and can recompute SHA-256
         // cannot produce the required MAC without the external integrity key.
         let mac_line = text.rfind("M\t").unwrap();
