@@ -37,7 +37,9 @@ def _open_replay_db(path: str | os.PathLike[str]) -> sqlite3.Connection:
         db = sqlite3.connect(str(target), timeout=5.0, isolation_level=None)
         db.execute("PRAGMA trusted_schema=OFF")
         db.execute("PRAGMA busy_timeout=5000")
-        db.execute("PRAGMA journal_mode=WAL")
+        # The nonce store uses short, serialized writes; rollback-journal mode avoids
+        # persistent WAL/SHM sidecars and their Windows file-handle cleanup hazards.
+        db.execute("PRAGMA journal_mode=DELETE")
         db.execute("PRAGMA synchronous=FULL")
         os.chmod(target, 0o600)
         db.execute("""
