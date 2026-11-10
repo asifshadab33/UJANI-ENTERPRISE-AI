@@ -113,7 +113,24 @@ def _validate_instance_fixtures(schema: dict[str, Any]) -> None:
     jsonschema.Draft202012Validator.check_schema(schema)
     validator = jsonschema.Draft202012Validator(schema)
     samples = _sample_messages()
-    for name, instance in samples.items():
+    valid_fixtures = list(samples.items())
+
+    approved_terminal = copy.deepcopy(samples["task_status"])
+    approved_terminal["state"] = "failed"
+    approved_terminal["reason_code"] = "internal_error"
+    valid_fixtures.append(("failed status with reason code", approved_terminal))
+
+    allowlisted_envelope = copy.deepcopy(samples["task_envelope"])
+    allowlisted_envelope["network_access"] = "allowlisted"
+    allowlisted_envelope["network_destinations"] = ["models.example.com"]
+    valid_fixtures.append(("allowlisted DNS destination", allowlisted_envelope))
+
+    receipt_with_output = copy.deepcopy(samples["execution_receipt"])
+    receipt_with_output["output_sha256"] = ZERO_SHA256
+    receipt_with_output["output_byte_length"] = 5
+    valid_fixtures.append(("receipt with output digest", receipt_with_output))
+
+    for name, instance in valid_fixtures:
         errors = list(validator.iter_errors(instance))
         assert not errors, f"valid {name} fixture rejected: {errors[0].message}"
 
@@ -138,6 +155,15 @@ def _validate_instance_fixtures(schema: dict[str, Any]) -> None:
     pending_admin["state"] = "running"
     invalid.append(("running before administrator approval", pending_admin))
 
+    revoked_user = copy.deepcopy(samples["task_status"])
+    revoked_user["state"] = "running"
+    revoked_user["consent_state"]["user"] = "revoked"
+    invalid.append(("running after user consent revocation", revoked_user))
+
+    pending_owner = copy.deepcopy(samples["task_status"])
+    pending_owner["state"] = "running"
+    invalid.append(("running before worker-owner approval", pending_owner))
+
     missing_terminal_reason = copy.deepcopy(samples["task_status"])
     missing_terminal_reason["state"] = "failed"
     invalid.append(("terminal failure without reason code", missing_terminal_reason))
@@ -149,6 +175,10 @@ def _validate_instance_fixtures(schema: dict[str, Any]) -> None:
     receipt_without_digest = copy.deepcopy(samples["execution_receipt"])
     receipt_without_digest["output_byte_length"] = 1
     invalid.append(("output bytes without digest", receipt_without_digest))
+
+    digest_without_output = copy.deepcopy(samples["execution_receipt"])
+    digest_without_output["output_sha256"] = ZERO_SHA256
+    invalid.append(("digest without output bytes", digest_without_output))
 
     for hostname in ("Example.com", ".", "..", "a..b", "-bad.example", "bad-.example",
                      "example.com.", "127.0.0.1", "example.com:443"):
@@ -162,8 +192,8 @@ def _validate_instance_fixtures(schema: dict[str, Any]) -> None:
         assert errors, f"invalid fixture unexpectedly accepted: {name}"
 
     print(
-        "JSON Schema Draft 2020-12 meta-schema and 3 valid / "
-        f"{len(invalid)} invalid contract fixtures passed."
+        "JSON Schema Draft 2020-12 meta-schema and "
+        f"{len(valid_fixtures)} valid / {len(invalid)} invalid contract fixtures passed."
     )
 
 
