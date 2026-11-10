@@ -261,11 +261,11 @@ fn hex_encode(bytes: &[u8]) -> String {
     out
 }
 fn hex_decode(value: &str) -> Option<Vec<u8>> {
-    if value.is_empty() || value.len() % 2 != 0 {
+    if value.is_empty() || value.len() & 1 == 1 {
         return None;
     }
     let mut out = Vec::with_capacity(value.len() / 2);
-    for pair in value.as_bytes().chunks_exact(2) {
+    for pair in value.as_bytes().chunks(2) {
         let digit = |b: u8| match b {
             b'0'..=b'9' => Some(b - b'0'),
             b'a'..=b'f' => Some(b - b'a' + 10),
@@ -503,9 +503,9 @@ impl<R: OperatorOverviewRepository, A: OperatorAuditSink> OperatorControlPlane<R
                 return Err(OperatorServiceError::RepositoryUnavailable);
             }
         };
-        let outcome = if overview.tenant_id != claims.tenant_id {
-            OperatorAuditOutcome::InvalidOverview
-        } else if validate_overview(&overview, now_unix_ms).is_err() {
+        let outcome = if overview.tenant_id != claims.tenant_id
+            || validate_overview(&overview, now_unix_ms).is_err()
+        {
             OperatorAuditOutcome::InvalidOverview
         } else {
             OperatorAuditOutcome::ReadSucceeded
