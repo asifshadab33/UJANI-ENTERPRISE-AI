@@ -14,6 +14,18 @@ def zeek_line(ts=1.0, uid="C123"):
                        "id.resp_p": 443, "proto": "tcp", "conn_state": "SF"}) + "\n"
 
 
+def zeek_notice_line(ts=1.0, uid="N123"):
+    return json.dumps({"ts": ts, "uid": uid, "note": "SSH::Password_Guessing",
+                       "sub": "repeated failures", "src": "10.0.0.5",
+                       "dst": "10.0.0.6", "p": 22, "password": "must-not-export"}) + "\n"
+
+
+def zeek_weird_line(ts=1.0, uid="W123"):
+    return json.dumps({"ts": ts, "uid": uid, "name": "bad_TCP_checksum",
+                       "id.orig_h": "10.0.0.7", "id.resp_h": "10.0.0.8",
+                       "proto": "tcp", "payload": "must-not-export"}) + "\n"
+
+
 class LiveNetworkLogIngestTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -77,6 +89,40 @@ class LiveNetworkLogIngestTests(unittest.TestCase):
         with self.assertRaises(ImportErrorSafe):
             ingest_once(log_path=self.log, database=self.db, checkpoint=self.cursor,
                         provider="zeek", tenant_id="tenant-b", now_ms=10_000)
+
+    def test_notice_and_weird_streams_use_separate_checkpoints_and_types(self):
+        notice_cursor = self.root / "notice-cursor.json"
+        weird_cursor = self.root / "weird-cursor.json"
+        self.log.write_text(zeek_notice_line(2.0), encoding="utf-8")
+        inserted, read_count, _ = ingest_once(
+            log_path=self.log, database=self.db, checkpoint=notice_cursor,
+            provider="zeek", tenant_id="tenant-a", from_start=True, now_ms=10_000,
+            zeek_log_kind="notice",
+        )
+        self.assertEqual((inserted, read_count), (1, 1))
+        self.log.write_text(zeek_weird_line(3.0), encoding="utf-8")
+        inserted, read_count, _ = ingest_once(
+            log_path=self.log, database=self.db, checkpoint=weird_cursor,
+            provider="zeek", tenant_id="tenant-a", from_start=True, now_ms=10_000,
+            zeek_log_kind="weird",
+        )
+        self.assertEqual((inserted, read_count), (1, 1))
+        store = SecurityEventStore(self.db)
+        try:
+            events, _ = store.search(tenant_id="tenant-a", limit=10)
+        finally:
+            store.close()
+        self.assertEqual({item["event_type"] for item in events}, {"zeek.notice", "zeek.weird"})
+
+    def test_checkpoint_cannot_be_reused_for_another_zeek_log_kind(self):
+        self.log.write_text(zeek_notice_line(2.0), encoding="utf-8")
+        ingest_once(log_path=self.log, database=self.db, checkpoint=self.cursor,
+                    provider="zeek", tenant_id="tenant-a", from_start=True,
+                    now_ms=10_000, zeek_log_kind="notice")
+        with self.assertRaises(ImportErrorSafe):
+            ingest_once(log_path=self.log, database=self.db, checkpoint=self.cursor,
+                        provider="zeek", tenant_id="tenant-a", now_ms=10_000,
+                        zeek_log_kind="weird")
 
 
 if __name__ == "__main__":
