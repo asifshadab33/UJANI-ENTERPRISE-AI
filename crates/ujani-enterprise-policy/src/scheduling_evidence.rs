@@ -501,6 +501,25 @@ mod tests {
     use super::*;
     use crate::{workload_from_manifest, DataClassification, LedgerIntegrityKey, WorkloadManifest};
     use ed25519_dalek::{Signer, SigningKey};
+    use std::hash::{BuildHasher, Hash, Hasher};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    // Test-only unpredictable challenge values avoid embedding fixed nonces in
+    // signed-message fixtures. Production challenges are issued by the trust service.
+    fn fresh_test_challenge() -> [u8; 16] {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        let sequence = NEXT.fetch_add(1, Ordering::Relaxed);
+        let mut challenge = [0u8; 16];
+        for half in 0..2 {
+            let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+            sequence.hash(&mut hasher);
+            std::process::id().hash(&mut hasher);
+            half.hash(&mut hasher);
+            let bytes = hasher.finish().to_le_bytes();
+            challenge[half * 8..(half + 1) * 8].copy_from_slice(&bytes);
+        }
+        challenge
+    }
 
     fn device() -> Device {
         Device {
@@ -627,7 +646,7 @@ mod tests {
 
         {
             let ledger = open();
-            let challenge = [0x81; 16];
+            let challenge = fresh_test_challenge();
             let (telemetry, policy, _, _) = signed_evidence(challenge, 1_000);
             assert!(verify_and_consume_scheduling_context(
                 &ledger,
@@ -643,7 +662,7 @@ mod tests {
             .is_ok());
 
             // A fresh challenge cannot make the same or an older signed sample current.
-            let challenge = [0x82; 16];
+            let challenge = fresh_test_challenge();
             let (mut telemetry, policy, device_key, _) = signed_evidence(challenge, 2_000);
             telemetry.claims.sample_generation = 1;
             telemetry.signature = device_key
@@ -664,7 +683,7 @@ mod tests {
                 Err(SchedulingEvidenceError::ChallengeReplayed)
             );
 
-            let challenge = [0x83; 16];
+            let challenge = fresh_test_challenge();
             let (mut telemetry, policy, device_key, _) = signed_evidence(challenge, 3_000);
             telemetry.claims.sample_generation = 2;
             telemetry.signature = device_key
@@ -687,7 +706,7 @@ mod tests {
         // Generation state survives reopening the authenticated ledger.
         {
             let ledger = open();
-            let challenge = [0x84; 16];
+            let challenge = fresh_test_challenge();
             let (mut telemetry, policy, device_key, _) = signed_evidence(challenge, 4_000);
             telemetry.claims.sample_generation = 2;
             telemetry.signature = device_key
