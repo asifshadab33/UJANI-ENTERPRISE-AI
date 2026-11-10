@@ -34,10 +34,14 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # pinned setup-python action
         with:
           python-version: "3.12"
+      - name: Install pinned JSON Schema validation dependencies
+        run: python -m pip install --disable-pip-version-check --no-input --requirement scripts/requirements-schema.txt
       - name: Validate collective-defence event schema contract
         run: python scripts/validate_security_event_schema.py
       - name: Validate model/runtime inventory v1 schema
         run: python scripts/validate_model_runtime_inventory_schema.py
+      - name: Validate Personal-to-Enterprise task contract v1
+        run: python scripts/validate_personal_enterprise_task_contract.py
       - name: Validate read-only operator console
         run: python scripts/validate_operator_console.py
       - name: Check operator console JavaScript syntax
