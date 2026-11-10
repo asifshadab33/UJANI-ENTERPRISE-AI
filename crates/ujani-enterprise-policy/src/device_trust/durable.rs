@@ -302,7 +302,11 @@ impl DurableDeviceRegistry {
         &self,
         tenant_id: &str,
     ) -> Result<Vec<DeviceTrustSummary>, DurableDeviceTrustError> {
-        self.transact(|registry| registry.tenant_device_summaries(tenant_id).map_err(Into::into))
+        self.transact(|registry| {
+            registry
+                .tenant_device_summaries(tenant_id)
+                .map_err(Into::into)
+        })
     }
 
     /// Returns the number of enrolled device records in the durable registry.
