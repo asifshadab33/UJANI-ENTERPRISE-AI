@@ -672,7 +672,7 @@ mod tests {
             Err(ModelInventoryValidationError::FutureTimestamp)
         );
 
-        let mut value = inventory();
+        let value = inventory();
         assert_eq!(
             validate_model_runtime_inventory(&value, 20_000, 1_000),
             Err(ModelInventoryValidationError::StaleInventory)
