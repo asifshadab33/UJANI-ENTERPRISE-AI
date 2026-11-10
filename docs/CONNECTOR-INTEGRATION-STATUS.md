@@ -134,3 +134,15 @@ This is a local single-process log follower, not a network listener, authenticat
 
 
 CI note: PR #81 targets `main` so the repository's pull-request validation workflow applies to the combined store-and-follower change. The branch remains draft pending fresh CI and real-provider lab verification.
+
+
+## Trusted-device signed ingestion authentication primitive (10 November 2026)
+
+The branch `feat/trusted-device-ingest-auth-2026-11` adds `scripts/trusted_device_ingest_auth.py`, a reusable authentication gate for a future trusted-host receiver. It verifies a device ID against an operator-managed registry, validates an HMAC-SHA256 signature over the device ID, timestamp, nonce and exact request bytes, rejects requests outside a five-minute clock-skew window, and atomically consumes a per-device nonce in a local SQLite replay database. The tenant identifier is returned from the trusted registry; it is never accepted from the request body. Revoked and unknown devices fail closed. Request bodies are bounded to 256 KiB and replay storage is owner-only where filesystem permissions are supported.
+
+The accompanying tests cover successful identity-to-tenant mapping, replay rejection, revocation, unknown devices, signature/body tampering, stale timestamps, undersized keys, body-size limits and symlink replay-database rejection.
+
+**Not yet a production receiver:** this is a library primitive, not an HTTP server, device-enrollment/key-rotation workflow, protected key vault, certificate-backed identity service or OS service manager. The registry must be supplied by a protected operator-managed source. A future receiver must authenticate before parsing events, apply rate limits, bind authorization to the authenticated principal, and pass only the returned tenant scope into the evidence store. Do not expose a network endpoint or enable remote execution based on this module alone. Cross-platform filesystem hardening, key custody, concurrent multi-process replay tests, rotation/revocation workflow tests and customer-lab validation remain acceptance gates.
+
+
+The branch also adds `scripts/trusted_network_event_ingest.py` as a library-only composition boundary between the signed device envelope and the existing tenant-scoped `SecurityEventStore`. It authenticates the exact raw request bytes before JSON parsing, derives tenant scope from the trusted device registry, takes provider identity from trusted host connector configuration, and overwrites any tenant/provider labels inside the event payload before storage. It does not open a socket or expose an HTTP listener. Regression tests verify authentication-before-parse and that payload-supplied tenant/provider values cannot redirect evidence into another tenant or provider partition. The receiver, registry lifecycle, key custody, rate limiting and customer deployment remain separate work.
