@@ -1807,7 +1807,7 @@ mod tests {
                     &policies(),
                     &[],
                     1_000,
-                    &fresh_test_token(),
+                    &first_token,
                 )
                 .unwrap()
         });
@@ -1820,7 +1820,7 @@ mod tests {
                     &policies(),
                     &[],
                     1_000,
-                    &fresh_test_token(),
+                    &second_token,
                 )
                 .unwrap()
         });
