@@ -150,8 +150,10 @@ class SecurityEventStore:
         if not 1 <= len(batch) <= MAX_BATCH:
             raise StoreError("batch must contain between 1 and 500 events")
         validated = [self._validate_event(item, tenant_id, provider_id, current) for item in batch]
-        inserted = 0
         cutoff = current - self.retention_ms
+        if any(item["observed"] < cutoff for item in validated):
+            raise StoreError("event is older than the configured retention window")
+        inserted = 0
         with self._lock:
             try:
                 self._db.execute("BEGIN IMMEDIATE")
