@@ -1,0 +1,74 @@
+name: Security-sensitive change watch
+
+# Runs the workflow definition from the base branch. Do not checkout or execute PR code here.
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions:
+  pull-requests: read
+  issues: write
+
+jobs:
+  inspect-sensitive-changes:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Flag security-sensitive file changes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          files="$(gh api --paginate "repos/${GH_REPO}/pulls/${PR_NUMBER}/files" --jq '.[].filename')"
+          pattern='(^\.github/workflows/|(^|/)CODEOWNERS$|(^|/)(Cargo\.toml|Cargo\.lock|package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock)$|(^|/)capabilities/|(^|/)(tauri\.conf\.json|SECURITY\.md|THREAT-MODEL\.md|RELEASE-GATES\.md)$|(^|/)(updater|signing|certificates?)/|(^|/)(security|auth|crypto|policy|consent|safe_fs|cloud_gateway|device_identity|task_engine|native_consent|ollama)\.rs$|(^|/)schemas/)'
+
+          matched="$(printf '%s\n' "$files" | grep -E "$pattern" || true)"
+          if [[ -z "$matched" ]]; then
+            {
+              echo "### UJANI security-sensitive change watch"
+              echo "No paths matched the current security-sensitive path rules."
+              echo "This is a path-based triage check, not a security audit."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          body="$(cat <<'EOF'
+          <!-- UJANI_SECURITY_CHANGE_WATCH -->
+          ## UJANI Security Watch: security-sensitive files changed
+
+          This pull request changes one or more security-sensitive paths. This is an **attention alarm**, not a finding that the change is malicious.
+
+          Before approval, reviewers should inspect the full diff and verify:
+          - the change is expected, narrowly scoped and documented;
+          - authorization, consent, least privilege and fail-closed behavior remain intact;
+          - relevant tests, dependency checks, CodeQL and platform CI pass;
+          - no secrets, credentials, private data or unsafe permissions were introduced;
+          - any security-policy or release-signing change has an independent reviewer.
+
+          Do not treat this check as enforcement of branch protection or proof that the code is safe.
+          EOF
+          )"
+
+          body+=$'\n\n### Matched paths\n'
+          while IFS= read -r path; do
+            [[ -n "$path" ]] && body+="- `$path`"$'\n'
+          done <<< "$matched"
+
+          {
+            echo "### UJANI security-sensitive change watch"
+            echo "**Review required:** security-sensitive paths changed."
+            echo
+            printf '%s\n' "$matched"
+            echo
+            echo "This check does not establish whether a change is malicious or safe."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          existing_comment="$(gh api --paginate "repos/${GH_REPO}/issues/${PR_NUMBER}/comments" --jq '.[] | select(.body | contains("UJANI_SECURITY_CHANGE_WATCH")) | .id' | tail -n 1)"
+          if [[ -n "$existing_comment" ]]; then
+            gh api --method PATCH "repos/${GH_REPO}/issues/comments/${existing_comment}" -f body="$body" >/dev/null
+          else
+            gh api --method POST "repos/${GH_REPO}/issues/${PR_NUMBER}/comments" -f body="$body" >/dev/null
+          fi
