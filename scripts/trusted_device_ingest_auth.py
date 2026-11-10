@@ -69,7 +69,7 @@ def authenticate_envelope(*, device_id: str, timestamp: int, nonce: str,
     """Verify device identity, HMAC, freshness and one-time nonce; return trusted tenant."""
     now = int(time.time()) if now_seconds is None else now_seconds
     if (isinstance(now, bool) or not isinstance(now, int) or now < 0
-            or isinstance(timestamp, bool) or not isinstance(timestamp, int)
+            or isinstance(timestamp, bool) or not isinstance(timestamp, int) or timestamp < 0
             or abs(now - timestamp) > MAX_CLOCK_SKEW_SECONDS):
         raise AuthenticationError("request authentication failed")
     if (not isinstance(device_id, str) or not DEVICE_ID.fullmatch(device_id)
