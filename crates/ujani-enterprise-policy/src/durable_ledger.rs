@@ -1280,11 +1280,7 @@ mod tests {
     }
 
     fn open_ledger(path: &Path) -> Result<DurableLedger, DurableLedgerError> {
-        DurableLedger::open_with_integrity_keys(
-            path,
-            "test-v1",
-            vec![integrity_key("test-v1")],
-        )
+        DurableLedger::open_with_integrity_keys(path, "test-v1", vec![integrity_key("test-v1")])
     }
 
     #[derive(Default)]
