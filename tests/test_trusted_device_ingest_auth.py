@@ -94,6 +94,14 @@ class TrustedDeviceAuthenticationTests(unittest.TestCase):
         with self.assertRaises(AuthenticationError):
             self.call_auth(replay_database=link)
 
+    def test_rejects_dangling_symlink_replay_database(self):
+        target = Path(self.temp.name) / "missing.sqlite3"
+        link = Path(self.temp.name) / "dangling.sqlite3"
+        link.symlink_to(target)
+        with self.assertRaises(AuthenticationError):
+            self.call_auth(replay_database=link)
+        self.assertFalse(target.exists())
+
 
 if __name__ == "__main__":
     unittest.main()
