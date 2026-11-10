@@ -1889,6 +1889,90 @@ mod tests {
     }
 
     #[test]
+    fn v3_snapshots_migrate_to_v4_without_losing_telemetry_generation() {
+        let key = integrity_key("test-v1", 0xA5);
+        let legacy_body = format!(
+            "{LEGACY_LEDGER_HEADER_V3}\nG\t{}\t7\n",
+            hex_encode("worker-01".as_bytes())
+        );
+        let legacy_mac = ledger_mac(&key.key, "test-v1", legacy_body.as_bytes());
+        let legacy_bytes = format!("{legacy_body}M\ttest-v1\t{}\n", hex_encode(&legacy_mac));
+        let keys = HashMap::from([("test-v1".to_string(), key.clone())]);
+        let migrated = deserialize_snapshot(legacy_bytes.as_bytes(), &keys).unwrap();
+        assert_eq!(migrated.telemetry_generations.get("worker-01"), Some(&7));
+        assert!(migrated.reservation_revisions.is_empty());
+
+        let encoded = serialize_snapshot(&migrated, "test-v1", &key.key);
+        assert!(String::from_utf8_lossy(&encoded).starts_with("UJANI-ENTERPRISE-LEDGER-V4\n"));
+        let restored = deserialize_snapshot(&encoded, &keys).unwrap();
+        assert_eq!(restored.telemetry_generations.get("worker-01"), Some(&7));
+    }
+
+    #[test]
+    fn reservation_revisions_advance_on_acquire_release_and_expiry() {
+        let path = temp_path("reservation-revisions");
+        let first_token = [0x73u8; 32];
+        let second_token = [0x74u8; 32];
+        {
+            let ledger = open_ledger(&path).unwrap();
+            assert_eq!(ledger.reservation_revision("worker-01", 1_000).unwrap(), 0);
+            assert_eq!(
+                ledger
+                    .admit_and_reserve_with_lease(
+                        &device(),
+                        &workload("job-release-revision"),
+                        &context(),
+                        &policies(),
+                        &[],
+                        1_000,
+                        &first_token,
+                    )
+                    .unwrap(),
+                Admission::Accept
+            );
+            assert_eq!(ledger.reservation_revision("worker-01", 2_000).unwrap(), 1);
+        }
+        {
+            let ledger = open_ledger(&path).unwrap();
+            assert_eq!(ledger.reservation_revision("worker-01", 3_000).unwrap(), 1);
+            assert!(ledger
+                .release_lease("job-release-revision", &first_token)
+                .unwrap());
+            assert_eq!(ledger.reservation_revision("worker-01", 3_000).unwrap(), 2);
+            assert_eq!(
+                ledger
+                    .admit_and_reserve_with_lease(
+                        &device(),
+                        &workload("job-expiry-revision"),
+                        &context(),
+                        &policies(),
+                        &[],
+                        4_000,
+                        &second_token,
+                    )
+                    .unwrap(),
+                Admission::Accept
+            );
+            assert_eq!(ledger.reservation_revision("worker-01", 4_000).unwrap(), 3);
+            assert_eq!(ledger.expire_leases(4_000 + crate::LEASE_MS).unwrap(), 1);
+            assert_eq!(
+                ledger
+                    .reservation_revision("worker-01", 4_000 + crate::LEASE_MS)
+                    .unwrap(),
+                4
+            );
+        }
+        let reopened = open_ledger(&path).unwrap();
+        assert_eq!(
+            reopened
+                .reservation_revision("worker-01", 5_000 + crate::LEASE_MS)
+                .unwrap(),
+            4
+        );
+        cleanup(&path);
+    }
+
+    #[test]
     fn attacker_cannot_rewrite_snapshot_and_recompute_an_unkeyed_checksum() {
         let path = temp_path("mac-tamper");
         let ledger = open_ledger(&path).unwrap();
