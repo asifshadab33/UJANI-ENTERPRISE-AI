@@ -21,7 +21,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          files="$(gh api --paginate "repos/${GH_REPO}/pulls/${PR_NUMBER}/files" --jq '.[].filename')"
+          # Check both sides of renames so moving a protected file cannot hide it.
+          files="$(gh api --paginate "repos/${GH_REPO}/pulls/${PR_NUMBER}/files" --jq '.[] | [.filename, .previous_filename // empty] | .[]')"
           pattern='(^\.github/workflows/|(^|/)CODEOWNERS$|(^|/)(Cargo\.toml|Cargo\.lock|package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock)$|(^|/)capabilities/|(^|/)(tauri\.conf\.json|SECURITY\.md|THREAT-MODEL\.md|RELEASE-GATES\.md)$|(^|/)(updater|signing|certificates?)/|(^|/)(security|auth|crypto|policy|consent|safe_fs|cloud_gateway|device_identity|task_engine|native_consent|ollama)\.rs$|(^|/)schemas/|(^|/)docs/)'
 
           matched="$(printf '%s\n' "$files" | grep -E "$pattern" || true)"
