@@ -462,7 +462,7 @@ impl DeviceRegistry {
             expires_at_unix_ms: c.expires_at_unix_ms,
         })
     }
-    
+
     /// List only the non-secret device identity records belonging to one tenant.
     /// Hardware telemetry and owner consent are separate inputs and must not be
     /// inferred from enrollment alone.
@@ -473,7 +473,9 @@ impl DeviceRegistry {
         if !valid_id(tenant_id, 128) {
             return Err(DeviceTrustError::InvalidIdentifier);
         }
-        let mut records: Vec<_> = self.devices.iter()
+        let mut records: Vec<_> = self
+            .devices
+            .iter()
             .filter(|(_, record)| record.tenant_id == tenant_id)
             .map(|(device_id, record)| DeviceTrustSummary {
                 tenant_id: record.tenant_id.clone(),
@@ -925,7 +927,10 @@ mod tests {
         assert_eq!(summaries.len(), 1);
         assert_eq!(summaries[0].device_id, "device-1");
         assert_eq!(summaries[0].key_generation, 1);
-        assert!(registry.tenant_device_summaries("tenant-b").unwrap().is_empty());
+        assert!(registry
+            .tenant_device_summaries("tenant-b")
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
