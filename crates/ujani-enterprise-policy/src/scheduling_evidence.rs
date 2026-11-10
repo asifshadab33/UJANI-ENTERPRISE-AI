@@ -1441,6 +1441,68 @@ mod tests {
         );
     }
 
+    fn verified_context_without_isolation(
+        workload: &Workload,
+        challenge: [u8; 16],
+        now: u64,
+    ) -> VerifiedSchedulingContext {
+        let (mut telemetry, mut policy, device_key, admin_key) = signed_evidence(challenge, now);
+        telemetry.claims.sample_generation = u64::from(challenge[0]);
+        telemetry.claims.os_isolation_ready = false;
+        telemetry.signature = device_key
+            .sign(&worker_telemetry_bytes(&telemetry.claims))
+            .to_bytes();
+        policy.claims.workload_id = workload.workload_id.clone();
+        policy.claims.manifest_sha256 = workload.manifest_sha256;
+        policy.claims.challenge_nonce = challenge;
+        policy.signature = admin_key
+            .sign(&scheduling_policy_bytes(&policy.claims))
+            .to_bytes();
+        verify_scheduling_context(
+            &device(),
+            workload,
+            &telemetry,
+            &policy,
+            &[("worker-01".into(), device_key.verifying_key())],
+            &[("admin-key-01".into(), admin_key.verifying_key())],
+            &challenge,
+            now + 1_000,
+        )
+        .unwrap()
+    }
+
+    fn verified_context_without_isolation_durable(
+        ledger: &DurableLedger,
+        workload: &Workload,
+        challenge: [u8; 16],
+        now: u64,
+    ) -> VerifiedSchedulingContext {
+        let (mut telemetry, mut policy, device_key, admin_key) = signed_evidence(challenge, now);
+        telemetry.claims.sample_generation = u64::from(challenge[0]);
+        telemetry.claims.os_isolation_ready = false;
+        telemetry.signature = device_key
+            .sign(&worker_telemetry_bytes(&telemetry.claims))
+            .to_bytes();
+        policy.claims.workload_id = workload.workload_id.clone();
+        policy.claims.manifest_sha256 = workload.manifest_sha256;
+        policy.claims.challenge_nonce = challenge;
+        policy.signature = admin_key
+            .sign(&scheduling_policy_bytes(&policy.claims))
+            .to_bytes();
+        verify_and_consume_scheduling_context(
+            ledger,
+            &device(),
+            workload,
+            &telemetry,
+            &policy,
+            &[("worker-01".into(), device_key.verifying_key())],
+            &[("admin-key-01".into(), admin_key.verifying_key())],
+            &challenge,
+            now + 1_000,
+        )
+        .unwrap()
+    }
+
     #[test]
     fn capacity_rejection_is_enforced_by_both_verified_reservation_wrappers() {
         let d = device();
@@ -1462,6 +1524,22 @@ mod tests {
                 &[0x71; 32],
             ),
             Admission::Reject(RejectReason::CpuBudget)
+        );
+        assert!(memory_ledger.jobs.is_empty());
+
+        let isolation_context = verified_context_without_isolation(&w, [0x73; 16], 1_000);
+        assert_eq!(
+            admit_and_reserve_with_verified_lease(
+                &mut memory_ledger,
+                &d,
+                &w,
+                isolation_context,
+                &[],
+                &[],
+                2_000,
+                &[0x73; 32],
+            ),
+            Admission::Reject(RejectReason::WorkerIsolationUnavailable)
         );
         assert!(memory_ledger.jobs.is_empty());
 
@@ -1490,6 +1568,24 @@ mod tests {
             )
             .unwrap(),
             Admission::Reject(RejectReason::CpuBudget)
+        );
+        assert_eq!(durable.snapshot().unwrap().active_jobs, 0);
+
+        let isolation_context =
+            verified_context_without_isolation_durable(&durable, &w, [0x73; 16], 1_000);
+        assert_eq!(
+            admit_and_reserve_durably_with_verified_lease(
+                &durable,
+                &d,
+                &w,
+                isolation_context,
+                &[],
+                &[],
+                2_000,
+                &[0x73; 32],
+            )
+            .unwrap(),
+            Admission::Reject(RejectReason::WorkerIsolationUnavailable)
         );
         assert_eq!(durable.snapshot().unwrap().active_jobs, 0);
         drop(durable);
