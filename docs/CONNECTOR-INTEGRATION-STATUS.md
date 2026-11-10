@@ -22,7 +22,7 @@ These are policy/contract primitives. They do not yet provide connector discover
 | Suricata | IDS/IPS alert and rule telemetry; optional separately approved enforcement provider | Local EVE JSONL import prototype with an explicit field allowlist | Live service/API adapter, health polling, rule management, inline IPS, virtual-patch deployment |
 | Zeek | Network metadata, protocol observations and notices | Local JSON log import prototype for conn, notice and weird streams | Live adapter, health polling, TSV parser, event store |
 | Malcolm | Optional higher-capability network-analysis deployment using its own specialist stack | Read-only health adapter prototype using documented GET ping/ready/version endpoints | Event/document search adapter, deployment automation, indexing or PCAP pipeline |
-| Customer firewall (including OPNsense or other supported products) | Existing network policy enforcement point | Read-only inventory, configuration posture and status where supported | Any configuration change, policy push, restart or rule deployment |
+| Customer firewall (including OPNsense or other supported products) | Existing network policy enforcement point | OPNsense fixed-endpoint read-only posture probe prototype | Authenticated production host integration, real device/version validation, broader inventory; all mutation operations remain excluded |
 | CISA KEV / NVD | External vulnerability intelligence | Fetch and cache public advisories with source, version and retrieval time | Feed scheduler, normalisation and asset matching |
 | MISP / OpenCTI | Optional threat-intelligence exchange and knowledge systems | Read-only indicator/context lookup after customer selection | Live connectors, sync, write-back or feed publication |
 
