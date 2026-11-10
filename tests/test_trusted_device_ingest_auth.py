@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from scripts.trusted_device_ingest_auth import (
@@ -40,6 +41,19 @@ class TrustedDeviceAuthenticationTests(unittest.TestCase):
         self.call_auth()
         with self.assertRaises(AuthenticationError):
             self.call_auth()
+
+    def test_concurrent_replay_accepts_nonce_at_most_once(self):
+        # Independent SQLite connections model concurrent receiver workers.
+        def attempt(_):
+            try:
+                self.call_auth()
+                return True
+            except AuthenticationError:
+                return False
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            outcomes = list(pool.map(attempt, range(8)))
+        self.assertEqual(sum(outcomes), 1)
 
     def test_rejects_revoked_device(self):
         self.registry["device-01"]["revoked"] = True
