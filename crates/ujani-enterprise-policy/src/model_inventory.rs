@@ -242,11 +242,7 @@ fn validate_evidence(
     Ok(())
 }
 
-fn evidence_is_usable(
-    evidence: &ModelEvidence,
-    now_unix_ms: u64,
-    max_age_ms: u64,
-) -> bool {
+fn evidence_is_usable(evidence: &ModelEvidence, now_unix_ms: u64, max_age_ms: u64) -> bool {
     matches!(
         evidence.confidence,
         EvidenceConfidence::Verified | EvidenceConfidence::Reported
@@ -273,9 +269,7 @@ pub fn validate_model_runtime_inventory(
     if inventory.generated_at_unix_ms == 0 {
         return Err(ModelInventoryValidationError::InvalidTimestamp);
     }
-    if inventory.generated_at_unix_ms
-        > now_unix_ms.saturating_add(CLOCK_SKEW_TOLERANCE_MS)
-    {
+    if inventory.generated_at_unix_ms > now_unix_ms.saturating_add(CLOCK_SKEW_TOLERANCE_MS) {
         return Err(ModelInventoryValidationError::FutureTimestamp);
     }
     if now_unix_ms.saturating_sub(inventory.generated_at_unix_ms) > max_age_ms {
@@ -312,9 +306,9 @@ pub fn validate_model_runtime_inventory(
             (accelerator.device_family.as_deref(), 96),
             (accelerator.runtime_api.as_deref(), 64),
         ] {
-            if value.is_some_and(|text| {
-                text.len() > max_bytes || text.chars().any(char::is_control)
-            }) {
+            if value
+                .is_some_and(|text| text.len() > max_bytes || text.chars().any(char::is_control))
+            {
                 return Err(ModelInventoryValidationError::InvalidMetadata);
             }
         }
@@ -384,11 +378,7 @@ pub fn validate_model_runtime_inventory(
         {
             return Err(ModelInventoryValidationError::DuplicateCapability);
         }
-        validate_evidence(
-            &model.evidence,
-            inventory.generated_at_unix_ms,
-            now_unix_ms,
-        )?;
+        validate_evidence(&model.evidence, inventory.generated_at_unix_ms, now_unix_ms)?;
     }
     if inventory.privacy.as_ref().is_some_and(|privacy| {
         privacy.contains_prompts == Some(true)
@@ -505,8 +495,7 @@ pub fn match_model_to_task(
         unknown = true;
     }
 
-    let capability_evidence_usable =
-        evidence_is_usable(&model.evidence, now_unix_ms, max_age_ms);
+    let capability_evidence_usable = evidence_is_usable(&model.evidence, now_unix_ms, max_age_ms);
     for capability in &requirements.required_capabilities {
         if model.capabilities.contains(capability) {
             if !capability_evidence_usable {
@@ -653,7 +642,10 @@ mod tests {
 
     #[test]
     fn validates_bounded_installed_runtime_inventory() {
-        assert_eq!(validate_model_runtime_inventory(&inventory(), 1_100, 10_000), Ok(()));
+        assert_eq!(
+            validate_model_runtime_inventory(&inventory(), 1_100, 10_000),
+            Ok(())
+        );
     }
 
     #[test]
@@ -699,8 +691,8 @@ mod tests {
     #[test]
     fn matches_only_installed_models_with_fresh_declared_capabilities() {
         let value = inventory();
-        let result = match_model_to_task(&value, "qwen2.5:7b", &requirements(), 1_100, 10_000)
-            .unwrap();
+        let result =
+            match_model_to_task(&value, "qwen2.5:7b", &requirements(), 1_100, 10_000).unwrap();
         assert_eq!(result.status, ModelFitStatus::Unknown);
         assert!(result
             .reasons
@@ -761,8 +753,7 @@ mod tests {
         let value = inventory();
         let mut task = requirements();
         task.minimum_memory_mb = None;
-        let result = match_model_to_task(&value, "qwen2.5:7b", &task, 1_100, 10_000)
-            .unwrap();
+        let result = match_model_to_task(&value, "qwen2.5:7b", &task, 1_100, 10_000).unwrap();
         assert_eq!(result.status, ModelFitStatus::Compatible);
         assert!(result.reasons.is_empty());
     }
