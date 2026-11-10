@@ -509,16 +509,17 @@ mod tests {
     fn fresh_test_challenge() -> [u8; 16] {
         static NEXT: AtomicU64 = AtomicU64::new(1);
         let sequence = NEXT.fetch_add(1, Ordering::Relaxed);
-        let mut challenge = [0u8; 16];
+        let mut challenge = Vec::with_capacity(16);
         for half in 0..2 {
             let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
             sequence.hash(&mut hasher);
             std::process::id().hash(&mut hasher);
             half.hash(&mut hasher);
-            let bytes = hasher.finish().to_le_bytes();
-            challenge[half * 8..(half + 1) * 8].copy_from_slice(&bytes);
+            challenge.extend_from_slice(&hasher.finish().to_le_bytes());
         }
         challenge
+            .try_into()
+            .expect("two 8-byte test hashes produce a 16-byte challenge")
     }
 
     fn device() -> Device {
