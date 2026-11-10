@@ -36,6 +36,9 @@ jobs:
               printf '%s\n' "$matched"
               echo
               echo "This check does not establish whether a change is malicious or safe."
-              echo "::warning title=Security-sensitive paths changed::Inspect the matched files and obtain appropriate independent security review."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ -n "$matched" ]]; then
+            echo "::warning title=Security-sensitive paths changed::Inspect the matched files and obtain appropriate independent security review."
+          fi
