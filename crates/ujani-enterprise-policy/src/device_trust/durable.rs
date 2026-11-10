@@ -314,6 +314,94 @@ impl DurableDeviceRegistry {
         self.transact(|registry| Ok(registry.devices.len()))
     }
 
+    /// Run a short trusted-key operation while the durable registry's read lock is held.
+    ///
+    /// The callback must not retain either key reference after it returns. When it also
+    /// touches the durable lease ledger, callers must always acquire this registry lock
+    /// before the ledger lock. Keeping verification and challenge consumption inside the
+    /// callback prevents a device key rotation/revocation between those two operations.
+    pub(crate) fn with_trusted_keys<T, E>(
+        &self,
+        tenant_id: &str,
+        device_id: &str,
+        operation: impl FnOnce(
+            &VerifyingKey,
+            &[(String, VerifyingKey)],
+        ) -> Result<T, E>,
+    ) -> Result<Result<T, E>, DurableDeviceTrustError> {
+        self.read(|registry| {
+            let record = registry.devices.get(device_id).ok_or(
+                DurableDeviceTrustError::Trust(DeviceTrustError::DeviceNotFound),
+            )?;
+            if record.tenant_id != tenant_id {
+                return Err(DurableDeviceTrustError::Trust(
+                    DeviceTrustError::TenantMismatch,
+                ));
+            }
+            if record.state != DeviceTrustState::Enrolled {
+                return Err(DurableDeviceTrustError::Trust(
+                    DeviceTrustError::DeviceNotEnrolled,
+                ));
+            }
+            Ok(operation(&record.key, self.admin_keys.as_ref()))
+        })?
+    }
+
+    /// Read a verified registry snapshot without rewriting it or advancing its anchor.
+    /// The same thread and OS locks as a transaction are held for the full callback.
+    fn read<T>(
+        &self,
+        operation: impl FnOnce(&DeviceRegistry) -> T,
+    ) -> Result<T, DurableDeviceTrustError> {
+        let _guard = self
+            .thread_lock
+            .lock()
+            .map_err(|_| DurableDeviceTrustError::LockPoisoned)?;
+        let mut options = OpenOptions::new();
+        options.create(true).truncate(false).read(true).write(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let lock = options.open(&self.lock_path)?;
+        lock.lock()?;
+
+        let anchor_record = match (&self.anchor, &self.anchor_namespace) {
+            (Some(anchor), Some(namespace)) => anchor
+                .load(namespace)
+                .map_err(DurableDeviceTrustError::AnchorUnavailable)?,
+            (None, None) => None,
+            _ => return Err(DurableDeviceTrustError::AnchorMismatch),
+        };
+        let registry = if self.anchor.is_some() {
+            self.load_anchored_registry(anchor_record.as_ref())?
+        } else {
+            let backup = suffix(&self.path, ".bak");
+            if self.path.exists() {
+                decode_snapshot(
+                    &fs::read(&self.path)?,
+                    &self.admin_keys,
+                    self.integrity_key.key_id(),
+                    &self.integrity_key.bytes,
+                )?
+            } else if backup.exists() {
+                let bytes = fs::read(&backup)?;
+                let recovered = decode_snapshot(
+                    &bytes,
+                    &self.admin_keys,
+                    self.integrity_key.key_id(),
+                    &self.integrity_key.bytes,
+                )?;
+                atomic_write(&self.path, &bytes, false)?;
+                recovered
+            } else {
+                DeviceRegistry::new(self.admin_keys.as_ref().clone())?
+            }
+        };
+        Ok(operation(&registry))
+    }
+
     fn load_anchored_registry(
         &self,
         anchor_record: Option<&SnapshotAnchorRecord>,
