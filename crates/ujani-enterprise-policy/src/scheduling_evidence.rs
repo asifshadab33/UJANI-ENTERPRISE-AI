@@ -1005,7 +1005,8 @@ mod tests {
 
         // A sample cannot claim a reservation revision the service has not committed.
         let future_challenge = fresh_test_challenge();
-        let (mut future, mut policy, device_key, admin_key) = signed_evidence(future_challenge, 1_000);
+        let (mut future, mut policy, device_key, admin_key) =
+            signed_evidence(future_challenge, 1_000);
         future.claims.reservation_revision = 1;
         future.signature = device_key
             .sign(&worker_telemetry_bytes(&future.claims))
@@ -1175,10 +1176,8 @@ mod tests {
 
         // CPU: the second sample reports 3,000 free milli-cores after the
         // first 3,000-millicore lease. The lease is already reflected at revision 1.
-        let cpu_path = std::env::temp_dir().join(format!(
-            "ujani-watermark-cpu-{}.ledger",
-            std::process::id()
-        ));
+        let cpu_path =
+            std::env::temp_dir().join(format!("ujani-watermark-cpu-{}.ledger", std::process::id()));
         let cpu_ledger = DurableLedger::open_with_integrity_keys(
             &cpu_path,
             "test-key",
@@ -1211,7 +1210,10 @@ mod tests {
             .unwrap(),
             Admission::Accept
         );
-        assert_eq!(cpu_ledger.reservation_revision("worker-01", 2_000).unwrap(), 1);
+        assert_eq!(
+            cpu_ledger.reservation_revision("worker-01", 2_000).unwrap(),
+            1
+        );
         let second_context = verified_context_for_durable(
             &cpu_ledger,
             &cpu_second,
@@ -1473,15 +1475,8 @@ mod tests {
             vec![LedgerIntegrityKey::new("test-key", [0x72; 32])],
         )
         .unwrap();
-        let durable_context = verified_context_for_durable(
-            &durable,
-            &w,
-            [0x72; 16],
-            1_000,
-            2_999,
-            20_000,
-            0,
-        );
+        let durable_context =
+            verified_context_for_durable(&durable, &w, [0x72; 16], 1_000, 2_999, 20_000, 0);
         assert_eq!(
             admit_and_reserve_durably_with_verified_lease(
                 &durable,
