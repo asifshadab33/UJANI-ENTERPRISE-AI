@@ -31,10 +31,19 @@ pub enum OperatorRole {
 }
 impl OperatorRole {
     fn as_byte(self) -> u8 {
-        match self { Self::Viewer => 1, Self::Operator => 2, Self::Administrator => 3 }
+        match self {
+            Self::Viewer => 1,
+            Self::Operator => 2,
+            Self::Administrator => 3,
+        }
     }
     fn from_byte(value: u8) -> Option<Self> {
-        match value { 1 => Some(Self::Viewer), 2 => Some(Self::Operator), 3 => Some(Self::Administrator), _ => None }
+        match value {
+            1 => Some(Self::Viewer),
+            2 => Some(Self::Operator),
+            3 => Some(Self::Administrator),
+            _ => None,
+        }
     }
 }
 
@@ -64,14 +73,18 @@ impl std::fmt::Debug for OperatorSessionAuthenticator {
     }
 }
 impl Drop for OperatorSessionAuthenticator {
-    fn drop(&mut self) { self.key.zeroize(); }
+    fn drop(&mut self) {
+        self.key.zeroize();
+    }
 }
 impl OperatorSessionAuthenticator {
     /// Construct from a key supplied by a protected secret provider. Never load
     /// this key from the writable application data directory or a request.
     pub fn new(key_id: impl Into<String>, key: [u8; 32]) -> Result<Self, OperatorAuthError> {
         let key_id = key_id.into();
-        if !valid_identifier(&key_id, 128) { return Err(OperatorAuthError::InvalidClaims); }
+        if !valid_identifier(&key_id, 128) {
+            return Err(OperatorAuthError::InvalidClaims);
+        }
         Ok(Self { key_id, key })
     }
 
@@ -86,11 +99,16 @@ impl OperatorSessionAuthenticator {
     ) -> Result<String, OperatorAuthError> {
         validate_claims(claims, now_unix_ms)?;
         let payload = encode_claims(claims);
-        let mut mac = HmacSha256::new_from_slice(&self.key).map_err(|_| OperatorAuthError::InvalidKey)?;
+        let mut mac =
+            HmacSha256::new_from_slice(&self.key).map_err(|_| OperatorAuthError::InvalidKey)?;
         mac.update(SESSION_DOMAIN);
         mac.update(&payload);
         let signature = mac.finalize().into_bytes();
-        Ok(format!("{}.{}", hex_encode(&payload), hex_encode(&signature)))
+        Ok(format!(
+            "{}.{}",
+            hex_encode(&payload),
+            hex_encode(&signature)
+        ))
     }
 
     pub fn authenticate(
@@ -98,21 +116,31 @@ impl OperatorSessionAuthenticator {
         token: &str,
         now_unix_ms: u64,
     ) -> Result<OperatorSessionClaims, OperatorAuthError> {
-        if token.len() > 2048 { return Err(OperatorAuthError::MalformedToken); }
-        let (payload_hex, signature_hex) = token.split_once('.').ok_or(OperatorAuthError::MalformedToken)?;
+        if token.len() > 2048 {
+            return Err(OperatorAuthError::MalformedToken);
+        }
+        let (payload_hex, signature_hex) = token
+            .split_once('.')
+            .ok_or(OperatorAuthError::MalformedToken)?;
         let payload = hex_decode(payload_hex).ok_or(OperatorAuthError::MalformedToken)?;
         let signature = hex_decode(signature_hex).ok_or(OperatorAuthError::MalformedToken)?;
-        if signature.len() != 32 { return Err(OperatorAuthError::MalformedToken); }
-        let mut mac = HmacSha256::new_from_slice(&self.key).map_err(|_| OperatorAuthError::InvalidKey)?;
+        if signature.len() != 32 {
+            return Err(OperatorAuthError::MalformedToken);
+        }
+        let mut mac =
+            HmacSha256::new_from_slice(&self.key).map_err(|_| OperatorAuthError::InvalidKey)?;
         mac.update(SESSION_DOMAIN);
         mac.update(&payload);
-        mac.verify_slice(&signature).map_err(|_| OperatorAuthError::InvalidSignature)?;
+        mac.verify_slice(&signature)
+            .map_err(|_| OperatorAuthError::InvalidSignature)?;
         let claims = decode_claims(&payload)?;
         validate_claims(&claims, now_unix_ms)?;
         Ok(claims)
     }
 
-    pub fn key_id(&self) -> &str { &self.key_id }
+    pub fn key_id(&self) -> &str {
+        &self.key_id
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -137,16 +165,24 @@ fn validate_claims(claims: &OperatorSessionClaims, now: u64) -> Result<(), Opera
         return Err(OperatorAuthError::FutureIssuedAt);
     }
     if claims.expires_at_unix_ms <= claims.issued_at_unix_ms
-        || claims.expires_at_unix_ms.saturating_sub(claims.issued_at_unix_ms) > OPERATOR_SESSION_MAX_TTL_MS
+        || claims
+            .expires_at_unix_ms
+            .saturating_sub(claims.issued_at_unix_ms)
+            > OPERATOR_SESSION_MAX_TTL_MS
     {
         return Err(OperatorAuthError::InvalidLifetime);
     }
-    if claims.expires_at_unix_ms <= now { return Err(OperatorAuthError::Expired); }
+    if claims.expires_at_unix_ms <= now {
+        return Err(OperatorAuthError::Expired);
+    }
     Ok(())
 }
 fn valid_identifier(value: &str, max: usize) -> bool {
-    !value.is_empty() && value.len() <= max
-        && value.bytes().all(|b| b.is_ascii_alphanumeric() || b"._:-".contains(&b))
+    !value.is_empty()
+        && value.len() <= max
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"._:-".contains(&b))
 }
 fn encode_claims(claims: &OperatorSessionClaims) -> Vec<u8> {
     let tenant = claims.tenant_id.as_bytes();
@@ -164,31 +200,78 @@ fn encode_claims(claims: &OperatorSessionClaims) -> Vec<u8> {
     out
 }
 fn decode_claims(bytes: &[u8]) -> Result<OperatorSessionClaims, OperatorAuthError> {
-    if bytes.len() < 38 || bytes[0] != 1 { return Err(OperatorAuthError::MalformedToken); }
-    let role = OperatorRole::from_byte(bytes[1]).ok_or(OperatorAuthError::MalformedToken)?;
-    let issued_at_unix_ms = u64::from_be_bytes(bytes[2..10].try_into().map_err(|_| OperatorAuthError::MalformedToken)?);
-    let expires_at_unix_ms = u64::from_be_bytes(bytes[10..18].try_into().map_err(|_| OperatorAuthError::MalformedToken)?);
-    let nonce: [u8; 16] = bytes[18..34].try_into().map_err(|_| OperatorAuthError::MalformedToken)?;
-    let tenant_len = u16::from_be_bytes(bytes[34..36].try_into().map_err(|_| OperatorAuthError::MalformedToken)?) as usize;
-    let subject_len = u16::from_be_bytes(bytes[36..38].try_into().map_err(|_| OperatorAuthError::MalformedToken)?) as usize;
-    if tenant_len == 0 || subject_len == 0 || 38usize.checked_add(tenant_len).and_then(|v| v.checked_add(subject_len)) != Some(bytes.len()) {
+    if bytes.len() < 38 || bytes[0] != 1 {
         return Err(OperatorAuthError::MalformedToken);
     }
-    let tenant_id = std::str::from_utf8(&bytes[38..38 + tenant_len]).map_err(|_| OperatorAuthError::MalformedToken)?.to_owned();
-    let subject_id = std::str::from_utf8(&bytes[38 + tenant_len..]).map_err(|_| OperatorAuthError::MalformedToken)?.to_owned();
-    Ok(OperatorSessionClaims { subject_id, tenant_id, role, issued_at_unix_ms, expires_at_unix_ms, nonce })
+    let role = OperatorRole::from_byte(bytes[1]).ok_or(OperatorAuthError::MalformedToken)?;
+    let issued_at_unix_ms = u64::from_be_bytes(
+        bytes[2..10]
+            .try_into()
+            .map_err(|_| OperatorAuthError::MalformedToken)?,
+    );
+    let expires_at_unix_ms = u64::from_be_bytes(
+        bytes[10..18]
+            .try_into()
+            .map_err(|_| OperatorAuthError::MalformedToken)?,
+    );
+    let nonce: [u8; 16] = bytes[18..34]
+        .try_into()
+        .map_err(|_| OperatorAuthError::MalformedToken)?;
+    let tenant_len = u16::from_be_bytes(
+        bytes[34..36]
+            .try_into()
+            .map_err(|_| OperatorAuthError::MalformedToken)?,
+    ) as usize;
+    let subject_len = u16::from_be_bytes(
+        bytes[36..38]
+            .try_into()
+            .map_err(|_| OperatorAuthError::MalformedToken)?,
+    ) as usize;
+    if tenant_len == 0
+        || subject_len == 0
+        || 38usize
+            .checked_add(tenant_len)
+            .and_then(|v| v.checked_add(subject_len))
+            != Some(bytes.len())
+    {
+        return Err(OperatorAuthError::MalformedToken);
+    }
+    let tenant_id = std::str::from_utf8(&bytes[38..38 + tenant_len])
+        .map_err(|_| OperatorAuthError::MalformedToken)?
+        .to_owned();
+    let subject_id = std::str::from_utf8(&bytes[38 + tenant_len..])
+        .map_err(|_| OperatorAuthError::MalformedToken)?
+        .to_owned();
+    Ok(OperatorSessionClaims {
+        subject_id,
+        tenant_id,
+        role,
+        issued_at_unix_ms,
+        expires_at_unix_ms,
+        nonce,
+    })
 }
 fn hex_encode(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes { out.push(HEX[(byte >> 4) as usize] as char); out.push(HEX[(byte & 0x0f) as usize] as char); }
+    for byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
     out
 }
 fn hex_decode(value: &str) -> Option<Vec<u8>> {
-    if value.is_empty() || value.len() % 2 != 0 { return None; }
+    if value.is_empty() || value.len() % 2 != 0 {
+        return None;
+    }
     let mut out = Vec::with_capacity(value.len() / 2);
     for pair in value.as_bytes().chunks_exact(2) {
-        let digit = |b: u8| match b { b'0'..=b'9' => Some(b-b'0'), b'a'..=b'f' => Some(b-b'a'+10), b'A'..=b'F' => Some(b-b'A'+10), _ => None };
+        let digit = |b: u8| match b {
+            b'0'..=b'9' => Some(b - b'0'),
+            b'a'..=b'f' => Some(b - b'a' + 10),
+            b'A'..=b'F' => Some(b - b'A' + 10),
+            _ => None,
+        };
         out.push((digit(pair[0])? << 4) | digit(pair[1])?);
     }
     Some(out)
@@ -319,16 +402,28 @@ fn json_optional_number<T: std::fmt::Display>(value: Option<T>) -> String {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OperatorRepositoryError { Unavailable }
+pub enum OperatorRepositoryError {
+    Unavailable,
+}
 pub trait OperatorOverviewRepository: Send + Sync {
     /// Implementations MUST filter in the data query itself by this authenticated
     /// tenant. Do not load all tenants and rely on UI-side filtering.
-    fn load_tenant_overview(&self, tenant_id: &str, now_unix_ms: u64) -> Result<OperatorOverview, OperatorRepositoryError>;
+    fn load_tenant_overview(
+        &self,
+        tenant_id: &str,
+        now_unix_ms: u64,
+    ) -> Result<OperatorOverview, OperatorRepositoryError>;
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OperatorAuditError { Unavailable }
+pub enum OperatorAuditError {
+    Unavailable,
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OperatorAuditOutcome { ReadSucceeded, RepositoryDenied, InvalidOverview }
+pub enum OperatorAuditOutcome {
+    ReadSucceeded,
+    RepositoryDenied,
+    InvalidOverview,
+}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OperatorAuditEvent {
     pub tenant_id: String,
@@ -357,24 +452,44 @@ pub struct OperatorControlPlane<R, A> {
     audit: Arc<A>,
 }
 impl<R: OperatorOverviewRepository, A: OperatorAuditSink> OperatorControlPlane<R, A> {
-    pub fn new(authenticator: OperatorSessionAuthenticator, repository: Arc<R>, audit: Arc<A>) -> Self {
-        Self { authenticator, repository, audit }
+    pub fn new(
+        authenticator: OperatorSessionAuthenticator,
+        repository: Arc<R>,
+        audit: Arc<A>,
+    ) -> Self {
+        Self {
+            authenticator,
+            repository,
+            audit,
+        }
     }
 
     /// Authorize a short-lived session, read only that tenant's overview, validate
     /// the response contract, and durably audit the access before returning it.
-    pub fn get_overview(&self, session_token: &str, now_unix_ms: u64) -> Result<OperatorOverview, OperatorServiceError> {
-        let claims = self.authenticator.authenticate(session_token, now_unix_ms).map_err(|_| OperatorServiceError::Unauthorized)?;
-        let overview = match self.repository.load_tenant_overview(&claims.tenant_id, now_unix_ms) {
+    pub fn get_overview(
+        &self,
+        session_token: &str,
+        now_unix_ms: u64,
+    ) -> Result<OperatorOverview, OperatorServiceError> {
+        let claims = self
+            .authenticator
+            .authenticate(session_token, now_unix_ms)
+            .map_err(|_| OperatorServiceError::Unauthorized)?;
+        let overview = match self
+            .repository
+            .load_tenant_overview(&claims.tenant_id, now_unix_ms)
+        {
             Ok(value) => value,
             Err(_) => {
-                self.audit.append(&OperatorAuditEvent {
-                    tenant_id: claims.tenant_id,
-                    subject_id: claims.subject_id,
-                    role: claims.role,
-                    occurred_at_unix_ms: now_unix_ms,
-                    outcome: OperatorAuditOutcome::RepositoryDenied,
-                }).map_err(|_| OperatorServiceError::AuditUnavailable)?;
+                self.audit
+                    .append(&OperatorAuditEvent {
+                        tenant_id: claims.tenant_id,
+                        subject_id: claims.subject_id,
+                        role: claims.role,
+                        occurred_at_unix_ms: now_unix_ms,
+                        outcome: OperatorAuditOutcome::RepositoryDenied,
+                    })
+                    .map_err(|_| OperatorServiceError::AuditUnavailable)?;
                 return Err(OperatorServiceError::RepositoryUnavailable);
             }
         };
@@ -385,18 +500,24 @@ impl<R: OperatorOverviewRepository, A: OperatorAuditSink> OperatorControlPlane<R
         } else {
             OperatorAuditOutcome::ReadSucceeded
         };
-        self.audit.append(&OperatorAuditEvent {
-            tenant_id: claims.tenant_id.clone(),
-            subject_id: claims.subject_id,
-            role: claims.role,
-            occurred_at_unix_ms: now_unix_ms,
-            outcome,
-        }).map_err(|_| OperatorServiceError::AuditUnavailable)?;
+        self.audit
+            .append(&OperatorAuditEvent {
+                tenant_id: claims.tenant_id.clone(),
+                subject_id: claims.subject_id,
+                role: claims.role,
+                occurred_at_unix_ms: now_unix_ms,
+                outcome,
+            })
+            .map_err(|_| OperatorServiceError::AuditUnavailable)?;
         match outcome {
             OperatorAuditOutcome::ReadSucceeded => Ok(overview),
-            OperatorAuditOutcome::InvalidOverview if overview.tenant_id != claims.tenant_id => Err(OperatorServiceError::InvalidTenantBoundary),
+            OperatorAuditOutcome::InvalidOverview if overview.tenant_id != claims.tenant_id => {
+                Err(OperatorServiceError::InvalidTenantBoundary)
+            }
             OperatorAuditOutcome::InvalidOverview => Err(OperatorServiceError::InvalidOverview),
-            OperatorAuditOutcome::RepositoryDenied => Err(OperatorServiceError::RepositoryUnavailable),
+            OperatorAuditOutcome::RepositoryDenied => {
+                Err(OperatorServiceError::RepositoryUnavailable)
+            }
         }
     }
 }
@@ -409,34 +530,50 @@ fn validate_overview(overview: &OperatorOverview, now: u64) -> Result<(), ()> {
         || overview.devices.len() > MAX_DEVICES
         || overview.workloads.len() > MAX_WORKLOADS
         || overview.approvals.len() > MAX_APPROVALS
-    { return Err(()); }
+    {
+        return Err(());
+    }
     let fleet = &overview.fleet;
     if fleet.registered_devices != overview.devices.len()
         || fleet.trusted_consented_devices > fleet.registered_devices
         || fleet.online_fresh_devices > fleet.trusted_consented_devices
         || fleet.schedulable_devices > fleet.online_fresh_devices
-    { return Err(()); }
+    {
+        return Err(());
+    }
     let mut ids = HashSet::with_capacity(overview.devices.len());
     for device in &overview.devices {
         if !valid_identifier(&device.device_id, 128)
             || device.display_name.len() > 256
-            || device.platform.is_empty() || device.platform.len() > 64
+            || device.platform.is_empty()
+            || device.platform.len() > 64
             || !ids.insert(device.device_id.as_str())
             || device.remaining_cpu_millis == Some(0)
             || device.remaining_memory_mb == Some(0)
-        { return Err(()); }
+        {
+            return Err(());
+        }
     }
     for workload in &overview.workloads {
-        if !valid_identifier(&workload.workload_id, 128) || workload.title.len() > 256
-            || workload.state.len() > 64 || workload.class.len() > 64
+        if !valid_identifier(&workload.workload_id, 128)
+            || workload.title.len() > 256
+            || workload.state.len() > 64
+            || workload.class.len() > 64
             || workload.reason.as_ref().is_some_and(|v| v.len() > 512)
-        { return Err(()); }
+        {
+            return Err(());
+        }
     }
     for approval in &overview.approvals {
-        if !valid_identifier(&approval.approval_id, 128) || approval.title.len() > 256
-            || approval.state.len() > 64 || approval.requester.len() > 128
-            || approval.scope.len() > 256 || approval.expires_at.as_ref().is_some_and(|v| v.len() > 64)
-        { return Err(()); }
+        if !valid_identifier(&approval.approval_id, 128)
+            || approval.title.len() > 256
+            || approval.state.len() > 64
+            || approval.requester.len() > 128
+            || approval.scope.len() > 256
+            || approval.expires_at.as_ref().is_some_and(|v| v.len() > 64)
+        {
+            return Err(());
+        }
     }
     Ok(())
 }
@@ -449,40 +586,79 @@ mod tests {
 
     fn claims(tenant: &str) -> OperatorSessionClaims {
         OperatorSessionClaims {
-            subject_id: "operator-1".into(), tenant_id: tenant.into(),
-            role: OperatorRole::Viewer, issued_at_unix_ms: 10_000,
-            expires_at_unix_ms: 20_000, nonce: [7; 16],
+            subject_id: "operator-1".into(),
+            tenant_id: tenant.into(),
+            role: OperatorRole::Viewer,
+            issued_at_unix_ms: 10_000,
+            expires_at_unix_ms: 20_000,
+            nonce: [7; 16],
         }
     }
     fn empty_overview(tenant: &str) -> OperatorOverview {
         OperatorOverview {
-            schema_version: 1, tenant_id: tenant.into(), generated_at_unix_ms: 10_100,
-            fleet: OperatorFleetCounts { registered_devices: 0, trusted_consented_devices: 0, online_fresh_devices: 0, schedulable_devices: 0 },
-            devices: vec![], workloads: vec![], approvals: vec![],
+            schema_version: 1,
+            tenant_id: tenant.into(),
+            generated_at_unix_ms: 10_100,
+            fleet: OperatorFleetCounts {
+                registered_devices: 0,
+                trusted_consented_devices: 0,
+                online_fresh_devices: 0,
+                schedulable_devices: 0,
+            },
+            devices: vec![],
+            workloads: vec![],
+            approvals: vec![],
         }
     }
-    struct TestRepo { values: Mutex<HashMap<String, OperatorOverview>> }
+    struct TestRepo {
+        values: Mutex<HashMap<String, OperatorOverview>>,
+    }
     impl OperatorOverviewRepository for TestRepo {
-        fn load_tenant_overview(&self, tenant: &str, _: u64) -> Result<OperatorOverview, OperatorRepositoryError> {
-            self.values.lock().unwrap().get(tenant).cloned().ok_or(OperatorRepositoryError::Unavailable)
+        fn load_tenant_overview(
+            &self,
+            tenant: &str,
+            _: u64,
+        ) -> Result<OperatorOverview, OperatorRepositoryError> {
+            self.values
+                .lock()
+                .unwrap()
+                .get(tenant)
+                .cloned()
+                .ok_or(OperatorRepositoryError::Unavailable)
         }
     }
     #[derive(Default)]
-    struct TestAudit { events: Mutex<Vec<OperatorAuditEvent>>, fail: bool }
+    struct TestAudit {
+        events: Mutex<Vec<OperatorAuditEvent>>,
+        fail: bool,
+    }
     impl OperatorAuditSink for TestAudit {
         fn append(&self, event: &OperatorAuditEvent) -> Result<(), OperatorAuditError> {
-            if self.fail { return Err(OperatorAuditError::Unavailable); }
-            self.events.lock().unwrap().push(event.clone()); Ok(())
+            if self.fail {
+                return Err(OperatorAuditError::Unavailable);
+            }
+            self.events.lock().unwrap().push(event.clone());
+            Ok(())
         }
     }
-    fn auth() -> OperatorSessionAuthenticator { OperatorSessionAuthenticator::new("session-key-1", [9; 32]).unwrap() }
+    fn auth() -> OperatorSessionAuthenticator {
+        OperatorSessionAuthenticator::new("session-key-1", [9; 32]).unwrap()
+    }
 
     #[test]
     fn session_is_signed_expiring_and_tamper_evident() {
         let auth = auth();
-        let token = auth.mint_after_identity_verification(&claims("tenant-a"), 10_000).unwrap();
-        assert_eq!(auth.authenticate(&token, 15_000).unwrap(), claims("tenant-a"));
-        assert_eq!(auth.authenticate(&token, 20_000), Err(OperatorAuthError::Expired));
+        let token = auth
+            .mint_after_identity_verification(&claims("tenant-a"), 10_000)
+            .unwrap();
+        assert_eq!(
+            auth.authenticate(&token, 15_000).unwrap(),
+            claims("tenant-a")
+        );
+        assert_eq!(
+            auth.authenticate(&token, 20_000),
+            Err(OperatorAuthError::Expired)
+        );
         let mut tampered = token.clone();
         let index = tampered.find('.').unwrap() + 3;
         tampered.replace_range(index..index + 1, "f");
@@ -493,9 +669,17 @@ mod tests {
         let auth = auth();
         let mut value = claims("tenant-a");
         value.expires_at_unix_ms = value.issued_at_unix_ms + OPERATOR_SESSION_MAX_TTL_MS + 1;
-        assert_eq!(auth.mint_after_identity_verification(&value, 10_000), Err(OperatorAuthError::InvalidLifetime));
-        value = claims("tenant-a"); value.issued_at_unix_ms = 50_000; value.expires_at_unix_ms = 55_000;
-        assert_eq!(auth.mint_after_identity_verification(&value, 10_000), Err(OperatorAuthError::FutureIssuedAt));
+        assert_eq!(
+            auth.mint_after_identity_verification(&value, 10_000),
+            Err(OperatorAuthError::InvalidLifetime)
+        );
+        value = claims("tenant-a");
+        value.issued_at_unix_ms = 50_000;
+        value.expires_at_unix_ms = 55_000;
+        assert_eq!(
+            auth.mint_after_identity_verification(&value, 10_000),
+            Err(OperatorAuthError::FutureIssuedAt)
+        );
     }
     #[test]
     fn tenant_scope_is_enforced_before_overview_is_returned() {
@@ -536,10 +720,23 @@ mod tests {
     #[test]
     fn audit_failure_fails_closed() {
         let auth = auth();
-        let token = auth.mint_after_identity_verification(&claims("tenant-a"), 10_000).unwrap();
-        let repo = Arc::new(TestRepo { values: Mutex::new(HashMap::from([("tenant-a".into(), empty_overview("tenant-a"))])) });
-        let audit = Arc::new(TestAudit { events: Mutex::new(vec![]), fail: true });
+        let token = auth
+            .mint_after_identity_verification(&claims("tenant-a"), 10_000)
+            .unwrap();
+        let repo = Arc::new(TestRepo {
+            values: Mutex::new(HashMap::from([(
+                "tenant-a".into(),
+                empty_overview("tenant-a"),
+            )])),
+        });
+        let audit = Arc::new(TestAudit {
+            events: Mutex::new(vec![]),
+            fail: true,
+        });
         let service = OperatorControlPlane::new(auth, repo, audit);
-        assert_eq!(service.get_overview(&token, 10_100), Err(OperatorServiceError::AuditUnavailable));
+        assert_eq!(
+            service.get_overview(&token, 10_100),
+            Err(OperatorServiceError::AuditUnavailable)
+        );
     }
 }
