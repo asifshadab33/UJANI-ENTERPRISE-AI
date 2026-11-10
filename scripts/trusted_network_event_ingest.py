@@ -19,6 +19,16 @@ class IngestionEnvelopeError(ValueError):
     """The authenticated request body does not match the bounded batch contract."""
 
 
+def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Reject duplicate JSON keys so different parsers cannot interpret scope differently."""
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON object key")
+        result[key] = value
+    return result
+
+
 def authenticate_and_ingest(
     *,
     device_id: str,
@@ -46,7 +56,7 @@ def authenticate_and_ingest(
     )
 
     try:
-        payload = json.loads(body.decode("utf-8"))
+        payload = json.loads(body.decode("utf-8"), object_pairs_hook=_unique_object)
     except (UnicodeDecodeError, ValueError):
         raise IngestionEnvelopeError("authenticated event batch is malformed") from None
     if not isinstance(payload, dict) or set(payload) != {"events"}:
