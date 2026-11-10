@@ -818,7 +818,7 @@ mod tests {
         available_cpu_millis: u32,
     ) -> VerifiedSchedulingContext {
         let (mut telemetry, mut policy, device_key, admin_key) = signed_evidence(challenge, now);
-        telemetry.claims.sample_generation = u64::from(challenge[0]);
+        telemetry.claims.sample_generation = u64::from(challenge[0]) + 256;
         telemetry.claims.available_cpu_millis = available_cpu_millis;
         telemetry.signature = device_key
             .sign(&worker_telemetry_bytes(&telemetry.claims))
@@ -852,7 +852,7 @@ mod tests {
         reservation_revision: u64,
     ) -> VerifiedSchedulingContext {
         let (mut telemetry, mut policy, device_key, admin_key) = signed_evidence(challenge, now);
-        telemetry.claims.sample_generation = u64::from(challenge[0]);
+        telemetry.claims.sample_generation = u64::from(challenge[0]) + 256;
         telemetry.claims.reservation_revision = reservation_revision;
         telemetry.claims.available_cpu_millis = available_cpu_millis;
         telemetry.claims.available_memory_mb = available_memory_mb;
@@ -1520,7 +1520,9 @@ mod tests {
         // 2,999 available CPU minus the 2,000 system reserve leaves 999,
         // one millicore below this workload's 1,000-millicore request.
         let mut memory_ledger = Ledger::default();
-        let memory_context = verified_context_for(&w, [0x71; 16], 1_000, 2_999);
+        let cpu_challenge = fresh_test_challenge();
+        let cpu_token = fresh_test_lease_token();
+        let memory_context = verified_context_for(&w, cpu_challenge, 1_000, 2_999);
         assert_eq!(
             admit_and_reserve_with_verified_lease(
                 &mut memory_ledger,
@@ -1530,7 +1532,7 @@ mod tests {
                 &[],
                 &[],
                 2_000,
-                &[0x71; 32],
+                &cpu_token,
             ),
             Admission::Reject(RejectReason::CpuBudget)
         );
@@ -1565,8 +1567,17 @@ mod tests {
             vec![LedgerIntegrityKey::new("test-key", [0x72; 32])],
         )
         .unwrap();
-        let durable_context =
-            verified_context_for_durable(&durable, &w, [0x72; 16], 1_000, 2_999, 20_000, 0);
+        let durable_cpu_challenge = fresh_test_challenge();
+        let durable_cpu_token = fresh_test_lease_token();
+        let durable_context = verified_context_for_durable(
+            &durable,
+            &w,
+            durable_cpu_challenge,
+            1_000,
+            2_999,
+            20_000,
+            0,
+        );
         assert_eq!(
             admit_and_reserve_durably_with_verified_lease(
                 &durable,
@@ -1576,7 +1587,7 @@ mod tests {
                 &[],
                 &[],
                 2_000,
-                &[0x72; 32],
+                &durable_cpu_token,
             )
             .unwrap(),
             Admission::Reject(RejectReason::CpuBudget)
