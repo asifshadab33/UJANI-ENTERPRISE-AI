@@ -1796,6 +1796,8 @@ mod tests {
         let path = temp_path("concurrent");
         let first = open_ledger(&path).unwrap();
         let second = open_ledger(&path).unwrap();
+        let first_token = fresh_test_token();
+        let second_token = fresh_test_token();
         let first_thread = thread::spawn(move || {
             first
                 .admit_and_reserve_with_lease(
