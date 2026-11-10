@@ -1730,7 +1730,9 @@ mod tests {
         {
             let ledger = open_ledger(&path).unwrap();
             assert!(ledger.renew_lease("job-restart", &token, 2_000).unwrap());
-            assert!(!ledger.release_lease("job-restart", &fresh_test_token()).unwrap());
+            assert!(!ledger
+                .release_lease("job-restart", &fresh_test_token())
+                .unwrap());
             assert!(ledger.release_lease("job-restart", &token).unwrap());
             assert_eq!(ledger.snapshot().unwrap().active_jobs, 0);
         }
@@ -1779,9 +1781,7 @@ mod tests {
                 .insert(format!("{prefix}-{index:06}"));
         }
         let key = fresh_test_token();
-        assert!(
-            serialize_snapshot(&ledger, "test-v1", &key).len() as u64 > MAX_LEDGER_BYTES
-        );
+        assert!(serialize_snapshot(&ledger, "test-v1", &key).len() as u64 > MAX_LEDGER_BYTES);
 
         assert_eq!(
             persist_snapshot(&path, &ledger, "test-v1", &key, false),
