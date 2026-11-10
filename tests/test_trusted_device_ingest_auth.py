@@ -125,7 +125,7 @@ except AuthenticationError:
             "fields": {},
         }
         body = json.dumps({"events": [event]}, separators=(",", ":")).encode()
-        signature = sign_envelope(self.secret, self.timestamp, self.nonce, body)
+        signature = sign_envelope(self.secret, "device-01", self.timestamp, self.nonce, body)
         try:
             inserted = authenticate_and_ingest(
                 device_id="device-01",
@@ -169,7 +169,7 @@ except AuthenticationError:
     def test_rejects_duplicate_json_keys_after_authentication(self):
         store = SecurityEventStore(":memory:")
         body = b'{"events":[],"events":[]}'
-        signature = sign_envelope(self.secret, self.timestamp, self.nonce, body)
+        signature = sign_envelope(self.secret, "device-01", self.timestamp, self.nonce, body)
         try:
             with self.assertRaises(IngestionEnvelopeError):
                 authenticate_and_ingest(
