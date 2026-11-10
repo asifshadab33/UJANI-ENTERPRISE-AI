@@ -24,7 +24,7 @@ These are policy/contract primitives. They do not yet provide connector discover
 | Malcolm | Optional higher-capability network-analysis deployment using its own specialist stack | Read-only health adapter prototype using documented GET ping/ready/version endpoints | Event/document search adapter, deployment automation, indexing or PCAP pipeline |
 | Customer firewall (including OPNsense or other supported products) | Existing network policy enforcement point | OPNsense fixed-endpoint read-only posture probe prototype | Authenticated production host integration, real device/version validation, broader inventory; all mutation operations remain excluded |
 | CISA KEV / NVD | External vulnerability intelligence | Fetch and cache public advisories with source, version and retrieval time | Feed scheduler, normalisation and asset matching |
-| MISP / OpenCTI | Optional threat-intelligence exchange and knowledge systems | Read-only indicator/context lookup after customer selection | Live connectors, sync, write-back or feed publication |
+| MISP / OpenCTI | Optional threat-intelligence exchange and knowledge systems | MISP read-only exact indicator lookup prototype using `attributes/restSearch` | Authenticated production host integration, tenant-derived scope, real MISP lab validation; OpenCTI remains unimplemented |
 
 No universal virtual-patching guarantee is made. A network control can only inspect or block traffic that actually traverses the enforcement point and is covered by a validated rule. Passive monitoring observes; it does not block. Neither approach repairs unsupported firmware or protects management-plane attacks, local access, bypass traffic or vulnerabilities outside the inspected protocols.
 
