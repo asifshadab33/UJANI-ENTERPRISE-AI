@@ -1385,6 +1385,7 @@ mod tests {
 }
 
 pub mod inventory;
+pub mod operator_control_plane;
 pub use inventory::{
     summarize_inventory, validate_inventory_record, DeviceInventoryRecord, DevicePowerState,
     InventoryError, InventorySummary, InventoryTrust,
