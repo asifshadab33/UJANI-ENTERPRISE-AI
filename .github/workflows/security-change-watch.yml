@@ -22,7 +22,7 @@ jobs:
           set -euo pipefail
 
           files="$(gh api --paginate "repos/${GH_REPO}/pulls/${PR_NUMBER}/files" --jq '.[].filename')"
-          pattern='(^\.github/workflows/|(^|/)CODEOWNERS$|(^|/)(Cargo\.toml|Cargo\.lock|package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock)$|(^|/)capabilities/|(^|/)(tauri\.conf\.json|SECURITY\.md|THREAT-MODEL\.md|RELEASE-GATES\.md)$|(^|/)(updater|signing|certificates?)/|(^|/)(security|auth|crypto|policy|consent|safe_fs|cloud_gateway|device_identity|task_engine|native_consent|ollama)\.rs$|(^|/)schemas/|(^|/)docs/CORE-PROTECTION-AND-RELEASE-INTEGRITY\\.md$)'
+          pattern='(^\.github/workflows/|(^|/)CODEOWNERS$|(^|/)(Cargo\.toml|Cargo\.lock|package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock)$|(^|/)capabilities/|(^|/)(tauri\.conf\.json|SECURITY\.md|THREAT-MODEL\.md|RELEASE-GATES\.md)$|(^|/)(updater|signing|certificates?)/|(^|/)(security|auth|crypto|policy|consent|safe_fs|cloud_gateway|device_identity|task_engine|native_consent|ollama)\.rs$|(^|/)schemas/|(^|/)docs/)'
 
           matched="$(printf '%s\n' "$files" | grep -E "$pattern" || true)"
           {
