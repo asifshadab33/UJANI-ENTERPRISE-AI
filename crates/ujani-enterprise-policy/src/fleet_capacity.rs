@@ -21,15 +21,15 @@ pub struct DeviceCapacity {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FleetCapacitySummary {
-    /// Number of unique device IDs supplied by the trusted caller, regardless of eligibility.
-    pub registered_device_count: usize,
+    /// Number of unique candidate device IDs supplied by the trusted caller, regardless of eligibility.
+    pub candidate_device_count: usize,
     /// Devices accepted by the existing workload-specific placement policy.
     pub eligible_device_count: usize,
     /// Rejection records returned by the planner (includes duplicate candidate IDs).
     pub rejected_candidate_count: usize,
-    /// Sum across eligible devices; useful only for multiple independent concurrent tasks.
+    /// Sum of caller-reported remaining capacity across eligible devices; valid for parallel independent work only when inputs already deduct OS reserves and active leases.
     pub aggregate_eligible_cpu_millis: u64,
-    /// Sum across eligible devices; this is not a single shared memory pool.
+    /// Sum of caller-reported remaining memory across eligible devices; not a shared memory pool and must already deduct OS reserves and active leases.
     pub aggregate_eligible_memory_mb: u64,
     /// Capacity of the planner's selected device for this exact manifest.
     pub selected_device_capacity: Option<DeviceCapacity>,
@@ -46,7 +46,7 @@ pub enum FleetCapacityError {
 
 /// Summarise capacity using the same policy checks as workload placement.
 ///
-/// The caller must supply fresh, authenticated candidates and verified approvals.
+/// The caller must supply fresh, authenticated candidates whose remaining capacities already deduct OS reserves and active durable leases, plus verified approvals. This summary does not reconcile the ledger.
 /// The aggregate totals describe separate eligible machines and must not be used
 /// to claim that one model can fit across several machines. A single workload's
 /// usable capacity is represented only by selected_device_capacity.
@@ -97,7 +97,7 @@ pub fn summarize_fleet_capacity(
     });
 
     Ok(FleetCapacitySummary {
-        registered_device_count: unique_devices.len(),
+        candidate_device_count: unique_devices.len(),
         eligible_device_count: plan.eligible_device_ids.len(),
         rejected_candidate_count: plan.rejected.len(),
         aggregate_eligible_cpu_millis: aggregate_cpu,
@@ -176,7 +176,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(summary.registered_device_count, 3);
+        assert_eq!(summary.candidate_device_count, 3);
         assert_eq!(summary.eligible_device_count, 2);
         assert_eq!(summary.rejected_candidate_count, 1);
         assert_eq!(summary.aggregate_eligible_cpu_millis, 3_000);
@@ -228,7 +228,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(summary.registered_device_count, 1);
+        assert_eq!(summary.candidate_device_count, 1);
         assert_eq!(summary.eligible_device_count, 1);
         assert_eq!(summary.rejected_candidate_count, 1);
         assert_eq!(summary.aggregate_eligible_memory_mb, 4_096);
@@ -238,7 +238,7 @@ mod tests {
     fn empty_fleet_has_zero_capacity_and_no_selected_worker() {
         let summary =
             summarize_fleet_capacity(&manifest(), &[], &policies(), &[], 10_000).unwrap();
-        assert_eq!(summary.registered_device_count, 0);
+        assert_eq!(summary.candidate_device_count, 0);
         assert_eq!(summary.eligible_device_count, 0);
         assert_eq!(summary.aggregate_eligible_cpu_millis, 0);
         assert_eq!(summary.aggregate_eligible_memory_mb, 0);
