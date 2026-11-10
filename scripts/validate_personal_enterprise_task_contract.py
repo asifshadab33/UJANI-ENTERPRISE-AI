@@ -138,6 +138,10 @@ def _validate_instance_fixtures(schema: dict[str, Any]) -> None:
     pending_admin["state"] = "running"
     invalid.append(("running before administrator approval", pending_admin))
 
+    missing_terminal_reason = copy.deepcopy(samples["task_status"])
+    missing_terminal_reason["state"] = "failed"
+    invalid.append(("terminal failure without reason code", missing_terminal_reason))
+
     unsafe_timestamp = copy.deepcopy(samples["task_envelope"])
     unsafe_timestamp["issued_at_unix_ms"] = SAFE_INTEGER_MAXIMUM + 1
     invalid.append(("unsafe I-JSON integer", unsafe_timestamp))
@@ -211,6 +215,9 @@ def main() -> None:
     states = status["properties"]["state"]["enum"]
     assert {"awaiting_approval", "queued", "reserved", "running", "completed", "failed", "cancelled", "timed_out", "rejected", "expired"} <= set(states)
     assert status["properties"]["sequence"]["minimum"] == 1
+    assert status["properties"]["consent_state"]["required"] == ["user", "organisation_admin", "worker_device_owner"]
+    assert len(status["allOf"]) == 2
+    assert status["allOf"][1]["then"]["required"] == ["reason_code"]
     consent_state = status["properties"]["consent_state"]["properties"]
     assert "revoked" in consent_state["user"]["enum"]
     assert "revoked" in consent_state["organisation_admin"]["enum"]
