@@ -50,7 +50,7 @@ pub enum RuntimeNetworkScope {
     Unknown,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelCapability {
     Chat,
