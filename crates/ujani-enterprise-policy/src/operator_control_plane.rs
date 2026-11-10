@@ -247,6 +247,8 @@ pub trait OperatorOverviewRepository: Send + Sync {
     fn load_tenant_overview(&self, tenant_id: &str, now_unix_ms: u64) -> Result<OperatorOverview, OperatorRepositoryError>;
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OperatorAuditError { Unavailable }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OperatorAuditOutcome { ReadSucceeded, RepositoryDenied, InvalidOverview }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OperatorAuditEvent {
@@ -259,7 +261,7 @@ pub struct OperatorAuditEvent {
 pub trait OperatorAuditSink: Send + Sync {
     /// Must append durably before returning success. Implementations should
     /// hash-chain or otherwise protect audit records from modification.
-    fn append(&self, event: &OperatorAuditEvent) -> Result<(), ()>;
+    fn append(&self, event: &OperatorAuditEvent) -> Result<(), OperatorAuditError>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -390,7 +392,7 @@ mod tests {
     struct TestAudit { events: Mutex<Vec<OperatorAuditEvent>>, fail: bool }
     impl OperatorAuditSink for TestAudit {
         fn append(&self, event: &OperatorAuditEvent) -> Result<(), ()> {
-            if self.fail { return Err(()); }
+            if self.fail { return Err(OperatorAuditError::Unavailable); }
             self.events.lock().unwrap().push(event.clone()); Ok(())
         }
     }
