@@ -525,12 +525,23 @@ impl Ledger {
         if !constant_time_eq(expected, &lease_token_hash(lease_token)) {
             return false;
         }
-        if let Some(job) = self.jobs.get_mut(workload_id) {
-            job.3 = now_unix_ms.saturating_add(LEASE_MS);
-            true
-        } else {
-            false
-        }
+        let Some(device_id) = self.jobs.get(workload_id).map(|job| job.0.clone()) else {
+            return false;
+        };
+        let current_revision = self
+            .reservation_revisions
+            .get(&device_id)
+            .copied()
+            .unwrap_or(0);
+        let Some(next_revision) = current_revision.checked_add(1) else {
+            return false;
+        };
+        let Some(job) = self.jobs.get_mut(workload_id) else {
+            return false;
+        };
+        job.3 = now_unix_ms.saturating_add(LEASE_MS);
+        self.reservation_revisions.insert(device_id, next_revision);
+        true
     }
 
     /// Release only when the caller proves possession of the lease capability.
