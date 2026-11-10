@@ -99,6 +99,30 @@ def _sample_messages() -> dict[str, dict[str, Any]]:
     return {"task_envelope": envelope, "task_status": status, "execution_receipt": receipt}
 
 
+def _semantic_errors(instance: dict[str, Any]) -> list[str]:
+    """Check cross-field time and expiry rules that JSON Schema cannot compare."""
+    message_type = instance.get("message_type")
+    errors: list[str] = []
+    if message_type == "task_envelope":
+        issued = instance["issued_at_unix_ms"]
+        expires = instance["expires_at_unix_ms"]
+        consent = instance["consent"]["user"]
+        granted = consent["granted_at_unix_ms"]
+        consent_expires = consent["expires_at_unix_ms"]
+        if expires <= issued:
+            errors.append("task expiry must follow issue time")
+        if expires - issued > 300_000:
+            errors.append("task lifetime must not exceed 300,000 ms")
+        if granted > issued:
+            errors.append("user consent must be granted no later than task issue")
+        if consent_expires <= granted or consent_expires < expires:
+            errors.append("user consent must cover the task expiry")
+    elif message_type == "execution_receipt":
+        if instance["completed_at_unix_ms"] < instance["started_at_unix_ms"]:
+            errors.append("receipt completion must not precede start")
+    return errors
+
+
 def _validate_instance_fixtures(schema: dict[str, Any]) -> None:
     """Validate accepted and rejected message fixtures when jsonschema is installed."""
     try:
@@ -133,6 +157,8 @@ def _validate_instance_fixtures(schema: dict[str, Any]) -> None:
     for name, instance in valid_fixtures:
         errors = list(validator.iter_errors(instance))
         assert not errors, f"valid {name} fixture rejected: {errors[0].message}"
+        semantic_errors = _semantic_errors(instance)
+        assert not semantic_errors, f"valid {name} fixture violates time semantics: {semantic_errors}"
 
     invalid: list[tuple[str, dict[str, Any]]] = []
     unknown_field = copy.deepcopy(samples["task_envelope"])
@@ -191,9 +217,42 @@ def _validate_instance_fixtures(schema: dict[str, Any]) -> None:
         errors = list(validator.iter_errors(instance))
         assert errors, f"invalid fixture unexpectedly accepted: {name}"
 
+    semantic_invalid = []
+    expiry_order = copy.deepcopy(samples["task_envelope"])
+    expiry_order["expires_at_unix_ms"] = expiry_order["issued_at_unix_ms"]
+    semantic_invalid.append(("expiry not after issue", expiry_order))
+
+    excessive_lifetime = copy.deepcopy(samples["task_envelope"])
+    excessive_lifetime["expires_at_unix_ms"] += 1
+    semantic_invalid.append(("task lifetime above 300 seconds", excessive_lifetime))
+
+    consent_expires_early = copy.deepcopy(samples["task_envelope"])
+    consent_expires_early["consent"]["user"]["expires_at_unix_ms"] -= 1
+    semantic_invalid.append(("consent expires before task", consent_expires_early))
+
+    future_consent = copy.deepcopy(samples["task_envelope"])
+    future_consent["consent"]["user"]["granted_at_unix_ms"] = (
+        future_consent["issued_at_unix_ms"] + 1
+    )
+    semantic_invalid.append(("consent granted after task issue", future_consent))
+
+    reversed_receipt_times = copy.deepcopy(samples["execution_receipt"])
+    reversed_receipt_times["completed_at_unix_ms"] = (
+        reversed_receipt_times["started_at_unix_ms"] - 1
+    )
+    semantic_invalid.append(("receipt completes before start", reversed_receipt_times))
+
+    for name, instance in semantic_invalid:
+        assert not list(validator.iter_errors(instance)), (
+            f"cross-field fixture {name} should be structurally valid"
+        )
+        errors = _semantic_errors(instance)
+        assert errors, f"cross-field invalid fixture unexpectedly accepted: {name}"
+
     print(
-        "JSON Schema Draft 2020-12 meta-schema and "
-        f"{len(valid_fixtures)} valid / {len(invalid)} invalid contract fixtures passed."
+        "JSON Schema Draft 2020-12 meta-schema, "
+        f"{len(valid_fixtures)} valid / {len(invalid)} invalid structural fixtures, "
+        f"and {len(semantic_invalid)} invalid cross-field time fixtures passed."
     )
 
 
