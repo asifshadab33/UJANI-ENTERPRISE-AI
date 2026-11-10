@@ -336,7 +336,9 @@ impl OperatorOverview {
             self.fleet.online_fresh_devices, self.fleet.schedulable_devices
         );
         for (index, device) in self.devices.iter().enumerate() {
-            if index > 0 { out.push(','); }
+            if index > 0 {
+                out.push(',');
+            }
             let _ = write!(
                 &mut out,
                 "{{\"device_id\":{},\"display_name\":{},\"platform\":{},\"trust_state\":{},\"availability\":{},\"remaining_cpu_millis\":{},\"remaining_memory_mb\":{},\"last_seen_unix_ms\":{}}}",
@@ -349,18 +351,24 @@ impl OperatorOverview {
         }
         out.push_str("],\"workloads\":[");
         for (index, workload) in self.workloads.iter().enumerate() {
-            if index > 0 { out.push(','); }
+            if index > 0 {
+                out.push(',');
+            }
             let _ = write!(
                 &mut out,
                 "{{\"workload_id\":{},\"title\":{},\"state\":{},\"class\":{},\"reason\":{}}}",
-                json_string(&workload.workload_id), json_string(&workload.title),
-                json_string(&workload.state), json_string(&workload.class),
+                json_string(&workload.workload_id),
+                json_string(&workload.title),
+                json_string(&workload.state),
+                json_string(&workload.class),
                 json_optional_string(workload.reason.as_deref())
             );
         }
         out.push_str("],\"approvals\":[");
         for (index, approval) in self.approvals.iter().enumerate() {
-            if index > 0 { out.push(','); }
+            if index > 0 {
+                out.push(',');
+            }
             let _ = write!(
                 &mut out,
                 "{{\"approval_id\":{},\"title\":{},\"state\":{},\"requester\":{},\"scope\":{},\"expires_at\":{}}}",
@@ -398,7 +406,9 @@ fn json_optional_string(value: Option<&str>) -> String {
     value.map(json_string).unwrap_or_else(|| "null".into())
 }
 fn json_optional_number<T: std::fmt::Display>(value: Option<T>) -> String {
-    value.map(|number| number.to_string()).unwrap_or_else(|| "null".into())
+    value
+        .map(|number| number.to_string())
+        .unwrap_or_else(|| "null".into())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -708,14 +718,20 @@ mod tests {
     fn overview_json_matches_console_contract_and_escapes_untrusted_text() {
         let mut overview = empty_overview("tenant-a");
         overview.devices.push(OperatorDeviceView {
-            device_id: "device-1".into(), display_name: "Lab \"A\"".into(),
-            platform: "linux".into(), trust_state: "enrolled".into(),
-            availability: "schedulable".into(), remaining_cpu_millis: Some(1500),
-            remaining_memory_mb: Some(4096), last_seen_unix_ms: 10_100,
+            device_id: "device-1".into(),
+            display_name: "Lab \"A\"".into(),
+            platform: "linux".into(),
+            trust_state: "enrolled".into(),
+            availability: "schedulable".into(),
+            remaining_cpu_millis: Some(1500),
+            remaining_memory_mb: Some(4096),
+            last_seen_unix_ms: 10_100,
         });
         overview.fleet = OperatorFleetCounts {
-            registered_devices: 1, trusted_consented_devices: 1,
-            online_fresh_devices: 1, schedulable_devices: 1,
+            registered_devices: 1,
+            trusted_consented_devices: 1,
+            online_fresh_devices: 1,
+            schedulable_devices: 1,
         };
         let json = overview.to_json();
         assert!(json.contains("\"schema_version\":1"));
