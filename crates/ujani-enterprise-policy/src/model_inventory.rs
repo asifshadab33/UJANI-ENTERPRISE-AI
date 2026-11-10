@@ -546,9 +546,6 @@ pub fn match_model_to_task(
                     reasons.push(ModelFitReason::MemoryEstimateWithinAvailable);
                     unknown = true;
                 }
-            } else {
-                reasons.push(ModelFitReason::HardwareMemoryUnknown);
-                unknown = true;
             }
         } else {
             reasons.push(ModelFitReason::MemoryEstimateUnknown);
