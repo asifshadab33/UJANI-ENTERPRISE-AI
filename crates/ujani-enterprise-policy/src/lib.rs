@@ -11,6 +11,10 @@ pub mod connector_contract;
 pub mod cpu_capacity;
 pub mod device_trust;
 pub mod energy;
+pub mod fleet_capacity;
+pub use fleet_capacity::{
+    summarize_fleet_capacity, DeviceCapacity, FleetCapacityError, FleetCapacitySummary,
+};
 pub mod local_first_placement;
 use ed25519_dalek::{Signature, VerifyingKey};
 pub use local_first_placement::{
@@ -318,6 +322,10 @@ pub enum RejectReason {
     InvalidLeaseToken,
     SchedulingEvidenceMismatch,
     SchedulingEvidenceExpired,
+    WorkerIsolationUnavailable,
+    ReservationRevisionExhausted,
+    TelemetryWatermarkInvalid,
+    TelemetrySuperseded,
 }
 impl RejectReason {
     pub fn as_str(&self) -> &'static str {
@@ -352,6 +360,10 @@ impl RejectReason {
                 "verified scheduling evidence does not match this device and workload"
             }
             Self::SchedulingEvidenceExpired => "verified scheduling evidence has expired",
+            Self::WorkerIsolationUnavailable => "required OS workload isolation is unavailable",
+            Self::ReservationRevisionExhausted => "device reservation revision is exhausted",
+            Self::TelemetryWatermarkInvalid => "signed telemetry reservation watermark is invalid",
+            Self::TelemetrySuperseded => "signed telemetry sample has been superseded",
         }
     }
 }
@@ -359,6 +371,12 @@ impl RejectReason {
 pub enum Admission {
     Accept,
     Reject(RejectReason),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TelemetryChallengeError {
+    Replayed,
+    InvalidReservationWatermark,
 }
 
 /// In-memory reservation semantics for tests and single-process prototypes only.
@@ -370,6 +388,14 @@ pub struct Ledger {
     consumed_approvals: std::collections::HashSet<String>,
     /// Short-lived, single-use dispatch challenges persisted by DurableLedger.
     consumed_challenges: std::collections::HashMap<[u8; 16], u64>,
+    /// Highest accepted signed worker telemetry generation per enrolled device.
+    telemetry_generations: std::collections::HashMap<String, u64>,
+    /// Latest reservation revision for each device, including release and expiry.
+    reservation_revisions: std::collections::HashMap<String, u64>,
+    /// Reservation revision assigned when each active lease was committed.
+    job_reservation_revisions: std::collections::HashMap<String, u64>,
+    /// Highest accepted reservation revision reflected by each device telemetry sample.
+    telemetry_reservation_watermarks: std::collections::HashMap<String, u64>,
     /// Domain-separated SHA-256 digests of caller-generated 256-bit lease capabilities.
     lease_token_hashes: std::collections::HashMap<String, [u8; 32]>,
 }
@@ -404,6 +430,13 @@ impl Ledger {
         if next_memory > device.remaining_memory_mb {
             return Err(RejectReason::MemoryBudget);
         }
+        let reservation_revision = self
+            .reservation_revisions
+            .get(&device.device_id)
+            .copied()
+            .unwrap_or(0)
+            .checked_add(1)
+            .ok_or(RejectReason::ReservationRevisionExhausted)?;
         self.used
             .insert(device.device_id.clone(), (next_cpu, next_memory));
         self.jobs.insert(
@@ -416,6 +449,10 @@ impl Ledger {
                 approval_id.map(str::to_owned),
             ),
         );
+        self.reservation_revisions
+            .insert(device.device_id.clone(), reservation_revision);
+        self.job_reservation_revisions
+            .insert(workload.workload_id.clone(), reservation_revision);
         if let Some(id) = approval_id {
             self.consumed_approvals.insert(id.to_owned());
         }
@@ -426,6 +463,14 @@ impl Ledger {
         if let Some((device_id, cpu, memory, _expires, _approval_id)) =
             self.jobs.remove(workload_id)
         {
+            self.job_reservation_revisions.remove(workload_id);
+            let revision = self
+                .reservation_revisions
+                .entry(device_id.clone())
+                .or_insert(0);
+            if let Some(next) = revision.checked_add(1) {
+                *revision = next;
+            }
             if let Some(used) = self.used.get_mut(&device_id) {
                 used.0 = used.0.saturating_sub(cpu);
                 used.1 = used.1.saturating_sub(memory);
@@ -488,12 +533,23 @@ impl Ledger {
         if !constant_time_eq(expected, &lease_token_hash(lease_token)) {
             return false;
         }
-        if let Some(job) = self.jobs.get_mut(workload_id) {
-            job.3 = now_unix_ms.saturating_add(LEASE_MS);
-            true
-        } else {
-            false
-        }
+        let Some(device_id) = self.jobs.get(workload_id).map(|job| job.0.clone()) else {
+            return false;
+        };
+        let current_revision = self
+            .reservation_revisions
+            .get(&device_id)
+            .copied()
+            .unwrap_or(0);
+        let Some(next_revision) = current_revision.checked_add(1) else {
+            return false;
+        };
+        let Some(job) = self.jobs.get_mut(workload_id) else {
+            return false;
+        };
+        job.3 = now_unix_ms.saturating_add(LEASE_MS);
+        self.reservation_revisions.insert(device_id, next_revision);
+        true
     }
 
     /// Release only when the caller proves possession of the lease capability.
@@ -521,6 +577,117 @@ impl Ledger {
         }
         self.consumed_challenges.insert(nonce, expires_unix_ms);
         true
+    }
+
+    /// Atomically consume a challenge and advance the device's signed telemetry
+    /// generation and reservation watermark.
+    pub(crate) fn consume_telemetry_challenge(
+        &mut self,
+        device_id: &str,
+        generation: u64,
+        reservation_revision: u64,
+        nonce: [u8; 16],
+        expires_unix_ms: u64,
+        now_unix_ms: u64,
+    ) -> Result<(), TelemetryChallengeError> {
+        self.expire(now_unix_ms);
+        if generation == 0
+            || self
+                .telemetry_generations
+                .get(device_id)
+                .is_some_and(|previous| generation <= *previous)
+        {
+            return Err(TelemetryChallengeError::Replayed);
+        }
+        let current_revision = self
+            .reservation_revisions
+            .get(device_id)
+            .copied()
+            .unwrap_or(0);
+        if reservation_revision > current_revision
+            || self
+                .telemetry_reservation_watermarks
+                .get(device_id)
+                .is_some_and(|previous| reservation_revision < *previous)
+        {
+            return Err(TelemetryChallengeError::InvalidReservationWatermark);
+        }
+        if !self.consume_challenge_nonce(nonce, expires_unix_ms, now_unix_ms) {
+            return Err(TelemetryChallengeError::Replayed);
+        }
+        self.telemetry_generations
+            .insert(device_id.to_owned(), generation);
+        self.telemetry_reservation_watermarks
+            .insert(device_id.to_owned(), reservation_revision);
+        Ok(())
+    }
+
+    /// Reserve against a signed capacity sample without double-counting leases
+    /// already reflected in that sample. Reservations committed after the
+    /// sample watermark remain charged against its reported free headroom.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn admit_and_reserve_with_lease_and_watermark(
+        &mut self,
+        device: &Device,
+        workload: &Workload,
+        context: &SchedulingContext,
+        policies: &[ClassPolicy],
+        approvals: &[VerifiedAdminApproval],
+        now_unix_ms: u64,
+        lease_token: &[u8; 32],
+        sample_generation: u64,
+        reservation_revision: u64,
+        signed_cpu_headroom_millis: u32,
+        signed_memory_headroom_mb: u64,
+    ) -> Admission {
+        self.expire(now_unix_ms);
+        if self.telemetry_generations.get(&device.device_id) != Some(&sample_generation)
+            || self.telemetry_reservation_watermarks.get(&device.device_id)
+                != Some(&reservation_revision)
+        {
+            return Admission::Reject(RejectReason::TelemetrySuperseded);
+        }
+        let current_revision = self
+            .reservation_revisions
+            .get(&device.device_id)
+            .copied()
+            .unwrap_or(0);
+        if reservation_revision > current_revision {
+            return Admission::Reject(RejectReason::TelemetryWatermarkInvalid);
+        }
+
+        let mut accounted_cpu = 0u32;
+        let mut accounted_memory = 0u64;
+        for (workload_id, job) in &self.jobs {
+            if job.0 == device.device_id
+                && self
+                    .job_reservation_revisions
+                    .get(workload_id)
+                    .copied()
+                    .unwrap_or(0)
+                    <= reservation_revision
+            {
+                accounted_cpu = accounted_cpu.saturating_add(job.1);
+                accounted_memory = accounted_memory.saturating_add(job.2);
+            }
+        }
+
+        let mut reservation_device = device.clone();
+        reservation_device.remaining_cpu_millis = device
+            .remaining_cpu_millis
+            .min(signed_cpu_headroom_millis.saturating_add(accounted_cpu));
+        reservation_device.remaining_memory_mb = device
+            .remaining_memory_mb
+            .min(signed_memory_headroom_mb.saturating_add(accounted_memory));
+        self.admit_and_reserve_with_lease(
+            &reservation_device,
+            workload,
+            context,
+            policies,
+            approvals,
+            now_unix_ms,
+            lease_token,
+        )
     }
 
     pub fn expire(&mut self, now_unix_ms: u64) {
@@ -1385,6 +1552,7 @@ mod tests {
 }
 
 pub mod inventory;
+pub mod operator_control_plane;
 pub use inventory::{
     summarize_inventory, validate_inventory_record, DeviceInventoryRecord, DevicePowerState,
     InventoryError, InventorySummary, InventoryTrust,

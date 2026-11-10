@@ -296,6 +296,19 @@ impl DurableDeviceRegistry {
         })
     }
 
+    /// Returns a tenant-scoped, non-secret projection of enrolled device identities.
+    /// Enrollment must not be interpreted as live availability or owner consent.
+    pub fn tenant_device_summaries(
+        &self,
+        tenant_id: &str,
+    ) -> Result<Vec<DeviceTrustSummary>, DurableDeviceTrustError> {
+        self.transact(|registry| {
+            registry
+                .tenant_device_summaries(tenant_id)
+                .map_err(Into::into)
+        })
+    }
+
     /// Returns the number of enrolled device records in the durable registry.
     pub fn device_count(&self) -> Result<usize, DurableDeviceTrustError> {
         self.transact(|registry| Ok(registry.devices.len()))

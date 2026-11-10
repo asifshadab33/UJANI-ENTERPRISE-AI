@@ -38,6 +38,10 @@ jobs:
         run: python scripts/validate_security_event_schema.py
       - name: Validate model/runtime inventory v1 schema
         run: python scripts/validate_model_runtime_inventory_schema.py
+      - name: Validate read-only operator console
+        run: python scripts/validate_operator_console.py
+      - name: Check operator console JavaScript syntax
+        run: node --check apps/operator-console/app.js
       - name: Test local read-only network log adapters
         run: python -m unittest discover -s tests -v
       - name: Check formatting

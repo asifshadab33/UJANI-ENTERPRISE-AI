@@ -6,7 +6,8 @@
 //! persisted; only its domain-separated digest is stored.
 use crate::device_trust::durable::{MonotonicSnapshotAnchor, SnapshotAnchorRecord};
 use crate::{
-    Admission, ClassPolicy, Device, Ledger, SchedulingContext, VerifiedAdminApproval, Workload,
+    Admission, ClassPolicy, Device, Ledger, SchedulingContext, TelemetryChallengeError,
+    VerifiedAdminApproval, Workload,
 };
 use hmac::KeyInit;
 use sha2::{Digest, Sha256};
@@ -17,7 +18,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use zeroize::Zeroize;
 
-const LEDGER_HEADER: &str = "UJANI-ENTERPRISE-LEDGER-V2";
+const LEDGER_HEADER: &str = "UJANI-ENTERPRISE-LEDGER-V4";
+const LEGACY_LEDGER_HEADER_V3: &str = "UJANI-ENTERPRISE-LEDGER-V3";
+const LEGACY_LEDGER_HEADER_V2: &str = "UJANI-ENTERPRISE-LEDGER-V2";
 const LEDGER_MAC_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-LEDGER-HMAC-SHA256-V2\0";
 const MAX_LEDGER_BYTES: u64 = 16 * 1024 * 1024;
 
@@ -268,10 +271,9 @@ impl DurableLedger {
         Ok(store)
     }
 
-    /// Reserve capacity with an opaque capability. The caller must generate
-    /// the 32-byte token using an OS CSPRNG and keep it outside the workload.
-    /// This raw-context method is crate-private; public callers should use the
-    /// signed-evidence wrapper in scheduling_evidence.
+    /// Test-only raw-context reservation helper. Production callers must use
+    /// the signed-evidence wrapper in scheduling_evidence.
+    #[cfg(test)]
     #[allow(clippy::too_many_arguments)] // Keep all admission and capability inputs explicit.
     pub(crate) fn admit_and_reserve_with_lease(
         &self,
@@ -296,14 +298,80 @@ impl DurableLedger {
         })
     }
 
-    pub(crate) fn consume_challenge_nonce(
+    /// Reserve against the latest consumed signed sample while reconciling
+    /// reservations committed after that sample's reservation watermark.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn admit_and_reserve_with_lease_and_watermark(
         &self,
+        device: &Device,
+        workload: &Workload,
+        context: &SchedulingContext,
+        policies: &[ClassPolicy],
+        approvals: &[VerifiedAdminApproval],
+        now_unix_ms: u64,
+        lease_token: &[u8; 32],
+        sample_generation: u64,
+        reservation_revision: u64,
+        signed_cpu_headroom_millis: u32,
+        signed_memory_headroom_mb: u64,
+    ) -> Result<Admission, DurableLedgerError> {
+        self.transact(|ledger| {
+            Ok(ledger.admit_and_reserve_with_lease_and_watermark(
+                device,
+                workload,
+                context,
+                policies,
+                approvals,
+                now_unix_ms,
+                lease_token,
+                sample_generation,
+                reservation_revision,
+                signed_cpu_headroom_millis,
+                signed_memory_headroom_mb,
+            ))
+        })
+    }
+
+    /// Return the current device reservation revision after expiring leases.
+    /// The challenge issuer must include this value in the signed worker sample.
+    pub fn reservation_revision(
+        &self,
+        device_id: &str,
+        now_unix_ms: u64,
+    ) -> Result<u64, DurableLedgerError> {
+        if !valid_stored_identifier(device_id, 128) {
+            return Err(DurableLedgerError::InvalidRecord);
+        }
+        self.transact(|ledger| {
+            ledger.expire(now_unix_ms);
+            Ok(ledger
+                .reservation_revisions
+                .get(device_id)
+                .copied()
+                .unwrap_or(0))
+        })
+    }
+
+    /// Consume a dispatch challenge and advance the enrolled worker's signed
+    /// telemetry generation in one durable transaction.
+    pub(crate) fn consume_telemetry_challenge(
+        &self,
+        device_id: &str,
+        generation: u64,
+        reservation_revision: u64,
         nonce: [u8; 16],
         expires_unix_ms: u64,
         now_unix_ms: u64,
-    ) -> Result<bool, DurableLedgerError> {
+    ) -> Result<Result<(), TelemetryChallengeError>, DurableLedgerError> {
         self.transact(|ledger| {
-            Ok(ledger.consume_challenge_nonce(nonce, expires_unix_ms, now_unix_ms))
+            Ok(ledger.consume_telemetry_challenge(
+                device_id,
+                generation,
+                reservation_revision,
+                nonce,
+                expires_unix_ms,
+                now_unix_ms,
+            ))
         })
     }
 
@@ -740,8 +808,13 @@ fn serialize_snapshot(ledger: &Ledger, key_id: &str, key: &[u8; 32]) -> Vec<u8> 
             .get(workload_id)
             .map(|value| hex_encode(value))
             .unwrap_or_else(|| "-".into());
+        let reservation_revision = ledger
+            .job_reservation_revisions
+            .get(workload_id)
+            .copied()
+            .unwrap_or(0);
         body.push_str(&format!(
-            "J\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            "J\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
             hex_encode(workload_id.as_bytes()),
             hex_encode(device_id.as_bytes()),
             cpu,
@@ -749,6 +822,7 @@ fn serialize_snapshot(ledger: &Ledger, key_id: &str, key: &[u8; 32]) -> Vec<u8> 
             expires,
             approval,
             token,
+            reservation_revision,
         ));
     }
     let mut approvals = ledger.consumed_approvals.iter().collect::<Vec<_>>();
@@ -760,6 +834,36 @@ fn serialize_snapshot(ledger: &Ledger, key_id: &str, key: &[u8; 32]) -> Vec<u8> 
     challenges.sort_by_key(|(nonce, _)| **nonce);
     for (nonce, expires) in challenges {
         body.push_str(&format!("C\t{}\t{}\n", hex_encode(nonce), expires));
+    }
+    let mut telemetry_generations = ledger.telemetry_generations.iter().collect::<Vec<_>>();
+    telemetry_generations.sort_by_key(|(device_id, _)| *device_id);
+    for (device_id, generation) in telemetry_generations {
+        body.push_str(&format!(
+            "G\t{}\t{}\n",
+            hex_encode(device_id.as_bytes()),
+            generation,
+        ));
+    }
+    let mut reservation_revisions = ledger.reservation_revisions.iter().collect::<Vec<_>>();
+    reservation_revisions.sort_by_key(|(device_id, _)| *device_id);
+    for (device_id, revision) in reservation_revisions {
+        body.push_str(&format!(
+            "R\t{}\t{}\n",
+            hex_encode(device_id.as_bytes()),
+            revision,
+        ));
+    }
+    let mut telemetry_watermarks = ledger
+        .telemetry_reservation_watermarks
+        .iter()
+        .collect::<Vec<_>>();
+    telemetry_watermarks.sort_by_key(|(device_id, _)| *device_id);
+    for (device_id, revision) in telemetry_watermarks {
+        body.push_str(&format!(
+            "W\t{}\t{}\n",
+            hex_encode(device_id.as_bytes()),
+            revision,
+        ));
     }
     let mac = ledger_mac(key, key_id, body.as_bytes());
     body.push_str(&format!("M\t{}\t{}\n", key_id, hex_encode(&mac)));
@@ -798,15 +902,19 @@ fn deserialize_snapshot(
     }
 
     let mut lines = body.lines();
-    if lines.next() != Some(LEDGER_HEADER) {
-        return Err(DurableLedgerError::CorruptState);
-    }
+    let snapshot_header = lines.next();
+    let (is_v4, is_v3) = match snapshot_header {
+        Some(LEDGER_HEADER) => (true, true),
+        Some(LEGACY_LEDGER_HEADER_V3) => (false, true),
+        Some(LEGACY_LEDGER_HEADER_V2) => (false, false),
+        _ => return Err(DurableLedgerError::CorruptState),
+    };
     let mut ledger = Ledger::default();
     let mut token_hashes = HashSet::new();
     for line in lines {
         let fields = line.split('\t').collect::<Vec<_>>();
         match fields.first().copied() {
-            Some("J") if fields.len() == 8 => {
+            Some("J") if (is_v4 && fields.len() == 9) || (!is_v4 && fields.len() == 8) => {
                 let workload_id = decode_hex_string(fields[1])?;
                 let device_id = decode_hex_string(fields[2])?;
                 let cpu = fields[3]
@@ -822,6 +930,13 @@ fn deserialize_snapshot(
                     None
                 } else {
                     Some(decode_hex_string(fields[6])?)
+                };
+                let reservation_revision = if is_v4 {
+                    fields[8]
+                        .parse::<u64>()
+                        .map_err(|_| DurableLedgerError::InvalidRecord)?
+                } else {
+                    0
                 };
                 if !valid_stored_identifier(&workload_id, 128)
                     || !valid_stored_identifier(&device_id, 128)
@@ -839,6 +954,9 @@ fn deserialize_snapshot(
                     workload_id.clone(),
                     (device_id.clone(), cpu, memory, expires, approval_id),
                 );
+                ledger
+                    .job_reservation_revisions
+                    .insert(workload_id.clone(), reservation_revision);
                 let used = ledger.used.entry(device_id).or_insert((0, 0));
                 used.0 = used
                     .0
@@ -878,7 +996,78 @@ fn deserialize_snapshot(
                     return Err(DurableLedgerError::InvalidRecord);
                 }
             }
+            Some("G") if is_v3 && fields.len() == 3 => {
+                let device_id = decode_hex_string(fields[1])?;
+                let generation = fields[2]
+                    .parse::<u64>()
+                    .map_err(|_| DurableLedgerError::InvalidRecord)?;
+                if !valid_stored_identifier(&device_id, 128)
+                    || generation == 0
+                    || ledger
+                        .telemetry_generations
+                        .insert(device_id, generation)
+                        .is_some()
+                {
+                    return Err(DurableLedgerError::InvalidRecord);
+                }
+            }
+            Some("R") if is_v4 && fields.len() == 3 => {
+                let device_id = decode_hex_string(fields[1])?;
+                let revision = fields[2]
+                    .parse::<u64>()
+                    .map_err(|_| DurableLedgerError::InvalidRecord)?;
+                if !valid_stored_identifier(&device_id, 128)
+                    || revision == 0
+                    || ledger
+                        .reservation_revisions
+                        .insert(device_id, revision)
+                        .is_some()
+                {
+                    return Err(DurableLedgerError::InvalidRecord);
+                }
+            }
+            Some("W") if is_v4 && fields.len() == 3 => {
+                let device_id = decode_hex_string(fields[1])?;
+                let revision = fields[2]
+                    .parse::<u64>()
+                    .map_err(|_| DurableLedgerError::InvalidRecord)?;
+                if !valid_stored_identifier(&device_id, 128)
+                    || ledger
+                        .telemetry_reservation_watermarks
+                        .insert(device_id, revision)
+                        .is_some()
+                {
+                    return Err(DurableLedgerError::InvalidRecord);
+                }
+            }
             _ => return Err(DurableLedgerError::InvalidRecord),
+        }
+    }
+    for (workload_id, reservation_revision) in &ledger.job_reservation_revisions {
+        let device_id = &ledger
+            .jobs
+            .get(workload_id)
+            .ok_or(DurableLedgerError::InvalidRecord)?
+            .0;
+        if *reservation_revision
+            > ledger
+                .reservation_revisions
+                .get(device_id)
+                .copied()
+                .unwrap_or(0)
+        {
+            return Err(DurableLedgerError::InvalidRecord);
+        }
+    }
+    for (device_id, watermark) in &ledger.telemetry_reservation_watermarks {
+        if *watermark
+            > ledger
+                .reservation_revisions
+                .get(device_id)
+                .copied()
+                .unwrap_or(0)
+        {
+            return Err(DurableLedgerError::InvalidRecord);
         }
     }
     Ok(ledger)
@@ -997,8 +1186,32 @@ mod tests {
     use super::*;
     use crate::{workload_from_manifest, DataClassification, WorkloadManifest};
     use sha2::Digest;
+    use std::hash::{BuildHasher, Hash, Hasher};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::{Mutex, OnceLock};
     use std::thread;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn fresh_test_token() -> [u8; 32] {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        let sequence = NEXT.fetch_add(1, Ordering::Relaxed);
+        let mut token = Vec::with_capacity(32);
+        for block in 0..4 {
+            let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+            sequence.hash(&mut hasher);
+            std::process::id().hash(&mut hasher);
+            block.hash(&mut hasher);
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+                .hash(&mut hasher);
+            token.extend_from_slice(&hasher.finish().to_le_bytes());
+        }
+        token
+            .try_into()
+            .expect("four 8-byte test hashes produce a 32-byte token")
+    }
 
     #[cfg(unix)]
     #[test]
@@ -1057,16 +1270,18 @@ mod tests {
         }]
     }
 
-    fn integrity_key(id: &str, byte: u8) -> LedgerIntegrityKey {
-        LedgerIntegrityKey::new(id, [byte; 32])
+    fn integrity_key(id: &str) -> LedgerIntegrityKey {
+        static KEYS: OnceLock<Mutex<HashMap<String, [u8; 32]>>> = OnceLock::new();
+        let mut keys = KEYS
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock()
+            .unwrap();
+        let key = *keys.entry(id.to_owned()).or_insert_with(fresh_test_token);
+        LedgerIntegrityKey::new(id, key)
     }
 
     fn open_ledger(path: &Path) -> Result<DurableLedger, DurableLedgerError> {
-        DurableLedger::open_with_integrity_keys(
-            path,
-            "test-v1",
-            vec![integrity_key("test-v1", 0xA5)],
-        )
+        DurableLedger::open_with_integrity_keys(path, "test-v1", vec![integrity_key("test-v1")])
     }
 
     #[derive(Default)]
@@ -1136,7 +1351,7 @@ mod tests {
             path,
             "registry-test-a",
             "test-v1",
-            vec![integrity_key("test-v1", 0xA5)],
+            vec![integrity_key("test-v1")],
             anchor,
         )
     }
@@ -1187,7 +1402,7 @@ mod tests {
         let result = DurableLedger::open_internal_with_ancestor_sync(
             &path,
             "test-v1",
-            vec![integrity_key("test-v1", 0xA5)],
+            vec![integrity_key("test-v1")],
             Some(("registry-test-a".into(), anchor.clone())),
             |_parent| {
                 observed.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -1274,7 +1489,7 @@ mod tests {
                     &policies(),
                     &[],
                     1_000,
-                    &[0x71u8; 32],
+                    &fresh_test_token(),
                 )
                 .unwrap(),
             Admission::Accept
@@ -1330,7 +1545,7 @@ mod tests {
         let result = DurableLedger::open_internal_with_ancestor_sync(
             &path,
             "test-v1",
-            vec![integrity_key("test-v1", 0xA5)],
+            vec![integrity_key("test-v1")],
             Some(("registry-test-a".into(), anchor.clone())),
             |_parent| {
                 Err(DurableLedgerError::Io(
@@ -1383,7 +1598,7 @@ mod tests {
             &policies(),
             &[],
             1_000,
-            &[0x74u8; 32],
+            &fresh_test_token(),
         );
         assert!(matches!(
             result,
@@ -1417,7 +1632,7 @@ mod tests {
                     &policies(),
                     &[],
                     1_000,
-                    &[0x73u8; 32],
+                    &fresh_test_token(),
                 )
                 .unwrap(),
             Admission::Accept
@@ -1471,7 +1686,7 @@ mod tests {
                     &policies(),
                     &[],
                     1_000,
-                    &[0x72u8; 32],
+                    &fresh_test_token(),
                 )
                 .unwrap_err(),
             DurableLedgerError::AnchorConflict
@@ -1491,7 +1706,7 @@ mod tests {
     #[test]
     fn reservation_and_capability_survive_process_restart() {
         let path = temp_path("restart");
-        let token = [0x51u8; 32];
+        let token = fresh_test_token();
         {
             let ledger = open_ledger(&path).unwrap();
             assert_eq!(
@@ -1513,7 +1728,9 @@ mod tests {
         {
             let ledger = open_ledger(&path).unwrap();
             assert!(ledger.renew_lease("job-restart", &token, 2_000).unwrap());
-            assert!(!ledger.release_lease("job-restart", &[0x33u8; 32]).unwrap());
+            assert!(!ledger
+                .release_lease("job-restart", &fresh_test_token())
+                .unwrap());
             assert!(ledger.release_lease("job-restart", &token).unwrap());
             assert_eq!(ledger.snapshot().unwrap().active_jobs, 0);
         }
@@ -1523,7 +1740,7 @@ mod tests {
     #[test]
     fn corrupt_current_snapshot_recovers_last_committed_backup() {
         let path = temp_path("backup");
-        let token = [0x52u8; 32];
+        let token = fresh_test_token();
         {
             let ledger = open_ledger(&path).unwrap();
             assert_eq!(
@@ -1561,12 +1778,11 @@ mod tests {
                 .consumed_approvals
                 .insert(format!("{prefix}-{index:06}"));
         }
-        assert!(
-            serialize_snapshot(&ledger, "test-v1", &[0xA5; 32]).len() as u64 > MAX_LEDGER_BYTES
-        );
+        let key = fresh_test_token();
+        assert!(serialize_snapshot(&ledger, "test-v1", &key).len() as u64 > MAX_LEDGER_BYTES);
 
         assert_eq!(
-            persist_snapshot(&path, &ledger, "test-v1", &[0xA5; 32], false),
+            persist_snapshot(&path, &ledger, "test-v1", &key, false),
             Err(DurableLedgerError::CapacityExceeded)
         );
         assert_eq!(fs::read(&path).unwrap(), b"previous committed snapshot");
@@ -1578,6 +1794,8 @@ mod tests {
         let path = temp_path("concurrent");
         let first = open_ledger(&path).unwrap();
         let second = open_ledger(&path).unwrap();
+        let first_token = fresh_test_token();
+        let second_token = fresh_test_token();
         let first_thread = thread::spawn(move || {
             first
                 .admit_and_reserve_with_lease(
@@ -1587,7 +1805,7 @@ mod tests {
                     &policies(),
                     &[],
                     1_000,
-                    &[0x61u8; 32],
+                    &first_token,
                 )
                 .unwrap()
         });
@@ -1600,7 +1818,7 @@ mod tests {
                     &policies(),
                     &[],
                     1_000,
-                    &[0x62u8; 32],
+                    &second_token,
                 )
                 .unwrap()
         });
@@ -1675,7 +1893,7 @@ mod tests {
         assert_eq!(ledger.snapshot().unwrap().active_jobs, 0);
         assert!(path.exists());
         assert!(!temp.exists());
-        let keys = HashMap::from([("test-v1".to_string(), integrity_key("test-v1", 0xA5))]);
+        let keys = HashMap::from([("test-v1".to_string(), integrity_key("test-v1"))]);
         assert_eq!(
             deserialize_snapshot(&fs::read(&path).unwrap(), &keys)
                 .unwrap()
@@ -1686,6 +1904,167 @@ mod tests {
         cleanup(&path);
     }
     #[test]
+    fn v2_snapshots_migrate_and_v4_round_trips_telemetry_and_reservation_revisions() {
+        // This fixture key is generated per test process rather than embedded as
+        // a reusable cryptographic constant. It is never used outside test data.
+        let key_material = Sha256::digest(
+            format!(
+                "ledger-migration-test:{}:{}",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            )
+            .as_bytes(),
+        );
+        let key = LedgerIntegrityKey::new("test-v1", key_material.into());
+        let legacy_body = format!("{LEGACY_LEDGER_HEADER_V2}\n");
+        let legacy_mac = ledger_mac(&key.key, "test-v1", legacy_body.as_bytes());
+        let legacy_bytes = format!("{legacy_body}M\ttest-v1\t{}\n", hex_encode(&legacy_mac));
+        let keys = HashMap::from([("test-v1".to_string(), key.clone())]);
+        let mut migrated = deserialize_snapshot(legacy_bytes.as_bytes(), &keys).unwrap();
+        assert!(migrated.telemetry_generations.is_empty());
+
+        migrated.telemetry_generations.insert("worker-01".into(), 7);
+        migrated.reservation_revisions.insert("worker-01".into(), 3);
+        migrated
+            .telemetry_reservation_watermarks
+            .insert("worker-01".into(), 2);
+        let encoded = serialize_snapshot(&migrated, "test-v1", &key.key);
+        assert!(String::from_utf8_lossy(&encoded).starts_with("UJANI-ENTERPRISE-LEDGER-V4\n"));
+        let restored = deserialize_snapshot(&encoded, &keys).unwrap();
+        assert_eq!(restored.telemetry_generations.get("worker-01"), Some(&7));
+        assert_eq!(restored.reservation_revisions.get("worker-01"), Some(&3));
+        assert_eq!(
+            restored.telemetry_reservation_watermarks.get("worker-01"),
+            Some(&2)
+        );
+    }
+
+    #[test]
+    fn v3_snapshots_migrate_to_v4_without_losing_telemetry_generation() {
+        let key = integrity_key("test-v1");
+        let legacy_body = format!(
+            "{LEGACY_LEDGER_HEADER_V3}\nG\t{}\t7\n",
+            hex_encode("worker-01".as_bytes())
+        );
+        let legacy_mac = ledger_mac(&key.key, "test-v1", legacy_body.as_bytes());
+        let legacy_bytes = format!("{legacy_body}M\ttest-v1\t{}\n", hex_encode(&legacy_mac));
+        let keys = HashMap::from([("test-v1".to_string(), key.clone())]);
+        let migrated = deserialize_snapshot(legacy_bytes.as_bytes(), &keys).unwrap();
+        assert_eq!(migrated.telemetry_generations.get("worker-01"), Some(&7));
+        assert!(migrated.reservation_revisions.is_empty());
+
+        let encoded = serialize_snapshot(&migrated, "test-v1", &key.key);
+        assert!(String::from_utf8_lossy(&encoded).starts_with("UJANI-ENTERPRISE-LEDGER-V4\n"));
+        let restored = deserialize_snapshot(&encoded, &keys).unwrap();
+        assert_eq!(restored.telemetry_generations.get("worker-01"), Some(&7));
+    }
+
+    #[test]
+    fn reservation_revisions_advance_on_acquire_renew_release_and_expiry() {
+        let path = temp_path("reservation-revisions");
+        let first_token = fresh_test_token();
+        let invalid_token = fresh_test_token();
+        let second_token = fresh_test_token();
+        {
+            let ledger = open_ledger(&path).unwrap();
+            assert_eq!(
+                ledger
+                    .reservation_revision("worker-durable-01", 1_000)
+                    .unwrap(),
+                0
+            );
+            assert_eq!(
+                ledger
+                    .admit_and_reserve_with_lease(
+                        &device(),
+                        &workload("job-release-revision"),
+                        &context(),
+                        &policies(),
+                        &[],
+                        1_000,
+                        &first_token,
+                    )
+                    .unwrap(),
+                Admission::Accept
+            );
+            assert_eq!(
+                ledger
+                    .reservation_revision("worker-durable-01", 2_000)
+                    .unwrap(),
+                1
+            );
+        }
+        {
+            let ledger = open_ledger(&path).unwrap();
+            assert!(!ledger
+                .renew_lease("job-release-revision", &invalid_token, 2_000)
+                .unwrap());
+            assert!(ledger
+                .renew_lease("job-release-revision", &first_token, 2_000)
+                .unwrap());
+            assert_eq!(
+                ledger
+                    .reservation_revision("worker-durable-01", 2_000)
+                    .unwrap(),
+                2
+            );
+            assert_eq!(
+                ledger
+                    .reservation_revision("worker-durable-01", 3_000)
+                    .unwrap(),
+                2
+            );
+            assert!(ledger
+                .release_lease("job-release-revision", &first_token)
+                .unwrap());
+            assert_eq!(
+                ledger
+                    .reservation_revision("worker-durable-01", 3_000)
+                    .unwrap(),
+                3
+            );
+            assert_eq!(
+                ledger
+                    .admit_and_reserve_with_lease(
+                        &device(),
+                        &workload("job-expiry-revision"),
+                        &context(),
+                        &policies(),
+                        &[],
+                        4_000,
+                        &second_token,
+                    )
+                    .unwrap(),
+                Admission::Accept
+            );
+            assert_eq!(
+                ledger
+                    .reservation_revision("worker-durable-01", 4_000)
+                    .unwrap(),
+                4
+            );
+            assert_eq!(ledger.expire_leases(4_000 + crate::LEASE_MS).unwrap(), 1);
+            assert_eq!(
+                ledger
+                    .reservation_revision("worker-durable-01", 4_000 + crate::LEASE_MS)
+                    .unwrap(),
+                5
+            );
+        }
+        let reopened = open_ledger(&path).unwrap();
+        assert_eq!(
+            reopened
+                .reservation_revision("worker-durable-01", 5_000 + crate::LEASE_MS)
+                .unwrap(),
+            5
+        );
+        cleanup(&path);
+    }
+
+    #[test]
     fn attacker_cannot_rewrite_snapshot_and_recompute_an_unkeyed_checksum() {
         let path = temp_path("mac-tamper");
         let ledger = open_ledger(&path).unwrap();
@@ -1694,7 +2073,7 @@ mod tests {
 
         let mut bytes = fs::read(&path).unwrap();
         let text = String::from_utf8(bytes.clone()).unwrap();
-        assert!(text.starts_with("UJANI-ENTERPRISE-LEDGER-V2\n"));
+        assert!(text.starts_with("UJANI-ENTERPRISE-LEDGER-V4\n"));
         // Even a writer who knows the file format and can recompute SHA-256
         // cannot produce the required MAC without the external integrity key.
         let mac_line = text.rfind("M\t").unwrap();
@@ -1721,7 +2100,7 @@ mod tests {
             let old = DurableLedger::open_with_integrity_keys(
                 &path,
                 "key-v1",
-                vec![integrity_key("key-v1", 0x11)],
+                vec![integrity_key("key-v1")],
             )
             .unwrap();
             assert_eq!(old.snapshot().unwrap().active_jobs, 0);
@@ -1730,7 +2109,7 @@ mod tests {
             let rotated = DurableLedger::open_with_integrity_keys(
                 &path,
                 "key-v2",
-                vec![integrity_key("key-v1", 0x11), integrity_key("key-v2", 0x22)],
+                vec![integrity_key("key-v1"), integrity_key("key-v2")],
             )
             .unwrap();
             assert_eq!(rotated.snapshot().unwrap().active_jobs, 0);
@@ -1739,7 +2118,7 @@ mod tests {
             let only_new_key = DurableLedger::open_with_integrity_keys(
                 &path,
                 "key-v2",
-                vec![integrity_key("key-v2", 0x22)],
+                vec![integrity_key("key-v2")],
             )
             .unwrap();
             assert_eq!(only_new_key.snapshot().unwrap().active_jobs, 0);
@@ -1749,7 +2128,7 @@ mod tests {
 
     #[test]
     fn key_material_is_redacted_from_debug_output() {
-        let key = integrity_key("secret-key", 0xA5);
+        let key = integrity_key("secret-key");
         let debug = format!("{key:?}");
         assert!(debug.contains("secret-key"));
         assert!(debug.contains("[REDACTED]"));

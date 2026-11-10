@@ -130,31 +130,19 @@ python -m scripts.live_network_log_ingest \
   --checkpoint /var/lib/ujani/cursors/suricata-eve.json --provider-version 7.0.0
 ```
 
-This is a local single-process log follower, not a network listener, authenticated event receiver or production service manager. One process must own each cursor file. Deployment still requires a trusted service wrapper to authenticate and derive tenant scope, provision directories/permissions, supervise restarts and configure retention. The first version supports Zeek `conn` records and Suricata EVE records; Zeek `notice`/`weird` streams, log rotation across all platform variants, Windows file identity guarantees and real sensor-lab validation remain separate acceptance items. Existing unit tests exercise append, partial-line, rotation and tenant-bound cursor behavior; CI results must pass before treating this branch as validated.
+This is a local single-process log follower, not a network listener, authenticated event receiver or production service manager. One process must own each cursor file. Deployment still requires a trusted service wrapper to authenticate and derive tenant scope, provision directories/permissions, supervise restarts and configure retention. The original follower supported Zeek `conn` records and Suricata EVE records. Draft PR #84 extends it to Zeek JSON `notice` and `weird` streams with distinct checkpoint scopes; this extension is not yet validated on all platforms. Log rotation across all platform variants, Windows file identity guarantees and real sensor-lab validation remain separate acceptance items. Existing unit tests exercise append, partial-line, rotation and tenant-bound cursor behavior; CI results must pass before treating this branch as validated.
 
 
 CI note: PR #81 targets `main` so the repository's pull-request validation workflow applies to the combined store-and-follower change. The branch remains draft pending fresh CI and real-provider lab verification.
 
 
-### OPNsense read-only posture probe prototype
+## Trusted-device signed ingestion authentication primitive (10 November 2026)
 
-The current feature branch adds `scripts/opnsense_readonly.py` and offline mocked tests. It uses only two fixed GET endpoints: `/api/core/system/status` and `/api/core/firmware/status`. It deliberately excludes `/api/core/firmware/info`, all POST routes, firewall rule APIs, service controls, reboot and upgrade operations.
+The branch `feat/trusted-device-ingest-auth-2026-11` adds `scripts/trusted_device_ingest_auth.py`, a reusable authentication gate for a future trusted-host receiver. It verifies a device ID against an operator-managed registry, validates an HMAC-SHA256 signature over the device ID, timestamp, nonce and exact request bytes, rejects requests outside a five-minute clock-skew window, and atomically consumes a per-device nonce in a local SQLite replay database. The tenant identifier is returned from the trusted registry; it is never accepted from the request body. Revoked and unknown devices fail closed. Request bodies are bounded to 256 KiB and replay storage is owner-only where filesystem permissions are supported.
 
-Security boundaries:
-- HTTPS and certificate verification are required by default; use a customer-provided CA bundle where necessary.
-- Redirects are rejected and ambient environment proxies are disabled.
-- OPNsense API key/secret use HTTP Basic authentication and are read from `UJANI_OPNSENSE_API_KEY` and `UJANI_OPNSENSE_API_SECRET`; credentials are never placed in a URL or output.
-- Fixed endpoint allowlist, GET-only requests, eight-second timeout and 1 MiB response bound.
-- Only allowlisted scalar status/version fields are returned; arbitrary nested configuration, users and secrets are discarded.
-- Use a dedicated OPNsense account whose effective privileges are restricted to the selected read-only status pages. API keys inherit the user's permissions.
-- This is a probe prototype, not an authenticated Enterprise host connector. Tenant identity, operator authorization, evidence retention and audit must be enforced by the trusted host.
+The accompanying tests cover successful identity-to-tenant mapping, replay rejection, revocation, unknown devices, signature/body tampering, stale timestamps, undersized keys, body-size limits and symlink replay-database rejection.
 
-Example:
+**Not yet a production receiver:** this is a library primitive, not an HTTP server, device-enrollment/key-rotation workflow, protected key vault, certificate-backed identity service or OS service manager. The registry must be supplied by a protected operator-managed source. A future receiver must authenticate before parsing events, apply rate limits, bind authorization to the authenticated principal, and pass only the returned tenant scope into the evidence store. Do not expose a network endpoint or enable remote execution based on this module alone. Cross-platform filesystem hardening, key custody, concurrent multi-process replay tests, rotation/revocation workflow tests and customer-lab validation remain acceptance gates.
 
-```sh
-UJANI_OPNSENSE_API_KEY='read-only-key' \\
-UJANI_OPNSENSE_API_SECRET='read-only-secret' \\
-  python scripts/opnsense_readonly.py --base-url https://firewall.example
-```
 
-Do not disable certificate verification. Do not grant the connector broad administrator permissions. Validate the response shape and exact ACLs on the customer's firmware version in an isolated lab before enabling the integration.
+The branch also adds `scripts/trusted_network_event_ingest.py` as a library-only composition boundary between the signed device envelope and the existing tenant-scoped `SecurityEventStore`. It authenticates the exact raw request bytes before JSON parsing, derives tenant scope from the trusted device registry, takes provider identity from trusted host connector configuration, and overwrites any tenant/provider labels inside the event payload before storage. It does not open a socket or expose an HTTP listener. Regression tests verify authentication-before-parse and that payload-supplied tenant/provider values cannot redirect evidence into another tenant or provider partition. The receiver, registry lifecycle, key custody, rate limiting and customer deployment remain separate work.

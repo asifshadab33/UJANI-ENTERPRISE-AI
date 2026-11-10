@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'">
+  <title>UJANI Enterprise — Operator Console</title>
+  <link rel="stylesheet" href="./styles.css">
+  <script type="module" src="./app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="./" aria-label="UJANI Enterprise home"><span class="mark">U</span><span><strong>UJANI</strong><small>ENTERPRISE</small></span></a>
+    <div class="top-actions">
+      <span id="connection" class="status status-unknown" role="status">Control plane not connected</span>
+      <button id="refresh" class="button button-primary" type="button">Refresh</button>
+    </div>
+  </header>
+  <main class="layout">
+    <section class="intro">
+      <div><p class="eyebrow">ORGANIZATION COMPUTE FABRIC</p><h1>Operator console</h1><p class="muted">A read-only view of trusted device capacity and workload admission. No remote execution or security-control actions are exposed here.</p></div>
+      <p id="updated" class="updated">No live snapshot received</p>
+    </section>
+    <section id="notice" class="notice" role="alert">
+      <strong>Waiting for the Enterprise control plane</strong>
+      <p>This console does not contain demo fleet data. It will display live information only after the authenticated same-origin API is deployed.</p>
+    </section>
+    <section aria-labelledby="fleet-heading">
+      <div class="section-title"><div><p class="eyebrow">FLEET OVERVIEW</p><h2 id="fleet-heading">Device capacity</h2></div><span class="muted">Live API data only</span></div>
+      <div class="metrics">
+        <article class="metric"><span>Registered devices</span><strong id="registered">—</strong><small>All known device records</small></article>
+        <article class="metric"><span>Trusted & consented</span><strong id="trusted">—</strong><small>Enrollment and owner/admin approval</small></article>
+        <article class="metric"><span>Online & fresh</span><strong id="online">—</strong><small>Within the configured telemetry age</small></article>
+        <article class="metric"><span>Schedulable now</span><strong id="schedulable">—</strong><small>Policy and capacity eligible</small></article>
+      </div>
+    </section>
+    <section class="panel" aria-labelledby="devices-heading">
+      <div class="section-title"><div><p class="eyebrow">TRUST AND AVAILABILITY</p><h2 id="devices-heading">Device inventory</h2></div><span id="device-count" class="muted">No records</span></div>
+      <div class="table-wrap"><table><thead><tr><th>Device</th><th>Platform</th><th>Trust</th><th>Availability</th><th>CPU free</th><th>RAM free</th><th>Last seen</th></tr></thead><tbody id="devices"><tr><td colspan="7" class="empty">No live device inventory available.</td></tr></tbody></table></div>
+    </section>
+    <section class="two-column">
+      <article class="panel"><div class="section-title"><div><p class="eyebrow">ADMISSION</p><h2>Workload queue</h2></div></div><div id="workloads" class="list empty">No live workload data available.</div></article>
+      <article class="panel"><div class="section-title"><div><p class="eyebrow">HUMAN CONTROL</p><h2>Approval requests</h2></div></div><div id="approvals" class="list empty">No live approval data available.</div></article>
+    </section>
+    <footer><span>UJANI Enterprise · Operator preview</span><span>Read-only · Same-origin API · No background polling</span></footer>
+  </main>
+</body>
+</html>
