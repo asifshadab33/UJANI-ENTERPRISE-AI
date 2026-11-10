@@ -198,6 +198,15 @@ struct DeviceRecord {
     generation: u64,
 }
 
+/// Tenant-scoped, non-secret projection of an enrolled device identity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeviceTrustSummary {
+    pub tenant_id: String,
+    pub device_id: String,
+    pub state: DeviceTrustState,
+    pub key_generation: u64,
+}
+
 pub struct DeviceRegistry {
     admin_keys: HashMap<String, VerifyingKey>,
     devices: HashMap<String, DeviceRecord>,
@@ -452,6 +461,29 @@ impl DeviceRegistry {
             resource_id: c.resource_id.clone(),
             expires_at_unix_ms: c.expires_at_unix_ms,
         })
+    }
+    
+    /// List only the non-secret device identity records belonging to one tenant.
+    /// Hardware telemetry and owner consent are separate inputs and must not be
+    /// inferred from enrollment alone.
+    pub fn tenant_device_summaries(
+        &self,
+        tenant_id: &str,
+    ) -> Result<Vec<DeviceTrustSummary>, DeviceTrustError> {
+        if !valid_id(tenant_id, 128) {
+            return Err(DeviceTrustError::InvalidIdentifier);
+        }
+        let mut records: Vec<_> = self.devices.iter()
+            .filter(|(_, record)| record.tenant_id == tenant_id)
+            .map(|(device_id, record)| DeviceTrustSummary {
+                tenant_id: record.tenant_id.clone(),
+                device_id: device_id.clone(),
+                state: record.state,
+                key_generation: record.generation,
+            })
+            .collect();
+        records.sort_by(|left, right| left.device_id.cmp(&right.device_id));
+        Ok(records)
     }
 }
 
@@ -882,6 +914,18 @@ mod tests {
             r.authenticate_request(&signed, b"", 400),
             Err(DeviceTrustError::DeviceNotEnrolled)
         );
+    }
+
+    #[test]
+    fn tenant_device_summaries_are_scoped_and_do_not_expose_keys() {
+        let (mut registry, admin, device) = registry();
+        let enroll = enrollment(&admin, &device, 1);
+        registry.apply_admin_command(&enroll, 200).unwrap();
+        let summaries = registry.tenant_device_summaries("tenant-a").unwrap();
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].device_id, "device-1");
+        assert_eq!(summaries[0].key_generation, 1);
+        assert!(registry.tenant_device_summaries("tenant-b").unwrap().is_empty());
     }
 
     #[test]
