@@ -58,6 +58,8 @@ pub struct SchedulingPolicyClaims {
     pub workload_id: String,
     pub manifest_sha256: [u8; 32],
     pub challenge_nonce: [u8; 16],
+    /// Control-plane-signed revision expected in the worker's capacity sample.
+    pub reservation_revision: u64,
     pub issued_at_unix_ms: u64,
     pub expires_unix_ms: u64,
     pub within_admin_schedule: bool,
@@ -167,6 +169,7 @@ fn scheduling_policy_bytes(claims: &SchedulingPolicyClaims) -> Vec<u8> {
     }
     bytes.extend_from_slice(&claims.manifest_sha256);
     bytes.extend_from_slice(&claims.challenge_nonce);
+    bytes.extend_from_slice(&claims.reservation_revision.to_be_bytes());
     bytes.extend_from_slice(&claims.issued_at_unix_ms.to_be_bytes());
     bytes.extend_from_slice(&claims.expires_unix_ms.to_be_bytes());
     bytes.push(u8::from(claims.within_admin_schedule));
@@ -235,6 +238,9 @@ pub(crate) fn verify_scheduling_context(
         || policy_claims.challenge_nonce != *expected_challenge_nonce
     {
         return Err(SchedulingEvidenceError::ChallengeMismatch);
+    }
+    if telemetry_claims.reservation_revision != policy_claims.reservation_revision {
+        return Err(SchedulingEvidenceError::InvalidReservationWatermark);
     }
     if telemetry_claims.sample_generation == 0 {
         return Err(SchedulingEvidenceError::InvalidTimeWindow);
@@ -665,6 +671,7 @@ mod tests {
             })
             .unwrap(),
             challenge_nonce: challenge,
+            reservation_revision: 0,
             issued_at_unix_ms: now,
             expires_unix_ms: now + MAX_SCHEDULING_POLICY_TTL_MS,
             within_admin_schedule: true,
@@ -846,6 +853,7 @@ mod tests {
         policy.claims.workload_id = workload.workload_id.clone();
         policy.claims.manifest_sha256 = workload.manifest_sha256;
         policy.claims.challenge_nonce = challenge;
+        policy.claims.reservation_revision = reservation_revision;
         policy.signature = admin_key
             .sign(&scheduling_policy_bytes(&policy.claims))
             .to_bytes();
@@ -997,10 +1005,14 @@ mod tests {
 
         // A sample cannot claim a reservation revision the service has not committed.
         let future_challenge = fresh_test_challenge();
-        let (mut future, policy, device_key, _) = signed_evidence(future_challenge, 1_000);
+        let (mut future, mut policy, device_key, admin_key) = signed_evidence(future_challenge, 1_000);
         future.claims.reservation_revision = 1;
         future.signature = device_key
             .sign(&worker_telemetry_bytes(&future.claims))
+            .to_bytes();
+        policy.claims.reservation_revision = 1;
+        policy.signature = admin_key
+            .sign(&scheduling_policy_bytes(&policy.claims))
             .to_bytes();
         assert_eq!(
             verify_and_consume_scheduling_context(
@@ -1098,12 +1110,16 @@ mod tests {
         // The next sample may advance to revision 1, but a later sample may
         // not move its signed watermark back to revision 0.
         let fresh_challenge = fresh_test_challenge();
-        let (mut fresh, fresh_policy, fresh_device_key, _) =
+        let (mut fresh, mut fresh_policy, fresh_device_key, fresh_admin_key) =
             signed_evidence(fresh_challenge, 3_000);
         fresh.claims.sample_generation = 3;
         fresh.claims.reservation_revision = 1;
         fresh.signature = fresh_device_key
             .sign(&worker_telemetry_bytes(&fresh.claims))
+            .to_bytes();
+        fresh_policy.claims.reservation_revision = 1;
+        fresh_policy.signature = fresh_admin_key
+            .sign(&scheduling_policy_bytes(&fresh_policy.claims))
             .to_bytes();
         assert!(verify_and_consume_scheduling_context(
             &ledger,
