@@ -97,3 +97,12 @@ For industrial/OT environments, start with passive observation and an approved a
 ## Explicitly deferred
 
 No remote execution, employee-device workload dispatch, autonomous containment, firewall modification, inline IPS enablement, automatic rule installation, or autonomous OT action is enabled by this integration plan. Such work remains blocked on production identity, protected key custody, authenticated receiver-side authorization, tenant isolation, OS-enforced isolation where applicable, exact-scope approval, replay protection, rollback, independent security review and operational sign-off.
+
+
+## Tenant-scoped searchable evidence store prototype (10 November 2026)
+
+The branch `feat/tenant-scoped-security-event-store-2026-11` adds `scripts/security_event_store.py`, a local SQLite storage primitive for the normalized Suricata/Zeek evidence format and future read-only providers (Malcolm, OPNsense and MISP). It requires the caller to supply an explicit tenant scope, validates the provider and normalized event contract, rejects cross-tenant/provider records and implausibly future timestamps, applies bounded batch/page sizes, makes duplicate event IDs idempotent, and supports indexed tenant-scoped filters with keyset pagination. Retention and per-tenant record caps are configurable. The persistent database file is restricted to owner read/write permissions on platforms where chmod is supported.
+
+Regression coverage is added in `tests/test_security_event_store.py` for tenant isolation, provider mismatch, idempotency, atomic batch rejection, filtering/pagination, retention and record caps. These are automated tests to be run by the existing Enterprise CI workflow; until a fresh workflow run passes, this is an implementation branch, not a validated release capability.
+
+**Important boundary:** this module is not a live listener, authenticated connector transport, event broker, UI or durable multi-node service. Authentication and tenant selection must happen in a trusted host service before calling it. The initial store is a single-process/local SQLite prototype; production deployment still needs service identity, secret handling, concurrency/load testing, backup/recovery, retention governance and authenticated connector adapters. No live Malcolm, OPNsense or MISP API calls are implemented by this batch.
