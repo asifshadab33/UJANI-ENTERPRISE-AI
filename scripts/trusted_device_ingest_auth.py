@@ -31,7 +31,7 @@ def _open_replay_db(path: str | os.PathLike[str]) -> sqlite3.Connection:
     target = Path(path)
     db: sqlite3.Connection | None = None
     try:
-        if target.exists() and target.is_symlink():
+        if target.is_symlink():
             raise AuthenticationError("replay database path is unsafe")
         if not target.parent.exists() or not target.parent.is_dir():
             raise AuthenticationError("replay database parent must exist")
