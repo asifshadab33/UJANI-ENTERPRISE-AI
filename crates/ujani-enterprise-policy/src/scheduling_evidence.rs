@@ -572,6 +572,15 @@ mod tests {
             .expect("two 8-byte test hashes produce a 16-byte challenge")
     }
 
+    fn fresh_test_lease_token() -> [u8; 32] {
+        let first = fresh_test_challenge();
+        let second = fresh_test_challenge();
+        let mut token = [0u8; 32];
+        token[..16].copy_from_slice(&first);
+        token[16..].copy_from_slice(&second);
+        token
+    }
+
     fn device() -> Device {
         Device {
             device_id: "worker-01".into(),
@@ -1447,7 +1456,7 @@ mod tests {
         now: u64,
     ) -> VerifiedSchedulingContext {
         let (mut telemetry, mut policy, device_key, admin_key) = signed_evidence(challenge, now);
-        telemetry.claims.sample_generation = u64::from(challenge[0]);
+        telemetry.claims.sample_generation = u64::from(challenge[0]) + 256;
         telemetry.claims.os_isolation_ready = false;
         telemetry.signature = device_key
             .sign(&worker_telemetry_bytes(&telemetry.claims))
@@ -1478,7 +1487,7 @@ mod tests {
         now: u64,
     ) -> VerifiedSchedulingContext {
         let (mut telemetry, mut policy, device_key, admin_key) = signed_evidence(challenge, now);
-        telemetry.claims.sample_generation = u64::from(challenge[0]);
+        telemetry.claims.sample_generation = u64::from(challenge[0]) + 256;
         telemetry.claims.os_isolation_ready = false;
         telemetry.signature = device_key
             .sign(&worker_telemetry_bytes(&telemetry.claims))
@@ -1527,7 +1536,10 @@ mod tests {
         );
         assert!(memory_ledger.jobs.is_empty());
 
-        let isolation_context = verified_context_without_isolation(&w, [0x73; 16], 1_000);
+        let isolation_challenge = fresh_test_challenge();
+        let isolation_token = fresh_test_lease_token();
+        let isolation_context =
+            verified_context_without_isolation(&w, isolation_challenge, 1_000);
         assert_eq!(
             admit_and_reserve_with_verified_lease(
                 &mut memory_ledger,
@@ -1537,7 +1549,7 @@ mod tests {
                 &[],
                 &[],
                 2_000,
-                &[0x73; 32],
+                &isolation_token,
             ),
             Admission::Reject(RejectReason::WorkerIsolationUnavailable)
         );
@@ -1571,8 +1583,14 @@ mod tests {
         );
         assert_eq!(durable.snapshot().unwrap().active_jobs, 0);
 
-        let isolation_context =
-            verified_context_without_isolation_durable(&durable, &w, [0x73; 16], 1_000);
+        let durable_isolation_challenge = fresh_test_challenge();
+        let durable_isolation_token = fresh_test_lease_token();
+        let isolation_context = verified_context_without_isolation_durable(
+            &durable,
+            &w,
+            durable_isolation_challenge,
+            1_000,
+        );
         assert_eq!(
             admit_and_reserve_durably_with_verified_lease(
                 &durable,
@@ -1582,7 +1600,7 @@ mod tests {
                 &[],
                 &[],
                 2_000,
-                &[0x73; 32],
+                &durable_isolation_token,
             )
             .unwrap(),
             Admission::Reject(RejectReason::WorkerIsolationUnavailable)
