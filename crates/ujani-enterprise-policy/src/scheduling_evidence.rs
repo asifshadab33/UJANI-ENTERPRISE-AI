@@ -912,7 +912,8 @@ mod tests {
         // 3,500 free CPU minus the 2,000 system reserve leaves 1,500.
         // Each job requests 1,000, so the first fits and the second must not.
         let mut memory_ledger = Ledger::default();
-        let first_context = verified_context_for(&first_workload, fresh_test_challenge(), 1_000, 3_500);
+        let first_context =
+            verified_context_for(&first_workload, fresh_test_challenge(), 1_000, 3_500);
         assert_eq!(
             admit_and_reserve_with_verified_lease(
                 &mut memory_ledger,
@@ -926,7 +927,8 @@ mod tests {
             ),
             Admission::Accept
         );
-        let second_context = verified_context_for(&second_workload, fresh_test_challenge(), 1_000, 3_500);
+        let second_context =
+            verified_context_for(&second_workload, fresh_test_challenge(), 1_000, 3_500);
         assert_eq!(
             admit_and_reserve_with_verified_lease(
                 &mut memory_ledger,
@@ -948,7 +950,10 @@ mod tests {
         let durable = DurableLedger::open_with_integrity_keys(
             &path,
             "test-key",
-            vec![LedgerIntegrityKey::new("test-key", fresh_test_lease_token())],
+            vec![LedgerIntegrityKey::new(
+                "test-key",
+                fresh_test_lease_token(),
+            )],
         )
         .unwrap();
         let first_context = verified_context_for_durable(
@@ -1014,7 +1019,10 @@ mod tests {
         let ledger = DurableLedger::open_with_integrity_keys(
             &path,
             "test-key",
-            vec![LedgerIntegrityKey::new("test-key", fresh_test_lease_token())],
+            vec![LedgerIntegrityKey::new(
+                "test-key",
+                fresh_test_lease_token(),
+            )],
         )
         .unwrap();
         let d = device();
@@ -1206,7 +1214,10 @@ mod tests {
         let cpu_ledger = DurableLedger::open_with_integrity_keys(
             &cpu_path,
             "test-key",
-            vec![LedgerIntegrityKey::new("test-key", fresh_test_lease_token())],
+            vec![LedgerIntegrityKey::new(
+                "test-key",
+                fresh_test_lease_token(),
+            )],
         )
         .unwrap();
         let d = device();
@@ -1278,7 +1289,10 @@ mod tests {
         let memory_ledger = DurableLedger::open_with_integrity_keys(
             &memory_path,
             "test-key",
-            vec![LedgerIntegrityKey::new("test-key", fresh_test_lease_token())],
+            vec![LedgerIntegrityKey::new(
+                "test-key",
+                fresh_test_lease_token(),
+            )],
         )
         .unwrap();
         let memory_first = workload_with_resources("memory-first", 1_000, 7_000);
@@ -1579,7 +1593,10 @@ mod tests {
         let durable = DurableLedger::open_with_integrity_keys(
             &path,
             "test-key",
-            vec![LedgerIntegrityKey::new("test-key", fresh_test_lease_token())],
+            vec![LedgerIntegrityKey::new(
+                "test-key",
+                fresh_test_lease_token(),
+            )],
         )
         .unwrap();
         let durable_cpu_challenge = fresh_test_challenge();
@@ -1722,7 +1739,10 @@ mod tests {
         let ledger = DurableLedger::open_with_integrity_keys(
             &path,
             "test-v1",
-            vec![crate::LedgerIntegrityKey::new("test-v1", fresh_test_lease_token())],
+            vec![crate::LedgerIntegrityKey::new(
+                "test-v1",
+                fresh_test_lease_token(),
+            )],
         )
         .unwrap();
         let d = device();
@@ -1855,7 +1875,10 @@ mod tests {
         let ledger = DurableLedger::open_with_integrity_keys(
             &path,
             "test-v1",
-            vec![crate::LedgerIntegrityKey::new("test-v1", fresh_test_lease_token())],
+            vec![crate::LedgerIntegrityKey::new(
+                "test-v1",
+                fresh_test_lease_token(),
+            )],
         )
         .unwrap();
         let d = device();
