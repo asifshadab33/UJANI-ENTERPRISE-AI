@@ -42,6 +42,7 @@ pub struct FleetCapacitySummary {
 pub enum FleetCapacityError {
     Manifest(ManifestError),
     ArithmeticOverflow,
+    CandidateMappingMissing,
 }
 
 /// Summarise capacity using the same policy checks as workload placement.
@@ -79,7 +80,7 @@ pub fn summarize_fleet_capacity(
     for device_id in &plan.eligible_device_ids {
         let device = unique_devices
             .get(device_id)
-            .ok_or(FleetCapacityError::ArithmeticOverflow)?;
+            .ok_or(FleetCapacityError::CandidateMappingMissing)?;
         aggregate_cpu = aggregate_cpu
             .checked_add(u64::from(device.remaining_cpu_millis))
             .ok_or(FleetCapacityError::ArithmeticOverflow)?;
@@ -162,7 +163,7 @@ mod tests {
     }
 
     #[test]
-    fn reports_registered_eligible_and_busy_devices_separately() {
+    fn reports_candidate_eligible_and_busy_devices_separately() {
         let summary = summarize_fleet_capacity(
             &manifest(),
             &[
