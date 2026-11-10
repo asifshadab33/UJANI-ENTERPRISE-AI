@@ -1724,7 +1724,20 @@ mod tests {
     }
     #[test]
     fn v2_snapshots_migrate_and_v3_round_trips_telemetry_generations() {
-        let key = integrity_key("test-v1", 0xA5);
+        // This fixture key is generated per test process rather than embedded as
+        // a reusable cryptographic constant. It is never used outside test data.
+        let key_material = Sha256::digest(
+            format!(
+                "ledger-migration-test:{}:{}",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            )
+            .as_bytes(),
+        );
+        let key = LedgerIntegrityKey::new("test-v1", key_material.into());
         let legacy_body = format!("{LEGACY_LEDGER_HEADER}\n");
         let legacy_mac = ledger_mac(&key.key, "test-v1", legacy_body.as_bytes());
         let legacy_bytes = format!("{legacy_body}M\ttest-v1\t{}\n", hex_encode(&legacy_mac));
