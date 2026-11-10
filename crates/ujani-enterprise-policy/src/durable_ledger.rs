@@ -270,10 +270,9 @@ impl DurableLedger {
         Ok(store)
     }
 
-    /// Reserve capacity with an opaque capability. The caller must generate
-    /// the 32-byte token using an OS CSPRNG and keep it outside the workload.
-    /// This raw-context method is crate-private; public callers should use the
-    /// signed-evidence wrapper in scheduling_evidence.
+    /// Test-only raw-context reservation helper. Production callers must use
+    /// the signed-evidence wrapper in scheduling_evidence.
+    #[cfg(test)]
     #[allow(clippy::too_many_arguments)] // Keep all admission and capability inputs explicit.
     pub(crate) fn admit_and_reserve_with_lease(
         &self,
