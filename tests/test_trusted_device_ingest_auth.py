@@ -27,7 +27,7 @@ class TrustedDeviceAuthenticationTests(unittest.TestCase):
         self.body = b'{"events":[]}'
         self.timestamp = 1_000_000
         self.nonce = "abcdefghijklmnopqrstuvwx12345678"
-        self.signature = sign_envelope(self.secret, self.timestamp, self.nonce, self.body)
+        self.signature = sign_envelope(self.secret, "device-01", self.timestamp, self.nonce, self.body)
 
     def tearDown(self):
         self.temp.cleanup()
@@ -44,6 +44,13 @@ class TrustedDeviceAuthenticationTests(unittest.TestCase):
 
     def test_returns_tenant_from_registry_not_request_body(self):
         self.assertEqual(self.call_auth(), "tenant-a")
+
+    def test_signature_is_bound_to_device_identity_even_if_a_secret_is_reused(self):
+        self.registry["device-02"] = {
+            "tenant_id": "tenant-b", "secret": self.secret, "revoked": False,
+        }
+        with self.assertRaises(AuthenticationError):
+            self.call_auth(device_id="device-02")
 
     def test_rejects_replay(self):
         self.call_auth()
@@ -76,7 +83,7 @@ timestamp = 1000000
 nonce = "abcdefghijklmnopqrstuvwx12345678"
 body = b'{"events":[]}'
 registry = {"device-01": {"tenant_id": "tenant-a", "secret": secret, "revoked": False}}
-signature = sign_envelope(secret, timestamp, nonce, body)
+signature = sign_envelope(secret, "device-01", timestamp, nonce, body)
 try:
     authenticate_envelope(device_id="device-01", timestamp=timestamp, nonce=nonce,
         body=body, signature=signature, registry=registry,
