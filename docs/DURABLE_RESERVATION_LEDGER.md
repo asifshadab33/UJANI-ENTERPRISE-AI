@@ -7,7 +7,7 @@ The Enterprise policy crate contains a local file-backed DurableLedger prototype
 The ledger currently supports:
 
 - Authenticated V4 snapshots with migration from V2/V3, per-device reservation revisions, per-lease commit revisions, telemetry generations and signed reservation watermarks.
-- Reservation revision increments on lease acquisition, release and expiry. The challenge issuer obtains the current revision through `DurableLedger::reservation_revision` and binds it into both worker telemetry and the administrator-signed scheduling policy.
+- Reservation revision increments on lease acquisition, renewal, release and expiry. The challenge issuer obtains the current revision through `DurableLedger::reservation_revision` and binds it into both worker telemetry and the administrator-signed scheduling policy.
 - Capacity reconciliation that adds back only active leases already reflected in the signed sample; reservations committed after that watermark remain charged against the sample's free CPU/memory headroom. A newer accepted telemetry generation supersedes an older verified context before reservation.
 
 - Capacity admission and reservation against the supplied device capacity and class policy.
