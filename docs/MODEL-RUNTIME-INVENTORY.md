@@ -28,4 +28,8 @@ The schema rejects unknown fields and bounds collection sizes. Evolving the mean
 
 ## Implementation status
 
-This PR establishes the shared data contract and governance boundary only. It does not implement a live agent, ingestion endpoint, persistent model inventory, operator GUI or scheduler integration.
+The shared v1 JSON Schema remains byte-for-byte identical to the Public AI v1 schema. Enterprise now also has a typed, side-effect-free policy module in `crates/ujani-enterprise-policy/src/model_inventory.rs`. It adds bounded metadata validation, duplicate/reference checks, freshness and evidence checks, privacy assertions, and advisory per-model task-capability matching.
+
+The matcher returns **Compatible**, **Incompatible** or **Unknown**. It requires an already-installed model and an available runtime; it never treats stale/unknown evidence as a positive match. Estimated memory is considered only when a task asks for a memory fit; an estimate that appears to fit is explicitly reported as **Unknown**, not as a verified fit. The result is not an admission decision and must still be combined with authenticated device trust, both consent authorities, fresh telemetry, power/thermal/interactive-use policy, quotas and durable reservations.
+
+The module is not an ingestion endpoint and does not authenticate a sender. A future receiver must authenticate the enrolled device and tenant before parsing/accepting the snapshot, enforce monotonic generation/sequence and replay protection transactionally, then validate this contract. It does not implement a live agent, persistent model inventory, operator GUI integration, runtime discovery, model downloads, scheduler dispatch or execution.

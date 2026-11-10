@@ -1557,3 +1557,8 @@ pub use inventory::{
     summarize_inventory, validate_inventory_record, DeviceInventoryRecord, DevicePowerState,
     InventoryError, InventorySummary, InventoryTrust,
 };
+pub mod model_inventory;
+pub use model_inventory::{
+    match_model_to_task, validate_model_runtime_inventory, ModelCapabilityMatch, ModelFitReason,
+    ModelFitStatus, ModelInventoryValidationError, ModelRuntimeInventory, ModelTaskRequirements,
+};
