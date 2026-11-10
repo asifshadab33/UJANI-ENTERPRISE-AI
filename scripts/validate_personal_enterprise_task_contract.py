@@ -11,6 +11,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_PATH = ROOT / "schemas/personal-enterprise-task-contract-v1.schema.json"
 SAFE_INTEGER_MAXIMUM = 9_007_199_254_740_991
+MAX_FUTURE_ISSUE_SKEW_MS = 60_000
 ZERO_SHA256 = "0" * 64
 TEST_SIGNATURE = "A" * 86
 TEST_NONCE = "A" * 43
@@ -120,7 +121,7 @@ def _sample_messages() -> dict[str, dict[str, Any]]:
     return {"task_envelope": envelope, "task_status": status, "execution_receipt": receipt}
 
 
-def _semantic_errors(instance: dict[str, Any]) -> list[str]:
+def _semantic_errors(instance: dict[str, Any], now_unix_ms: int = 1_000) -> list[str]:
     """Check cross-field time and expiry rules that JSON Schema cannot compare."""
     message_type = instance.get("message_type")
     errors: list[str] = []
@@ -130,6 +131,8 @@ def _semantic_errors(instance: dict[str, Any]) -> list[str]:
         consent = instance["consent"]["user"]
         granted = consent["granted_at_unix_ms"]
         consent_expires = consent["expires_at_unix_ms"]
+        if issued > now_unix_ms + MAX_FUTURE_ISSUE_SKEW_MS:
+            errors.append("task issue time exceeds the 60,000 ms future clock-skew allowance")
         if expires <= issued:
             errors.append("task expiry must follow issue time")
         if expires - issued > 300_000:
@@ -282,6 +285,24 @@ def _validate_instance_fixtures(schema: dict[str, Any]) -> None:
         assert errors, f"invalid fixture unexpectedly accepted: {name}"
 
     semantic_invalid = []
+    future_issue_outside_skew = copy.deepcopy(samples["task_envelope"])
+    future_issue_outside_skew["issued_at_unix_ms"] = 61_001
+    future_issue_outside_skew["expires_at_unix_ms"] = 361_001
+    future_issue_outside_skew["consent"]["user"]["granted_at_unix_ms"] = 61_000
+    future_issue_outside_skew["consent"]["user"]["expires_at_unix_ms"] = 361_001
+    _refresh_consent_binding(future_issue_outside_skew)
+    semantic_invalid.append(("future issue exceeds 60-second clock skew", future_issue_outside_skew))
+
+    future_issue_within_skew = copy.deepcopy(samples["task_envelope"])
+    future_issue_within_skew["issued_at_unix_ms"] = 61_000
+    future_issue_within_skew["expires_at_unix_ms"] = 361_000
+    future_issue_within_skew["consent"]["user"]["granted_at_unix_ms"] = 60_999
+    future_issue_within_skew["consent"]["user"]["expires_at_unix_ms"] = 361_000
+    _refresh_consent_binding(future_issue_within_skew)
+    assert not _semantic_errors(future_issue_within_skew, now_unix_ms=1_000), (
+        "future issue exactly at the 60-second skew boundary should be accepted"
+    )
+
     expiry_order = copy.deepcopy(samples["task_envelope"])
     expiry_order["expires_at_unix_ms"] = expiry_order["issued_at_unix_ms"]
     _refresh_consent_binding(expiry_order)
