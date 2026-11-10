@@ -1187,7 +1187,7 @@ mod tests {
     use sha2::Digest;
     use std::hash::{BuildHasher, Hash, Hasher};
     use std::sync::atomic::{AtomicU64, Ordering};
-    use std::sync::OnceLock;
+    use std::sync::{Mutex, OnceLock};
     use std::thread;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -1269,12 +1269,13 @@ mod tests {
         }]
     }
 
-    fn integrity_key(id: &str, byte: u8) -> LedgerIntegrityKey {
-        static BASE_KEY: OnceLock<[u8; 32]> = OnceLock::new();
-        let mut key = *BASE_KEY.get_or_init(fresh_test_token);
-        for (index, value) in key.iter_mut().enumerate() {
-            *value ^= byte.wrapping_add(index as u8);
-        }
+    fn integrity_key(id: &str) -> LedgerIntegrityKey {
+        static KEYS: OnceLock<Mutex<HashMap<String, [u8; 32]>>> = OnceLock::new();
+        let mut keys = KEYS
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock()
+            .unwrap();
+        let key = *keys.entry(id.to_owned()).or_insert_with(fresh_test_token);
         LedgerIntegrityKey::new(id, key)
     }
 
@@ -1282,7 +1283,7 @@ mod tests {
         DurableLedger::open_with_integrity_keys(
             path,
             "test-v1",
-            vec![integrity_key("test-v1", 0xA5)],
+            vec![integrity_key("test-v1")],
         )
     }
 
@@ -1353,7 +1354,7 @@ mod tests {
             path,
             "registry-test-a",
             "test-v1",
-            vec![integrity_key("test-v1", 0xA5)],
+            vec![integrity_key("test-v1")],
             anchor,
         )
     }
@@ -1404,7 +1405,7 @@ mod tests {
         let result = DurableLedger::open_internal_with_ancestor_sync(
             &path,
             "test-v1",
-            vec![integrity_key("test-v1", 0xA5)],
+            vec![integrity_key("test-v1")],
             Some(("registry-test-a".into(), anchor.clone())),
             |_parent| {
                 observed.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -1547,7 +1548,7 @@ mod tests {
         let result = DurableLedger::open_internal_with_ancestor_sync(
             &path,
             "test-v1",
-            vec![integrity_key("test-v1", 0xA5)],
+            vec![integrity_key("test-v1")],
             Some(("registry-test-a".into(), anchor.clone())),
             |_parent| {
                 Err(DurableLedgerError::Io(
@@ -1895,7 +1896,7 @@ mod tests {
         assert_eq!(ledger.snapshot().unwrap().active_jobs, 0);
         assert!(path.exists());
         assert!(!temp.exists());
-        let keys = HashMap::from([("test-v1".to_string(), integrity_key("test-v1", 0xA5))]);
+        let keys = HashMap::from([("test-v1".to_string(), integrity_key("test-v1"))]);
         assert_eq!(
             deserialize_snapshot(&fs::read(&path).unwrap(), &keys)
                 .unwrap()
@@ -1946,7 +1947,7 @@ mod tests {
 
     #[test]
     fn v3_snapshots_migrate_to_v4_without_losing_telemetry_generation() {
-        let key = integrity_key("test-v1", 0xA5);
+        let key = integrity_key("test-v1");
         let legacy_body = format!(
             "{LEGACY_LEDGER_HEADER_V3}\nG\t{}\t7\n",
             hex_encode("worker-01".as_bytes())
@@ -2102,7 +2103,7 @@ mod tests {
             let old = DurableLedger::open_with_integrity_keys(
                 &path,
                 "key-v1",
-                vec![integrity_key("key-v1", 0x11)],
+                vec![integrity_key("key-v1")],
             )
             .unwrap();
             assert_eq!(old.snapshot().unwrap().active_jobs, 0);
@@ -2111,7 +2112,7 @@ mod tests {
             let rotated = DurableLedger::open_with_integrity_keys(
                 &path,
                 "key-v2",
-                vec![integrity_key("key-v1", 0x11), integrity_key("key-v2", 0x22)],
+                vec![integrity_key("key-v1"), integrity_key("key-v2")],
             )
             .unwrap();
             assert_eq!(rotated.snapshot().unwrap().active_jobs, 0);
@@ -2120,7 +2121,7 @@ mod tests {
             let only_new_key = DurableLedger::open_with_integrity_keys(
                 &path,
                 "key-v2",
-                vec![integrity_key("key-v2", 0x22)],
+                vec![integrity_key("key-v2")],
             )
             .unwrap();
             assert_eq!(only_new_key.snapshot().unwrap().active_jobs, 0);
@@ -2130,7 +2131,7 @@ mod tests {
 
     #[test]
     fn key_material_is_redacted_from_debug_output() {
-        let key = integrity_key("secret-key", 0xA5);
+        let key = integrity_key("secret-key");
         let debug = format!("{key:?}");
         assert!(debug.contains("secret-key"));
         assert!(debug.contains("[REDACTED]"));
