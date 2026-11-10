@@ -4,7 +4,7 @@
 //! trusted host from protected configuration. Neither is read from this file.
 //! This is a persistence primitive, not an HTTP server or a complete RBAC layer.
 use super::*;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::{Digest, Sha256};
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;

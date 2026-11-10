@@ -26,7 +26,7 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
       - name: Run workspace tests
@@ -36,6 +36,8 @@ jobs:
           python-version: "3.12"
       - name: Validate collective-defence event schema contract
         run: python scripts/validate_security_event_schema.py
+      - name: Validate model/runtime inventory v1 schema
+        run: python scripts/validate_model_runtime_inventory_schema.py
       - name: Test local read-only network log adapters
         run: python -m unittest discover -s tests -v
       - name: Check formatting

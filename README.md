@@ -32,6 +32,8 @@ It is designed for controlled internal use, not a public marketplace for strange
 
 ## Architecture
 
+The intended per-workload placement rules, adaptive resource allocation criteria, and safety prerequisites are documented in [Adaptive Resource Allocation](docs/ADAPTIVE-RESOURCE-ALLOCATION.md). Placement is dynamic rather than a fixed local/remote percentage; this is a design contract, not a claim that distributed execution is production-ready.
+
 See [energy-aware distributed compute](docs/ENERGY-AWARE-DISTRIBUTED-COMPUTE.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/SECURITY.md](docs/SECURITY.md), [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md) and [ROADMAP.md](ROADMAP.md).
 
 ## Initial prototype

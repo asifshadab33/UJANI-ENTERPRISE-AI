@@ -97,3 +97,52 @@ For industrial/OT environments, start with passive observation and an approved a
 ## Explicitly deferred
 
 No remote execution, employee-device workload dispatch, autonomous containment, firewall modification, inline IPS enablement, automatic rule installation, or autonomous OT action is enabled by this integration plan. Such work remains blocked on production identity, protected key custody, authenticated receiver-side authorization, tenant isolation, OS-enforced isolation where applicable, exact-scope approval, replay protection, rollback, independent security review and operational sign-off.
+
+
+## Tenant-scoped searchable evidence store prototype (10 November 2026)
+
+The branch `feat/tenant-scoped-security-event-store-2026-11` adds `scripts/security_event_store.py`, a local SQLite storage primitive for the normalized Suricata/Zeek evidence format and future read-only providers (Malcolm, OPNsense and MISP). It requires the caller to supply an explicit tenant scope, validates the provider and normalized event contract, rejects cross-tenant/provider records and implausibly future timestamps, applies bounded batch/page sizes, makes duplicate event IDs idempotent, and supports indexed tenant-scoped filters with keyset pagination. Retention and per-tenant record caps are configurable. The persistent database file is restricted to owner read/write permissions on platforms where chmod is supported.
+
+Regression coverage is added in `tests/test_security_event_store.py` for tenant isolation, provider mismatch, idempotency, atomic batch rejection, filtering/pagination, retention and record caps. These are automated tests to be run by the existing Enterprise CI workflow; until a fresh workflow run passes, this is an implementation branch, not a validated release capability.
+
+**Important boundary:** this module is not a live listener, authenticated connector transport, event broker, UI or durable multi-node service. Authentication and tenant selection must happen in a trusted host service before calling it. The initial store is a single-process/local SQLite prototype; production deployment still needs service identity, secret handling, concurrency/load testing, backup/recovery, retention governance and authenticated connector adapters. No live Malcolm, OPNsense or MISP API calls are implemented by this batch.
+
+
+## Local live log-follow prototype (10 November 2026)
+
+The stacked branch `feat/live-network-log-ingestion-2026-11` adds `scripts/live_network_log_ingest.py`. It follows a customer-selected local Zeek JSON `conn` log or Suricata EVE JSONL file and writes normalized records into the tenant-scoped SQLite store from the preceding evidence-store branch. It uses no-follow regular-file opening where supported, bounded line and batch sizes, an atomic owner-only cursor file, file identity checks for rotation, and at-least-once delivery. The database commit occurs before cursor advancement; a crash in between is handled by idempotent event IDs. It starts at the end of an existing file unless `--from-start` is explicitly selected.
+
+Example (Zeek):
+
+```sh
+python -m scripts.live_network_log_ingest \
+  --provider zeek --tenant-id tenant-a --input /var/log/zeek/current/conn.log \
+  --database /var/lib/ujani/events.sqlite3 \
+  --checkpoint /var/lib/ujani/cursors/zeek-conn.json --provider-version 7.0.0
+```
+
+Example (Suricata):
+
+```sh
+python -m scripts.live_network_log_ingest \
+  --provider suricata --tenant-id tenant-a --input /var/log/suricata/eve.json \
+  --database /var/lib/ujani/events.sqlite3 \
+  --checkpoint /var/lib/ujani/cursors/suricata-eve.json --provider-version 7.0.0
+```
+
+This is a local single-process log follower, not a network listener, authenticated event receiver or production service manager. One process must own each cursor file. Deployment still requires a trusted service wrapper to authenticate and derive tenant scope, provision directories/permissions, supervise restarts and configure retention. The first version supports Zeek `conn` records and Suricata EVE records; Zeek `notice`/`weird` streams, log rotation across all platform variants, Windows file identity guarantees and real sensor-lab validation remain separate acceptance items. Existing unit tests exercise append, partial-line, rotation and tenant-bound cursor behavior; CI results must pass before treating this branch as validated.
+
+
+CI note: PR #81 targets `main` so the repository's pull-request validation workflow applies to the combined store-and-follower change. The branch remains draft pending fresh CI and real-provider lab verification.
+
+
+## Trusted-device signed ingestion authentication primitive (10 November 2026)
+
+The branch `feat/trusted-device-ingest-auth-2026-11` adds `scripts/trusted_device_ingest_auth.py`, a reusable authentication gate for a future trusted-host receiver. It verifies a device ID against an operator-managed registry, validates an HMAC-SHA256 signature over the device ID, timestamp, nonce and exact request bytes, rejects requests outside a five-minute clock-skew window, and atomically consumes a per-device nonce in a local SQLite replay database. The tenant identifier is returned from the trusted registry; it is never accepted from the request body. Revoked and unknown devices fail closed. Request bodies are bounded to 256 KiB and replay storage is owner-only where filesystem permissions are supported.
+
+The accompanying tests cover successful identity-to-tenant mapping, replay rejection, revocation, unknown devices, signature/body tampering, stale timestamps, undersized keys, body-size limits and symlink replay-database rejection.
+
+**Not yet a production receiver:** this is a library primitive, not an HTTP server, device-enrollment/key-rotation workflow, protected key vault, certificate-backed identity service or OS service manager. The registry must be supplied by a protected operator-managed source. A future receiver must authenticate before parsing events, apply rate limits, bind authorization to the authenticated principal, and pass only the returned tenant scope into the evidence store. Do not expose a network endpoint or enable remote execution based on this module alone. Cross-platform filesystem hardening, key custody, concurrent multi-process replay tests, rotation/revocation workflow tests and customer-lab validation remain acceptance gates.
+
+
+The branch also adds `scripts/trusted_network_event_ingest.py` as a library-only composition boundary between the signed device envelope and the existing tenant-scoped `SecurityEventStore`. It authenticates the exact raw request bytes before JSON parsing, derives tenant scope from the trusted device registry, takes provider identity from trusted host connector configuration, and overwrites any tenant/provider labels inside the event payload before storage. It does not open a socket or expose an HTTP listener. Regression tests verify authentication-before-parse and that payload-supplied tenant/provider values cannot redirect evidence into another tenant or provider partition. The receiver, registry lifecycle, key custody, rate limiting and customer deployment remain separate work.
