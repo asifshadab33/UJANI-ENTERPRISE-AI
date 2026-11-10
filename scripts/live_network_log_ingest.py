@@ -152,10 +152,7 @@ def ingest_once(*, log_path, database, checkpoint, provider, tenant_id,
                     record = normalize_zeek(obj, tenant_id, provider_version, "conn")
                 records.append(record)
         inserted = 0
-        if records:
-            with SecurityEventStore(database) as_store:
-                pass
-        # Store context management is explicit below to keep the public store API small.
+        # Commit the DB batch before advancing the cursor; replay is idempotent.
         store = SecurityEventStore(database)
         try:
             if records:
