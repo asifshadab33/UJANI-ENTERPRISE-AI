@@ -18,8 +18,8 @@ use std::sync::{Arc, Mutex};
 use zeroize::Zeroize;
 
 const LEDGER_HEADER: &str = "UJANI-ENTERPRISE-LEDGER-V4";
-const LEGACY_LEDGER_HEADER_V3: &str = "UJANI-ENTERPRISE-LEDGER-V4";
-const LEGACY_LEDGER_HEADER_V2_V2: &str = "UJANI-ENTERPRISE-LEDGER-V2";
+const LEGACY_LEDGER_HEADER_V3: &str = "UJANI-ENTERPRISE-LEDGER-V3";
+const LEGACY_LEDGER_HEADER_V2: &str = "UJANI-ENTERPRISE-LEDGER-V2";
 const LEDGER_MAC_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-LEDGER-HMAC-SHA256-V2\0";
 const MAX_LEDGER_BYTES: u64 = 16 * 1024 * 1024;
 
@@ -899,7 +899,7 @@ fn deserialize_snapshot(
     let (is_v4, is_v3) = match snapshot_header {
         Some(LEDGER_HEADER) => (true, true),
         Some(LEGACY_LEDGER_HEADER_V3) => (false, true),
-        Some(LEGACY_LEDGER_HEADER_V2_V2) => (false, false),
+        Some(LEGACY_LEDGER_HEADER_V2) => (false, false),
         _ => return Err(DurableLedgerError::CorruptState),
     };
     let mut ledger = Ledger::default();
