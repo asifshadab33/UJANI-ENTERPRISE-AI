@@ -292,6 +292,11 @@ pub fn validate_model_runtime_inventory(
     }
     if inventory.hardware.cpu_logical_cores == Some(0)
         || inventory.hardware.memory_total_mb == Some(0)
+        || inventory
+            .hardware
+            .memory_total_mb
+            .zip(inventory.hardware.memory_available_mb)
+            .is_some_and(|(total, available)| available > total)
     {
         return Err(ModelInventoryValidationError::InvalidHardware);
     }
@@ -546,9 +551,6 @@ pub fn match_model_to_task(
                     reasons.push(ModelFitReason::MemoryEstimateWithinAvailable);
                     unknown = true;
                 }
-            } else {
-                reasons.push(ModelFitReason::HardwareMemoryUnknown);
-                unknown = true;
             }
         } else {
             reasons.push(ModelFitReason::MemoryEstimateUnknown);
@@ -705,6 +707,33 @@ mod tests {
             .reasons
             .contains(&ModelFitReason::MemoryEstimateUnknown));
         assert_eq!(result.status, ModelFitStatus::Unknown);
+    }
+
+    #[test]
+    fn rejects_available_memory_above_total_memory() {
+        let mut value = inventory();
+        value.hardware.memory_available_mb = Some(16_385);
+        assert_eq!(
+            validate_model_runtime_inventory(&value, 1_100, 10_000),
+            Err(ModelInventoryValidationError::InvalidHardware)
+        );
+    }
+
+    #[test]
+    fn reports_unknown_hardware_memory_only_once_when_estimate_is_available() {
+        let mut value = inventory();
+        value.hardware.memory_available_mb = None;
+        let result =
+            match_model_to_task(&value, "qwen2.5:7b", &requirements(), 1_100, 10_000).unwrap();
+        assert_eq!(result.status, ModelFitStatus::Unknown);
+        assert_eq!(
+            result
+                .reasons
+                .iter()
+                .filter(|reason| **reason == ModelFitReason::HardwareMemoryUnknown)
+                .count(),
+            1
+        );
     }
 
     #[test]
