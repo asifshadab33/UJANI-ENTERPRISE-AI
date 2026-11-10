@@ -1473,7 +1473,15 @@ mod tests {
             vec![LedgerIntegrityKey::new("test-key", [0x72; 32])],
         )
         .unwrap();
-        let durable_context = verified_context_for(&w, [0x72; 16], 1_000, 2_999);
+        let durable_context = verified_context_for_durable(
+            &durable,
+            &w,
+            [0x72; 16],
+            1_000,
+            2_999,
+            20_000,
+            0,
+        );
         assert_eq!(
             admit_and_reserve_durably_with_verified_lease(
                 &durable,
