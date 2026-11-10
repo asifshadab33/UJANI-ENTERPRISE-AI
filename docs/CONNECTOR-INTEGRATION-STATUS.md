@@ -22,7 +22,7 @@ These are policy/contract primitives. They do not yet provide connector discover
 | Suricata | IDS/IPS alert and rule telemetry; optional separately approved enforcement provider | Local EVE JSONL import prototype with an explicit field allowlist | Live service/API adapter, health polling, rule management, inline IPS, virtual-patch deployment |
 | Zeek | Network metadata, protocol observations and notices | Local JSON log import prototype for conn, notice and weird streams | Live adapter, health polling, TSV parser, event store |
 | Malcolm | Optional higher-capability network-analysis deployment using its own specialist stack | Read-only health adapter prototype using documented GET ping/ready/version endpoints | Event/document search adapter, deployment automation, indexing or PCAP pipeline |
-| Customer firewall (including OPNsense or other supported products) | Existing network policy enforcement point | Read-only inventory, configuration posture and status where supported | Any configuration change, policy push, restart or rule deployment |
+| Customer firewall (including OPNsense or other supported products) | Existing network policy enforcement point | OPNsense fixed-endpoint read-only posture probe prototype | Authenticated production host integration, real device/version validation, broader inventory; all mutation operations remain excluded |
 | CISA KEV / NVD | External vulnerability intelligence | Fetch and cache public advisories with source, version and retrieval time | Feed scheduler, normalisation and asset matching |
 | MISP / OpenCTI | Optional threat-intelligence exchange and knowledge systems | Read-only indicator/context lookup after customer selection | Live connectors, sync, write-back or feed publication |
 
@@ -134,3 +134,27 @@ This is a local single-process log follower, not a network listener, authenticat
 
 
 CI note: PR #81 targets `main` so the repository's pull-request validation workflow applies to the combined store-and-follower change. The branch remains draft pending fresh CI and real-provider lab verification.
+
+
+### OPNsense read-only posture probe prototype
+
+The current feature branch adds `scripts/opnsense_readonly.py` and offline mocked tests. It uses only two fixed GET endpoints: `/api/core/system/status` and `/api/core/firmware/status`. It deliberately excludes `/api/core/firmware/info`, all POST routes, firewall rule APIs, service controls, reboot and upgrade operations.
+
+Security boundaries:
+- HTTPS and certificate verification are required by default; use a customer-provided CA bundle where necessary.
+- Redirects are rejected and ambient environment proxies are disabled.
+- OPNsense API key/secret use HTTP Basic authentication and are read from `UJANI_OPNSENSE_API_KEY` and `UJANI_OPNSENSE_API_SECRET`; credentials are never placed in a URL or output.
+- Fixed endpoint allowlist, GET-only requests, eight-second timeout and 1 MiB response bound.
+- Only allowlisted scalar status/version fields are returned; arbitrary nested configuration, users and secrets are discarded.
+- Use a dedicated OPNsense account whose effective privileges are restricted to the selected read-only status pages. API keys inherit the user's permissions.
+- This is a probe prototype, not an authenticated Enterprise host connector. Tenant identity, operator authorization, evidence retention and audit must be enforced by the trusted host.
+
+Example:
+
+```sh
+UJANI_OPNSENSE_API_KEY='read-only-key' \\
+UJANI_OPNSENSE_API_SECRET='read-only-secret' \\
+  python scripts/opnsense_readonly.py --base-url https://firewall.example
+```
+
+Do not disable certificate verification. Do not grant the connector broad administrator permissions. Validate the response shape and exact ACLs on the customer's firmware version in an isolated lab before enabling the integration.
