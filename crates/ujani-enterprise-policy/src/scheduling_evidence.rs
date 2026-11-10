@@ -593,6 +593,21 @@ mod tests {
         .unwrap()
     }
 
+    fn workload_with_resources(workload_id: &str, cpu_millis: u32, memory_mb: u64) -> Workload {
+        workload_from_manifest(&WorkloadManifest {
+            schema_version: 1,
+            workload_id: workload_id.into(),
+            class: "inference".into(),
+            model: "llama3.2".into(),
+            requested_cpu_millis: cpu_millis,
+            requested_memory_mb: memory_mb,
+            max_runtime_ms: 60_000,
+            data_classification: DataClassification::Internal,
+            network_access: false,
+        })
+        .unwrap()
+    }
+
     fn signed_evidence(
         challenge: [u8; 16],
         now: u64,
@@ -955,6 +970,328 @@ mod tests {
         lock_path.push(".lock");
         let _ = std::fs::remove_file(std::path::PathBuf::from(lock_path));
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn durable_telemetry_watermarks_reject_future_rollback_and_superseded_samples() {
+        let path = std::env::temp_dir().join(format!(
+            "ujani-telemetry-watermark-{}.ledger",
+            std::process::id()
+        ));
+        let ledger = DurableLedger::open_with_integrity_keys(
+            &path,
+            "test-key",
+            vec![LedgerIntegrityKey::new("test-key", [0x7A; 32])],
+        )
+        .unwrap();
+        let d = device();
+        let w = workload();
+        let device_keys = [(
+            "worker-01".to_owned(),
+            SigningKey::from_bytes(&[5u8; 32]).verifying_key(),
+        )];
+        let admin_keys = [(
+            "admin-key-01".to_owned(),
+            SigningKey::from_bytes(&[6u8; 32]).verifying_key(),
+        )];
+
+        // A sample cannot claim a reservation revision the service has not committed.
+        let future_challenge = fresh_test_challenge();
+        let (mut future, policy, device_key, _) = signed_evidence(future_challenge, 1_000);
+        future.claims.reservation_revision = 1;
+        future.signature = device_key
+            .sign(&worker_telemetry_bytes(&future.claims))
+            .to_bytes();
+        assert_eq!(
+            verify_and_consume_scheduling_context(
+                &ledger,
+                &d,
+                &w,
+                &future,
+                &policy,
+                &device_keys,
+                &admin_keys,
+                &future_challenge,
+                2_000,
+            ),
+            Err(SchedulingEvidenceError::InvalidReservationWatermark)
+        );
+
+        // A newer accepted sample supersedes an older verified context before
+        // reservation, even when both samples refer to the same ledger revision.
+        let first_challenge = fresh_test_challenge();
+        let (mut first, first_policy, first_device_key, _) =
+            signed_evidence(first_challenge, 1_000);
+        first.claims.sample_generation = 1;
+        first.signature = first_device_key
+            .sign(&worker_telemetry_bytes(&first.claims))
+            .to_bytes();
+        let first_context = verify_and_consume_scheduling_context(
+            &ledger,
+            &d,
+            &w,
+            &first,
+            &first_policy,
+            &device_keys,
+            &admin_keys,
+            &first_challenge,
+            2_000,
+        )
+        .unwrap();
+
+        let second_challenge = fresh_test_challenge();
+        let (mut second, second_policy, second_device_key, _) =
+            signed_evidence(second_challenge, 1_000);
+        second.claims.sample_generation = 2;
+        second.signature = second_device_key
+            .sign(&worker_telemetry_bytes(&second.claims))
+            .to_bytes();
+        let second_context = verify_and_consume_scheduling_context(
+            &ledger,
+            &d,
+            &w,
+            &second,
+            &second_policy,
+            &device_keys,
+            &admin_keys,
+            &second_challenge,
+            2_000,
+        )
+        .unwrap();
+
+        let policies = [ClassPolicy {
+            class: "inference".into(),
+            requires_admin_approval: false,
+            max_cpu_millis: 4_000,
+            max_memory_mb: 8_192,
+        }];
+        assert_eq!(
+            admit_and_reserve_durably_with_verified_lease(
+                &ledger,
+                &d,
+                &w,
+                first_context,
+                &policies,
+                &[],
+                2_000,
+                &[0x71; 32],
+            )
+            .unwrap(),
+            Admission::Reject(RejectReason::TelemetrySuperseded)
+        );
+        assert_eq!(
+            admit_and_reserve_durably_with_verified_lease(
+                &ledger,
+                &d,
+                &w,
+                second_context,
+                &policies,
+                &[],
+                2_000,
+                &[0x72; 32],
+            )
+            .unwrap(),
+            Admission::Accept
+        );
+        assert_eq!(ledger.reservation_revision("worker-01", 2_000).unwrap(), 1);
+
+        // The next sample may advance to revision 1, but a later sample may
+        // not move its signed watermark back to revision 0.
+        let fresh_challenge = fresh_test_challenge();
+        let (mut fresh, fresh_policy, fresh_device_key, _) =
+            signed_evidence(fresh_challenge, 3_000);
+        fresh.claims.sample_generation = 3;
+        fresh.claims.reservation_revision = 1;
+        fresh.signature = fresh_device_key
+            .sign(&worker_telemetry_bytes(&fresh.claims))
+            .to_bytes();
+        assert!(verify_and_consume_scheduling_context(
+            &ledger,
+            &d,
+            &w,
+            &fresh,
+            &fresh_policy,
+            &device_keys,
+            &admin_keys,
+            &fresh_challenge,
+            4_000,
+        )
+        .is_ok());
+
+        let rollback_challenge = fresh_test_challenge();
+        let (mut rollback, rollback_policy, rollback_key, _) =
+            signed_evidence(rollback_challenge, 4_000);
+        rollback.claims.sample_generation = 4;
+        rollback.claims.reservation_revision = 0;
+        rollback.signature = rollback_key
+            .sign(&worker_telemetry_bytes(&rollback.claims))
+            .to_bytes();
+        assert_eq!(
+            verify_and_consume_scheduling_context(
+                &ledger,
+                &d,
+                &w,
+                &rollback,
+                &rollback_policy,
+                &device_keys,
+                &admin_keys,
+                &rollback_challenge,
+                5_000,
+            ),
+            Err(SchedulingEvidenceError::InvalidReservationWatermark)
+        );
+
+        drop(ledger);
+        let mut lock_path = path.as_os_str().to_os_string();
+        lock_path.push(".lock");
+        let _ = std::fs::remove_file(std::path::PathBuf::from(lock_path));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn fresh_sample_watermark_does_not_double_count_existing_cpu_or_memory_leases() {
+        let policies = [ClassPolicy {
+            class: "inference".into(),
+            requires_admin_approval: false,
+            max_cpu_millis: 4_000,
+            max_memory_mb: 8_192,
+        }];
+
+        // CPU: the second sample reports 3,000 free milli-cores after the
+        // first 3,000-millicore lease. The lease is already reflected at revision 1.
+        let cpu_path = std::env::temp_dir().join(format!(
+            "ujani-watermark-cpu-{}.ledger",
+            std::process::id()
+        ));
+        let cpu_ledger = DurableLedger::open_with_integrity_keys(
+            &cpu_path,
+            "test-key",
+            vec![LedgerIntegrityKey::new("test-key", [0x7B; 32])],
+        )
+        .unwrap();
+        let d = device();
+        let cpu_first = workload_with_resources("cpu-first", 3_000, 1_024);
+        let cpu_second = workload_with_resources("cpu-second", 1_000, 1_024);
+        let first_context = verified_context_for_durable(
+            &cpu_ledger,
+            &cpu_first,
+            [0x71; 16],
+            1_000,
+            6_000,
+            20_000,
+            0,
+        );
+        assert_eq!(
+            admit_and_reserve_durably_with_verified_lease(
+                &cpu_ledger,
+                &d,
+                &cpu_first,
+                first_context,
+                &policies,
+                &[],
+                2_000,
+                &[0x71; 32],
+            )
+            .unwrap(),
+            Admission::Accept
+        );
+        assert_eq!(cpu_ledger.reservation_revision("worker-01", 2_000).unwrap(), 1);
+        let second_context = verified_context_for_durable(
+            &cpu_ledger,
+            &cpu_second,
+            [0x72; 16],
+            3_000,
+            5_000,
+            20_000,
+            1,
+        );
+        assert_eq!(
+            admit_and_reserve_durably_with_verified_lease(
+                &cpu_ledger,
+                &d,
+                &cpu_second,
+                second_context,
+                &policies,
+                &[],
+                4_000,
+                &[0x72; 32],
+            )
+            .unwrap(),
+            Admission::Accept
+        );
+        assert_eq!(cpu_ledger.snapshot().unwrap().reserved_cpu_millis, 4_000);
+        drop(cpu_ledger);
+        let mut cpu_lock = cpu_path.as_os_str().to_os_string();
+        cpu_lock.push(".lock");
+        let _ = std::fs::remove_file(std::path::PathBuf::from(cpu_lock));
+        let _ = std::fs::remove_file(cpu_path);
+
+        // Memory: the OS reports 5,904 MB of free headroom after the first
+        // 7,000 MB lease. The revision watermark prevents counting that lease twice.
+        let memory_path = std::env::temp_dir().join(format!(
+            "ujani-watermark-memory-{}.ledger",
+            std::process::id()
+        ));
+        let memory_ledger = DurableLedger::open_with_integrity_keys(
+            &memory_path,
+            "test-key",
+            vec![LedgerIntegrityKey::new("test-key", [0x7C; 32])],
+        )
+        .unwrap();
+        let memory_first = workload_with_resources("memory-first", 1_000, 7_000);
+        let memory_second = workload_with_resources("memory-second", 1_000, 1_000);
+        let first_context = verified_context_for_durable(
+            &memory_ledger,
+            &memory_first,
+            [0x73; 16],
+            1_000,
+            6_000,
+            20_000,
+            0,
+        );
+        assert_eq!(
+            admit_and_reserve_durably_with_verified_lease(
+                &memory_ledger,
+                &d,
+                &memory_first,
+                first_context,
+                &policies,
+                &[],
+                2_000,
+                &[0x73; 32],
+            )
+            .unwrap(),
+            Admission::Accept
+        );
+        let second_context = verified_context_for_durable(
+            &memory_ledger,
+            &memory_second,
+            [0x74; 16],
+            3_000,
+            6_000,
+            10_000,
+            1,
+        );
+        assert_eq!(
+            admit_and_reserve_durably_with_verified_lease(
+                &memory_ledger,
+                &d,
+                &memory_second,
+                second_context,
+                &policies,
+                &[],
+                4_000,
+                &[0x74; 32],
+            )
+            .unwrap(),
+            Admission::Accept
+        );
+        assert_eq!(memory_ledger.snapshot().unwrap().reserved_memory_mb, 8_000);
+        drop(memory_ledger);
+        let mut memory_lock = memory_path.as_os_str().to_os_string();
+        memory_lock.push(".lock");
+        let _ = std::fs::remove_file(std::path::PathBuf::from(memory_lock));
+        let _ = std::fs::remove_file(memory_path);
     }
 
     #[test]
