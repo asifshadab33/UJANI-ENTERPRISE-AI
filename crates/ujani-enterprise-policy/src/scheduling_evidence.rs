@@ -1545,8 +1545,7 @@ mod tests {
 
         let isolation_challenge = fresh_test_challenge();
         let isolation_token = fresh_test_lease_token();
-        let isolation_context =
-            verified_context_without_isolation(&w, isolation_challenge, 1_000);
+        let isolation_context = verified_context_without_isolation(&w, isolation_challenge, 1_000);
         assert_eq!(
             admit_and_reserve_with_verified_lease(
                 &mut memory_ledger,
