@@ -66,11 +66,13 @@ def _open_replay_db(path: str | os.PathLike[str]) -> sqlite3.Connection:
         raise AuthenticationError("replay protection storage unavailable") from None
 
 
-def sign_envelope(secret: bytes, timestamp: int, nonce: str, body: bytes) -> str:
-    """Create the HMAC-SHA256 signature used by a trusted device agent."""
+def sign_envelope(secret: bytes, device_id: str, timestamp: int, nonce: str, body: bytes) -> str:
+    """Create an HMAC-SHA256 signature bound to device identity and exact request bytes."""
     if not isinstance(secret, bytes) or len(secret) < 32:
         raise AuthenticationError("device signing key is invalid")
-    message = str(timestamp).encode("ascii") + b"\n" + nonce.encode("ascii") + b"\n" + body
+    if not isinstance(device_id, str) or not DEVICE_ID.fullmatch(device_id):
+        raise AuthenticationError("device identifier is invalid")
+    message = device_id.encode("ascii") + b"\n" + str(timestamp).encode("ascii") + b"\n" + nonce.encode("ascii") + b"\n" + body
     return hmac.new(secret, message, hashlib.sha256).hexdigest()
 
 
@@ -98,7 +100,7 @@ def authenticate_envelope(*, device_id: str, timestamp: int, nonce: str,
     if (not isinstance(tenant_id, str) or not TENANT_ID.fullmatch(tenant_id)
             or not isinstance(secret, bytes) or len(secret) < 32):
         raise AuthenticationError("request authentication failed")
-    expected = sign_envelope(secret, timestamp, nonce, body)
+    expected = sign_envelope(secret, device_id, timestamp, nonce, body)
     if not hmac.compare_digest(expected, signature):
         raise AuthenticationError("request authentication failed")
 
