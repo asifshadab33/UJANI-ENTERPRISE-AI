@@ -10,6 +10,7 @@
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 use std::collections::HashSet;
+use std::fmt::Write as FmtWrite;
 use std::sync::Arc;
 use zeroize::Zeroize;
 
@@ -239,6 +240,84 @@ pub struct OperatorOverview {
     pub approvals: Vec<OperatorApprovalView>,
 }
 
+impl OperatorOverview {
+    /// Serialize the validated overview using the exact version-1 console field names.
+    /// Call only after `OperatorControlPlane::get_overview` has authorized and audited it.
+    pub fn to_json(&self) -> String {
+        let mut out = String::with_capacity(1024 + self.devices.len() * 256);
+        let _ = write!(
+            &mut out,
+            "{{\"schema_version\":{},\"generated_at_unix_ms\":{},\"fleet\":{{\"registered_devices\":{},\"trusted_consented_devices\":{},\"online_fresh_devices\":{},\"schedulable_devices\":{}}},\"devices\":[",
+            self.schema_version, self.generated_at_unix_ms,
+            self.fleet.registered_devices, self.fleet.trusted_consented_devices,
+            self.fleet.online_fresh_devices, self.fleet.schedulable_devices
+        );
+        for (index, device) in self.devices.iter().enumerate() {
+            if index > 0 { out.push(','); }
+            let _ = write!(
+                &mut out,
+                "{{\"device_id\":{},\"display_name\":{},\"platform\":{},\"trust_state\":{},\"availability\":{},\"remaining_cpu_millis\":{},\"remaining_memory_mb\":{},\"last_seen_unix_ms\":{}}}",
+                json_string(&device.device_id), json_string(&device.display_name),
+                json_string(&device.platform), json_string(&device.trust_state),
+                json_string(&device.availability),
+                json_optional_number(device.remaining_cpu_millis),
+                json_optional_number(device.remaining_memory_mb), device.last_seen_unix_ms
+            );
+        }
+        out.push_str("],\"workloads\":[");
+        for (index, workload) in self.workloads.iter().enumerate() {
+            if index > 0 { out.push(','); }
+            let _ = write!(
+                &mut out,
+                "{{\"workload_id\":{},\"title\":{},\"state\":{},\"class\":{},\"reason\":{}}}",
+                json_string(&workload.workload_id), json_string(&workload.title),
+                json_string(&workload.state), json_string(&workload.class),
+                json_optional_string(workload.reason.as_deref())
+            );
+        }
+        out.push_str("],\"approvals\":[");
+        for (index, approval) in self.approvals.iter().enumerate() {
+            if index > 0 { out.push(','); }
+            let _ = write!(
+                &mut out,
+                "{{\"approval_id\":{},\"title\":{},\"state\":{},\"requester\":{},\"scope\":{},\"expires_at\":{}}}",
+                json_string(&approval.approval_id), json_string(&approval.title),
+                json_string(&approval.state), json_string(&approval.requester),
+                json_string(&approval.scope), json_optional_string(approval.expires_at.as_deref())
+            );
+        }
+        out.push_str("]}");
+        out
+    }
+}
+fn json_string(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push('"');
+    for character in value.chars() {
+        match character {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\u{08}' => out.push_str("\\b"),
+            '\u{0C}' => out.push_str("\\f"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            value if value <= '\u{1F}' => {
+                let _ = write!(&mut out, "\\u{:04x}", value as u32);
+            }
+            value => out.push(value),
+        }
+    }
+    out.push('"');
+    out
+}
+fn json_optional_string(value: Option<&str>) -> String {
+    value.map(json_string).unwrap_or_else(|| "null".into())
+}
+fn json_optional_number<T: std::fmt::Display>(value: Option<T>) -> String {
+    value.map(|number| number.to_string()).unwrap_or_else(|| "null".into())
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OperatorRepositoryError { Unavailable }
 pub trait OperatorOverviewRepository: Send + Sync {
@@ -428,6 +507,26 @@ mod tests {
         assert_eq!(service.get_overview(&token, 10_100), Err(OperatorServiceError::InvalidTenantBoundary));
         assert_eq!(audit.events.lock().unwrap()[0].outcome, OperatorAuditOutcome::InvalidOverview);
     }
+    #[test]
+    fn overview_json_matches_console_contract_and_escapes_untrusted_text() {
+        let mut overview = empty_overview("tenant-a");
+        overview.devices.push(OperatorDeviceView {
+            device_id: "device-1".into(), display_name: "Lab \"A\"".into(),
+            platform: "linux".into(), trust_state: "enrolled".into(),
+            availability: "schedulable".into(), remaining_cpu_millis: Some(1500),
+            remaining_memory_mb: Some(4096), last_seen_unix_ms: 10_100,
+        });
+        overview.fleet = OperatorFleetCounts {
+            registered_devices: 1, trusted_consented_devices: 1,
+            online_fresh_devices: 1, schedulable_devices: 1,
+        };
+        let json = overview.to_json();
+        assert!(json.contains("\"schema_version\":1"));
+        assert!(json.contains("\"remaining_memory_mb\":4096"));
+        assert!(json.contains("Lab \\\"A\\\""));
+        assert!(json.starts_with("{") && json.ends_with("}"));
+    }
+
     #[test]
     fn overview_requires_consistent_non_pooled_fleet_counts() {
         let mut overview = empty_overview("tenant-a");
