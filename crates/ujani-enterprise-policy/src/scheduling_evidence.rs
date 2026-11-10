@@ -787,6 +787,7 @@ mod tests {
         available_cpu_millis: u32,
     ) -> VerifiedSchedulingContext {
         let (mut telemetry, mut policy, device_key, admin_key) = signed_evidence(challenge, now);
+        telemetry.claims.sample_generation = u64::from(challenge[0]);
         telemetry.claims.available_cpu_millis = available_cpu_millis;
         telemetry.signature = device_key
             .sign(&worker_telemetry_bytes(&telemetry.claims))
@@ -798,6 +799,43 @@ mod tests {
             .sign(&scheduling_policy_bytes(&policy.claims))
             .to_bytes();
         verify_scheduling_context(
+            &device(),
+            workload,
+            &telemetry,
+            &policy,
+            &[("worker-01".into(), device_key.verifying_key())],
+            &[("admin-key-01".into(), admin_key.verifying_key())],
+            &challenge,
+            now + 1_000,
+        )
+        .unwrap()
+    }
+
+    fn verified_context_for_durable(
+        ledger: &DurableLedger,
+        workload: &Workload,
+        challenge: [u8; 16],
+        now: u64,
+        available_cpu_millis: u32,
+        available_memory_mb: u64,
+        reservation_revision: u64,
+    ) -> VerifiedSchedulingContext {
+        let (mut telemetry, mut policy, device_key, admin_key) = signed_evidence(challenge, now);
+        telemetry.claims.sample_generation = u64::from(challenge[0]);
+        telemetry.claims.reservation_revision = reservation_revision;
+        telemetry.claims.available_cpu_millis = available_cpu_millis;
+        telemetry.claims.available_memory_mb = available_memory_mb;
+        telemetry.signature = device_key
+            .sign(&worker_telemetry_bytes(&telemetry.claims))
+            .to_bytes();
+        policy.claims.workload_id = workload.workload_id.clone();
+        policy.claims.manifest_sha256 = workload.manifest_sha256;
+        policy.claims.challenge_nonce = challenge;
+        policy.signature = admin_key
+            .sign(&scheduling_policy_bytes(&policy.claims))
+            .to_bytes();
+        verify_and_consume_scheduling_context(
+            ledger,
             &device(),
             workload,
             &telemetry,
@@ -865,7 +903,15 @@ mod tests {
             vec![LedgerIntegrityKey::new("test-key", [0x71; 32])],
         )
         .unwrap();
-        let first_context = verified_context_for(&first_workload, [0x61; 16], 1_000, 3_500);
+        let first_context = verified_context_for_durable(
+            &durable,
+            &first_workload,
+            [0x61; 16],
+            1_000,
+            3_500,
+            20_000,
+            0,
+        );
         assert_eq!(
             admit_and_reserve_durably_with_verified_lease(
                 &durable,
@@ -880,7 +926,15 @@ mod tests {
             .unwrap(),
             Admission::Accept
         );
-        let second_context = verified_context_for(&second_workload, [0x62; 16], 1_000, 3_500);
+        let second_context = verified_context_for_durable(
+            &durable,
+            &second_workload,
+            [0x62; 16],
+            1_000,
+            3_500,
+            20_000,
+            0,
+        );
         assert_eq!(
             admit_and_reserve_durably_with_verified_lease(
                 &durable,
