@@ -455,20 +455,25 @@
           ],
           "properties": {
             "user": {
-              "const": "granted"
+              "enum": [
+                "granted",
+                "revoked"
+              ]
             },
             "organization_admin": {
               "enum": [
                 "pending",
                 "approved",
-                "denied"
+                "denied",
+                "revoked"
               ]
             },
             "worker_device_owner": {
               "enum": [
                 "pending",
                 "approved",
-                "denied"
+                "denied",
+                "revoked"
               ]
             }
           }
@@ -488,7 +493,8 @@
             "unsupported_capability",
             "cancelled",
             "timeout",
-            "internal_error"
+            "internal_error",
+            "consent_revoked"
           ]
         },
         "signature": {
