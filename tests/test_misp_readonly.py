@@ -83,6 +83,7 @@ class MISPReadOnlyAdapterTests(unittest.TestCase):
         fake = FakeOpener([
             {"response": {"Attribute": [attribute("198.51.100.1")]}},
             {"response": {"Attribute": [attribute("198.51.100.2")]}},
+            {"response": {"Attribute": []}},
         ])
         result = search_indicators(
             "https://misp.example", "api-key", "198.51.100.1",
