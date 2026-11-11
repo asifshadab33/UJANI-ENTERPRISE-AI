@@ -147,7 +147,10 @@ class SecurityEventStore:
         if (not isinstance(tenant_id, str) or not IDENTIFIER.fullmatch(tenant_id)
                 or not isinstance(provider_id, str) or provider_id not in PROVIDERS):
             raise StoreError("invalid tenant or unsupported provider")
-        batch = list(events)
+        try:
+            batch = list(events)
+        except TypeError:
+            raise StoreError("events must be an iterable of event objects") from None
         if not 1 <= len(batch) <= MAX_BATCH:
             raise StoreError("batch must contain between 1 and 500 events")
         validated = [self._validate_event(item, tenant_id, provider_id, current) for item in batch]
@@ -204,7 +207,7 @@ class SecurityEventStore:
         clauses = ["tenant_id=?"]
         params: list[Any] = [tenant_id]
         if provider_id is not None:
-            if provider_id not in PROVIDERS:
+            if not isinstance(provider_id, str) or provider_id not in PROVIDERS:
                 raise StoreError("unsupported provider")
             clauses.append("provider_id=?")
             params.append(provider_id)
@@ -214,7 +217,7 @@ class SecurityEventStore:
             clauses.append("event_type=?")
             params.append(event_type)
         if severity is not None:
-            if severity not in SEVERITIES:
+            if not isinstance(severity, str) or severity not in SEVERITIES:
                 raise StoreError("invalid severity filter")
             clauses.append("severity=?")
             params.append(severity)
