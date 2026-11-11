@@ -21,7 +21,7 @@ ON CONFLICT (tenant_id, device_id) DO NOTHING;
 SET ROLE ujani_runtime;
 
 -- A fresh runtime session has no tenant context and must see no tenant rows.
-DO $
+DO $$
 DECLARE visible_tenants integer; visible_devices integer;
 BEGIN
  SELECT count(*) INTO visible_tenants FROM ujani_control.tenants;
@@ -30,7 +30,7 @@ BEGIN
   RAISE EXCEPTION 'unset tenant context did not fail closed: tenants %, devices %',
    visible_tenants, visible_devices;
  END IF;
-END $;
+END $$;
 
 BEGIN;
 SET LOCAL ujani.tenant_id = 'tenant-a';
