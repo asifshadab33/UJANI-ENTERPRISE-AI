@@ -680,7 +680,9 @@ impl OperatorOverview {
         let total_model_count = self
             .model_inventory
             .iter()
-            .fold(0usize, |total, inventory| total.saturating_add(inventory.models.len()));
+            .fold(0usize, |total, inventory| {
+                total.saturating_add(inventory.models.len())
+            });
         let mut returned_model_count = 0usize;
         let mut returned_device_count = 0usize;
         let mut partial_response = false;
@@ -842,19 +844,24 @@ fn valid_bounded_text(value: &str, max: usize) -> bool {
 fn contains_local_path(value: &str) -> bool {
     let lower = value.to_ascii_lowercase();
     lower.contains("file://")
-        || value.split(|character: char| character.is_whitespace() || character == '=').any(|token| {
-            let token = token.trim_matches(|character: char| {
-                matches!(character, '"' | '\'' | '(' | '[' | '{' | ',' | ';' | ')' | ']' | '}')
-            });
-            let bytes = token.as_bytes();
-            token.starts_with('/')
-                || token.starts_with("~/")
-                || token.starts_with("\\\\")
-                || (bytes.len() >= 3
-                    && bytes[0].is_ascii_alphabetic()
-                    && bytes[1] == b':'
-                    && matches!(bytes[2], b'/' | b'\\'))
-        })
+        || value
+            .split(|character: char| character.is_whitespace() || character == '=')
+            .any(|token| {
+                let token = token.trim_matches(|character: char| {
+                    matches!(
+                        character,
+                        '"' | '\'' | '(' | '[' | '{' | ',' | ';' | ')' | ']' | '}'
+                    )
+                });
+                let bytes = token.as_bytes();
+                token.starts_with('/')
+                    || token.starts_with("~/")
+                    || token.starts_with("\\\\")
+                    || (bytes.len() >= 3
+                        && bytes[0].is_ascii_alphabetic()
+                        && bytes[1] == b':'
+                        && matches!(bytes[2], b'/' | b'\\'))
+            })
 }
 
 fn valid_inventory_evidence(
@@ -1073,10 +1080,12 @@ where
     }
 }
 fn validate_overview(overview: &OperatorOverview, now: u64) -> Result<(), ()> {
-    let total_model_rows = overview.model_inventory.iter().try_fold(
-        0usize,
-        |total, inventory| total.checked_add(inventory.models.len()),
-    );
+    let total_model_rows = overview
+        .model_inventory
+        .iter()
+        .try_fold(0usize, |total, inventory| {
+            total.checked_add(inventory.models.len())
+        });
     if overview.schema_version != 1
         || !valid_identifier(&overview.tenant_id, 128)
         || overview.generated_at_unix_ms == 0
@@ -1175,7 +1184,11 @@ fn validate_overview(overview: &OperatorOverview, now: u64) -> Result<(), ()> {
                     .runtime_api
                     .as_ref()
                     .is_some_and(|value| !valid_bounded_text(value, 64))
-                || !valid_inventory_evidence(&accelerator.evidence, inventory.generated_at_unix_ms, now)
+                || !valid_inventory_evidence(
+                    &accelerator.evidence,
+                    inventory.generated_at_unix_ms,
+                    now,
+                )
             {
                 return Err(());
             }
@@ -1750,7 +1763,9 @@ mod tests {
 
         overview.model_inventory.clear();
         let mut evidence_after_snapshot = sample_model_inventory("device-1", 100_000);
-        evidence_after_snapshot.models[0].evidence.observed_at_unix_ms = Some(130_001);
+        evidence_after_snapshot.models[0]
+            .evidence
+            .observed_at_unix_ms = Some(130_001);
         overview.model_inventory.push(evidence_after_snapshot);
         assert!(validate_overview(&overview, 100_000).is_err());
 
