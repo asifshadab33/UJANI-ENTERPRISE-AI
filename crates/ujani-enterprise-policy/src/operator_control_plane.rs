@@ -898,6 +898,34 @@ mod tests {
         );
     }
     #[test]
+    fn control_plane_accepts_rotatable_session_verifier() {
+        let keyring = OperatorSessionKeyRing::new(
+            "session-key-v2",
+            vec![("session-key-v1".into(), [8; 32]), ("session-key-v2".into(), [9; 32])],
+        )
+        .unwrap();
+        let token = keyring
+            .mint_after_identity_verification(&claims("tenant-a"), 10_000)
+            .unwrap();
+        let repo = Arc::new(TestRepo {
+            values: Mutex::new(HashMap::from([(
+                "tenant-a".into(),
+                empty_overview("tenant-a"),
+            )])),
+        });
+        let audit = Arc::new(TestAudit::default());
+        let service = OperatorControlPlane::new(keyring, repo, audit.clone());
+        assert_eq!(
+            service.get_overview(&token, 10_100),
+            Ok(empty_overview("tenant-a"))
+        );
+        assert_eq!(
+            audit.events.lock().unwrap()[0].outcome,
+            OperatorAuditOutcome::ReadSucceeded
+        );
+    }
+
+    #[test]
     fn tenant_scope_is_enforced_before_overview_is_returned() {
         let auth = auth();
         let token = auth
