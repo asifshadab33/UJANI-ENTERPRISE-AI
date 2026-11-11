@@ -123,14 +123,19 @@ function renderModelInventory(inventories) {
     const row = document.createElement("tr");
     row.append(textCell(item.device_id));
     row.append(textCell(item.model.display_name));
+    row.append(textCell(item.model.version));
     row.append(textCell(item.model.family));
-    row.append(textCell(item.runtime ? item.runtime.provider + " · " + (item.runtime.version || "version unknown") : item.model.runtime_id));
+    row.append(textCell(item.runtime
+      ? item.runtime.provider + " · " + (item.runtime.version || "version unknown") + " · " + item.runtime.availability + " · " + item.runtime.network_scope
+      : item.model.runtime_id + " · runtime metadata unknown"));
     const availability = document.createElement("td"); availability.append(pill(item.model.availability)); row.append(availability);
     row.append(textCell(item.model.capabilities.join(", ")));
     const requiredRam = item.model.estimated_min_memory_mb;
     const ramFit = requiredRam == null || item.memory_available_mb == null
       ? "Unknown"
-      : requiredRam <= item.memory_available_mb ? "RAM estimate fits" : "Insufficient RAM";
+      : requiredRam <= item.memory_available_mb
+        ? requiredRam + " MiB req / " + item.memory_available_mb + " MiB free · estimate fits"
+        : requiredRam + " MiB req / " + item.memory_available_mb + " MiB free · insufficient";
     const fitCell = document.createElement("td"); fitCell.append(pill(ramFit)); row.append(fitCell);
     const evidenceAt = item.model.evidence.observed_at_unix_ms;
     const freshness = evidenceAt == null ? "Unknown" : snapshotIsFresh(evidenceAt) ? formatAge(evidenceAt) : "Stale";
