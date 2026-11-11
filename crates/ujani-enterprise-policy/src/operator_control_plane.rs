@@ -311,26 +311,29 @@ impl OperatorSessionKeyRing {
         keys: Vec<(String, [u8; 32])>,
     ) -> Result<Self, OperatorAuthError> {
         let active_key_id = active_key_id.into();
-        if !valid_identifier(&active_key_id, 128)
+        let invalid_configuration = !valid_identifier(&active_key_id, 128)
             || active_key_id.contains('.')
             || keys.is_empty()
-            || keys.len() > 4
-        {
-            return Err(OperatorAuthError::InvalidClaims);
-        }
+            || keys.len() > 4;
+        let mut invalid_key_set = invalid_configuration;
         let mut indexed: HashMap<String, [u8; 32]> = HashMap::with_capacity(keys.len());
         for (key_id, mut key) in keys {
-            if !valid_identifier(&key_id, 128)
+            if invalid_key_set
+                || !valid_identifier(&key_id, 128)
                 || key_id.contains('.')
                 || indexed.contains_key(&key_id)
             {
                 key.zeroize();
-                for existing in indexed.values_mut() {
-                    existing.zeroize();
-                }
-                return Err(OperatorAuthError::InvalidClaims);
+                invalid_key_set = true;
+                continue;
             }
             indexed.insert(key_id, key);
+        }
+        if invalid_key_set {
+            for existing in indexed.values_mut() {
+                existing.zeroize();
+            }
+            return Err(OperatorAuthError::InvalidClaims);
         }
         if !indexed.contains_key(&active_key_id) {
             for existing in indexed.values_mut() {
