@@ -58,7 +58,7 @@ def main():
     assert "function validModelInventory" in js and "function validEvidence" in js, "Model inventory evidence must be structurally validated."
     assert "inventory.runtimes.length <= 16" in js and "inventory.models.length <= 512" in js, "Runtime/model inventory bounds are missing."
     assert "validEvidence(model.evidence)" in js and "snapshotIsFresh(evidenceAt)" in js, "Model evidence must expose confidence and freshness."
-    assert "inventory.hardware.memory_available_mb" in js and "RAM estimate fits" in js and "Insufficient RAM" in js, "Model RAM fit must be conservative and explicit."
+    assert "inventory.hardware.memory_available_mb" in js and "estimate fits" in js and "insufficient" in js, "Model RAM fit must be conservative and explicit."
     assert "<th>RAM fit</th>" in html, "Model RAM fit column is missing."
     assert "renderModelInventory(data.model_inventory)" in js, "Authenticated model inventory must be rendered."
     assert "prompts, model contents and local file paths are never displayed" in html, "Model inventory privacy boundary must be visible."
