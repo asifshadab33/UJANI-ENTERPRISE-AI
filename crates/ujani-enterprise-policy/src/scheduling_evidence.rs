@@ -7,8 +7,10 @@
 use crate::cpu_capacity::{
     evaluate_cpu_placement, CpuPlacementRejection, CpuPlacementRequest, CpuWorkerSnapshot,
 };
+use crate::device_trust::durable::DurableDeviceRegistry;
+use crate::device_trust::{AuthenticatedDeviceRequest, SignedDeviceRequest};
 use crate::{
-    admit_with_context, Admission, ClassPolicy, Device, DurableLedger, DurableLedgerError, Ledger,
+    admit_with_context, Admission, ClassPolicy, Device, DurableLedger, DurableLedgerError,
     RejectReason, SchedulingContext, TelemetryChallengeError, VerifiedAdminApproval, Workload,
 };
 use ed25519_dalek::{Signature, VerifyingKey};
@@ -18,6 +20,10 @@ const POLICY_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-SCHEDULING-POLICY-V1\0";
 const CLOCK_SKEW_TOLERANCE_MS: u64 = 30_000;
 pub const MAX_WORKER_TELEMETRY_TTL_MS: u64 = 30_000;
 pub const MAX_SCHEDULING_POLICY_TTL_MS: u64 = 5 * 60 * 1000;
+
+/// Server-selected route binding for the worker telemetry admission endpoint.
+pub const WORKER_TELEMETRY_REQUEST_METHOD: &str = "POST";
+pub const WORKER_TELEMETRY_REQUEST_RESOURCE: &str = "worker-telemetry:admission";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkerTelemetryClaims {
@@ -76,7 +82,7 @@ pub struct SignedSchedulingPolicy {
 /// A non-cloneable, single-use scheduling context. It retains the exact device,
 /// workload manifest and expiry that were covered by the signed evidence.
 #[derive(Debug, PartialEq, Eq)]
-pub struct VerifiedSchedulingContext {
+pub(crate) struct VerifiedSchedulingContext {
     context: SchedulingContext,
     device_id: String,
     workload_id: String,
@@ -131,6 +137,13 @@ pub enum SchedulingEvidenceError {
 fn append_string(bytes: &mut Vec<u8>, value: &str) {
     bytes.extend_from_slice(&(value.len() as u32).to_be_bytes());
     bytes.extend_from_slice(value.as_bytes());
+}
+
+/// Return the exact versioned canonical body bytes signed by worker telemetry
+/// and by the outer device request. HTTP adapters must pass these same bytes to
+/// the authentication boundary rather than reserializing the claims as JSON.
+pub fn canonical_worker_telemetry_body(claims: &WorkerTelemetryClaims) -> Vec<u8> {
+    worker_telemetry_bytes(claims)
 }
 
 fn worker_telemetry_bytes(claims: &WorkerTelemetryClaims) -> Vec<u8> {
@@ -329,7 +342,7 @@ pub(crate) fn verify_scheduling_context(
 /// Verify signed evidence and atomically consume its dispatch challenge in the
 /// durable ledger. This is the only public constructor for VerifiedSchedulingContext.
 #[allow(clippy::too_many_arguments)] // Keep both trust roots and the per-dispatch challenge explicit.
-pub fn verify_and_consume_scheduling_context(
+pub(crate) fn verify_and_consume_scheduling_context(
     ledger: &DurableLedger,
     device: &Device,
     workload: &Workload,
@@ -383,6 +396,137 @@ pub fn verify_and_consume_scheduling_context(
     Ok(verified)
 }
 
+/// Fail-closed errors from the transport-independent authenticated telemetry
+/// admission boundary. Authentication details are deliberately not exposed to
+/// an untrusted caller.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthenticatedTelemetryAdmissionError {
+    DeviceAuthenticationFailed,
+    RequestBodyMismatch,
+    RequestBindingMismatch,
+    SchedulingEvidence(SchedulingEvidenceError),
+    ReservationStoreUnavailable,
+    ReservationOutcomeUnknown,
+}
+
+/// Authenticate a worker request against the durable enrollment registry, verify
+/// the exact canonical telemetry body and administrator-signed policy, consume
+/// the monotonic telemetry challenge, and run the dual-consent/resource admission
+/// plus durable reservation.
+///
+/// expected_tenant_id, device, and workload must be loaded by the hosting service
+/// from the same tenant-scoped repository. The tenant is compared with the identity
+/// derived from the enrolled device key, never trusted from the body.
+///
+/// This is a service-core boundary, not an HTTP listener. Registry replay state
+/// and the reservation ledger are separate stores, so this function does not
+/// claim cross-store atomicity or production dispatch safety. Keep dispatch
+/// disabled until those records share one authoritative transaction and the
+/// isolation/result-verification lifecycle is independently proven.
+#[allow(clippy::too_many_arguments)] // Keep identity, policy, and resource inputs explicit at the trust boundary.
+pub fn authenticate_verify_and_reserve_worker_telemetry(
+    registry: &DurableDeviceRegistry,
+    ledger: &DurableLedger,
+    signed_request: &SignedDeviceRequest,
+    raw_body: &[u8],
+    expected_tenant_id: &str,
+    device: &Device,
+    workload: &Workload,
+    telemetry: &SignedWorkerTelemetry,
+    policy: &SignedSchedulingPolicy,
+    enrolled_admin_keys: &[(String, VerifyingKey)],
+    expected_challenge_nonce: &[u8; 16],
+    policies: &[ClassPolicy],
+    approvals: &[VerifiedAdminApproval],
+    now_unix_ms: u64,
+    lease_token: &[u8; 32],
+) -> Result<(AuthenticatedDeviceRequest, Admission), AuthenticatedTelemetryAdmissionError> {
+    if telemetry.claims.device_id.len() > 128
+        || raw_body.len() > crate::device_trust::MAX_DEVICE_REQUEST_BODY_BYTES
+    {
+        return Err(AuthenticatedTelemetryAdmissionError::RequestBodyMismatch);
+    }
+    let canonical_body = canonical_worker_telemetry_body(&telemetry.claims);
+    if raw_body != canonical_body.as_slice() {
+        return Err(AuthenticatedTelemetryAdmissionError::RequestBodyMismatch);
+    }
+
+    // Reject obvious caller/record mismatches before consuming the durable
+    // request nonce. These untrusted claims are only a prefilter; the same
+    // bindings are checked again against the authenticated principal below.
+    if signed_request.claims.tenant_id != expected_tenant_id
+        || signed_request.claims.device_id != device.device_id
+        || signed_request.claims.workload_id != workload.workload_id
+        || signed_request.claims.manifest_sha256 != workload.manifest_sha256
+    {
+        return Err(AuthenticatedTelemetryAdmissionError::RequestBindingMismatch);
+    }
+
+    let authenticated: AuthenticatedDeviceRequest = registry
+        .authenticate_request_for(
+            signed_request,
+            WORKER_TELEMETRY_REQUEST_METHOD,
+            WORKER_TELEMETRY_REQUEST_RESOURCE,
+            raw_body,
+            now_unix_ms,
+        )
+        .map_err(|_| AuthenticatedTelemetryAdmissionError::DeviceAuthenticationFailed)?;
+
+    if expected_tenant_id != authenticated.tenant_id()
+        || authenticated.device_id() != device.device_id.as_str()
+        || telemetry.claims.device_id.as_str() != authenticated.device_id()
+        || authenticated.workload_id() != workload.workload_id.as_str()
+        || authenticated.manifest_sha256() != &workload.manifest_sha256
+    {
+        return Err(AuthenticatedTelemetryAdmissionError::RequestBindingMismatch);
+    }
+
+    // Re-read the registry after request authentication. If the device was
+    // revoked or its key rotated between the two operations, fail closed.
+    let (device_key, owner_opted_in) = registry
+        .authenticated_device_status_for_request(&authenticated)
+        .map_err(|_| AuthenticatedTelemetryAdmissionError::DeviceAuthenticationFailed)?;
+    if !owner_opted_in {
+        return Ok((
+            authenticated,
+            Admission::Reject(RejectReason::OwnerOptInMissing),
+        ));
+    }
+    let enrolled_device_keys = [(authenticated.device_id().to_owned(), device_key)];
+
+    let verified = verify_and_consume_scheduling_context(
+        ledger,
+        device,
+        workload,
+        telemetry,
+        policy,
+        &enrolled_device_keys,
+        enrolled_admin_keys,
+        expected_challenge_nonce,
+        now_unix_ms,
+    )
+    .map_err(AuthenticatedTelemetryAdmissionError::SchedulingEvidence)?;
+
+    let admission = admit_and_reserve_durably_with_verified_lease(
+        ledger,
+        device,
+        workload,
+        verified,
+        policies,
+        approvals,
+        now_unix_ms,
+        lease_token,
+    )
+    .map_err(|error| match error {
+        DurableLedgerError::AnchorUnavailable(_) => {
+            AuthenticatedTelemetryAdmissionError::ReservationOutcomeUnknown
+        }
+        _ => AuthenticatedTelemetryAdmissionError::ReservationStoreUnavailable,
+    })?;
+
+    Ok((authenticated, admission))
+}
+
 fn capacity_rejection(
     snapshot: &CpuWorkerSnapshot,
     workload: &Workload,
@@ -425,7 +569,7 @@ fn signed_headroom(snapshot: &CpuWorkerSnapshot) -> (u32, u64) {
 }
 
 /// Evaluate policy using only cryptographically verified scheduling evidence.
-pub fn admit_with_verified_context(
+pub(crate) fn admit_with_verified_context(
     device: &Device,
     workload: &Workload,
     context: &VerifiedSchedulingContext,
@@ -451,7 +595,7 @@ pub fn admit_with_verified_context(
 
 /// Atomically persist a reservation after verifying signed scheduling evidence.
 #[allow(clippy::too_many_arguments)] // Keep all policy, identity and capability inputs explicit.
-pub fn admit_and_reserve_durably_with_verified_lease(
+pub(crate) fn admit_and_reserve_durably_with_verified_lease(
     ledger: &DurableLedger,
     device: &Device,
     workload: &Workload,
@@ -489,11 +633,12 @@ pub fn admit_and_reserve_durably_with_verified_lease(
     )
 }
 
-/// Atomically reserve in the in-memory prototype after verified evidence and
-/// lease-capability checks. Production still needs a durable transactional ledger.
+/// Test-only in-memory prototype; production callers must use the authenticated
+/// durable admission boundary.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)] // Preserve explicit admission evidence and reservation inputs.
-pub fn admit_and_reserve_with_verified_lease(
-    ledger: &mut Ledger,
+pub(crate) fn admit_and_reserve_with_verified_lease(
+    ledger: &mut crate::Ledger,
     device: &Device,
     workload: &Workload,
     context: VerifiedSchedulingContext,
@@ -549,7 +694,9 @@ pub fn admit_and_reserve_with_verified_lease(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{workload_from_manifest, DataClassification, LedgerIntegrityKey, WorkloadManifest};
+    use crate::{
+        workload_from_manifest, DataClassification, Ledger, LedgerIntegrityKey, WorkloadManifest,
+    };
     use ed25519_dalek::{Signer, SigningKey};
     use std::hash::{BuildHasher, Hash, Hasher};
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -1906,6 +2053,401 @@ mod tests {
         };
         let _ = std::fs::remove_file(lock_path);
         let _ = std::fs::remove_file(path);
+    }
+
+    fn unique_authenticated_test_path(label: &str) -> std::path::PathBuf {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        std::env::temp_dir().join(format!(
+            "ujani-authenticated-telemetry-{label}-{}-{}.db",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed),
+        ))
+    }
+
+    fn remove_authenticated_test_files(path: &std::path::Path) {
+        for suffix in ["", ".lock", ".bak", ".tmp", ".anchor-restore.tmp"] {
+            let mut value = path.as_os_str().to_os_string();
+            value.push(suffix);
+            let _ = std::fs::remove_file(std::path::PathBuf::from(value));
+        }
+    }
+
+    fn open_authenticated_test_registry(
+        path: &std::path::Path,
+        admin_key: &SigningKey,
+        device_key: &SigningKey,
+        now: u64,
+    ) -> DurableDeviceRegistry {
+        use crate::device_trust::durable::DeviceTrustIntegrityKey;
+        use crate::device_trust::{
+            DeviceCommandAction, SignedDeviceAdminCommand, SignedOwnerConsentCommand,
+        };
+
+        let registry = DurableDeviceRegistry::open(
+            path,
+            vec![("admin-key-01".into(), admin_key.verifying_key())],
+            DeviceTrustIntegrityKey::new("test-registry-key", fresh_test_lease_token()),
+        )
+        .unwrap();
+        let mut command = SignedDeviceAdminCommand {
+            action: DeviceCommandAction::Enroll,
+            tenant_id: "tenant-a".into(),
+            device_id: "worker-01".into(),
+            admin_key_id: "admin-key-01".into(),
+            target_key_id: "worker-key-01".into(),
+            target_public_key: Some(device_key.verifying_key().to_bytes()),
+            issued_at_unix_ms: now,
+            expires_at_unix_ms: now + crate::device_trust::MAX_ADMIN_COMMAND_TTL_MS,
+            nonce: fresh_test_challenge(),
+            signature: [0; 64],
+            old_device_signature: None,
+            new_device_signature: None,
+        };
+        command.new_device_signature = Some(
+            device_key
+                .sign(&crate::device_trust::enrollment_proof_bytes(&command))
+                .to_bytes(),
+        );
+        command.signature = admin_key
+            .sign(&crate::device_trust::admin_command_bytes(&command))
+            .to_bytes();
+        registry.apply_admin_command(&command, now + 1).unwrap();
+        let mut consent = SignedOwnerConsentCommand {
+            tenant_id: "tenant-a".into(),
+            device_id: "worker-01".into(),
+            key_id: "worker-key-01".into(),
+            key_generation: 1,
+            revision: 1,
+            opted_in: true,
+            issued_at_unix_ms: now + 1,
+            expires_at_unix_ms: now + crate::device_trust::MAX_OWNER_CONSENT_TTL_MS,
+            nonce: fresh_test_challenge(),
+            signature: [0; 64],
+        };
+        consent.signature = device_key
+            .sign(&crate::device_trust::owner_consent_bytes(&consent))
+            .to_bytes();
+        registry.apply_owner_consent(&consent, now + 2).unwrap();
+        registry
+    }
+
+    fn set_authenticated_test_owner_consent(
+        registry: &DurableDeviceRegistry,
+        device_key: &SigningKey,
+        opted_in: bool,
+        revision: u64,
+        now: u64,
+    ) {
+        use crate::device_trust::SignedOwnerConsentCommand;
+        let mut consent = SignedOwnerConsentCommand {
+            tenant_id: "tenant-a".into(),
+            device_id: "worker-01".into(),
+            key_id: "worker-key-01".into(),
+            key_generation: 1,
+            revision,
+            opted_in,
+            issued_at_unix_ms: now,
+            expires_at_unix_ms: now + crate::device_trust::MAX_OWNER_CONSENT_TTL_MS,
+            nonce: fresh_test_challenge(),
+            signature: [0; 64],
+        };
+        consent.signature = device_key
+            .sign(&crate::device_trust::owner_consent_bytes(&consent))
+            .to_bytes();
+        registry.apply_owner_consent(&consent, now + 1).unwrap();
+    }
+
+    fn signed_telemetry_request(
+        device_key: &SigningKey,
+        workload: &Workload,
+        telemetry: &SignedWorkerTelemetry,
+        now: u64,
+    ) -> (SignedDeviceRequest, Vec<u8>) {
+        use crate::device_trust::{DeviceRequestClaims, SignedDeviceRequest};
+        use sha2::Digest;
+
+        let body = worker_telemetry_bytes(&telemetry.claims);
+        let claims = DeviceRequestClaims {
+            tenant_id: "tenant-a".into(),
+            device_id: telemetry.claims.device_id.clone(),
+            key_id: "worker-key-01".into(),
+            key_generation: 1,
+            request_id: fresh_test_challenge(),
+            issued_at_unix_ms: now,
+            expires_at_unix_ms: now + crate::device_trust::MAX_DEVICE_REQUEST_TTL_MS,
+            method: WORKER_TELEMETRY_REQUEST_METHOD.into(),
+            resource_id: WORKER_TELEMETRY_REQUEST_RESOURCE.into(),
+            workload_id: workload.workload_id.clone(),
+            manifest_sha256: workload.manifest_sha256,
+            body_sha256: sha2::Sha256::digest(&body).into(),
+        };
+        let signed = SignedDeviceRequest {
+            signature: device_key
+                .sign(&crate::device_trust::device_request_bytes(&claims))
+                .to_bytes(),
+            claims,
+        };
+        (signed, body)
+    }
+
+    fn open_authenticated_test_ledger(path: &std::path::Path) -> DurableLedger {
+        DurableLedger::open_with_integrity_keys(
+            path,
+            "telemetry-ledger-test",
+            vec![LedgerIntegrityKey::new(
+                "telemetry-ledger-test",
+                fresh_test_lease_token(),
+            )],
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn authenticated_telemetry_uses_durable_device_identity_and_rejects_replay() {
+        let registry_path = unique_authenticated_test_path("registry");
+        let ledger_path = unique_authenticated_test_path("ledger");
+        let now = 20_000;
+        let challenge = fresh_test_challenge();
+        let (telemetry, policy, device_key, admin_key) = signed_evidence(challenge, now);
+        let registry =
+            open_authenticated_test_registry(&registry_path, &admin_key, &device_key, now);
+        let ledger = open_authenticated_test_ledger(&ledger_path);
+        let device = device();
+        let workload = workload();
+        let (request, body) = signed_telemetry_request(&device_key, &workload, &telemetry, now);
+        let admin_keys = [(
+            policy.claims.policy_key_id.clone(),
+            admin_key.verifying_key(),
+        )];
+        let policies = [ClassPolicy {
+            class: "inference".into(),
+            requires_admin_approval: false,
+            max_cpu_millis: 4_000,
+            max_memory_mb: 8_192,
+        }];
+        let lease_token = fresh_test_lease_token();
+
+        let mut mismatched_body = body.clone();
+        mismatched_body.push(0);
+        assert_eq!(
+            authenticate_verify_and_reserve_worker_telemetry(
+                &registry,
+                &ledger,
+                &request,
+                &mismatched_body,
+                "tenant-a",
+                &device,
+                &workload,
+                &telemetry,
+                &policy,
+                &admin_keys,
+                &challenge,
+                &policies,
+                &[],
+                now + 2,
+                &lease_token,
+            ),
+            Err(AuthenticatedTelemetryAdmissionError::RequestBodyMismatch)
+        );
+
+        let (authenticated, admission) = authenticate_verify_and_reserve_worker_telemetry(
+            &registry,
+            &ledger,
+            &request,
+            &body,
+            "tenant-a",
+            &device,
+            &workload,
+            &telemetry,
+            &policy,
+            &admin_keys,
+            &challenge,
+            &policies,
+            &[],
+            now + 2,
+            &lease_token,
+        )
+        .unwrap();
+        assert_eq!(admission, Admission::Accept);
+        assert_eq!(authenticated.tenant_id(), "tenant-a");
+        assert_eq!(authenticated.device_id(), "worker-01");
+        assert_eq!(authenticated.key_id(), "worker-key-01");
+        assert_eq!(authenticated.key_generation(), 1);
+        assert_eq!(authenticated.workload_id(), "job-01");
+        assert_eq!(
+            authenticate_verify_and_reserve_worker_telemetry(
+                &registry,
+                &ledger,
+                &request,
+                &body,
+                "tenant-a",
+                &device,
+                &workload,
+                &telemetry,
+                &policy,
+                &admin_keys,
+                &challenge,
+                &policies,
+                &[],
+                now + 3,
+                &lease_token,
+            ),
+            Err(AuthenticatedTelemetryAdmissionError::DeviceAuthenticationFailed)
+        );
+
+        drop(registry);
+        drop(ledger);
+        remove_authenticated_test_files(&registry_path);
+        remove_authenticated_test_files(&ledger_path);
+    }
+
+    #[test]
+    fn authenticated_telemetry_rejects_persisted_owner_opt_out_even_if_sample_is_stale() {
+        let registry_path = unique_authenticated_test_path("owner-opt-out-registry");
+        let ledger_path = unique_authenticated_test_path("owner-opt-out-ledger");
+        let now = 40_000;
+        let challenge = fresh_test_challenge();
+        let (telemetry, policy, device_key, admin_key) = signed_evidence(challenge, now);
+        let registry =
+            open_authenticated_test_registry(&registry_path, &admin_key, &device_key, now);
+        let ledger = open_authenticated_test_ledger(&ledger_path);
+        let device = device();
+        let workload = workload();
+        let (request, body) = signed_telemetry_request(&device_key, &workload, &telemetry, now);
+        let admin_keys = [(
+            policy.claims.policy_key_id.clone(),
+            admin_key.verifying_key(),
+        )];
+        let policies = [ClassPolicy {
+            class: "inference".into(),
+            requires_admin_approval: false,
+            max_cpu_millis: 4_000,
+            max_memory_mb: 8_192,
+        }];
+
+        set_authenticated_test_owner_consent(&registry, &device_key, false, 2, now + 10);
+        assert_eq!(
+            authenticate_verify_and_reserve_worker_telemetry(
+                &registry,
+                &ledger,
+                &request,
+                &body,
+                "tenant-a",
+                &device,
+                &workload,
+                &telemetry,
+                &policy,
+                &admin_keys,
+                &challenge,
+                &policies,
+                &[],
+                now + 20,
+                &fresh_test_lease_token(),
+            )
+            .map(|(_, admission)| admission),
+            Ok(Admission::Reject(RejectReason::OwnerOptInMissing))
+        );
+
+        drop(registry);
+        drop(ledger);
+        remove_authenticated_test_files(&registry_path);
+        remove_authenticated_test_files(&ledger_path);
+    }
+
+    #[test]
+    fn authenticated_telemetry_requires_both_owner_and_organisation_consent() {
+        let registry_path = unique_authenticated_test_path("consent-registry");
+        let ledger_path = unique_authenticated_test_path("consent-ledger");
+        let now = 30_000;
+        let first_challenge = fresh_test_challenge();
+        let (mut first_telemetry, first_policy, device_key, admin_key) =
+            signed_evidence(first_challenge, now);
+        first_telemetry.claims.owner_opted_in = false;
+        first_telemetry.signature = device_key
+            .sign(&worker_telemetry_bytes(&first_telemetry.claims))
+            .to_bytes();
+
+        let registry =
+            open_authenticated_test_registry(&registry_path, &admin_key, &device_key, now);
+        let ledger = open_authenticated_test_ledger(&ledger_path);
+        let device = device();
+        let workload = workload();
+        let admin_keys = [(
+            first_policy.claims.policy_key_id.clone(),
+            admin_key.verifying_key(),
+        )];
+        let policies = [ClassPolicy {
+            class: "inference".into(),
+            requires_admin_approval: false,
+            max_cpu_millis: 4_000,
+            max_memory_mb: 8_192,
+        }];
+        let lease_token = fresh_test_lease_token();
+        let (first_request, first_body) =
+            signed_telemetry_request(&device_key, &workload, &first_telemetry, now);
+
+        assert_eq!(
+            authenticate_verify_and_reserve_worker_telemetry(
+                &registry,
+                &ledger,
+                &first_request,
+                &first_body,
+                "tenant-a",
+                &device,
+                &workload,
+                &first_telemetry,
+                &first_policy,
+                &admin_keys,
+                &first_challenge,
+                &policies,
+                &[],
+                now + 2,
+                &lease_token,
+            )
+            .map(|(_, admission)| admission),
+            Ok(Admission::Reject(RejectReason::OwnerOptInMissing))
+        );
+
+        let second_challenge = fresh_test_challenge();
+        let (mut second_telemetry, mut second_policy, _, _) =
+            signed_evidence(second_challenge, now + 10);
+        second_telemetry.claims.sample_generation = 2;
+        second_telemetry.signature = device_key
+            .sign(&worker_telemetry_bytes(&second_telemetry.claims))
+            .to_bytes();
+        second_policy.claims.within_admin_schedule = false;
+        second_policy.signature = admin_key
+            .sign(&scheduling_policy_bytes(&second_policy.claims))
+            .to_bytes();
+        let (second_request, second_body) =
+            signed_telemetry_request(&device_key, &workload, &second_telemetry, now + 10);
+
+        assert_eq!(
+            authenticate_verify_and_reserve_worker_telemetry(
+                &registry,
+                &ledger,
+                &second_request,
+                &second_body,
+                "tenant-a",
+                &device,
+                &workload,
+                &second_telemetry,
+                &second_policy,
+                &admin_keys,
+                &second_challenge,
+                &policies,
+                &[],
+                now + 12,
+                &lease_token,
+            )
+            .map(|(_, admission)| admission),
+            Ok(Admission::Reject(RejectReason::OutsideAdminSchedule))
+        );
+
+        drop(registry);
+        drop(ledger);
+        remove_authenticated_test_files(&registry_path);
+        remove_authenticated_test_files(&ledger_path);
     }
 
     #[test]

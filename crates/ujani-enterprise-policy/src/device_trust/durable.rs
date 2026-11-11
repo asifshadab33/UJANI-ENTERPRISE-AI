@@ -11,7 +11,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-const HEADER: &str = "UJANI-DEVICE-TRUST-V1";
+const HEADER_V1: &str = "UJANI-DEVICE-TRUST-V1";
+const HEADER: &str = "UJANI-DEVICE-TRUST-V2";
 const DOMAIN: &[u8] = b"UJANI-DEVICE-TRUST-HMAC-SHA256-V1\0";
 const MAX_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_RECORDS: usize = MAX_REPLAY_ENTRIES;
@@ -273,6 +274,19 @@ impl DurableDeviceRegistry {
         })
     }
 
+    /// Persist an explicit owner opt-in or opt-out signed by the active device key.
+    pub fn apply_owner_consent(
+        &self,
+        command: &SignedOwnerConsentCommand,
+        now: u64,
+    ) -> Result<u64, DurableDeviceTrustError> {
+        self.transact(|registry| {
+            registry
+                .apply_owner_consent(command, now)
+                .map_err(Into::into)
+        })
+    }
+
     /// Authenticates only when the signed method/resource match the server-selected route.
     ///
     /// A route mismatch does not consume the durable replay nonce.
@@ -289,6 +303,44 @@ impl DurableDeviceRegistry {
                 .authenticate_request_for(request, expected_method, expected_resource_id, body, now)
                 .map_err(Into::into)
         })
+    }
+
+    /// Re-read the current durable trust record and consent state after request
+    /// authentication. Both values are checked against the exact active key generation.
+    pub fn authenticated_device_status_for_request(
+        &self,
+        authenticated: &AuthenticatedDeviceRequest,
+    ) -> Result<(VerifyingKey, bool), DurableDeviceTrustError> {
+        self.transact(|registry| {
+            let record = registry
+                .devices
+                .get(authenticated.device_id())
+                .ok_or(DeviceTrustError::DeviceNotFound)?;
+            if record.state != DeviceTrustState::Enrolled {
+                return Err(DeviceTrustError::DeviceNotEnrolled.into());
+            }
+            if record.tenant_id != authenticated.tenant_id() {
+                return Err(DeviceTrustError::TenantMismatch.into());
+            }
+            if record.key_id != authenticated.key_id()
+                || record.generation != authenticated.key_generation()
+            {
+                return Err(DeviceTrustError::StaleKeyGeneration.into());
+            }
+            let owner_opted_in = record.owner_opted_in
+                && record.owner_consent_generation == record.generation
+                && record.owner_consent_revision > 0;
+            Ok((record.key, owner_opted_in))
+        })
+    }
+
+    /// Compatibility accessor for callers that need only the active public key.
+    pub fn verifying_key_for_authenticated_request(
+        &self,
+        authenticated: &AuthenticatedDeviceRequest,
+    ) -> Result<VerifyingKey, DurableDeviceTrustError> {
+        self.authenticated_device_status_for_request(authenticated)
+            .map(|(key, _)| key)
     }
 
     /// Authenticates a device request and durably records its replay nonce.
@@ -443,11 +495,26 @@ impl DurableDeviceRegistry {
                 generation,
                 snapshot_sha256: snapshot_sha256(&bytes),
             };
-            let advanced = anchor
-                .compare_and_set(namespace, expected_generation, next)
-                .map_err(DurableDeviceTrustError::AnchorUnavailable)?;
-            if !advanced {
-                return Err(DurableDeviceTrustError::AnchorConflict);
+            match anchor.compare_and_set(namespace, expected_generation, next.clone()) {
+                Ok(true) => {}
+                Ok(false) => return Err(DurableDeviceTrustError::AnchorConflict),
+                Err(error) => {
+                    // A transport error can arrive after the provider committed.
+                    // Its load operation is a quiescence barrier, so read back the
+                    // authoritative record before telling the caller to retry.
+                    match anchor.load(namespace) {
+                        Ok(Some(observed)) if observed == next => {}
+                        Ok(observed) if observed == anchor_record => {
+                            return Err(DurableDeviceTrustError::AnchorUnavailable(error));
+                        }
+                        Ok(_) => return Err(DurableDeviceTrustError::AnchorMismatch),
+                        Err(load_error) => {
+                            return Err(DurableDeviceTrustError::AnchorUnavailable(format!(
+                                "{error}; commit outcome could not be verified: {load_error}"
+                            )));
+                        }
+                    }
+                }
             }
         }
         Ok(result)
@@ -540,7 +607,7 @@ fn encode_snapshot(r: &DeviceRegistry, key_id: &str, key: &[u8; 32]) -> Vec<u8> 
     for id in ids {
         let d = r.devices.get(id).expect("key came from map");
         body.push_str(&format!(
-            "D|{}|{}|{}|{}|{}|{}\n",
+            "D|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}\n",
             hex(id.as_bytes()),
             hex(d.tenant_id.as_bytes()),
             if d.state == DeviceTrustState::Enrolled {
@@ -550,7 +617,11 @@ fn encode_snapshot(r: &DeviceRegistry, key_id: &str, key: &[u8; 32]) -> Vec<u8> 
             },
             hex(d.key_id.as_bytes()),
             hex(&d.key.to_bytes()),
-            d.generation
+            d.generation,
+            u8::from(d.owner_opted_in),
+            d.owner_consent_revision,
+            d.owner_consent_generation,
+            d.owner_consent_updated_at_unix_ms
         ));
     }
     let mut admins = r.admin_nonces.iter().collect::<Vec<_>>();
@@ -602,9 +673,11 @@ fn decode_snapshot(
     let mut registry = DeviceRegistry::new(admin_keys.to_vec())?;
     let mut records = 0usize;
     let mut lines = body.lines();
-    if lines.next() != Some(HEADER) {
-        return Err(DurableDeviceTrustError::CorruptState);
-    }
+    let version = match lines.next() {
+        Some(HEADER_V1) => 1,
+        Some(HEADER) => 2,
+        _ => return Err(DurableDeviceTrustError::CorruptState),
+    };
     for line in lines {
         let p = line.split('|').collect::<Vec<_>>();
         records += 1;
@@ -612,7 +685,7 @@ fn decode_snapshot(
             return Err(DurableDeviceTrustError::CapacityExceeded);
         }
         match p.first().copied() {
-            Some("D") if p.len() == 7 => {
+            Some("D") if (version == 1 && p.len() == 7) || (version == 2 && p.len() == 11) => {
                 let id = String::from_utf8(unhex(p[1])?)
                     .map_err(|_| DurableDeviceTrustError::CorruptState)?;
                 let tenant = String::from_utf8(unhex(p[2])?)
@@ -637,6 +710,37 @@ fn decode_snapshot(
                 {
                     return Err(DurableDeviceTrustError::CorruptState);
                 }
+                let (
+                    owner_opted_in,
+                    owner_consent_revision,
+                    owner_consent_generation,
+                    owner_consent_updated_at_unix_ms,
+                ) = if version == 2 {
+                    let opted_in = match p[7] {
+                        "0" => false,
+                        "1" => true,
+                        _ => return Err(DurableDeviceTrustError::CorruptState),
+                    };
+                    let revision = p[8]
+                        .parse::<u64>()
+                        .map_err(|_| DurableDeviceTrustError::CorruptState)?;
+                    let consent_generation = p[9]
+                        .parse::<u64>()
+                        .map_err(|_| DurableDeviceTrustError::CorruptState)?;
+                    let updated_at = p[10]
+                        .parse::<u64>()
+                        .map_err(|_| DurableDeviceTrustError::CorruptState)?;
+                    if (revision == 0 && (opted_in || consent_generation != 0 || updated_at != 0))
+                        || (revision > 0
+                            && (state != DeviceTrustState::Enrolled
+                                || consent_generation != generation))
+                    {
+                        return Err(DurableDeviceTrustError::CorruptState);
+                    }
+                    (opted_in, revision, consent_generation, updated_at)
+                } else {
+                    (false, 0, 0, 0)
+                };
                 let vk = VerifyingKey::from_bytes(&pubkey)
                     .map_err(|_| DurableDeviceTrustError::CorruptState)?;
                 if registry
@@ -649,6 +753,10 @@ fn decode_snapshot(
                             key_id,
                             key: vk,
                             generation,
+                            owner_opted_in,
+                            owner_consent_revision,
+                            owner_consent_generation,
+                            owner_consent_updated_at_unix_ms,
                         },
                     )
                     .is_some()
@@ -771,11 +879,29 @@ mod tests {
             std::process::id()
         ))
     }
+    // Deterministic, domain-separated fixtures are confined to tests; runtime
+    // trust roots are always injected from protected deployment configuration.
+    fn test_signing_key(label: &str) -> SigningKey {
+        let seed: [u8; 32] = Sha256::digest(label.as_bytes()).into();
+        SigningKey::from_bytes(&seed)
+    }
+
+    fn test_nonce(label: &str) -> [u8; 16] {
+        let digest = Sha256::digest(label.as_bytes());
+        let mut nonce = [0u8; 16];
+        nonce.copy_from_slice(&digest[..16]);
+        nonce
+    }
+
+    fn test_integrity_key_bytes() -> [u8; 32] {
+        Sha256::digest(b"ujani-enterprise-device-trust-test-integrity-v1").into()
+    }
+
     fn open(path: &Path, admin: &SigningKey) -> DurableDeviceRegistry {
         DurableDeviceRegistry::open(
             path,
             vec![("admin-v1".into(), admin.verifying_key())],
-            DeviceTrustIntegrityKey::new("integrity-v1", [0x42; 32]),
+            DeviceTrustIntegrityKey::new("integrity-v1", test_integrity_key_bytes()),
         )
         .unwrap()
     }
@@ -797,6 +923,29 @@ mod tests {
         c.new_device_signature = Some(device.sign(&enrollment_proof_bytes(&c)).to_bytes());
         c.signature = admin.sign(&admin_command_bytes(&c)).to_bytes();
         c
+    }
+
+    fn owner_consent(
+        device: &SigningKey,
+        opted_in: bool,
+        revision: u64,
+        issued_at_unix_ms: u64,
+        nonce_label: &str,
+    ) -> SignedOwnerConsentCommand {
+        let mut command = SignedOwnerConsentCommand {
+            tenant_id: "tenant-a".into(),
+            device_id: "device-1".into(),
+            key_id: "device-key-v1".into(),
+            key_generation: 1,
+            revision,
+            opted_in,
+            issued_at_unix_ms,
+            expires_at_unix_ms: issued_at_unix_ms + MAX_OWNER_CONSENT_TTL_MS,
+            nonce: test_nonce(nonce_label),
+            signature: [0; 64],
+        };
+        command.signature = device.sign(&owner_consent_bytes(&command)).to_bytes();
+        command
     }
     #[test]
     fn enrollment_and_request_replay_state_survive_restart() {
@@ -859,6 +1008,116 @@ mod tests {
         let _ = fs::remove_file(&path);
         let _ = fs::remove_file(suffix(&path, ".lock"));
     }
+    #[test]
+    fn owner_consent_persists_and_rejects_stale_revisions() {
+        let path = path();
+        let admin = test_signing_key("owner-consent-admin");
+        let device = test_signing_key("owner-consent-device");
+        let store = open(&path, &admin);
+        store
+            .apply_admin_command(&enroll(&admin, &device), 200)
+            .unwrap();
+        let opt_in = owner_consent(&device, true, 1, 210, "owner-opt-in");
+        assert_eq!(store.apply_owner_consent(&opt_in, 220), Ok(1));
+        assert!(store.tenant_device_summaries("tenant-a").unwrap()[0].owner_opted_in);
+        drop(store);
+
+        let reopened = open(&path, &admin);
+        assert!(reopened.tenant_device_summaries("tenant-a").unwrap()[0].owner_opted_in);
+        assert_eq!(
+            reopened.apply_owner_consent(&opt_in, 225),
+            Err(DurableDeviceTrustError::Trust(
+                DeviceTrustError::ReplayDetected
+            ))
+        );
+        let opt_out = owner_consent(&device, false, 2, 230, "owner-opt-out");
+        assert_eq!(reopened.apply_owner_consent(&opt_out, 240), Ok(2));
+        assert!(!reopened.tenant_device_summaries("tenant-a").unwrap()[0].owner_opted_in);
+
+        let delayed_opt_in = owner_consent(&device, true, 1, 250, "delayed-owner-opt-in");
+        assert_eq!(
+            reopened.apply_owner_consent(&delayed_opt_in, 260),
+            Err(DurableDeviceTrustError::Trust(
+                DeviceTrustError::InvalidConsentRevision
+            ))
+        );
+        let out_of_order_opt_in = owner_consent(&device, true, 3, 225, "out-of-order-owner-opt-in");
+        assert_eq!(
+            reopened.apply_owner_consent(&out_of_order_opt_in, 260),
+            Err(DurableDeviceTrustError::Trust(
+                DeviceTrustError::InvalidConsentRevision
+            ))
+        );
+
+        let renewed_opt_in = owner_consent(&device, true, 3, 270, "renewed-owner-opt-in");
+        assert_eq!(reopened.apply_owner_consent(&renewed_opt_in, 280), Ok(3));
+        assert!(reopened.tenant_device_summaries("tenant-a").unwrap()[0].owner_opted_in);
+
+        let replacement = test_signing_key("owner-consent-replacement");
+        let mut rotate = SignedDeviceAdminCommand {
+            action: DeviceCommandAction::RotateKey,
+            tenant_id: "tenant-a".into(),
+            device_id: "device-1".into(),
+            admin_key_id: "admin-v1".into(),
+            target_key_id: "device-key-v2".into(),
+            target_public_key: Some(replacement.verifying_key().to_bytes()),
+            issued_at_unix_ms: 290,
+            expires_at_unix_ms: 1_000,
+            nonce: test_nonce("owner-consent-rotation"),
+            signature: [0; 64],
+            old_device_signature: None,
+            new_device_signature: None,
+        };
+        rotate.old_device_signature = Some(device.sign(&rotation_proof_bytes(&rotate)).to_bytes());
+        rotate.new_device_signature = Some(
+            replacement
+                .sign(&enrollment_proof_bytes(&rotate))
+                .to_bytes(),
+        );
+        rotate.signature = admin.sign(&admin_command_bytes(&rotate)).to_bytes();
+        reopened.apply_admin_command(&rotate, 300).unwrap();
+        assert!(!reopened.tenant_device_summaries("tenant-a").unwrap()[0].owner_opted_in);
+        let old_key_consent = owner_consent(&device, true, 4, 310, "old-key-owner-consent");
+        assert_eq!(
+            reopened.apply_owner_consent(&old_key_consent, 320),
+            Err(DurableDeviceTrustError::Trust(
+                DeviceTrustError::StaleKeyGeneration
+            ))
+        );
+        drop(reopened);
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(suffix(&path, ".lock"));
+        let _ = fs::remove_file(suffix(&path, ".bak"));
+    }
+
+    #[test]
+    fn legacy_v1_registry_migrates_with_owner_consent_disabled() {
+        let path = path();
+        let admin = test_signing_key("legacy-v1-admin");
+        let device = test_signing_key("legacy-v1-device");
+        let body = format!(
+            "{HEADER_V1}\nD|{}|{}|E|{}|{}|1\n",
+            hex(b"device-1"),
+            hex(b"tenant-a"),
+            hex(b"device-key-v1"),
+            hex(&device.verifying_key().to_bytes())
+        );
+        let mac = hmac(&test_integrity_key_bytes(), "integrity-v1", body.as_bytes());
+        let legacy = format!("{body}H|{}|{}\n", hex(b"integrity-v1"), hex(&mac));
+        fs::write(&path, legacy).unwrap();
+
+        let store = open(&path, &admin);
+        let summary = store.tenant_device_summaries("tenant-a").unwrap();
+        assert_eq!(summary.len(), 1);
+        assert!(!summary[0].owner_opted_in);
+        drop(store);
+        let migrated = fs::read_to_string(&path).unwrap();
+        assert!(migrated.starts_with(&format!("{HEADER}\n")));
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(suffix(&path, ".lock"));
+        let _ = fs::remove_file(suffix(&path, ".bak"));
+    }
+
     #[cfg(unix)]
     #[test]
     fn registry_pins_symlinked_parent_to_its_canonical_directory() {
@@ -969,6 +1228,7 @@ mod tests {
     struct MemoryAnchor {
         record: std::sync::Mutex<Option<SnapshotAnchorRecord>>,
         fail_next_cas: std::sync::atomic::AtomicBool,
+        lose_next_response_after_commit: std::sync::atomic::AtomicBool,
     }
 
     impl MonotonicSnapshotAnchor for MemoryAnchor {
@@ -993,6 +1253,12 @@ mod tests {
                 return Ok(false);
             }
             *current = Some(next);
+            if self
+                .lose_next_response_after_commit
+                .swap(false, Ordering::SeqCst)
+            {
+                return Err("simulated lost compare-and-set response".into());
+            }
             Ok(true)
         }
     }
@@ -1123,6 +1389,136 @@ mod tests {
         let _ = fs::remove_file(&path);
         let _ = fs::remove_file(suffix(&path, ".bak"));
         let _ = fs::remove_file(suffix(&path, ".lock"));
+    }
+
+    #[test]
+    fn external_anchor_lost_cas_response_is_reconciled_as_committed() {
+        let path = path();
+        let admin = SigningKey::from_bytes(&[7; 32]);
+        let device = SigningKey::from_bytes(&[9; 32]);
+        let anchor = std::sync::Arc::new(MemoryAnchor::default());
+        let store = DurableDeviceRegistry::open_with_anchor(
+            &path,
+            "tenant-a-device-registry",
+            vec![("admin-v1".into(), admin.verifying_key())],
+            DeviceTrustIntegrityKey::new("integrity-v1", [0x42; 32]),
+            anchor.clone(),
+        )
+        .unwrap();
+        store
+            .apply_admin_command(&enroll(&admin, &device), 200)
+            .unwrap();
+
+        let claims = DeviceRequestClaims {
+            tenant_id: "tenant-a".into(),
+            device_id: "device-1".into(),
+            key_id: "device-key-v1".into(),
+            key_generation: 1,
+            request_id: test_nonce("anchor-lost-response-request"),
+            issued_at_unix_ms: 200,
+            expires_at_unix_ms: 500,
+            method: "POST".into(),
+            resource_id: "lease:acquire".into(),
+            workload_id: "workload-1".into(),
+            manifest_sha256: sha2::Sha256::digest(b"manifest-v1").into(),
+            body_sha256: sha2::Sha256::digest([]).into(),
+        };
+        let signed = SignedDeviceRequest {
+            signature: device.sign(&device_request_bytes(&claims)).to_bytes(),
+            claims,
+        };
+
+        anchor
+            .lose_next_response_after_commit
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let authenticated = store.authenticate_request(&signed, b"", 250).unwrap();
+        assert_eq!(authenticated.device_id(), "device-1");
+        assert_eq!(
+            anchor
+                .load("tenant-a-device-registry")
+                .unwrap()
+                .unwrap()
+                .generation(),
+            3
+        );
+
+        drop(store);
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(suffix(&path, ".bak"));
+        let _ = fs::remove_file(suffix(&path, ".lock"));
+    }
+
+    #[test]
+    fn authenticated_request_cannot_verify_evidence_after_device_key_rotation() {
+        let path = path();
+        let admin = SigningKey::from_bytes(&[7; 32]);
+        let device = SigningKey::from_bytes(&[9; 32]);
+        let store = open(&path, &admin);
+        store
+            .apply_admin_command(&enroll(&admin, &device), 200)
+            .unwrap();
+
+        let body = b"canonical worker telemetry claims";
+        let claims = DeviceRequestClaims {
+            tenant_id: "tenant-a".into(),
+            device_id: "device-1".into(),
+            key_id: "device-key-v1".into(),
+            key_generation: 1,
+            request_id: [8; 16],
+            issued_at_unix_ms: 200,
+            expires_at_unix_ms: 500,
+            method: "POST".into(),
+            resource_id: "worker-telemetry:admission".into(),
+            workload_id: "workload-1".into(),
+            manifest_sha256: Sha256::digest(b"manifest-v1").into(),
+            body_sha256: Sha256::digest(body).into(),
+        };
+        let signed = SignedDeviceRequest {
+            signature: device.sign(&device_request_bytes(&claims)).to_bytes(),
+            claims,
+        };
+        let authenticated = store
+            .authenticate_request_for(&signed, "POST", "worker-telemetry:admission", body, 250)
+            .unwrap();
+        assert!(store
+            .verifying_key_for_authenticated_request(&authenticated)
+            .is_ok());
+
+        let replacement = SigningKey::from_bytes(&[11; 32]);
+        let mut rotate = SignedDeviceAdminCommand {
+            action: DeviceCommandAction::RotateKey,
+            tenant_id: "tenant-a".into(),
+            device_id: "device-1".into(),
+            admin_key_id: "admin-v1".into(),
+            target_key_id: "device-key-v2".into(),
+            target_public_key: Some(replacement.verifying_key().to_bytes()),
+            issued_at_unix_ms: 300,
+            expires_at_unix_ms: 1_000,
+            nonce: [9; 16],
+            signature: [0; 64],
+            old_device_signature: None,
+            new_device_signature: None,
+        };
+        rotate.old_device_signature = Some(device.sign(&rotation_proof_bytes(&rotate)).to_bytes());
+        rotate.new_device_signature = Some(
+            replacement
+                .sign(&enrollment_proof_bytes(&rotate))
+                .to_bytes(),
+        );
+        rotate.signature = admin.sign(&admin_command_bytes(&rotate)).to_bytes();
+        assert_eq!(store.apply_admin_command(&rotate, 350), Ok(2));
+
+        assert!(matches!(
+            store.verifying_key_for_authenticated_request(&authenticated),
+            Err(DurableDeviceTrustError::Trust(
+                DeviceTrustError::StaleKeyGeneration
+            ))
+        ));
+
+        drop(store);
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(suffix(&path, ".lock"));
+        let _ = fs::remove_file(suffix(&path, ".bak"));
     }
 
     #[test]

@@ -909,10 +909,10 @@ pub use durable_ledger::{
 
 pub mod scheduling_evidence;
 pub use scheduling_evidence::{
-    admit_and_reserve_durably_with_verified_lease, admit_and_reserve_with_verified_lease,
-    admit_with_verified_context, verify_and_consume_scheduling_context, SchedulingEvidenceError,
-    SchedulingPolicyClaims, SignedSchedulingPolicy, SignedWorkerTelemetry,
-    VerifiedSchedulingContext, WorkerTelemetryClaims,
+    authenticate_verify_and_reserve_worker_telemetry, canonical_worker_telemetry_body,
+    AuthenticatedTelemetryAdmissionError, SchedulingEvidenceError, SchedulingPolicyClaims,
+    SignedSchedulingPolicy, SignedWorkerTelemetry, WorkerTelemetryClaims,
+    WORKER_TELEMETRY_REQUEST_METHOD, WORKER_TELEMETRY_REQUEST_RESOURCE,
 };
 
 #[cfg(test)]

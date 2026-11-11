@@ -5,11 +5,12 @@
 `device_trust::durable::DurableDeviceRegistry` is a persistence adapter around the existing signed device-trust primitive. It:
 
 - reloads the authoritative registry under an OS advisory lock for each operation, including across separate processes;
-- persists tenant binding, device public keys, key IDs, monotonic device-key generations, enrollment/revocation state, administrator-command nonces and device-request nonces;
+- persists tenant binding, device public keys, key IDs, monotonic device-key generations, enrollment/revocation state, explicit device-owner consent and its monotonic revision, administrator-command nonces and device-request/consent nonces;
 - authenticates the complete snapshot with HMAC-SHA256 and a domain-separated format version;
 - requires the HMAC key and administrator verifying keys to be injected by the trusted host; neither is read from the writable registry directory;
 - writes a same-directory temporary snapshot, syncs it, and uses backup/rename recovery for interrupted replacement;
 - rejects oversized, malformed, unknown-version, duplicate, wrong-key-ID and MAC-invalid state without silently resetting it;
+- migrates legacy V1 snapshots with owner consent disabled; new V2 snapshots bind consent to the active key generation and reset it on enrollment, key rotation or revocation;
 - never persists device private keys, raw request signatures, or lease capability secrets.
 
 The integrity key's key_id is part of the authenticated envelope and must match the configured active key. A key rotation is performed by a trusted host deployment that verifies/exports the old state under the old protected key and performs a controlled migration; automatic multi-key rotation is not yet provided.
@@ -25,6 +26,7 @@ This is a durable policy primitive, not a complete production control plane. It 
 | POST /v1/tenants/{tenant}/devices/enroll | Tenant device-admin role; step-up auth | Signed admin command, new-key proof of possession |
 | POST /v1/tenants/{tenant}/devices/{device}/rotate-key | Tenant device-admin role; step-up auth | Existing-key and new-key proof; expected generation |
 | POST /v1/tenants/{tenant}/devices/{device}/revoke | Tenant security-admin role; step-up auth | Signed command; monotonic generation |
+| POST /v1/tenants/{tenant}/devices/{device}/owner-consent | Device principal only; explicit local owner action | Device-key signature, active key generation, monotonic consent revision, short expiry and single-use nonce; no administrator override |
 | POST /v1/tenants/{tenant}/leases | Enrolled device workload-submit role | Device signature, tenant, device, workload, manifest digest, policy approval and expiry |
 | POST /v1/tenants/{tenant}/leases/{id}/renew | Same enrolled device and lease owner | Lease capability, request nonce, generation, expiry |
 | DELETE /v1/tenants/{tenant}/leases/{id} | Same enrolled device and lease owner or authorized tenant operator | Lease capability or audited operator override |
@@ -46,6 +48,7 @@ Every role is deny-by-default. Cross-tenant actions require explicit platform-le
 
 - restart and multi-process concurrency tests for nonce consumption and device lifecycle;
 - tampered snapshot, missing key, wrong key ID, stale generation, revoked device and cross-tenant rejection;
+- owner opt-in/opt-out persistence across restart, nonce replay, stale/out-of-order revision rejection, and consent reset on key rotation/revocation;
 - protected key-provider integration and a documented key rotation/recovery drill;
 - authenticated HTTP adapter tests for role/scope checks, body limits, rate limits, clock skew and request replay;
 - external security review of the service boundary and deployment permissions.
@@ -57,3 +60,5 @@ Passing crate tests is not a substitute for service and deployment validation.
 HMAC authenticates snapshot contents but does not, by itself, prevent an attacker with write access from restoring an older valid snapshot or deleting the current file and its backup. Because old snapshots can contain already-consumed replay nonces or an earlier enrolled/revoked state, production deployment must pair this file store with an external monotonic generation anchor (for example, a KMS/HSM-backed compare-and-advance record or a transactional authoritative database) that is not writable by the file-store identity. A generation mismatch, missing snapshot when the anchor is non-zero, or anchor outage must fail closed. This external anti-rollback anchor is not implemented by this PR and is a release blocker for production use.
 
 The advisory file lock serializes cooperating service instances; it is not a defense against a privileged local attacker who can replace the lock file or bypass the service account boundary. Enforce OS ownership/permissions and isolate the registry process accordingly.
+
+An owner opt-out blocks subsequent admissions through the authenticated telemetry boundary. Immediate cancellation of leases already committed in the separate reservation ledger is not atomic with consent revocation and remains disabled pending a unified registry/lease/audit transaction.

@@ -50,9 +50,15 @@ The anchored adapter uses this order:
 
 If the process stops after the local snapshot write but before the anchor update,
 the prior backup still matches the old anchor and is restored on the next open.
-If the anchor update succeeds but its response is lost, the new primary digest
-matches the provider on the next open. If neither local snapshot matches the
-provider, the registry fails closed.
+If compare-and-set returns a transport error, the registry immediately performs
+a linearizable read-back. When the provider reports the exact proposed generation
+and digest, the operation is treated as committed; when the previous record is
+still authoritative, the caller receives an unavailable error and the next
+operation restores the matching backup. If read-back itself fails or reports an
+unexpected record, the outcome remains unknown and the caller must reconcile
+before retrying. The provider's `load` implementation must therefore
+settle or fence all earlier in-flight writes before returning. If neither local
+snapshot matches the provider, the registry fails closed.
 
 ## Tests and limits
 
