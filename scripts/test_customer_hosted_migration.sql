@@ -25,7 +25,7 @@ DO $$
 DECLARE
  visible_tenants integer;
  visible_devices integer;
- affected_rows bigint;
+ affected_rows bigint; -- Captures ROW_COUNT for the cross-tenant update assertion.
  bypass_rls boolean;
 BEGIN
  SELECT count(*) INTO visible_tenants FROM ujani_control.tenants;
