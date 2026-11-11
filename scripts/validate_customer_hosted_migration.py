@@ -42,7 +42,39 @@ def main() -> None:
             raise SystemExit(f"PostgreSQL test must verify runtime tenant-registry {privilege} privilege is absent")
     if "GET DIAGNOSTICS affected_rows = ROW_COUNT;" in test_sql and "affected_rows bigint;" not in test_sql:
         raise SystemExit("PostgreSQL isolation test reads affected_rows without declaring it")
-    print("Customer-hosted migration static checks passed.")
+    telemetry_sql = (ROOT / "migrations" / "0002_authenticated_device_telemetry.sql").read_text(encoding="utf-8")
+    telemetry_test = (ROOT / "scripts" / "test_authenticated_telemetry.sql").read_text(encoding="utf-8")
+    for required in (
+        "CREATE TABLE IF NOT EXISTS ujani_control.device_telemetry_samples",
+        "ENABLE ROW LEVEL SECURITY",
+        "FORCE ROW LEVEL SECURITY",
+        "SECURITY INVOKER",
+        "current_setting('ujani.tenant_id', true)",
+        "p_generation > telemetry_generation",
+        "p_generation = telemetry_generation AND p_sequence > telemetry_sequence",
+        "owner_consent_state = 'granted'",
+        "admin_approval_state = 'approved'",
+        "trust_state = 'enrolled'",
+        "interval '5 minutes'",
+        "interval '60 seconds'",
+        "ON CONFLICT (tenant_id, device_id, request_id) DO NOTHING",
+    ):
+        if required not in telemetry_sql:
+            raise SystemExit(f"authenticated telemetry migration is missing invariant: {required}")
+    if "SECURITY DEFINER" in telemetry_sql:
+        raise SystemExit("telemetry admission must not bypass tenant RLS with SECURITY DEFINER")
+    for required in (
+        "replayed request id should be rejected",
+        "duplicate generation/sequence should be rejected",
+        "stale telemetry timestamp should be rejected",
+        "future telemetry timestamp should be rejected",
+        "owner opt-out should reject admission",
+        "organization denial should reject admission",
+        "revoked device should reject admission",
+    ):
+        if required not in telemetry_test:
+            raise SystemExit(f"telemetry PostgreSQL regression test missing: {required}")
+    print("Customer-hosted and authenticated telemetry migration static checks passed.")
 
 
 if __name__ == "__main__":
