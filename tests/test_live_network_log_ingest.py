@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -82,7 +83,7 @@ class LiveNetworkLogIngestTests(unittest.TestCase):
         self.assertEqual((inserted, read_count), (1, 1))
         self.assertEqual(self.count(), 2)
 
-    @unittest.skipIf(__import__("os").name == "nt", "symlink creation may require elevated Windows privileges")
+    @unittest.skipIf(os.name == "nt", "symlink creation may require elevated Windows privileges")
     def test_rejects_dangling_checkpoint_symlink(self):
         target = self.root / "missing-cursor.json"
         self.cursor.symlink_to(target)
