@@ -1482,6 +1482,7 @@ mod tests {
         let json = overview.to_json();
         assert!(json.contains("\"model_inventory\":[{"));
         assert!(json.contains("\"device_id\":\"device-1\""));
+        assert!(json.contains("\"inventory\":{\"schema_version\":1"));
         assert!(json.contains("\"model_ref\":\"llama3.2:latest\""));
         assert!(json.contains("\"memory_available_mb\":4096"));
         assert!(json.contains("\"capabilities\":[\"chat\"]"));
