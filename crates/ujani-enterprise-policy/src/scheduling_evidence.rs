@@ -82,7 +82,7 @@ pub struct SignedSchedulingPolicy {
 /// A non-cloneable, single-use scheduling context. It retains the exact device,
 /// workload manifest and expiry that were covered by the signed evidence.
 #[derive(Debug, PartialEq, Eq)]
-pub struct VerifiedSchedulingContext {
+pub(crate) struct VerifiedSchedulingContext {
     context: SchedulingContext,
     device_id: String,
     workload_id: String,
@@ -342,7 +342,7 @@ pub(crate) fn verify_scheduling_context(
 /// Verify signed evidence and atomically consume its dispatch challenge in the
 /// durable ledger. This is the only public constructor for VerifiedSchedulingContext.
 #[allow(clippy::too_many_arguments)] // Keep both trust roots and the per-dispatch challenge explicit.
-pub fn verify_and_consume_scheduling_context(
+pub(crate) fn verify_and_consume_scheduling_context(
     ledger: &DurableLedger,
     device: &Device,
     workload: &Workload,
@@ -569,7 +569,7 @@ fn signed_headroom(snapshot: &CpuWorkerSnapshot) -> (u32, u64) {
 }
 
 /// Evaluate policy using only cryptographically verified scheduling evidence.
-pub fn admit_with_verified_context(
+pub(crate) fn admit_with_verified_context(
     device: &Device,
     workload: &Workload,
     context: &VerifiedSchedulingContext,
@@ -595,7 +595,7 @@ pub fn admit_with_verified_context(
 
 /// Atomically persist a reservation after verifying signed scheduling evidence.
 #[allow(clippy::too_many_arguments)] // Keep all policy, identity and capability inputs explicit.
-pub fn admit_and_reserve_durably_with_verified_lease(
+pub(crate) fn admit_and_reserve_durably_with_verified_lease(
     ledger: &DurableLedger,
     device: &Device,
     workload: &Workload,
@@ -636,7 +636,7 @@ pub fn admit_and_reserve_durably_with_verified_lease(
 /// Atomically reserve in the in-memory prototype after verified evidence and
 /// lease-capability checks. Production still needs a durable transactional ledger.
 #[allow(clippy::too_many_arguments)] // Preserve explicit admission evidence and reservation inputs.
-pub fn admit_and_reserve_with_verified_lease(
+pub(crate) fn admit_and_reserve_with_verified_lease(
     ledger: &mut Ledger,
     device: &Device,
     workload: &Workload,
