@@ -10,7 +10,7 @@ use crate::cpu_capacity::{
 use crate::device_trust::durable::DurableDeviceRegistry;
 use crate::device_trust::{AuthenticatedDeviceRequest, SignedDeviceRequest};
 use crate::{
-    admit_with_context, Admission, ClassPolicy, Device, DurableLedger, DurableLedgerError, Ledger,
+    admit_with_context, Admission, ClassPolicy, Device, DurableLedger, DurableLedgerError,
     RejectReason, SchedulingContext, TelemetryChallengeError, VerifiedAdminApproval, Workload,
 };
 use ed25519_dalek::{Signature, VerifyingKey};
@@ -638,7 +638,7 @@ pub(crate) fn admit_and_reserve_durably_with_verified_lease(
 #[cfg(test)]
 #[allow(clippy::too_many_arguments)] // Preserve explicit admission evidence and reservation inputs.
 pub(crate) fn admit_and_reserve_with_verified_lease(
-    ledger: &mut Ledger,
+    ledger: &mut crate::Ledger,
     device: &Device,
     workload: &Workload,
     context: VerifiedSchedulingContext,
@@ -694,7 +694,9 @@ pub(crate) fn admit_and_reserve_with_verified_lease(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{workload_from_manifest, DataClassification, LedgerIntegrityKey, WorkloadManifest};
+    use crate::{
+        workload_from_manifest, DataClassification, Ledger, LedgerIntegrityKey, WorkloadManifest,
+    };
     use ed25519_dalek::{Signer, SigningKey};
     use std::hash::{BuildHasher, Hash, Hasher};
     use std::sync::atomic::{AtomicU64, Ordering};
