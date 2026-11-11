@@ -633,8 +633,9 @@ pub(crate) fn admit_and_reserve_durably_with_verified_lease(
     )
 }
 
-/// Atomically reserve in the in-memory prototype after verified evidence and
-/// lease-capability checks. Production still needs a durable transactional ledger.
+/// Test-only in-memory prototype; production callers must use the authenticated
+/// durable admission boundary.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)] // Preserve explicit admission evidence and reservation inputs.
 pub(crate) fn admit_and_reserve_with_verified_lease(
     ledger: &mut Ledger,
