@@ -198,7 +198,6 @@ class SecurityEventStore:
         return inserted
 
     def search(self, *, tenant_id: str, provider_id: str | None = None,
-        """Return a bounded, tenant-scoped page of matching security events."""
                event_type: str | None = None, severity: str | None = None,
                text_query: str | None = None, since_ms: int | None = None,
                until_ms: int | None = None, after: tuple[int, str] | None = None,
