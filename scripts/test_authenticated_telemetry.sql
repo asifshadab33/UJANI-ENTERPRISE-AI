@@ -84,5 +84,27 @@ BEGIN
    sample_count, current_generation, current_sequence;
  END IF;
 END $$;
+
+-- The admission operation participates in the caller's transaction. A caller
+-- rollback must undo both the monotonic checkpoint and the sample insert.
+SAVEPOINT telemetry_rollback_test;
+SELECT ujani_control.accept_device_telemetry(
+ 'telemetry-test','telemetry-device',1,3,decode(repeat('09',16),'hex'),
+ clock_timestamp(),decode(repeat('33',32),'hex'),1000,2048,'cool','ac','idle');
+ROLLBACK TO SAVEPOINT telemetry_rollback_test;
+DO $
+DECLARE sample_count integer;
+DECLARE current_generation bigint;
+DECLARE current_sequence bigint;
+BEGIN
+ SELECT count(*) INTO sample_count FROM ujani_control.device_telemetry_samples
+ WHERE tenant_id='telemetry-test' AND device_id='telemetry-device';
+ SELECT telemetry_generation, telemetry_sequence INTO current_generation, current_sequence
+ FROM ujani_control.devices WHERE tenant_id='telemetry-test' AND device_id='telemetry-device';
+ IF sample_count <> 2 OR current_generation <> 1 OR current_sequence <> 2 THEN
+  RAISE EXCEPTION 'caller rollback did not atomically restore telemetry state';
+ END IF;
+END $;
+
 ROLLBACK;
 RESET ROLE;
