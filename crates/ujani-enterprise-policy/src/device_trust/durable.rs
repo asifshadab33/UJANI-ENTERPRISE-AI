@@ -1584,7 +1584,9 @@ mod tests {
         let device = test_signing_key("revocation-device");
         let store = open(&path, &admin);
         assert_eq!(
-            store.apply_admin_command(&enroll(&admin, &device), 200).unwrap(),
+            store
+                .apply_admin_command(&enroll(&admin, &device), 200)
+                .unwrap(),
             1
         );
 
@@ -1629,7 +1631,9 @@ mod tests {
         };
         assert_eq!(
             reopened.authenticate_request(&signed, body, 370),
-            Err(DurableDeviceTrustError::Trust(DeviceTrustError::DeviceNotEnrolled))
+            Err(DurableDeviceTrustError::Trust(
+                DeviceTrustError::DeviceNotEnrolled
+            ))
         );
         let _ = fs::remove_file(&path);
         let _ = fs::remove_file(suffix(&path, ".bak"));
