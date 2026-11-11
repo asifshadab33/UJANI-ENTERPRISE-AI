@@ -44,6 +44,10 @@ class EnergyAdmissionPolicyTests(unittest.TestCase):
                          "invalid_resource_telemetry"}.issubset(reasons))
         self.assertIn("invalid_policy_configuration", admission_reasons(
             self.snapshot(on_ac_power=False), allow_battery=True, minimum_battery_percent=101))
+        self.assertIn("invalid_policy_configuration", admission_reasons(
+            self.snapshot(on_ac_power=False), allow_battery=True, minimum_battery_percent="50"))
+        self.assertIn("thermal_state_not_safe", admission_reasons(
+            self.snapshot(thermal_state=["cool"])))
 
     def test_unknown_thermal_state_is_not_admitted(self):
         self.assertIn("thermal_state_not_safe",
