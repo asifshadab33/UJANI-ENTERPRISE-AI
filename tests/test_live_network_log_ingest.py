@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -81,6 +82,16 @@ class LiveNetworkLogIngestTests(unittest.TestCase):
         )
         self.assertEqual((inserted, read_count), (1, 1))
         self.assertEqual(self.count(), 2)
+
+    @unittest.skipIf(os.name == "nt", "symlink creation may require elevated Windows privileges")
+    def test_rejects_dangling_checkpoint_symlink(self):
+        target = self.root / "missing-cursor.json"
+        self.cursor.symlink_to(target)
+        self.log.write_text(zeek_line(2.0, "dangling"), encoding="utf-8")
+        with self.assertRaisesRegex(ImportErrorSafe, "checkpoint must not be a symlink"):
+            ingest_once(log_path=self.log, database=self.db, checkpoint=self.cursor,
+                        provider="zeek", tenant_id="tenant-a", now_ms=10_000)
+        self.assertFalse(target.exists())
 
     def test_checkpoint_cannot_be_reused_across_tenants(self):
         self.log.write_text(zeek_line(2.0), encoding="utf-8")

@@ -65,10 +65,11 @@ def _safe_open(path):
 
 def _load_checkpoint(path, tenant_id, provider_id):
     path = Path(path)
-    if not path.exists():
-        return None
+    # Check links before exists(): a dangling symlink reports exists() == False.
     if path.is_symlink():
         raise ImportErrorSafe("checkpoint must not be a symlink")
+    if not path.exists():
+        return None
     try:
         raw = path.read_bytes()
         if len(raw) > 4096:
