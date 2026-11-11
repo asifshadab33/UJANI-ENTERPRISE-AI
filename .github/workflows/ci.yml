@@ -94,3 +94,7 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: psql --host localhost --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file scripts/test_monotonic_device_telemetry.sql
+      - name: Verify concurrent monotonic telemetry serialization
+        env:
+          PGPASSWORD: postgres
+        run: bash scripts/test_monotonic_device_telemetry_concurrency.sh
