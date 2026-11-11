@@ -724,7 +724,7 @@ fn json_model_inventory(inventory: &OperatorModelInventoryView) -> String {
     let mut out = String::with_capacity(768 + inventory.models.len() * 256);
     let _ = write!(
         &mut out,
-        "{{\"device_id\":{},\"schema_version\":{},\"generated_at_unix_ms\":{},\"platform\":{{\"os\":{},\"os_version\":{},\"architecture\":{}}},\"hardware\":{{\"cpu_logical_cores\":{},\"memory_total_mb\":{},\"memory_available_mb\":{},\"storage_free_mb\":{},\"accelerators\":[",
+        "{{\"device_id\":{},\"inventory\":{{\"schema_version\":{},\"generated_at_unix_ms\":{},\"platform\":{{\"os\":{},\"os_version\":{},\"architecture\":{}}},\"hardware\":{{\"cpu_logical_cores\":{},\"memory_total_mb\":{},\"memory_available_mb\":{},\"storage_free_mb\":{},\"accelerators\":[",
         json_string(&inventory.device_id), inventory.schema_version, inventory.generated_at_unix_ms,
         json_string(&inventory.platform.os), json_optional_string(inventory.platform.os_version.as_deref()),
         json_string(&inventory.platform.architecture),
@@ -779,7 +779,7 @@ fn json_model_inventory(inventory: &OperatorModelInventoryView) -> String {
             privacy.contains_local_paths, privacy.contains_credentials
         );
     }
-    out.push('}');
+    out.push_str("}}");
     out
 }
 fn valid_bounded_text(value: &str, max: usize) -> bool {
