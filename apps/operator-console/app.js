@@ -91,16 +91,16 @@ function validModelInventory(inventories) {
     && (inventory.hardware.memory_total_mb === null || Number.isSafeInteger(inventory.hardware.memory_total_mb) && inventory.hardware.memory_total_mb > 0)
     && (inventory.hardware.memory_available_mb === null || Number.isSafeInteger(inventory.hardware.memory_available_mb) && inventory.hardware.memory_available_mb >= 0)
     && (inventory.hardware.memory_total_mb == null || inventory.hardware.memory_available_mb == null || inventory.hardware.memory_available_mb <= inventory.hardware.memory_total_mb)
-    && (inventory.hardware.storage_free_mb === null || Number.isSafeInteger(inventory.hardware.storage_free_mb) && inventory.hardware.storage_free_mb >= 0)
+    && (inventory.hardware.storage_free_mb === null || inventory.hardware.storage_free_mb === undefined || Number.isSafeInteger(inventory.hardware.storage_free_mb) && inventory.hardware.storage_free_mb >= 0)
     && Array.isArray(inventory.hardware.accelerators) && inventory.hardware.accelerators.length <= 32
     && inventory.hardware.accelerators.every((item) => item
       && ["gpu", "npu", "other"].includes(item.kind)
       && (item.vendor === null || item.vendor === undefined || boundedString(item.vendor, 64))
       && (item.device_family === null || item.device_family === undefined || boundedString(item.device_family, 96))
-      && (item.memory_mb === null || Number.isSafeInteger(item.memory_mb) && item.memory_mb >= 0)
+      && (item.memory_mb === null || item.memory_mb === undefined || Number.isSafeInteger(item.memory_mb) && item.memory_mb >= 0)
       && (item.runtime_api === null || item.runtime_api === undefined || boundedString(item.runtime_api, 64))
       && validEvidence(item.evidence))
-    && (!inventory.privacy || ["contains_prompts", "contains_user_files", "contains_local_paths", "contains_credentials"].every((key) => inventory.privacy[key] === undefined || inventory.privacy[key] === false))
+    && (inventory.privacy === undefined || inventory.privacy && typeof inventory.privacy === "object" && !Array.isArray(inventory.privacy) && ["contains_prompts", "contains_user_files", "contains_local_paths", "contains_credentials"].every((key) => inventory.privacy[key] === undefined || inventory.privacy[key] === false))
     && Array.isArray(inventory.runtimes) && inventory.runtimes.length <= 16
     && inventory.runtimes.every((runtime) => runtime
       && boundedString(runtime.runtime_id, 96) && boundedString(runtime.provider, 64)
