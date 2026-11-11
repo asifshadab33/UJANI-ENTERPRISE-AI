@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import jsonschema
 from pathlib import Path
 
 SCHEMA_PATH = Path(__file__).resolve().parents[1] / "schemas/model-runtime-inventory-v1.schema.json"
@@ -28,7 +29,12 @@ def main() -> None:
     assert evidence["properties"]["confidence"]["enum"] == [
         "verified", "reported", "estimated", "unknown"
     ]
-    print("Model/runtime inventory v1 schema checks passed.")
+    fixture_path = SCHEMA_PATH.parent / "test-vectors/model-runtime-inventory-v1.json"
+    fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+    jsonschema.Draft202012Validator(schema).validate(fixture)
+    assert fixture["schema_version"] == 1
+    assert fixture["models"][0]["estimated_min_memory_mb"] == 3_374
+    print("Model/runtime inventory v1 schema and shared fixture checks passed.")
 
     from validate_personal_enterprise_task_contract import main as validate_task_contract
     validate_task_contract()
