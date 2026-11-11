@@ -815,4 +815,28 @@ mod tests {
             Err(ModelInventoryValidationError::InvalidRequirements)
         );
     }
+    #[test]
+    fn parses_shared_public_model_inventory_vector_and_keeps_estimate_advisory() {
+        let raw = include_str!("../../../schemas/test-vectors/model-runtime-inventory-v1.json");
+        let value: ModelRuntimeInventory = serde_json::from_str(raw).unwrap();
+        assert_eq!(
+            validate_model_runtime_inventory(&value, 1_000_100, 10_000),
+            Ok(())
+        );
+        assert_eq!(value.models[0].estimated_min_memory_mb, Some(3_374));
+
+        let result = match_model_to_task(
+            &value,
+            "qwen2.5:3b",
+            &requirements(),
+            1_000_100,
+            10_000,
+        )
+        .unwrap();
+        assert_eq!(result.status, ModelFitStatus::Unknown);
+        assert!(result
+            .reasons
+            .contains(&ModelFitReason::MemoryEstimateWithinAvailable));
+    }
+
 }
