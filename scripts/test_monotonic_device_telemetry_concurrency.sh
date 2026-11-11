@@ -23,7 +23,7 @@ cleanup() { rm -f "$first_out" "$second_out"; }
 trap cleanup EXIT
 
 (
- "${PSQL[@]}" >"$first_out" <<'SQL'
+ PGAPPNAME=ujani-telemetry-first "${PSQL[@]}" >"$first_out" <<'SQL'
 SET ROLE ujani_runtime;
 BEGIN;
 SET LOCAL ujani.tenant_id = 'telemetry-concurrency-test';
@@ -37,8 +37,18 @@ SQL
 ) &
 first_pid=$!
 
-# Let session one acquire and hold the device-row lock before session two arrives.
-sleep 0.2
+# Wait until session one is holding the device-row lock inside pg_sleep.
+locked=0
+for _ in $(seq 1 100); do
+  active="$("${PSQL[@]}" -c "SELECT count(*) FROM pg_stat_activity WHERE application_name='ujani-telemetry-first' AND state='active' AND query LIKE '%pg_sleep(1)%'")"
+  if [[ "$active" == "1" ]]; then locked=1; break; fi
+  sleep 0.1
+done
+if [[ "$locked" != "1" ]]; then
+  echo "first telemetry session did not reach its lock-holding phase" >&2
+  cat "$first_out" >&2
+  exit 1
+fi
 "${PSQL[@]}" >"$second_out" <<'SQL'
 SET ROLE ujani_runtime;
 BEGIN;
