@@ -565,16 +565,45 @@ pub struct OperatorModelView {
     pub evidence: OperatorInventoryEvidence,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OperatorModelInventoryPlatform {
+    pub os: String,
+    pub os_version: Option<String>,
+    pub architecture: String,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OperatorModelAcceleratorView {
+    pub kind: String,
+    pub vendor: Option<String>,
+    pub device_family: Option<String>,
+    pub memory_mb: Option<u64>,
+    pub runtime_api: Option<String>,
+    pub evidence: OperatorInventoryEvidence,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OperatorModelInventoryHardware {
+    pub cpu_logical_cores: Option<u32>,
+    pub memory_total_mb: Option<u64>,
     pub memory_available_mb: Option<u64>,
+    pub storage_free_mb: Option<u64>,
+    pub accelerators: Vec<OperatorModelAcceleratorView>,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OperatorModelInventoryPrivacy {
+    pub contains_prompts: bool,
+    pub contains_user_files: bool,
+    pub contains_local_paths: bool,
+    pub contains_credentials: bool,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OperatorModelInventoryView {
     pub device_id: String,
+    pub schema_version: u8,
     pub generated_at_unix_ms: u64,
+    pub platform: OperatorModelInventoryPlatform,
     pub hardware: OperatorModelInventoryHardware,
     pub runtimes: Vec<OperatorModelRuntimeView>,
     pub models: Vec<OperatorModelView>,
+    pub privacy: Option<OperatorModelInventoryPrivacy>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -692,13 +721,31 @@ fn json_evidence(evidence: &OperatorInventoryEvidence) -> String {
     )
 }
 fn json_model_inventory(inventory: &OperatorModelInventoryView) -> String {
-    let mut out = String::with_capacity(512 + inventory.models.len() * 256);
+    let mut out = String::with_capacity(768 + inventory.models.len() * 256);
     let _ = write!(
         &mut out,
-        "{{\"device_id\":{},\"generated_at_unix_ms\":{},\"hardware\":{{\"memory_available_mb\":{}}},\"runtimes\":[",
-        json_string(&inventory.device_id), inventory.generated_at_unix_ms,
-        json_optional_number(inventory.hardware.memory_available_mb)
+        "{{\"device_id\":{},\"schema_version\":{},\"generated_at_unix_ms\":{},\"platform\":{{\"os\":{},\"os_version\":{},\"architecture\":{}}},\"hardware\":{{\"cpu_logical_cores\":{},\"memory_total_mb\":{},\"memory_available_mb\":{},\"storage_free_mb\":{},\"accelerators\":[",
+        json_string(&inventory.device_id), inventory.schema_version, inventory.generated_at_unix_ms,
+        json_string(&inventory.platform.os), json_optional_string(inventory.platform.os_version.as_deref()),
+        json_string(&inventory.platform.architecture),
+        json_optional_number(inventory.hardware.cpu_logical_cores),
+        json_optional_number(inventory.hardware.memory_total_mb),
+        json_optional_number(inventory.hardware.memory_available_mb),
+        json_optional_number(inventory.hardware.storage_free_mb)
     );
+    for (index, accelerator) in inventory.hardware.accelerators.iter().enumerate() {
+        if index > 0 { out.push(','); }
+        let _ = write!(
+            &mut out,
+            "{{\"kind\":{},\"vendor\":{},\"device_family\":{},\"memory_mb\":{},\"runtime_api\":{},\"evidence\":{}}}",
+            json_string(&accelerator.kind), json_optional_string(accelerator.vendor.as_deref()),
+            json_optional_string(accelerator.device_family.as_deref()),
+            json_optional_number(accelerator.memory_mb),
+            json_optional_string(accelerator.runtime_api.as_deref()),
+            json_evidence(&accelerator.evidence)
+        );
+    }
+    out.push_str("]},\"runtimes\":[");
     for (index, runtime) in inventory.runtimes.iter().enumerate() {
         if index > 0 { out.push(','); }
         let _ = write!(
@@ -723,7 +770,16 @@ fn json_model_inventory(inventory: &OperatorModelInventoryView) -> String {
             capabilities, json_evidence(&model.evidence)
         );
     }
-    out.push_str("]}");
+    out.push_str("]");
+    if let Some(privacy) = &inventory.privacy {
+        let _ = write!(
+            &mut out,
+            ",\"privacy\":{{\"contains_prompts\":{},\"contains_user_files\":{},\"contains_local_paths\":{},\"contains_credentials\":{}}}",
+            privacy.contains_prompts, privacy.contains_user_files,
+            privacy.contains_local_paths, privacy.contains_credentials
+        );
+    }
+    out.push('}');
     out
 }
 fn valid_bounded_text(value: &str, max: usize) -> bool {
