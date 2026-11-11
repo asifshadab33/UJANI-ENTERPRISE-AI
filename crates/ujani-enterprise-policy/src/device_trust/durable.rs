@@ -886,6 +886,29 @@ mod tests {
         c.signature = admin.sign(&admin_command_bytes(&c)).to_bytes();
         c
     }
+
+    fn owner_consent(
+        device: &SigningKey,
+        opted_in: bool,
+        revision: u64,
+        issued_at_unix_ms: u64,
+        nonce: u8,
+    ) -> SignedOwnerConsentCommand {
+        let mut command = SignedOwnerConsentCommand {
+            tenant_id: "tenant-a".into(),
+            device_id: "device-1".into(),
+            key_id: "device-key-v1".into(),
+            key_generation: 1,
+            revision,
+            opted_in,
+            issued_at_unix_ms,
+            expires_at_unix_ms: issued_at_unix_ms + MAX_OWNER_CONSENT_TTL_MS,
+            nonce: [nonce; 16],
+            signature: [0; 64],
+        };
+        command.signature = device.sign(&owner_consent_bytes(&command)).to_bytes();
+        command
+    }
     #[test]
     fn enrollment_and_request_replay_state_survive_restart() {
         let path = path();
@@ -947,6 +970,69 @@ mod tests {
         let _ = fs::remove_file(&path);
         let _ = fs::remove_file(suffix(&path, ".lock"));
     }
+    #[test]
+    fn owner_consent_persists_and_rejects_stale_revisions() {
+        let path = path();
+        let admin = SigningKey::from_bytes(&[7; 32]);
+        let device = SigningKey::from_bytes(&[9; 32]);
+        let store = open(&path, &admin);
+        store.apply_admin_command(&enroll(&admin, &device), 200).unwrap();
+        let opt_in = owner_consent(&device, true, 1, 210, 2);
+        assert_eq!(store.apply_owner_consent(&opt_in, 220), Ok(1));
+        assert!(store.tenant_device_summaries("tenant-a").unwrap()[0].owner_opted_in);
+        drop(store);
+
+        let reopened = open(&path, &admin);
+        assert!(reopened.tenant_device_summaries("tenant-a").unwrap()[0].owner_opted_in);
+        let opt_out = owner_consent(&device, false, 2, 230, 3);
+        assert_eq!(reopened.apply_owner_consent(&opt_out, 240), Ok(2));
+        assert!(!reopened.tenant_device_summaries("tenant-a").unwrap()[0].owner_opted_in);
+
+        let delayed_opt_in = owner_consent(&device, true, 1, 250, 4);
+        assert_eq!(
+            reopened.apply_owner_consent(&delayed_opt_in, 260),
+            Err(DurableDeviceTrustError::Trust(
+                DeviceTrustError::InvalidConsentRevision
+            ))
+        );
+        drop(reopened);
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(suffix(&path, ".lock"));
+        let _ = fs::remove_file(suffix(&path, ".bak"));
+    }
+
+    #[test]
+    fn legacy_v1_registry_migrates_with_owner_consent_disabled() {
+        let path = path();
+        let admin = SigningKey::from_bytes(&[7; 32]);
+        let device = SigningKey::from_bytes(&[9; 32]);
+        let body = format!(
+            "{HEADER_V1}\nD|{}|{}|E|{}|{}|1\n",
+            hex(b"device-1"),
+            hex(b"tenant-a"),
+            hex(b"device-key-v1"),
+            hex(&device.verifying_key().to_bytes())
+        );
+        let mac = hmac(&[0x42; 32], "integrity-v1", body.as_bytes());
+        let legacy = format!(
+            "{body}H|{}|{}\n",
+            hex(b"integrity-v1"),
+            hex(&mac)
+        );
+        fs::write(&path, legacy).unwrap();
+
+        let store = open(&path, &admin);
+        let summary = store.tenant_device_summaries("tenant-a").unwrap();
+        assert_eq!(summary.len(), 1);
+        assert!(!summary[0].owner_opted_in);
+        drop(store);
+        let migrated = fs::read_to_string(&path).unwrap();
+        assert!(migrated.starts_with(&format!("{HEADER}\n")));
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(suffix(&path, ".lock"));
+        let _ = fs::remove_file(suffix(&path, ".bak"));
+    }
+
     #[cfg(unix)]
     #[test]
     fn registry_pins_symlinked_parent_to_its_canonical_directory() {
