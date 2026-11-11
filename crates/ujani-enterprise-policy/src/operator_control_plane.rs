@@ -316,15 +316,26 @@ impl OperatorSessionKeyRing {
             return Err(OperatorAuthError::InvalidClaims);
         }
         let mut indexed = HashMap::with_capacity(keys.len());
-        for (key_id, key) in keys {
-            if !valid_identifier(&key_id, 128) || key_id.contains('.') || indexed.insert(key_id, key).is_some() {
+        for (key_id, mut key) in keys {
+            if !valid_identifier(&key_id, 128) || key_id.contains('.') || indexed.contains_key(&key_id) {
+                key.zeroize();
+                for existing in indexed.values_mut() {
+                    existing.zeroize();
+                }
                 return Err(OperatorAuthError::InvalidClaims);
             }
+            indexed.insert(key_id, key);
         }
         if !indexed.contains_key(&active_key_id) {
+            for existing in indexed.values_mut() {
+                existing.zeroize();
+            }
             return Err(OperatorAuthError::UnknownKeyId);
         }
-        Ok(Self { active_key_id, keys: indexed })
+        Ok(Self {
+            active_key_id,
+            keys: indexed,
+        })
     }
 
     pub fn active_key_id(&self) -> &str {
@@ -339,15 +350,24 @@ impl OperatorSessionKeyRing {
         now_unix_ms: u64,
     ) -> Result<String, OperatorAuthError> {
         validate_claims(claims, now_unix_ms)?;
-        let key = self.keys.get(&self.active_key_id).ok_or(OperatorAuthError::UnknownKeyId)?;
+        let key = self
+            .keys
+            .get(&self.active_key_id)
+            .ok_or(OperatorAuthError::UnknownKeyId)?;
         let payload = encode_claims(claims);
-        let mut mac = HmacSha256::new_from_slice(key).map_err(|_| OperatorAuthError::InvalidKey)?;
+        let mut mac = HmacSha256::new_from_slice(key)
+            .map_err(|_| OperatorAuthError::InvalidKey)?;
         mac.update(SESSION_KEYRING_DOMAIN);
         mac.update(self.active_key_id.as_bytes());
         mac.update(&[0]);
         mac.update(&payload);
         let signature = mac.finalize().into_bytes();
-        Ok(format!("{}.{}.{}", self.active_key_id, hex_encode(&payload), hex_encode(&signature)))
+        Ok(format!(
+            "{}.{}.{}",
+            self.active_key_id,
+            hex_encode(&payload),
+            hex_encode(&signature)
+        ))
     }
 
     /// Verify only keys explicitly present in the configured key set. Removing
@@ -364,7 +384,7 @@ impl OperatorSessionKeyRing {
         let key_id = parts.next().ok_or(OperatorAuthError::MalformedToken)?;
         let payload_hex = parts.next().ok_or(OperatorAuthError::MalformedToken)?;
         let signature_hex = parts.next().ok_or(OperatorAuthError::MalformedToken)?;
-        if parts.next().is_some() || !valid_identifier(key_id, 128) {
+        if parts.next().is_some() || !valid_identifier(key_id, 128) || key_id.contains('.') {
             return Err(OperatorAuthError::MalformedToken);
         }
         let key = self.keys.get(key_id).ok_or(OperatorAuthError::UnknownKeyId)?;
@@ -378,7 +398,8 @@ impl OperatorSessionKeyRing {
         mac.update(key_id.as_bytes());
         mac.update(&[0]);
         mac.update(&payload);
-        mac.verify_slice(&signature).map_err(|_| OperatorAuthError::InvalidSignature)?;
+        mac.verify_slice(&signature)
+            .map_err(|_| OperatorAuthError::InvalidSignature)?;
         let claims = decode_claims(&payload)?;
         validate_claims(&claims, now_unix_ms)?;
         Ok(claims)
@@ -575,12 +596,20 @@ pub trait OperatorSessionVerifier: Send + Sync {
     ) -> Result<OperatorSessionClaims, OperatorAuthError>;
 }
 impl OperatorSessionVerifier for OperatorSessionAuthenticator {
-    fn verify_session(&self, token: &str, now_unix_ms: u64) -> Result<OperatorSessionClaims, OperatorAuthError> {
+    fn verify_session(
+        &self,
+        token: &str,
+        now_unix_ms: u64,
+    ) -> Result<OperatorSessionClaims, OperatorAuthError> {
         self.authenticate(token, now_unix_ms)
     }
 }
 impl OperatorSessionVerifier for OperatorSessionKeyRing {
-    fn verify_session(&self, token: &str, now_unix_ms: u64) -> Result<OperatorSessionClaims, OperatorAuthError> {
+    fn verify_session(
+        &self,
+        token: &str,
+        now_unix_ms: u64,
+    ) -> Result<OperatorSessionClaims, OperatorAuthError> {
         self.authenticate(token, now_unix_ms)
     }
 }
@@ -590,7 +619,12 @@ pub struct OperatorControlPlane<V, R, A> {
     repository: Arc<R>,
     audit: Arc<A>,
 }
-impl<V: OperatorSessionVerifier, R: OperatorOverviewRepository, A: OperatorAuditSink> OperatorControlPlane<V, R, A> {
+impl<V, R, A> OperatorControlPlane<V, R, A>
+where
+    V: OperatorSessionVerifier,
+    R: OperatorOverviewRepository,
+    A: OperatorAuditSink,
+{
     pub fn new(
         authenticator: V,
         repository: Arc<R>,
