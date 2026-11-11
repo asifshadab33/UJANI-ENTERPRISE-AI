@@ -112,7 +112,7 @@ function renderModelInventory(inventories) {
   for (const inventory of inventories || []) {
     for (const model of inventory.models) {
       totalModels += 1;
-      if (rows.length < 5121) {
+      if (rows.length < 5120) {
         const runtime = inventory.runtimes.find((item) => item.runtime_id === model.runtime_id);
         rows.push({ device_id: inventory.device_id, inventory_at: inventory.generated_at_unix_ms, memory_available_mb: inventory.hardware.memory_available_mb, model, runtime });
       }
