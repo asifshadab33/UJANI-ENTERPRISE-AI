@@ -4,6 +4,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SQL_PATH = ROOT / "migrations" / "0001_customer_hosted_control_plane.sql"
+TEST_SQL_PATH = ROOT / "scripts" / "test_customer_hosted_migration.sql"
 
 
 def main() -> None:
@@ -33,6 +34,14 @@ def main() -> None:
         raise SystemExit("replay request identifiers must be at least 128 bits")
     if "BYPASSRLS" in sql or "GRANT ALL" in sql or "CREATE ROLE" in sql:
         raise SystemExit("migration must not create a privileged runtime role")
+    test_sql = TEST_SQL_PATH.read_text(encoding="utf-8")
+    if "REVOKE INSERT, UPDATE, DELETE ON ujani_control.tenants FROM ujani_runtime" not in test_sql:
+        raise SystemExit("runtime role must not mutate the tenant registry")
+    for privilege in ("INSERT", "UPDATE", "DELETE"):
+        if f"has_table_privilege(current_user, 'ujani_control.tenants', '{privilege}')" not in test_sql:
+            raise SystemExit(f"PostgreSQL test must verify runtime tenant-registry {privilege} privilege is absent")
+    if "GET DIAGNOSTICS affected_rows = ROW_COUNT;" in test_sql and "affected_rows bigint;" not in test_sql:
+        raise SystemExit("PostgreSQL isolation test reads affected_rows without declaring it")
     print("Customer-hosted migration static checks passed.")
 
 
