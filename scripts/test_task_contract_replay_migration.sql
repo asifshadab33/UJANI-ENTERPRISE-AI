@@ -75,6 +75,14 @@ BEGIN
  IF affected_rows <> 0 THEN
   RAISE EXCEPTION 'replayed status sequence unexpectedly advanced';
  END IF;
+ SELECT count(*) INTO visible_rows
+  FROM ujani_control.task_contract_sequences
+  WHERE tenant_id = 'tenant-a' AND task_id = 'task-a'
+    AND message_type = 'task_status'
+    AND last_sequence = 2 AND message_digest = decode(repeat('88',32),'hex');
+ IF visible_rows <> 1 THEN
+  RAISE EXCEPTION 'stale sequence attempt changed the accepted message digest';
+ END IF;
 
  SELECT count(*) INTO visible_rows FROM ujani_control.task_contract_replays;
  IF visible_rows <> 1 THEN
