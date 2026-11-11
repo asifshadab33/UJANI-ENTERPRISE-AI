@@ -103,8 +103,7 @@ COMMIT;
 
 -- A new transaction on the same session must not inherit the prior tenant context.
 BEGIN;
-DO $
-DECLARE visible_tenants integer; visible_devices integer;
+DO $$DECLARE visible_tenants integer; visible_devices integer;
 BEGIN
  SELECT count(*) INTO visible_tenants FROM ujani_control.tenants;
  SELECT count(*) INTO visible_devices FROM ujani_control.devices;
