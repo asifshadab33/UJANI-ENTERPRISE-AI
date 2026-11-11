@@ -266,7 +266,7 @@ function validOverview(data) {
   const returnedModelCount = Array.isArray(data && data.model_inventory)
     ? data.model_inventory.reduce((total, entry) => total
       + (entry && entry.inventory && Array.isArray(entry.inventory.models) ? entry.inventory.models.length : 0), 0)
-    : -1;
+    : data && data.model_inventory === undefined ? 0 : -1;
   return data && data.schema_version === 1
     && typeof data.tenant_id === "string" && data.tenant_id.length > 0 && data.tenant_id.length <= 128
     && counts && validCount(counts.registered_devices)
@@ -280,7 +280,7 @@ function validOverview(data) {
     && Array.isArray(data.devices) && data.devices.length <= 10000
     && Array.isArray(data.workloads) && data.workloads.length <= 1000
     && Array.isArray(data.approvals) && data.approvals.length <= 1000
-    && Array.isArray(data.model_inventory) && validModelInventory(data.model_inventory)
+    && (data.model_inventory === undefined || Array.isArray(data.model_inventory) && validModelInventory(data.model_inventory))
     && validCount(data.model_inventory_total_devices) && data.model_inventory_total_devices <= 10000
     && validCount(data.model_inventory_returned_devices)
     && data.model_inventory_returned_devices === data.model_inventory.length
@@ -308,7 +308,7 @@ function renderOverview(data) {
   byId("online").textContent = data.fleet.online_fresh_devices.toLocaleString();
   byId("schedulable").textContent = data.fleet.schedulable_devices.toLocaleString();
   renderDevices(data.devices);
-  renderModelInventory(data.model_inventory, data);
+  renderModelInventory(data.model_inventory || [], data);
   renderList("workloads", data.workloads, "No active workloads.", ["state", "class", "reason"]);
   renderList("approvals", data.approvals, "No pending approvals.", ["requester", "scope", "expires_at"]);
   byId("updated").textContent = "Snapshot: " + new Date(data.generated_at_unix_ms).toLocaleString();
