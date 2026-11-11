@@ -9,7 +9,7 @@
 //! this service only behind HTTPS with secure session cookies and CSRF controls.
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write as FmtWrite;
 use std::sync::Arc;
 use zeroize::Zeroize;
@@ -17,6 +17,7 @@ use zeroize::Zeroize;
 type HmacSha256 = Hmac<Sha256>;
 const SESSION_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-OPERATOR-SESSION-V1\0";
 pub const OPERATOR_SESSION_MAX_TTL_MS: u64 = 15 * 60 * 1000;
+const SESSION_KEYRING_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-OPERATOR-SESSION-KEYRING-V1\\0";
 const CLOCK_SKEW_TOLERANCE_MS: u64 = 30_000;
 const MAX_OVERVIEW_AGE_MS: u64 = 60_000;
 const MAX_DEVICES: usize = 10_000;
@@ -145,6 +146,7 @@ impl OperatorSessionAuthenticator {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OperatorAuthError {
+    UnknownKeyId,
     InvalidKey,
     InvalidClaims,
     MalformedToken,
@@ -275,6 +277,112 @@ fn hex_decode(value: &str) -> Option<Vec<u8>> {
         out.push((digit(pair[0])? << 4) | digit(pair[1])?);
     }
     Some(out)
+}
+
+
+/// Versioned operator-session signer/verifier with bounded, explicitly configured
+/// key overlap. The active key signs new sessions; previous keys verify only while
+/// they remain in the configured key set. Removing a key revokes all sessions
+/// minted with it. Key material must come from a protected customer-managed provider.
+pub struct OperatorSessionKeyRing {
+    active_key_id: String,
+    keys: HashMap<String, [u8; 32]>,
+}
+impl std::fmt::Debug for OperatorSessionKeyRing {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OperatorSessionKeyRing")
+            .field("active_key_id", &self.active_key_id)
+            .field("configured_key_ids", &self.keys.keys().collect::<Vec<_>>())
+            .field("key_material", &"[REDACTED]")
+            .finish()
+    }
+}
+impl Drop for OperatorSessionKeyRing {
+    fn drop(&mut self) {
+        for key in self.keys.values_mut() {
+            key.zeroize();
+        }
+    }
+}
+impl OperatorSessionKeyRing {
+    /// The key set may contain the active key and a small number of previous keys
+    /// during a planned rotation overlap. Duplicate and invalid IDs are rejected.
+    pub fn new(
+        active_key_id: impl Into<String>,
+        keys: Vec<(String, [u8; 32])>,
+    ) -> Result<Self, OperatorAuthError> {
+        let active_key_id = active_key_id.into();
+        if !valid_identifier(&active_key_id, 128) || keys.is_empty() || keys.len() > 4 {
+            return Err(OperatorAuthError::InvalidClaims);
+        }
+        let mut indexed = HashMap::with_capacity(keys.len());
+        for (key_id, key) in keys {
+            if !valid_identifier(&key_id, 128) || indexed.insert(key_id, key).is_some() {
+                return Err(OperatorAuthError::InvalidClaims);
+            }
+        }
+        if !indexed.contains_key(&active_key_id) {
+            return Err(OperatorAuthError::UnknownKeyId);
+        }
+        Ok(Self { active_key_id, keys: indexed })
+    }
+
+    pub fn active_key_id(&self) -> &str {
+        &self.active_key_id
+    }
+
+    /// Mint a key-ring token. The key ID is authenticated as part of the
+    /// domain-separated MAC input; it is not an authorization claim.
+    pub fn mint_after_identity_verification(
+        &self,
+        claims: &OperatorSessionClaims,
+        now_unix_ms: u64,
+    ) -> Result<String, OperatorAuthError> {
+        validate_claims(claims, now_unix_ms)?;
+        let key = self.keys.get(&self.active_key_id).ok_or(OperatorAuthError::UnknownKeyId)?;
+        let payload = encode_claims(claims);
+        let mut mac = HmacSha256::new_from_slice(key).map_err(|_| OperatorAuthError::InvalidKey)?;
+        mac.update(SESSION_KEYRING_DOMAIN);
+        mac.update(self.active_key_id.as_bytes());
+        mac.update(&[0]);
+        mac.update(&payload);
+        let signature = mac.finalize().into_bytes();
+        Ok(format!("{}.{}.{}", self.active_key_id, hex_encode(&payload), hex_encode(&signature)))
+    }
+
+    /// Verify only keys explicitly present in the configured key set. Removing
+    /// a retired/revoked key immediately invalidates tokens signed by that key.
+    pub fn authenticate(
+        &self,
+        token: &str,
+        now_unix_ms: u64,
+    ) -> Result<OperatorSessionClaims, OperatorAuthError> {
+        if token.len() > 2300 {
+            return Err(OperatorAuthError::MalformedToken);
+        }
+        let mut parts = token.split('.');
+        let key_id = parts.next().ok_or(OperatorAuthError::MalformedToken)?;
+        let payload_hex = parts.next().ok_or(OperatorAuthError::MalformedToken)?;
+        let signature_hex = parts.next().ok_or(OperatorAuthError::MalformedToken)?;
+        if parts.next().is_some() || !valid_identifier(key_id, 128) {
+            return Err(OperatorAuthError::MalformedToken);
+        }
+        let key = self.keys.get(key_id).ok_or(OperatorAuthError::UnknownKeyId)?;
+        let payload = hex_decode(payload_hex).ok_or(OperatorAuthError::MalformedToken)?;
+        let signature = hex_decode(signature_hex).ok_or(OperatorAuthError::MalformedToken)?;
+        if signature.len() != 32 {
+            return Err(OperatorAuthError::MalformedToken);
+        }
+        let mut mac = HmacSha256::new_from_slice(key).map_err(|_| OperatorAuthError::InvalidKey)?;
+        mac.update(SESSION_KEYRING_DOMAIN);
+        mac.update(key_id.as_bytes());
+        mac.update(&[0]);
+        mac.update(&payload);
+        mac.verify_slice(&signature).map_err(|_| OperatorAuthError::InvalidSignature)?;
+        let claims = decode_claims(&payload)?;
+        validate_claims(&claims, now_unix_ms)?;
+        Ok(claims)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -678,6 +786,41 @@ mod tests {
         tampered.replace_range(index..index + 1, "f");
         assert!(auth.authenticate(&tampered, 15_000).is_err());
     }
+
+    #[test]
+    fn keyring_supports_rotation_overlap_and_key_revocation() {
+        let old = OperatorSessionKeyRing::new(
+            "key-old",
+            vec![("key-old".into(), [3; 32])],
+        ).unwrap();
+        let token = old.mint_after_identity_verification(&claims("tenant-a"), 10_000).unwrap();
+        let overlap = OperatorSessionKeyRing::new(
+            "key-new",
+            vec![("key-old".into(), [3; 32]), ("key-new".into(), [4; 32])],
+        ).unwrap();
+        assert_eq!(overlap.active_key_id(), "key-new");
+        assert_eq!(overlap.authenticate(&token, 15_000).unwrap(), claims("tenant-a"));
+        let new_token = overlap.mint_after_identity_verification(&claims("tenant-a"), 10_000).unwrap();
+        assert_eq!(overlap.authenticate(&new_token, 15_000).unwrap(), claims("tenant-a"));
+        let retired = OperatorSessionKeyRing::new(
+            "key-new",
+            vec![("key-new".into(), [4; 32])],
+        ).unwrap();
+        assert_eq!(retired.authenticate(&token, 15_000), Err(OperatorAuthError::UnknownKeyId));
+    }
+
+    #[test]
+    fn keyring_rejects_duplicate_keys_and_unknown_active_key() {
+        assert!(OperatorSessionKeyRing::new(
+            "key-a",
+            vec![("key-a".into(), [1; 32]), ("key-a".into(), [2; 32])],
+        ).is_err());
+        assert_eq!(
+            OperatorSessionKeyRing::new("missing", vec![("key-a".into(), [1; 32])]).err(),
+            Some(OperatorAuthError::UnknownKeyId)
+        );
+    }
+
     #[test]
     fn rejects_overlong_and_future_sessions() {
         let auth = auth();
