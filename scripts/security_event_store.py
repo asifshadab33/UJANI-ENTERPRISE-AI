@@ -144,7 +144,8 @@ class SecurityEventStore:
         current = int(time.time() * 1000) if now_ms is None else now_ms
         if isinstance(current, bool) or not isinstance(current, int) or current < 0:
             raise StoreError("invalid ingestion clock")
-        if not IDENTIFIER.fullmatch(tenant_id) or provider_id not in PROVIDERS:
+        if (not isinstance(tenant_id, str) or not IDENTIFIER.fullmatch(tenant_id)
+                or not isinstance(provider_id, str) or provider_id not in PROVIDERS):
             raise StoreError("invalid tenant or unsupported provider")
         batch = list(events)
         if not 1 <= len(batch) <= MAX_BATCH:
@@ -182,7 +183,11 @@ class SecurityEventStore:
                     """, (tenant_id, excess))
                 self._db.execute("COMMIT")
             except Exception:
-                self._db.execute("ROLLBACK")
+                # BEGIN IMMEDIATE itself can fail before a transaction exists (for
+                # example, when another process holds a write lock). Do not mask
+                # that original SQLite error with a second ROLLBACK error.
+                if self._db.in_transaction:
+                    self._db.execute("ROLLBACK")
                 raise
         return inserted
 
@@ -240,7 +245,7 @@ class SecurityEventStore:
         return [json.loads(row["payload_json"]) for row in rows]
 
     def count(self, *, tenant_id: str) -> int:
-        if not IDENTIFIER.fullmatch(tenant_id):
+        if not isinstance(tenant_id, str) or not IDENTIFIER.fullmatch(tenant_id):
             raise StoreError("a valid tenant scope is required")
         with self._lock:
             row = self._db.execute(
