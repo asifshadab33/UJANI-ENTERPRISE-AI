@@ -66,14 +66,70 @@ function renderList(id, records, emptyText, detailKeys) {
     root.append(entry);
   }
 }
+const MAX_OVERVIEW_RESPONSE_BYTES = 2 * 1024 * 1024;
+
+async function readBoundedJson(response) {
+  const contentType = response.headers.get("content-type") || "";
+  if (!/^application\/(?:[a-z0-9.+-]*\+)?json(?:\s*;|$)/i.test(contentType)) {
+    throw new Error("The control plane did not return a JSON overview.");
+  }
+  const declaredLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_OVERVIEW_RESPONSE_BYTES) {
+    throw new Error("The control-plane overview exceeds the 2 MiB response limit.");
+  }
+  if (!response.body || typeof response.body.getReader !== "function") {
+    throw new Error("This browser cannot safely stream the bounded control-plane response.");
+  }
+
+  const reader = response.body.getReader();
+  const chunks = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > MAX_OVERVIEW_RESPONSE_BYTES) {
+        await reader.cancel();
+        throw new Error("The control-plane overview exceeds the 2 MiB response limit.");
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const bytes = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  try {
+    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+  } catch {
+    throw new Error("The control plane returned malformed UTF-8 or JSON.");
+  }
+}
+
 function validOverview(data) {
+  const counts = data && data.fleet;
+  const validCount = (value) => Number.isSafeInteger(value) && value >= 0;
   return data && data.schema_version === 1
-    && data.fleet && Number.isSafeInteger(data.fleet.registered_devices)
-    && Number.isSafeInteger(data.fleet.trusted_consented_devices)
-    && Number.isSafeInteger(data.fleet.online_fresh_devices)
-    && Number.isSafeInteger(data.fleet.schedulable_devices)
-    && Array.isArray(data.devices) && Array.isArray(data.workloads) && Array.isArray(data.approvals)
-    && Number.isFinite(data.generated_at_unix_ms);
+    && typeof data.tenant_id === "string" && data.tenant_id.length > 0 && data.tenant_id.length <= 128
+    && counts && validCount(counts.registered_devices)
+    && validCount(counts.trusted_consented_devices)
+    && validCount(counts.online_fresh_devices)
+    && validCount(counts.schedulable_devices)
+    && counts.registered_devices <= 10000
+    && counts.trusted_consented_devices <= counts.registered_devices
+    && counts.online_fresh_devices <= counts.trusted_consented_devices
+    && counts.schedulable_devices <= counts.online_fresh_devices
+    && Array.isArray(data.devices) && data.devices.length <= 10000
+    && Array.isArray(data.workloads) && data.workloads.length <= 1000
+    && Array.isArray(data.approvals) && data.approvals.length <= 1000
+    && data.devices.length === counts.registered_devices
+    && Number.isSafeInteger(data.generated_at_unix_ms) && data.generated_at_unix_ms > 0;
 }
 function renderOverview(data) {
   if (!validOverview(data)) throw new Error("The control plane returned an unsupported or incomplete overview schema.");
@@ -102,7 +158,7 @@ async function refreshOverview() {
     if (response.status === 401 || response.status === 403) throw new Error("Sign in with an authorized Enterprise operator account to view this fleet.");
     if (response.status === 404) throw new Error("The Enterprise overview API is not deployed yet. No sample data is shown.");
     if (!response.ok) throw new Error("The control plane returned HTTP " + response.status + ".");
-    const payload = await response.json();
+    const payload = await readBoundedJson(response);
     renderOverview(payload);
   } catch (error) {
     setConnection("Not connected", "error");
