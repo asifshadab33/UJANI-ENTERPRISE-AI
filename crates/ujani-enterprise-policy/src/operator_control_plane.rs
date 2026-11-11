@@ -727,7 +727,7 @@ fn json_model_inventory(inventory: &OperatorModelInventoryView) -> String {
     out
 }
 fn valid_bounded_text(value: &str, max: usize) -> bool {
-    !value.is_empty() && value.len() <= max && !value.chars().any(char::is_control)
+    !value.trim().is_empty() && value.len() <= max && !value.chars().any(char::is_control)
 }
 fn valid_inventory_evidence(evidence: &OperatorInventoryEvidence, now: u64) -> bool {
     ["runtime_api", "os_api", "runtime_metadata", "signed_catalogue", "published_catalogue", "estimate", "unknown"].contains(&evidence.source.as_str())
