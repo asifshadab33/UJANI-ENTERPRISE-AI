@@ -1577,3 +1577,117 @@ mod tests {
         );
     }
 }
+
+// Negative vectors ensure key selection and every token component are authenticated.
+#[cfg(test)]
+mod session_keyring_negative_tests {
+    use super::*;
+
+    fn claims() -> OperatorSessionClaims {
+        OperatorSessionClaims {
+            subject_id: "lab-operator".into(),
+            tenant_id: "lab-tenant".into(),
+            role: OperatorRole::Administrator,
+            issued_at_unix_ms: 10_000,
+            expires_at_unix_ms: 20_000,
+            nonce: [7; 16],
+        }
+    }
+
+    fn ring() -> OperatorSessionKeyRing {
+        OperatorSessionKeyRing::new(
+            "key-new",
+            vec![
+                ("key-old".into(), [0x31; 32]),
+                ("key-new".into(), [0xA5; 32]),
+            ],
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn keyring_binds_key_id_payload_and_signature() {
+        let keyring = ring();
+        let token = keyring
+            .mint_after_identity_verification(&claims(), 10_100)
+            .unwrap();
+        let parts: Vec<&str> = token.split('.').collect();
+        assert_eq!(parts.len(), 3);
+
+        let unknown_key = format!("unknown.{}.{}", parts[1], parts[2]);
+        assert_eq!(
+            keyring.authenticate(&unknown_key, 10_200),
+            Err(OperatorAuthError::UnknownKeyId)
+        );
+
+        let alternate_known_key = format!("key-old.{}.{}", parts[1], parts[2]);
+        assert_eq!(
+            keyring.authenticate(&alternate_known_key, 10_200),
+            Err(OperatorAuthError::InvalidSignature)
+        );
+
+        let mut changed_payload = parts[1].to_owned();
+        let first = changed_payload.remove(0);
+        changed_payload.insert(0, if first == '0' { '1' } else { '0' });
+        let payload_tamper = format!("{}.{}.{}", parts[0], changed_payload, parts[2]);
+        assert_eq!(
+            keyring.authenticate(&payload_tamper, 10_200),
+            Err(OperatorAuthError::InvalidSignature)
+        );
+
+        let mut changed_signature = parts[2].to_owned();
+        let first = changed_signature.remove(0);
+        changed_signature.insert(0, if first == '0' { '1' } else { '0' });
+        let signature_tamper = format!("{}.{}.{}", parts[0], parts[1], changed_signature);
+        assert_eq!(
+            keyring.authenticate(&signature_tamper, 10_200),
+            Err(OperatorAuthError::InvalidSignature)
+        );
+
+        assert_eq!(
+            keyring.authenticate(&format!("{token}.extra"), 10_200),
+            Err(OperatorAuthError::MalformedToken)
+        );
+    }
+
+    #[test]
+    fn keyring_rejects_ambiguous_ids_and_excessive_overlap() {
+        assert_eq!(
+            OperatorSessionKeyRing::new("key.with.dot", vec![("key.with.dot".into(), [1; 32])])
+                .err(),
+            Some(OperatorAuthError::InvalidClaims)
+        );
+        assert_eq!(
+            OperatorSessionKeyRing::new(
+                "key-1",
+                vec![
+                    ("key-1".into(), [1; 32]),
+                    ("key-2".into(), [2; 32]),
+                    ("key-3".into(), [3; 32]),
+                    ("key-4".into(), [4; 32]),
+                    ("key-5".into(), [5; 32]),
+                ],
+            )
+            .err(),
+            Some(OperatorAuthError::InvalidClaims)
+        );
+        assert!(OperatorSessionKeyRing::new(
+            "key-1",
+            vec![
+                ("key-1".into(), [1; 32]),
+                ("key-2".into(), [2; 32]),
+                ("key-3".into(), [3; 32]),
+                ("key-4".into(), [4; 32]),
+            ],
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn keyring_debug_output_never_contains_key_material() {
+        let keyring = ring();
+        let rendered = format!("{keyring:?}");
+        assert!(rendered.contains("[REDACTED]"));
+        assert!(!rendered.contains("165"));
+    }
+}
