@@ -1070,7 +1070,7 @@ mod session_keyring_negative_tests {
                 ("key-new".into(), [0xA5; 32]),
             ],
         )
-            .unwrap()
+        .unwrap()
     }
 
     #[test]
