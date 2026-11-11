@@ -315,7 +315,7 @@ impl DurableDeviceRegistry {
             {
                 return Err(DeviceTrustError::StaleKeyGeneration.into());
             }
-            Ok(record.key.clone())
+            Ok(record.key)
         })
     }
 
