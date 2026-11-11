@@ -57,3 +57,11 @@ The schema rejects unknown fields and bounds identifiers, all signed integers to
 The schema is a draft compatibility boundary, not an active protocol. Existing v2 peer envelopes, Enterprise manifests/approvals and Public local receipts must not be relabelled as interoperable v1 messages. A future adapter must explicitly translate a user-approved task into the new envelope and independently verify the Enterprise status/receipt.
 
 Still required before any remote worker execution: cross-language canonicalisation/signature test vectors; strict duplicate-key parser tests; schema/Rust parity tests; sender/organisation/worker key enrollment and revocation; durable transactional replay; authenticated transport; atomic consent/policy/lease admission; OS-enforced isolation and egress; signed receipts and exact output verification; crash, timeout, cancellation and rollback recovery. No transport or remote execution is enabled by this RFC.
+
+
+
+### Native verifier implementation status (2026-11-11)
+
+Enterprise PR #138 adds a native, side-effect-free Rust decoder/verifier for the shared v1 task envelope, status and execution receipt. It includes strict raw-JSON duplicate-key rejection for all three message types, consent-binding canonicalization, Ed25519 domain-separated verification, exact payload-byte digest verification, bounded validation and monotonic sequence helpers. The fixed consent-binding vector is embedded in the Rust unit test so this PR can be validated independently while PR #134 adds the canonical shared fixture and schema validators.
+
+This verifier is not an authenticated intake service. Sender/worker key enrollment and revocation, durable replay storage, atomic consent/policy/lease admission, authenticated transport, dispatch-time revalidation and OS-enforced worker isolation remain separate gates. Remote dispatch and worker execution remain disabled.
