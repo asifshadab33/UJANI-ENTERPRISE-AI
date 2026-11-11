@@ -74,15 +74,27 @@ jobs:
           --health-retries 12
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - name: Install PostgreSQL client
+      - name: Prepare PostgreSQL client from service container
+        shell: bash
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes postgresql-client
+          container_id="$(docker ps --filter "ancestor=postgres:16" --format '{{.ID}}' | head -n1)"
+          test -n "$container_id"
+          cat > "$RUNNER_TEMP/ujani-psql" <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          docker exec -i \
+            -e "PGPASSWORD=${PGPASSWORD:-postgres}" \
+            -e "PGAPPNAME=${PGAPPNAME:-}" \
+            "${POSTGRES_CONTAINER_ID:?}" psql "$@"
+          EOF
+          chmod +x "$RUNNER_TEMP/ujani-psql"
+          echo "POSTGRES_CONTAINER_ID=$container_id" >> "$GITHUB_ENV"
+          echo "PSQL_BIN=$RUNNER_TEMP/ujani-psql" >> "$GITHUB_ENV"
       - name: Apply customer-hosted control-plane migration
         env:
           PGPASSWORD: postgres
-        run: psql --host localhost --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file migrations/0001_customer_hosted_control_plane.sql
+        run: "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < migrations/0001_customer_hosted_control_plane.sql
       - name: Verify tenant isolation and append-only audit behavior
         env:
           PGPASSWORD: postgres
-        run: psql --host localhost --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file scripts/test_customer_hosted_migration.sql
+        run: "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < scripts/test_customer_hosted_migration.sql
