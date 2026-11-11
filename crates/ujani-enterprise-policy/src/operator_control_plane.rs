@@ -534,6 +534,49 @@ pub struct OperatorApprovalView {
     pub scope: String,
     pub expires_at: Option<String>,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OperatorInventoryEvidence {
+    pub source: String,
+    pub confidence: String,
+    pub observed_at_unix_ms: Option<u64>,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OperatorModelRuntimeView {
+    pub runtime_id: String,
+    pub provider: String,
+    pub version: Option<String>,
+    pub availability: String,
+    pub network_scope: String,
+    pub evidence: OperatorInventoryEvidence,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OperatorModelView {
+    pub model_ref: String,
+    pub runtime_id: String,
+    pub display_name: String,
+    pub family: Option<String>,
+    pub version: Option<String>,
+    pub availability: String,
+    pub size_bytes: Option<u64>,
+    pub context_length_tokens: Option<u64>,
+    pub estimated_min_memory_mb: Option<u64>,
+    pub capabilities: Vec<String>,
+    pub evidence: OperatorInventoryEvidence,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OperatorModelInventoryHardware {
+    pub memory_available_mb: Option<u64>,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OperatorModelInventoryView {
+    pub device_id: String,
+    pub generated_at_unix_ms: u64,
+    pub hardware: OperatorModelInventoryHardware,
+    pub runtimes: Vec<OperatorModelRuntimeView>,
+    pub models: Vec<OperatorModelView>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OperatorOverview {
     pub schema_version: u16,
@@ -543,6 +586,8 @@ pub struct OperatorOverview {
     pub devices: Vec<OperatorDeviceView>,
     pub workloads: Vec<OperatorWorkloadView>,
     pub approvals: Vec<OperatorApprovalView>,
+    /// Optional, privacy-minimised inventory from authenticated device telemetry.
+    pub model_inventory: Vec<OperatorModelInventoryView>,
 }
 
 impl OperatorOverview {
@@ -599,6 +644,11 @@ impl OperatorOverview {
                 json_string(&approval.scope), json_optional_string(approval.expires_at.as_deref())
             );
         }
+        out.push_str("],\"model_inventory\":[");
+        for (index, inventory) in self.model_inventory.iter().enumerate() {
+            if index > 0 { out.push(','); }
+            out.push_str(&json_model_inventory(inventory));
+        }
         out.push_str("]}");
         out
     }
@@ -631,6 +681,58 @@ fn json_optional_number<T: std::fmt::Display>(value: Option<T>) -> String {
     value
         .map(|number| number.to_string())
         .unwrap_or_else(|| "null".into())
+}
+
+fn json_evidence(evidence: &OperatorInventoryEvidence) -> String {
+    format!(
+        "{{\"source\":{},\"confidence\":{},\"observed_at_unix_ms\":{}}}",
+        json_string(&evidence.source),
+        json_string(&evidence.confidence),
+        json_optional_number(evidence.observed_at_unix_ms)
+    )
+}
+fn json_model_inventory(inventory: &OperatorModelInventoryView) -> String {
+    let mut out = String::with_capacity(512 + inventory.models.len() * 256);
+    let _ = write!(
+        &mut out,
+        "{{\"device_id\":{},\"generated_at_unix_ms\":{},\"hardware\":{{\"memory_available_mb\":{}}},\"runtimes\":[",
+        json_string(&inventory.device_id), inventory.generated_at_unix_ms,
+        json_optional_number(inventory.hardware.memory_available_mb)
+    );
+    for (index, runtime) in inventory.runtimes.iter().enumerate() {
+        if index > 0 { out.push(','); }
+        let _ = write!(
+            &mut out,
+            "{{\"runtime_id\":{},\"provider\":{},\"version\":{},\"availability\":{},\"network_scope\":{},\"evidence\":{}}}",
+            json_string(&runtime.runtime_id), json_string(&runtime.provider),
+            json_optional_string(runtime.version.as_deref()), json_string(&runtime.availability),
+            json_string(&runtime.network_scope), json_evidence(&runtime.evidence)
+        );
+    }
+    out.push_str("],\"models\":[");
+    for (index, model) in inventory.models.iter().enumerate() {
+        if index > 0 { out.push(','); }
+        let capabilities = model.capabilities.iter().map(|value| json_string(value)).collect::<Vec<_>>().join(",");
+        let _ = write!(
+            &mut out,
+            "{{\"model_ref\":{},\"runtime_id\":{},\"display_name\":{},\"family\":{},\"version\":{},\"availability\":{},\"size_bytes\":{},\"context_length_tokens\":{},\"estimated_min_memory_mb\":{},\"capabilities\":[{}],\"evidence\":{}}}",
+            json_string(&model.model_ref), json_string(&model.runtime_id), json_string(&model.display_name),
+            json_optional_string(model.family.as_deref()), json_optional_string(model.version.as_deref()),
+            json_string(&model.availability), json_optional_number(model.size_bytes),
+            json_optional_number(model.context_length_tokens), json_optional_number(model.estimated_min_memory_mb),
+            capabilities, json_evidence(&model.evidence)
+        );
+    }
+    out.push_str("]}");
+    out
+}
+fn valid_bounded_text(value: &str, max: usize) -> bool {
+    !value.is_empty() && value.len() <= max && !value.chars().any(char::is_control)
+}
+fn valid_inventory_evidence(evidence: &OperatorInventoryEvidence, now: u64) -> bool {
+    ["runtime_api", "os_api", "runtime_metadata", "signed_catalogue", "published_catalogue", "estimate", "unknown"].contains(&evidence.source.as_str())
+        && ["verified", "reported", "estimated", "unknown"].contains(&evidence.confidence.as_str())
+        && evidence.observed_at_unix_ms.is_none_or(|observed| observed > 0 && observed <= now.saturating_add(CLOCK_SKEW_TOLERANCE_MS))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -832,6 +934,7 @@ fn validate_overview(overview: &OperatorOverview, now: u64) -> Result<(), ()> {
         || overview.devices.len() > MAX_DEVICES
         || overview.workloads.len() > MAX_WORKLOADS
         || overview.approvals.len() > MAX_APPROVALS
+        || overview.model_inventory.len() > MAX_DEVICES
     {
         return Err(());
     }
@@ -860,6 +963,55 @@ fn validate_overview(overview: &OperatorOverview, now: u64) -> Result<(), ()> {
             return Err(());
         }
     }
+
+    let mut inventory_devices = HashSet::with_capacity(overview.model_inventory.len());
+    for inventory in &overview.model_inventory {
+        if !valid_identifier(&inventory.device_id, 128)
+            || !ids.contains(inventory.device_id.as_str())
+            || !inventory_devices.insert(inventory.device_id.as_str())
+            || inventory.generated_at_unix_ms == 0
+            || inventory.generated_at_unix_ms > now.saturating_add(CLOCK_SKEW_TOLERANCE_MS)
+            || now.saturating_sub(inventory.generated_at_unix_ms) > MAX_OVERVIEW_AGE_MS
+            || inventory.hardware.memory_available_mb.is_some_and(|value| value > 16_777_216)
+            || inventory.runtimes.len() > 16
+            || inventory.models.len() > 512
+        {
+            return Err(());
+        }
+        let mut runtime_ids = HashSet::with_capacity(inventory.runtimes.len());
+        for runtime in &inventory.runtimes {
+            if !valid_identifier(&runtime.runtime_id, 96)
+                || !valid_bounded_text(&runtime.provider, 64)
+                || runtime.version.as_ref().is_some_and(|value| !valid_bounded_text(value, 64))
+                || !["available", "unavailable", "unknown"].contains(&runtime.availability.as_str())
+                || !["loopback_only", "local_socket", "enterprise_internal", "not_applicable", "unknown"].contains(&runtime.network_scope.as_str())
+                || !runtime_ids.insert(runtime.runtime_id.as_str())
+                || !valid_inventory_evidence(&runtime.evidence, now)
+            {
+                return Err(());
+            }
+        }
+        let mut model_ids = HashSet::with_capacity(inventory.models.len());
+        for model in &inventory.models {
+            if !valid_bounded_text(&model.model_ref, 160)
+                || !valid_identifier(&model.runtime_id, 96)
+                || !valid_bounded_text(&model.display_name, 160)
+                || model.family.as_ref().is_some_and(|value| !valid_bounded_text(value, 96))
+                || model.version.as_ref().is_some_and(|value| !valid_bounded_text(value, 64))
+                || !["installed", "downloadable", "unavailable", "unknown"].contains(&model.availability.as_str())
+                || model.context_length_tokens == Some(0)
+                || model.estimated_min_memory_mb == Some(0)
+                || model.capabilities.len() > 16
+                || model.capabilities.iter().any(|value| !["chat", "reasoning", "coding", "vision", "embeddings", "tool_use", "streaming", "audio_input", "audio_output", "unknown"].contains(&value.as_str()))
+                || !model_ids.insert(model.model_ref.as_str())
+                || !runtime_ids.contains(model.runtime_id.as_str())
+                || !valid_inventory_evidence(&model.evidence, now)
+            {
+                return Err(());
+            }
+        }
+    }
+
     for workload in &overview.workloads {
         if !valid_identifier(&workload.workload_id, 128)
             || workload.title.len() > 256
@@ -914,6 +1066,7 @@ mod tests {
             devices: vec![],
             workloads: vec![],
             approvals: vec![],
+            model_inventory: vec![],
         }
     }
     struct TestRepo {
