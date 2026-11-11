@@ -1025,7 +1025,16 @@ fn validate_overview(overview: &OperatorOverview, now: u64) -> Result<(), ()> {
         if !valid_identifier(&inventory.device_id, 128)
             || !ids.contains(inventory.device_id.as_str())
             || !inventory_devices.insert(inventory.device_id.as_str())
+            || inventory.schema_version != 1
             || inventory.generated_at_unix_ms == 0
+            || !valid_bounded_text(&inventory.platform.os, 32)
+            || inventory.platform.os_version.as_ref().is_some_and(|value| !valid_bounded_text(value, 64))
+            || !valid_bounded_text(&inventory.platform.architecture, 32)
+            || inventory.hardware.cpu_logical_cores.is_some_and(|value| value == 0 || value > 65_535)
+            || inventory.hardware.memory_total_mb.is_some_and(|value| value == 0 || value > 16_777_216)
+            || inventory.hardware.memory_total_mb.zip(inventory.hardware.memory_available_mb).is_some_and(|(total, available)| available > total)
+            || inventory.hardware.accelerators.len() > 32
+            || inventory.privacy.as_ref().is_some_and(|privacy| privacy.contains_prompts || privacy.contains_user_files || privacy.contains_local_paths || privacy.contains_credentials)
             || inventory.generated_at_unix_ms > now.saturating_add(CLOCK_SKEW_TOLERANCE_MS)
             || now.saturating_sub(inventory.generated_at_unix_ms) > MAX_OVERVIEW_AGE_MS
             || inventory.hardware.memory_available_mb.is_some_and(|value| value > 16_777_216)
@@ -1033,6 +1042,16 @@ fn validate_overview(overview: &OperatorOverview, now: u64) -> Result<(), ()> {
             || inventory.models.len() > 512
         {
             return Err(());
+        }
+        for accelerator in &inventory.hardware.accelerators {
+            if !["gpu", "npu", "other"].contains(&accelerator.kind.as_str())
+                || accelerator.vendor.as_ref().is_some_and(|value| !valid_bounded_text(value, 64))
+                || accelerator.device_family.as_ref().is_some_and(|value| !valid_bounded_text(value, 96))
+                || accelerator.runtime_api.as_ref().is_some_and(|value| !valid_bounded_text(value, 64))
+                || !valid_inventory_evidence(&accelerator.evidence, now)
+            {
+                return Err(());
+            }
         }
         let mut runtime_ids = HashSet::with_capacity(inventory.runtimes.len());
         for runtime in &inventory.runtimes {
@@ -1056,8 +1075,8 @@ fn validate_overview(overview: &OperatorOverview, now: u64) -> Result<(), ()> {
                 || model.version.as_ref().is_some_and(|value| !valid_bounded_text(value, 64))
                 || !["installed", "downloadable", "unavailable", "unknown"].contains(&model.availability.as_str())
                 || model.context_length_tokens == Some(0)
-                || model.estimated_min_memory_mb == Some(0)
                 || model.capabilities.len() > 16
+                || model.capabilities.iter().collect::<HashSet<_>>().len() != model.capabilities.len()
                 || model.capabilities.iter().any(|value| !["chat", "reasoning", "coding", "vision", "embeddings", "tool_use", "streaming", "audio_input", "audio_output", "unknown"].contains(&value.as_str()))
                 || !model_ids.insert(model.model_ref.as_str())
                 || !runtime_ids.contains(model.runtime_id.as_str())
@@ -1134,9 +1153,19 @@ mod tests {
         };
         OperatorModelInventoryView {
             device_id: device_id.into(),
+            schema_version: 1,
             generated_at_unix_ms,
+            platform: OperatorModelInventoryPlatform {
+                os: "Linux".into(),
+                os_version: Some("6.8".into()),
+                architecture: "x86_64".into(),
+            },
             hardware: OperatorModelInventoryHardware {
+                cpu_logical_cores: Some(8),
+                memory_total_mb: Some(16_384),
                 memory_available_mb: Some(4096),
+                storage_free_mb: None,
+                accelerators: vec![],
             },
             runtimes: vec![OperatorModelRuntimeView {
                 runtime_id: "ollama.local".into(),
@@ -1159,6 +1188,12 @@ mod tests {
                 capabilities: vec!["chat".into()],
                 evidence,
             }],
+            privacy: Some(OperatorModelInventoryPrivacy {
+                contains_prompts: false,
+                contains_user_files: false,
+                contains_local_paths: false,
+                contains_credentials: false,
+            }),
         }
     }
 
