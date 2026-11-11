@@ -280,7 +280,11 @@ impl DurableDeviceRegistry {
         command: &SignedOwnerConsentCommand,
         now: u64,
     ) -> Result<u64, DurableDeviceTrustError> {
-        self.transact(|registry| registry.apply_owner_consent(command, now).map_err(Into::into))
+        self.transact(|registry| {
+            registry
+                .apply_owner_consent(command, now)
+                .map_err(Into::into)
+        })
     }
 
     /// Authenticates only when the signed method/resource match the server-selected route.
@@ -666,9 +670,7 @@ fn decode_snapshot(
             return Err(DurableDeviceTrustError::CapacityExceeded);
         }
         match p.first().copied() {
-            Some("D")
-                if (version == 1 && p.len() == 7) || (version == 2 && p.len() == 11) =>
-            {
+            Some("D") if (version == 1 && p.len() == 7) || (version == 2 && p.len() == 11) => {
                 let id = String::from_utf8(unhex(p[1])?)
                     .map_err(|_| DurableDeviceTrustError::CorruptState)?;
                 let tenant = String::from_utf8(unhex(p[2])?)
@@ -693,34 +695,37 @@ fn decode_snapshot(
                 {
                     return Err(DurableDeviceTrustError::CorruptState);
                 }
-                let (owner_opted_in, owner_consent_revision, owner_consent_generation, owner_consent_updated_at_unix_ms) =
-                    if version == 2 {
-                        let opted_in = match p[7] {
-                            "0" => false,
-                            "1" => true,
-                            _ => return Err(DurableDeviceTrustError::CorruptState),
-                        };
-                        let revision = p[8]
-                            .parse::<u64>()
-                            .map_err(|_| DurableDeviceTrustError::CorruptState)?;
-                        let consent_generation = p[9]
-                            .parse::<u64>()
-                            .map_err(|_| DurableDeviceTrustError::CorruptState)?;
-                        let updated_at = p[10]
-                            .parse::<u64>()
-                            .map_err(|_| DurableDeviceTrustError::CorruptState)?;
-                        if (revision == 0
-                            && (opted_in || consent_generation != 0 || updated_at != 0))
-                            || (revision > 0
-                                && (state != DeviceTrustState::Enrolled
-                                    || consent_generation != generation))
-                        {
-                            return Err(DurableDeviceTrustError::CorruptState);
-                        }
-                        (opted_in, revision, consent_generation, updated_at)
-                    } else {
-                        (false, 0, 0, 0)
+                let (
+                    owner_opted_in,
+                    owner_consent_revision,
+                    owner_consent_generation,
+                    owner_consent_updated_at_unix_ms,
+                ) = if version == 2 {
+                    let opted_in = match p[7] {
+                        "0" => false,
+                        "1" => true,
+                        _ => return Err(DurableDeviceTrustError::CorruptState),
                     };
+                    let revision = p[8]
+                        .parse::<u64>()
+                        .map_err(|_| DurableDeviceTrustError::CorruptState)?;
+                    let consent_generation = p[9]
+                        .parse::<u64>()
+                        .map_err(|_| DurableDeviceTrustError::CorruptState)?;
+                    let updated_at = p[10]
+                        .parse::<u64>()
+                        .map_err(|_| DurableDeviceTrustError::CorruptState)?;
+                    if (revision == 0 && (opted_in || consent_generation != 0 || updated_at != 0))
+                        || (revision > 0
+                            && (state != DeviceTrustState::Enrolled
+                                || consent_generation != generation))
+                    {
+                        return Err(DurableDeviceTrustError::CorruptState);
+                    }
+                    (opted_in, revision, consent_generation, updated_at)
+                } else {
+                    (false, 0, 0, 0)
+                };
                 let vk = VerifyingKey::from_bytes(&pubkey)
                     .map_err(|_| DurableDeviceTrustError::CorruptState)?;
                 if registry
@@ -976,7 +981,9 @@ mod tests {
         let admin = SigningKey::from_bytes(&[7; 32]);
         let device = SigningKey::from_bytes(&[9; 32]);
         let store = open(&path, &admin);
-        store.apply_admin_command(&enroll(&admin, &device), 200).unwrap();
+        store
+            .apply_admin_command(&enroll(&admin, &device), 200)
+            .unwrap();
         let opt_in = owner_consent(&device, true, 1, 210, 2);
         assert_eq!(store.apply_owner_consent(&opt_in, 220), Ok(1));
         assert!(store.tenant_device_summaries("tenant-a").unwrap()[0].owner_opted_in);
@@ -1021,11 +1028,7 @@ mod tests {
             hex(&device.verifying_key().to_bytes())
         );
         let mac = hmac(&[0x42; 32], "integrity-v1", body.as_bytes());
-        let legacy = format!(
-            "{body}H|{}|{}\n",
-            hex(b"integrity-v1"),
-            hex(&mac)
-        );
+        let legacy = format!("{body}H|{}|{}\n", hex(b"integrity-v1"), hex(&mac));
         fs::write(&path, legacy).unwrap();
 
         let store = open(&path, &admin);
