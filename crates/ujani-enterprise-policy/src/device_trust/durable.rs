@@ -1576,4 +1576,63 @@ mod tests {
         let _ = fs::remove_file(&path);
         let _ = fs::remove_file(suffix(&path, ".lock"));
     }
+
+    #[test]
+    fn revoked_device_remains_revoked_after_registry_restart() {
+        let path = path();
+        let admin = test_signing_key("revocation-admin");
+        let device = test_signing_key("revocation-device");
+        let store = open(&path, &admin);
+        assert_eq!(
+            store.apply_admin_command(&enroll(&admin, &device), 200).unwrap(),
+            1
+        );
+
+        let mut revoke = SignedDeviceAdminCommand {
+            action: DeviceCommandAction::Revoke,
+            tenant_id: "tenant-a".into(),
+            device_id: "device-1".into(),
+            admin_key_id: "admin-v1".into(),
+            target_key_id: String::new(),
+            target_public_key: None,
+            issued_at_unix_ms: 300,
+            expires_at_unix_ms: 1_000,
+            nonce: test_nonce("revocation-after-enrollment"),
+            signature: [0; 64],
+            old_device_signature: None,
+            new_device_signature: None,
+        };
+        revoke.signature = admin.sign(&admin_command_bytes(&revoke)).to_bytes();
+        assert_eq!(store.apply_admin_command(&revoke, 350).unwrap(), 2);
+        drop(store);
+
+        let reopened = open(&path, &admin);
+        assert_eq!(reopened.device_count().unwrap(), 1);
+        let body = b"lease request after revocation";
+        let claims = DeviceRequestClaims {
+            tenant_id: "tenant-a".into(),
+            device_id: "device-1".into(),
+            key_id: "device-key-v1".into(),
+            key_generation: 1,
+            request_id: test_nonce("lease-request-after-revocation"),
+            issued_at_unix_ms: 360,
+            expires_at_unix_ms: 500,
+            method: "POST".into(),
+            resource_id: "lease:acquire".into(),
+            workload_id: "workload-1".into(),
+            manifest_sha256: Sha256::digest(b"manifest-v1").into(),
+            body_sha256: Sha256::digest(body).into(),
+        };
+        let signed = SignedDeviceRequest {
+            signature: device.sign(&device_request_bytes(&claims)).to_bytes(),
+            claims,
+        };
+        assert_eq!(
+            reopened.authenticate_request(&signed, body, 370),
+            Err(DurableDeviceTrustError::Trust(DeviceTrustError::DeviceNotEnrolled))
+        );
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(suffix(&path, ".bak"));
+        let _ = fs::remove_file(suffix(&path, ".lock"));
+    }
 }
