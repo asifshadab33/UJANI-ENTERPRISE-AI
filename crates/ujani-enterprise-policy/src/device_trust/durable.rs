@@ -1414,7 +1414,7 @@ mod tests {
             device_id: "device-1".into(),
             key_id: "device-key-v1".into(),
             key_generation: 1,
-            request_id: [11; 16],
+            request_id: test_nonce("anchor-lost-response-request"),
             issued_at_unix_ms: 200,
             expires_at_unix_ms: 500,
             method: "POST".into(),
