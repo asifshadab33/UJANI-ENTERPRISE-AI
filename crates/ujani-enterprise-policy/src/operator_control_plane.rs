@@ -732,7 +732,7 @@ fn valid_bounded_text(value: &str, max: usize) -> bool {
 fn valid_inventory_evidence(evidence: &OperatorInventoryEvidence, now: u64) -> bool {
     ["runtime_api", "os_api", "runtime_metadata", "signed_catalogue", "published_catalogue", "estimate", "unknown"].contains(&evidence.source.as_str())
         && ["verified", "reported", "estimated", "unknown"].contains(&evidence.confidence.as_str())
-        && evidence.observed_at_unix_ms.map_or(true, |observed| observed > 0 && observed <= now.saturating_add(CLOCK_SKEW_TOLERANCE_MS))
+        && evidence.observed_at_unix_ms.map_or(true, |observed| observed > 0 && observed <= now.saturating_add(CLOCK_SKEW_TOLERANCE_MS) && now.saturating_sub(observed) <= MAX_OVERVIEW_AGE_MS)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
