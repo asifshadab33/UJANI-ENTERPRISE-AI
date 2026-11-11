@@ -13,7 +13,7 @@ After authenticating the sender and validating the envelope/signature/consent co
 - Insert `(tenant_id, task_id, sender_device_id, nonce)` into `task_contract_replays`.
 - The primary key rejects task-ID reuse within a tenant.
 - The unique key on `(tenant_id, sender_device_id, nonce)` rejects nonce reuse for that sender within a tenant. The database constraint is the concurrency primitive; an application-side pre-check is not sufficient.
-- Persist the envelope and payload digests, expiry and initial state. Do not persist the payload itself.
+- Persist the envelope and payload digests, expiry and a lifecycle state from the v1 task-state vocabulary (`received`, `validating`, `awaiting_approval`, `queued`, `reserved`, `running`, `completed`, `failed`, `cancelled`, `timed_out`, `rejected`, `expired`). Enforce legal transitions in the future service transaction; this migration constrains values but does not implement the transition machine. Do not persist the payload itself.
 - If the claim conflicts, reject the request as replayed. Do not overwrite the existing record or treat a duplicate as an idempotent new task.
 
 The sender device must already be authenticated and enrolled in the tenant device registry. The migration does not establish that identity or validate signatures.
