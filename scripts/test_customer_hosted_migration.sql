@@ -27,6 +27,7 @@ DO $$
 DECLARE
  visible_tenants integer;
  visible_devices integer;
+ affected_rows bigint;
  bypass_rls boolean;
  can_insert_tenant boolean;
  can_update_tenant boolean;
