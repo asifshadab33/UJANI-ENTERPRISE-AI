@@ -1187,7 +1187,9 @@ mod tests {
         let admin = SigningKey::from_bytes(&[7; 32]);
         let device = SigningKey::from_bytes(&[9; 32]);
         let store = open(&path, &admin);
-        store.apply_admin_command(&enroll(&admin, &device), 200).unwrap();
+        store
+            .apply_admin_command(&enroll(&admin, &device), 200)
+            .unwrap();
 
         let mut revoke = SignedDeviceAdminCommand {
             action: DeviceCommandAction::Revoke,
@@ -1230,7 +1232,9 @@ mod tests {
         };
         assert_eq!(
             reopened.authenticate_request(&signed, body, 370),
-            Err(DurableDeviceTrustError::Trust(DeviceTrustError::DeviceNotEnrolled))
+            Err(DurableDeviceTrustError::Trust(
+                DeviceTrustError::DeviceNotEnrolled
+            ))
         );
         let _ = fs::remove_file(&path);
         let _ = fs::remove_file(suffix(&path, ".bak"));
