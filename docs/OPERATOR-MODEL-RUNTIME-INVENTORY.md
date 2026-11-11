@@ -13,17 +13,26 @@ runtime metadata and installed-model metadata.
   foreign device identifiers are rejected.
 - Overview, inventory and evidence timestamps are bounded to the same freshness
   window. Missing timestamps or unknown evidence remain unknown, never inferred.
-- Runtime/model arrays are bounded (16 runtimes and 512 models per device).
+- Per-device arrays are bounded (16 runtimes and 512 models); one overview
+  accepts at most 100,000 model rows across the fleet.
 - Model capabilities are allowlisted. Unknown capability metadata stays unknown.
+- The serialized overview is capped at 8 MiB. It includes only complete
+  per-device snapshots that fit the budget and reports total/returned device and
+  model counts plus model_inventory_status. The console displays the first
+  5,120 returned rows and labels a partial_response_budget result explicitly;
+  no individual device snapshot is silently truncated.
 - An absent or empty inventory means "not reported"; it does not prove that a
   device has no installed models or no AI capability.
 
 ## Privacy and authority
 
-The contract intentionally has no fields for prompts, model contents, local
-paths, process lists, personal files or credentials. It is read-only operator
-visibility; it does not select or replace a user's local model, authorize a
-workload, reserve resources, download models or enable remote execution.
+The contract intentionally has no fields for prompts, model contents,
+process lists, personal files or credentials. A device/telemetry adapter must
+remove local paths from both model_ref and display_name before publishing
+inventory; the operator API and console reject path-like labels as a second
+boundary. It is read-only operator visibility; it does not select or replace a
+user's local model, authorize a workload, reserve resources, download models or
+enable remote execution.
 
 ## Current implementation boundary
 
