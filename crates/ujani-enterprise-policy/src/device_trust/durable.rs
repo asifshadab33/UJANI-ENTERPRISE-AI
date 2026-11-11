@@ -1217,12 +1217,12 @@ mod tests {
         rotate.signature = admin.sign(&admin_command_bytes(&rotate)).to_bytes();
         assert_eq!(store.apply_admin_command(&rotate, 350), Ok(2));
 
-        assert_eq!(
+        assert!(matches!(
             store.verifying_key_for_authenticated_request(&authenticated),
             Err(DurableDeviceTrustError::Trust(
                 DeviceTrustError::StaleKeyGeneration
             ))
-        );
+        ));
 
         drop(store);
         let _ = fs::remove_file(&path);
