@@ -714,6 +714,59 @@ mod tests {
     }
 
     #[test]
+    fn empty_inventory_and_unsupported_runtimes_never_claim_a_usable_model() {
+        let mut empty = inventory();
+        empty.models.clear();
+        assert_eq!(
+            match_model_to_task(&empty, "qwen2.5:7b", &requirements(), 1_100, 10_000),
+            Err(ModelInventoryValidationError::ModelNotFound)
+        );
+
+        let mut unknown_runtime = inventory();
+        unknown_runtime.runtimes[0].availability = RuntimeAvailability::Unknown;
+        let result = match_model_to_task(
+            &unknown_runtime,
+            "qwen2.5:7b",
+            &requirements(),
+            1_100,
+            10_000,
+        )
+        .unwrap();
+        assert_eq!(result.status, ModelFitStatus::Unknown);
+        assert!(result.reasons.contains(&ModelFitReason::RuntimeAvailabilityUnknown));
+
+        let mut unavailable_runtime = inventory();
+        unavailable_runtime.runtimes[0].availability = RuntimeAvailability::Unavailable;
+        let result = match_model_to_task(
+            &unavailable_runtime,
+            "qwen2.5:7b",
+            &requirements(),
+            1_100,
+            10_000,
+        )
+        .unwrap();
+        assert_eq!(result.status, ModelFitStatus::Incompatible);
+        assert!(result.reasons.contains(&ModelFitReason::RuntimeUnavailable));
+    }
+
+    #[test]
+    fn insufficient_device_memory_is_an_explicit_incompatibility() {
+        let mut value = inventory();
+        value.hardware.memory_available_mb = Some(1_024);
+        let result = match_model_to_task(
+            &value,
+            "qwen2.5:7b",
+            &requirements(),
+            1_100,
+            10_000,
+        )
+        .unwrap();
+        assert_eq!(result.status, ModelFitStatus::Incompatible);
+        assert!(result.reasons.contains(&ModelFitReason::HardwareMemoryBelowRequirement));
+        assert!(result.reasons.contains(&ModelFitReason::MemoryEstimateExceedsAvailable));
+    }
+
+    #[test]
     fn rejects_available_memory_above_total_memory() {
         let mut value = inventory();
         value.hardware.memory_available_mb = Some(16_385);
