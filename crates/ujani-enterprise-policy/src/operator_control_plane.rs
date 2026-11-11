@@ -842,12 +842,13 @@ fn valid_bounded_text(value: &str, max: usize) -> bool {
 fn contains_local_path(value: &str) -> bool {
     let lower = value.to_ascii_lowercase();
     lower.contains("file://")
-        || value.split_whitespace().any(|token| {
+        || value.split(|character: char| character.is_whitespace() || character == '=').any(|token| {
             let token = token.trim_matches(|character: char| {
-                matches!(character, '"' | '\'' | '(' | '[' | '{' | ',' | ';')
+                matches!(character, '"' | '\'' | '(' | '[' | '{' | ',' | ';' | ')' | ']' | '}')
             });
             let bytes = token.as_bytes();
             token.starts_with('/')
+                || token.starts_with("~/")
                 || token.starts_with("\\\\")
                 || (bytes.len() >= 3
                     && bytes[0].is_ascii_alphabetic()
