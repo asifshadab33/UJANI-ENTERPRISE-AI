@@ -26,6 +26,7 @@ DECLARE
  visible_tenants integer;
  visible_devices integer;
  bypass_rls boolean;
+ affected_rows integer;
 BEGIN
  SELECT count(*) INTO visible_tenants FROM ujani_control.tenants;
  SELECT count(*) INTO visible_devices FROM ujani_control.devices;
