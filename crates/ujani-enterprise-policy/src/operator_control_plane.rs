@@ -1001,6 +1001,39 @@ mod tests {
     }
 
     #[test]
+    fn provider_verifier_supports_customer_managed_non_exportable_key_adapters() {
+        let old_provider = OperatorSessionKeyRing::new(
+            "session-old",
+            vec![("session-old".into(), [11; 32])],
+        )
+        .unwrap();
+        let old_verifier = OperatorSessionProviderVerifier::new(old_provider);
+        let token = old_verifier
+            .mint_after_identity_verification(&claims("tenant-a"), 10_000)
+            .unwrap();
+
+        let overlap_provider = OperatorSessionKeyRing::new(
+            "session-new",
+            vec![
+                ("session-old".into(), [11; 32]),
+                ("session-new".into(), [12; 32]),
+            ],
+        )
+        .unwrap();
+        let verifier = OperatorSessionProviderVerifier::new(overlap_provider);
+        assert_eq!(
+            verifier.authenticate(&token, 15_000).unwrap(),
+            claims("tenant-a")
+        );
+
+        let tampered_key_id = token.replacen("session-old.", "session-new.", 1);
+        assert_eq!(
+            verifier.authenticate(&tampered_key_id, 15_000),
+            Err(OperatorAuthError::InvalidSignature)
+        );
+    }
+
+    #[test]
     fn keyring_rejects_duplicate_keys_and_unknown_active_key() {
         assert!(OperatorSessionKeyRing::new(
             "key-a",
