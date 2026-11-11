@@ -1430,6 +1430,18 @@ mod tests {
         stale.models[0].capabilities = vec!["execute_shell".into()];
         overview.model_inventory.push(stale);
         assert!(validate_overview(&overview, 100_000).is_err());
+
+        overview.model_inventory.clear();
+        let mut stale_evidence = sample_model_inventory("device-1", 100_000);
+        stale_evidence.models[0].evidence.observed_at_unix_ms = Some(1);
+        overview.model_inventory.push(stale_evidence);
+        assert!(validate_overview(&overview, 100_000).is_err());
+
+        overview.model_inventory.clear();
+        let mut blank = sample_model_inventory("device-1", 100_000);
+        blank.models[0].display_name = "   ".into();
+        overview.model_inventory.push(blank);
+        assert!(validate_overview(&overview, 100_000).is_err());
     }
 
     #[test]
