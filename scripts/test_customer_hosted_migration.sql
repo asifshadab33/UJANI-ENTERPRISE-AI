@@ -36,6 +36,18 @@ BEGIN
  IF bypass_rls THEN
   RAISE EXCEPTION 'runtime role unexpectedly has BYPASSRLS';
  END IF;
+ UPDATE ujani_control.devices SET display_name = 'cross-tenant-write'
+  WHERE tenant_id = 'tenant-b';
+ GET DIAGNOSTICS affected_rows = ROW_COUNT;
+ IF affected_rows <> 0 THEN
+  RAISE EXCEPTION 'cross-tenant update unexpectedly affected % rows', affected_rows;
+ END IF;
+ PERFORM set_config('ujani.tenant_id', '', true);
+ SELECT count(*) INTO visible_devices FROM ujani_control.devices;
+ IF visible_devices <> 0 THEN
+  RAISE EXCEPTION 'missing tenant context did not fail closed';
+ END IF;
+ PERFORM set_config('ujani.tenant_id', 'tenant-a', true);
  BEGIN
   INSERT INTO ujani_control.devices
    (tenant_id, device_id, display_name, platform, trust_state, owner_consent_state, admin_approval_state)
