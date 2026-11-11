@@ -1154,6 +1154,83 @@ mod tests {
     }
 
     #[test]
+    fn authenticated_request_cannot_verify_evidence_after_device_key_rotation() {
+        let path = path();
+        let admin = SigningKey::from_bytes(&[7; 32]);
+        let device = SigningKey::from_bytes(&[9; 32]);
+        let store = open(&path, &admin);
+        store
+            .apply_admin_command(&enroll(&admin, &device), 200)
+            .unwrap();
+
+        let body = b"canonical worker telemetry claims";
+        let claims = DeviceRequestClaims {
+            tenant_id: "tenant-a".into(),
+            device_id: "device-1".into(),
+            key_id: "device-key-v1".into(),
+            key_generation: 1,
+            request_id: [8; 16],
+            issued_at_unix_ms: 200,
+            expires_at_unix_ms: 500,
+            method: "POST".into(),
+            resource_id: "worker-telemetry:admission".into(),
+            workload_id: "workload-1".into(),
+            manifest_sha256: Sha256::digest(b"manifest-v1").into(),
+            body_sha256: Sha256::digest(body).into(),
+        };
+        let signed = SignedDeviceRequest {
+            signature: device.sign(&device_request_bytes(&claims)).to_bytes(),
+            claims,
+        };
+        let authenticated = store
+            .authenticate_request_for(
+                &signed,
+                "POST",
+                "worker-telemetry:admission",
+                body,
+                250,
+            )
+            .unwrap();
+        assert!(store
+            .verifying_key_for_authenticated_request(&authenticated)
+            .is_ok());
+
+        let replacement = SigningKey::from_bytes(&[11; 32]);
+        let mut rotate = SignedDeviceAdminCommand {
+            action: DeviceCommandAction::RotateKey,
+            tenant_id: "tenant-a".into(),
+            device_id: "device-1".into(),
+            admin_key_id: "admin-v1".into(),
+            target_key_id: "device-key-v2".into(),
+            target_public_key: Some(replacement.verifying_key().to_bytes()),
+            issued_at_unix_ms: 300,
+            expires_at_unix_ms: 1_000,
+            nonce: [9; 16],
+            signature: [0; 64],
+            old_device_signature: None,
+            new_device_signature: None,
+        };
+        rotate.old_device_signature =
+            Some(device.sign(&rotation_proof_bytes(&rotate)).to_bytes());
+        rotate.new_device_signature =
+            Some(replacement.sign(&enrollment_proof_bytes(&rotate)).to_bytes());
+        rotate.signature = admin.sign(&admin_command_bytes(&rotate)).to_bytes();
+        assert_eq!(store.apply_admin_command(&rotate, 350), Ok(2));
+
+        assert_eq!(
+            store.verifying_key_for_authenticated_request(&authenticated),
+            Err(DurableDeviceTrustError::Trust(
+                DeviceTrustError::StaleKeyGeneration
+            ))
+        );
+
+        drop(store);
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(suffix(&path, ".lock"));
+        let _ = fs::remove_file(suffix(&path, ".bak"));
+    }
+
+    #[test]
     fn concurrent_handles_consume_a_request_nonce_once() {
         let path = path();
         let admin = SigningKey::from_bytes(&[7; 32]);
