@@ -7,12 +7,12 @@
 use crate::cpu_capacity::{
     evaluate_cpu_placement, CpuPlacementRejection, CpuPlacementRequest, CpuWorkerSnapshot,
 };
+use crate::device_trust::durable::DurableDeviceRegistry;
+use crate::device_trust::{AuthenticatedDeviceRequest, SignedDeviceRequest};
 use crate::{
     admit_with_context, Admission, ClassPolicy, Device, DurableLedger, DurableLedgerError, Ledger,
     RejectReason, SchedulingContext, TelemetryChallengeError, VerifiedAdminApproval, Workload,
 };
-use crate::device_trust::durable::DurableDeviceRegistry;
-use crate::device_trust::{AuthenticatedDeviceRequest, SignedDeviceRequest};
 use ed25519_dalek::{Signature, VerifyingKey};
 
 const TELEMETRY_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-WORKER-TELEMETRY-V1\0";
