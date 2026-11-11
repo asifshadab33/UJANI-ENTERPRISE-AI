@@ -42,6 +42,8 @@ Tenant-owned tables enforce row-level security using the transaction-local setti
 
 The application database role must not own the schema/tables, must not have BYPASSRLS, and must not be superuser. Migration credentials are separate from runtime credentials. The audit append path must serialize/hash-chain event sequence and previous digest in the same transaction; the trigger prevents UPDATE/DELETE but is not, by itself, cryptographic tamper evidence against a database administrator. Export signed checkpoints to the external monotonic anchor.
 
+**RLS threat boundary:** the transaction-local custom setting is writable by SQL executed under the same application role. These policies protect against omitted tenant predicates and accidental cross-tenant queries; they do not, by themselves, withstand arbitrary SQL injection or a fully compromised runtime database credential. The service must use parameterized queries, prohibit dynamic SQL, expose no user-controlled SQL path and keep the runtime role least-privileged. Before production, security review must decide whether stronger isolation requires per-tenant database roles or a separately verified tenant-context mechanism. The PostgreSQL CI test validates policy behavior for correctly set context; it is not a SQL-injection or compromised-role test.
+
 The migration is a foundation only: it does not yet provide SQLx repository code, transaction wrappers, connection-pool tenant context or a production audit writer. CI now applies the migration to a disposable PostgreSQL 16 service and tests cross-tenant read/write isolation plus audit update/delete rejection; this validates the schema boundary, not the future Rust repository or production deployment.
 
 ## Ordered implementation gates
