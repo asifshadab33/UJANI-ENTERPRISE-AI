@@ -675,7 +675,9 @@ impl OperatorOverview {
         }
         out.push_str("],\"model_inventory\":[");
         for (index, inventory) in self.model_inventory.iter().enumerate() {
-            if index > 0 { out.push(','); }
+            if index > 0 {
+                out.push(',');
+            }
             out.push_str(&json_model_inventory(inventory));
         }
         out.push_str("]}");
@@ -734,7 +736,9 @@ fn json_model_inventory(inventory: &OperatorModelInventoryView) -> String {
         json_optional_number(inventory.hardware.storage_free_mb)
     );
     for (index, accelerator) in inventory.hardware.accelerators.iter().enumerate() {
-        if index > 0 { out.push(','); }
+        if index > 0 {
+            out.push(',');
+        }
         let _ = write!(
             &mut out,
             "{{\"kind\":{},\"vendor\":{},\"device_family\":{},\"memory_mb\":{},\"runtime_api\":{},\"evidence\":{}}}",
@@ -747,7 +751,9 @@ fn json_model_inventory(inventory: &OperatorModelInventoryView) -> String {
     }
     out.push_str("]},\"runtimes\":[");
     for (index, runtime) in inventory.runtimes.iter().enumerate() {
-        if index > 0 { out.push(','); }
+        if index > 0 {
+            out.push(',');
+        }
         let _ = write!(
             &mut out,
             "{{\"runtime_id\":{},\"provider\":{},\"version\":{},\"availability\":{},\"network_scope\":{},\"evidence\":{}}}",
@@ -758,8 +764,15 @@ fn json_model_inventory(inventory: &OperatorModelInventoryView) -> String {
     }
     out.push_str("],\"models\":[");
     for (index, model) in inventory.models.iter().enumerate() {
-        if index > 0 { out.push(','); }
-        let capabilities = model.capabilities.iter().map(|value| json_string(value)).collect::<Vec<_>>().join(",");
+        if index > 0 {
+            out.push(',');
+        }
+        let capabilities = model
+            .capabilities
+            .iter()
+            .map(|value| json_string(value))
+            .collect::<Vec<_>>()
+            .join(",");
         let _ = write!(
             &mut out,
             "{{\"model_ref\":{},\"runtime_id\":{},\"display_name\":{},\"family\":{},\"version\":{},\"availability\":{},\"size_bytes\":{},\"context_length_tokens\":{},\"estimated_min_memory_mb\":{},\"capabilities\":[{}],\"evidence\":{}}}",
@@ -786,9 +799,23 @@ fn valid_bounded_text(value: &str, max: usize) -> bool {
     !value.trim().is_empty() && value.len() <= max && !value.chars().any(char::is_control)
 }
 fn valid_inventory_evidence(evidence: &OperatorInventoryEvidence, now: u64) -> bool {
-    ["runtime_api", "os_api", "runtime_metadata", "signed_catalogue", "published_catalogue", "estimate", "unknown"].contains(&evidence.source.as_str())
-        && ["verified", "reported", "estimated", "unknown"].contains(&evidence.confidence.as_str())
-        && evidence.observed_at_unix_ms.map_or(true, |observed| observed > 0 && observed <= now.saturating_add(CLOCK_SKEW_TOLERANCE_MS) && now.saturating_sub(observed) <= MAX_OVERVIEW_AGE_MS)
+    [
+        "runtime_api",
+        "os_api",
+        "runtime_metadata",
+        "signed_catalogue",
+        "published_catalogue",
+        "estimate",
+        "unknown",
+    ]
+    .contains(&evidence.source.as_str())
+        && ["verified", "reported", "estimated", "unknown"]
+            .contains(&evidence.confidence.as_str())
+        && evidence.observed_at_unix_ms.map_or(true, |observed| {
+            observed > 0
+                && observed <= now.saturating_add(CLOCK_SKEW_TOLERANCE_MS)
+                && now.saturating_sub(observed) <= MAX_OVERVIEW_AGE_MS
+        })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1028,16 +1055,38 @@ fn validate_overview(overview: &OperatorOverview, now: u64) -> Result<(), ()> {
             || inventory.schema_version != 1
             || inventory.generated_at_unix_ms == 0
             || !valid_bounded_text(&inventory.platform.os, 32)
-            || inventory.platform.os_version.as_ref().is_some_and(|value| !valid_bounded_text(value, 64))
+            || inventory
+                .platform
+                .os_version
+                .as_ref()
+                .is_some_and(|value| !valid_bounded_text(value, 64))
             || !valid_bounded_text(&inventory.platform.architecture, 32)
-            || inventory.hardware.cpu_logical_cores.is_some_and(|value| value == 0 || value > 65_535)
-            || inventory.hardware.memory_total_mb.is_some_and(|value| value == 0 || value > 16_777_216)
-            || inventory.hardware.memory_total_mb.zip(inventory.hardware.memory_available_mb).is_some_and(|(total, available)| available > total)
+            || inventory
+                .hardware
+                .cpu_logical_cores
+                .is_some_and(|value| value == 0 || value > 65_535)
+            || inventory
+                .hardware
+                .memory_total_mb
+                .is_some_and(|value| value == 0 || value > 16_777_216)
+            || inventory
+                .hardware
+                .memory_total_mb
+                .zip(inventory.hardware.memory_available_mb)
+                .is_some_and(|(total, available)| available > total)
             || inventory.hardware.accelerators.len() > 32
-            || inventory.privacy.as_ref().is_some_and(|privacy| privacy.contains_prompts || privacy.contains_user_files || privacy.contains_local_paths || privacy.contains_credentials)
+            || inventory.privacy.as_ref().is_some_and(|privacy| {
+                privacy.contains_prompts
+                    || privacy.contains_user_files
+                    || privacy.contains_local_paths
+                    || privacy.contains_credentials
+            })
             || inventory.generated_at_unix_ms > now.saturating_add(CLOCK_SKEW_TOLERANCE_MS)
             || now.saturating_sub(inventory.generated_at_unix_ms) > MAX_OVERVIEW_AGE_MS
-            || inventory.hardware.memory_available_mb.is_some_and(|value| value > 16_777_216)
+            || inventory
+                .hardware
+                .memory_available_mb
+                .is_some_and(|value| value > 16_777_216)
             || inventory.runtimes.len() > 16
             || inventory.models.len() > 512
         {
@@ -1045,9 +1094,18 @@ fn validate_overview(overview: &OperatorOverview, now: u64) -> Result<(), ()> {
         }
         for accelerator in &inventory.hardware.accelerators {
             if !["gpu", "npu", "other"].contains(&accelerator.kind.as_str())
-                || accelerator.vendor.as_ref().is_some_and(|value| !valid_bounded_text(value, 64))
-                || accelerator.device_family.as_ref().is_some_and(|value| !valid_bounded_text(value, 96))
-                || accelerator.runtime_api.as_ref().is_some_and(|value| !valid_bounded_text(value, 64))
+                || accelerator
+                    .vendor
+                    .as_ref()
+                    .is_some_and(|value| !valid_bounded_text(value, 64))
+                || accelerator
+                    .device_family
+                    .as_ref()
+                    .is_some_and(|value| !valid_bounded_text(value, 96))
+                || accelerator
+                    .runtime_api
+                    .as_ref()
+                    .is_some_and(|value| !valid_bounded_text(value, 64))
                 || !valid_inventory_evidence(&accelerator.evidence, now)
             {
                 return Err(());
@@ -1057,9 +1115,19 @@ fn validate_overview(overview: &OperatorOverview, now: u64) -> Result<(), ()> {
         for runtime in &inventory.runtimes {
             if !valid_identifier(&runtime.runtime_id, 96)
                 || !valid_bounded_text(&runtime.provider, 64)
-                || runtime.version.as_ref().is_some_and(|value| !valid_bounded_text(value, 64))
+                || runtime
+                    .version
+                    .as_ref()
+                    .is_some_and(|value| !valid_bounded_text(value, 64))
                 || !["available", "unavailable", "unknown"].contains(&runtime.availability.as_str())
-                || !["loopback_only", "local_socket", "enterprise_internal", "not_applicable", "unknown"].contains(&runtime.network_scope.as_str())
+                || ![
+                    "loopback_only",
+                    "local_socket",
+                    "enterprise_internal",
+                    "not_applicable",
+                    "unknown",
+                ]
+                .contains(&runtime.network_scope.as_str())
                 || !runtime_ids.insert(runtime.runtime_id.as_str())
                 || !valid_inventory_evidence(&runtime.evidence, now)
             {
@@ -1071,13 +1139,35 @@ fn validate_overview(overview: &OperatorOverview, now: u64) -> Result<(), ()> {
             if !valid_bounded_text(&model.model_ref, 160)
                 || !valid_identifier(&model.runtime_id, 96)
                 || !valid_bounded_text(&model.display_name, 160)
-                || model.family.as_ref().is_some_and(|value| !valid_bounded_text(value, 96))
-                || model.version.as_ref().is_some_and(|value| !valid_bounded_text(value, 64))
-                || !["installed", "downloadable", "unavailable", "unknown"].contains(&model.availability.as_str())
+                || model
+                    .family
+                    .as_ref()
+                    .is_some_and(|value| !valid_bounded_text(value, 96))
+                || model
+                    .version
+                    .as_ref()
+                    .is_some_and(|value| !valid_bounded_text(value, 64))
+                || !["installed", "downloadable", "unavailable", "unknown"]
+                    .contains(&model.availability.as_str())
                 || model.context_length_tokens == Some(0)
                 || model.capabilities.len() > 16
-                || model.capabilities.iter().collect::<HashSet<_>>().len() != model.capabilities.len()
-                || model.capabilities.iter().any(|value| !["chat", "reasoning", "coding", "vision", "embeddings", "tool_use", "streaming", "audio_input", "audio_output", "unknown"].contains(&value.as_str()))
+                || model.capabilities.iter().collect::<HashSet<_>>().len()
+                    != model.capabilities.len()
+                || model.capabilities.iter().any(|value| {
+                    ![
+                        "chat",
+                        "reasoning",
+                        "coding",
+                        "vision",
+                        "embeddings",
+                        "tool_use",
+                        "streaming",
+                        "audio_input",
+                        "audio_output",
+                        "unknown",
+                    ]
+                    .contains(&value.as_str())
+                })
                 || !model_ids.insert(model.model_ref.as_str())
                 || !runtime_ids.contains(model.runtime_id.as_str())
                 || !valid_inventory_evidence(&model.evidence, now)
@@ -1145,7 +1235,10 @@ mod tests {
         }
     }
 
-    fn sample_model_inventory(device_id: &str, generated_at_unix_ms: u64) -> OperatorModelInventoryView {
+    fn sample_model_inventory(
+        device_id: &str,
+        generated_at_unix_ms: u64,
+    ) -> OperatorModelInventoryView {
         let evidence = OperatorInventoryEvidence {
             source: "runtime_metadata".into(),
             confidence: "reported".into(),
@@ -1477,7 +1570,9 @@ mod tests {
             online_fresh_devices: 1,
             schedulable_devices: 1,
         };
-        overview.model_inventory.push(sample_model_inventory("device-1", 10_100));
+        overview
+            .model_inventory
+            .push(sample_model_inventory("device-1", 10_100));
         assert!(validate_overview(&overview, 10_100).is_ok());
         let json = overview.to_json();
         assert!(json.contains("\"model_inventory\":[{"));
@@ -1508,7 +1603,9 @@ mod tests {
             schedulable_devices: 1,
         };
 
-        overview.model_inventory.push(sample_model_inventory("other-tenant-device", 10_100));
+        overview
+            .model_inventory
+            .push(sample_model_inventory("other-tenant-device", 10_100));
         assert!(validate_overview(&overview, 10_100).is_err());
 
         overview.model_inventory.clear();
