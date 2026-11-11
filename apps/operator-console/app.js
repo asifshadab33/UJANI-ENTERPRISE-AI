@@ -81,6 +81,7 @@ function validModelInventory(inventories) {
   return inventories.every((inventory) => inventory
     && boundedString(inventory.device_id, 128)
     && Number.isSafeInteger(inventory.generated_at_unix_ms) && inventory.generated_at_unix_ms > 0
+    && snapshotIsFresh(inventory.generated_at_unix_ms)
     && inventory.hardware && (inventory.hardware.memory_available_mb === null || Number.isSafeInteger(inventory.hardware.memory_available_mb) && inventory.hardware.memory_available_mb >= 0)
     && Array.isArray(inventory.runtimes) && inventory.runtimes.length <= 16
     && inventory.runtimes.every((runtime) => runtime
@@ -107,17 +108,21 @@ function renderModelInventory(inventories) {
   const body = byId("model-inventory");
   body.replaceChildren();
   const rows = [];
+  let totalModels = 0;
   for (const inventory of inventories || []) {
     for (const model of inventory.models) {
-      const runtime = inventory.runtimes.find((item) => item.runtime_id === model.runtime_id);
-      rows.push({ device_id: inventory.device_id, inventory_at: inventory.generated_at_unix_ms, memory_available_mb: inventory.hardware.memory_available_mb, model, runtime });
+      totalModels += 1;
+      if (rows.length < 5121) {
+        const runtime = inventory.runtimes.find((item) => item.runtime_id === model.runtime_id);
+        rows.push({ device_id: inventory.device_id, inventory_at: inventory.generated_at_unix_ms, memory_available_mb: inventory.hardware.memory_available_mb, model, runtime });
+      }
     }
   }
-  byId("model-count").textContent = rows.length + " model records" + (rows.length > 5120 ? " · showing first 5,120" : "");
-  if (!rows.length) {
+  byId("model-count").textContent = totalModels + " model records" + (totalModels > 5120 ? " · showing first 5,120" : "");
+  if (!totalModels) {
     const row = document.createElement("tr");
     const cell = textCell("No authenticated model/runtime inventory is available.");
-    cell.colSpan = 7; cell.className = "empty"; row.append(cell); body.append(row); return;
+    cell.colSpan = 9; cell.className = "empty"; row.append(cell); body.append(row); return;
   }
   for (const item of rows.slice(0, 5120)) {
     const row = document.createElement("tr");
