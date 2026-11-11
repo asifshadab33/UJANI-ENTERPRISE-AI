@@ -784,7 +784,7 @@ fn json_model_inventory(inventory: &OperatorModelInventoryView) -> String {
             capabilities, json_evidence(&model.evidence)
         );
     }
-    out.push_str("]");
+    out.push(']');
     if let Some(privacy) = &inventory.privacy {
         let _ = write!(
             &mut out,
@@ -811,7 +811,7 @@ fn valid_inventory_evidence(evidence: &OperatorInventoryEvidence, now: u64) -> b
     ]
     .contains(&evidence.source.as_str())
         && ["verified", "reported", "estimated", "unknown"].contains(&evidence.confidence.as_str())
-        && evidence.observed_at_unix_ms.map_or(true, |observed| {
+        && evidence.observed_at_unix_ms.is_none_or(|observed| {
             observed > 0
                 && observed <= now.saturating_add(CLOCK_SKEW_TOLERANCE_MS)
                 && now.saturating_sub(observed) <= MAX_OVERVIEW_AGE_MS
