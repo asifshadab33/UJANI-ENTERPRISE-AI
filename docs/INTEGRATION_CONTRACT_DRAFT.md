@@ -72,3 +72,8 @@ Next gates, in order:
 1. Add an Enterprise-native v1 decoder/verifier and run the same cross-repository task/status/receipt vectors against both Rust implementations without introducing a shared runtime dependency.
 2. Bind sender, organisation audience, worker device and signing-key IDs to authenticated enrollment; atomically enforce user/admin/owner consent, nonce replay protection, monotonic status sequence and durable lease admission.
 3. Before any dispatch is enabled, verify exact payload bytes, bounded CPU/memory/runtime/output, cancellation acknowledgement, failure recovery and worker-signed receipts against the durable task/lease record.
+
+
+### Model inventory v1 limits and future adapter extension
+
+Model/runtime inventory v1 reports host platform and observed hardware/accelerators, runtime identity/version/network scope, model identity/version/size/context, declared task capabilities, bounded memory estimates and model-level evidence source/confidence/freshness. It does not yet express per-capability provenance or model-specific supported-platform/accelerator constraints. Neither product may infer those facts from a provider name, model family or catalogue label. Unknown or unsupported runtime metadata stays unknown. A future inventory schema v2 may add per-capability evidence and explicit model platform/accelerator compatibility constraints; each runtime adapter must populate them only from a documented runtime API, OS observation or appropriately trusted catalogue source. Different runtimes must remain separate least-privilege adapters rather than being treated as behaviourally interchangeable.
