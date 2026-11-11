@@ -36,6 +36,7 @@ class SecurityEventStore:
 
     def __init__(self, database: str | os.PathLike[str], *, max_records_per_tenant: int = 100_000,
                  retention_ms: int = 30 * 24 * 60 * 60 * 1000) -> None:
+        """Open a bounded tenant event store at a pre-existing local path."""
         if not 1 <= max_records_per_tenant <= 10_000_000:
             raise StoreError("max_records_per_tenant is outside supported bounds")
         if not 60_000 <= retention_ms <= 365 * 24 * 60 * 60 * 1000:
@@ -46,7 +47,7 @@ class SecurityEventStore:
         self._lock = threading.RLock()
         if self.database != ":memory:":
             path = Path(self.database)
-            if path.exists() and path.is_symlink():
+            if path.is_symlink():
                 raise StoreError("database path must not be a symlink")
             if not path.parent.exists() or not path.parent.is_dir():
                 raise StoreError("database parent directory must already exist")
@@ -86,11 +87,13 @@ class SecurityEventStore:
         """)
 
     def close(self) -> None:
+        """Close the SQLite connection and release its process-local lock."""
         with self._lock:
             self._db.close()
 
     @staticmethod
     def _validate_event(event: Any, tenant_id: str, provider_id: str, now_ms: int) -> dict[str, Any]:
+        """Validate one normalized event against its trusted tenant/provider scope."""
         if not isinstance(event, dict):
             raise StoreError("event must be an object")
         required = {"schema_version", "event_id", "tenant_id", "provider_id",
@@ -248,6 +251,7 @@ class SecurityEventStore:
         return [json.loads(row["payload_json"]) for row in rows]
 
     def count(self, *, tenant_id: str) -> int:
+        """Return the number of retained records visible in one tenant scope."""
         if not isinstance(tenant_id, str) or not IDENTIFIER.fullmatch(tenant_id):
             raise StoreError("a valid tenant scope is required")
         with self._lock:
