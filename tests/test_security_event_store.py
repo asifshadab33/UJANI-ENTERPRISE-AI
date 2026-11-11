@@ -1,4 +1,5 @@
 import hashlib
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -74,6 +75,26 @@ class SecurityEventStoreTests(unittest.TestCase):
         with self.assertRaises(StoreError):
             self.store.ingest([event(ts=1)], tenant_id="tenant-a", provider_id="zeek", now_ms=100_000)
         self.assertEqual(self.store.count(tenant_id="tenant-a"), 0)
+
+    def test_rejects_non_string_tenant_values_with_store_error(self):
+        for tenant in (None, 7, [], {}):
+            with self.subTest(tenant=tenant):
+                with self.assertRaises(StoreError):
+                    self.store.ingest([event()], tenant_id=tenant, provider_id="zeek", now_ms=2000)
+                with self.assertRaises(StoreError):
+                    self.store.count(tenant_id=tenant)
+
+    def test_begin_lock_failure_is_not_masked_by_rollback(self):
+        locker = sqlite3.connect(self.store.database, isolation_level=None)
+        try:
+            locker.execute("BEGIN EXCLUSIVE")
+            self.store._db.execute("PRAGMA busy_timeout=0")
+            with self.assertRaisesRegex(sqlite3.OperationalError, "locked"):
+                self.store.ingest([event()], tenant_id="tenant-a", provider_id="zeek", now_ms=2000)
+        finally:
+            if locker.in_transaction:
+                locker.execute("ROLLBACK")
+            locker.close()
 
     def test_rejects_missing_tenant_and_bad_limits(self):
         with self.assertRaises(StoreError):
