@@ -86,3 +86,11 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: psql --host localhost --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file scripts/test_customer_hosted_migration.sql
+      - name: Apply authenticated telemetry admission migration
+        env:
+          PGPASSWORD: postgres
+        run: psql --host localhost --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file migrations/0002_authenticated_device_telemetry.sql
+      - name: Verify telemetry replay, ordering, freshness and dual-consent admission
+        env:
+          PGPASSWORD: postgres
+        run: psql --host localhost --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file scripts/test_authenticated_telemetry.sql
