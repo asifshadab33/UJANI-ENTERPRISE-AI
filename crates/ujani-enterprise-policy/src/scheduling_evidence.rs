@@ -483,9 +483,15 @@ pub fn authenticate_verify_and_reserve_worker_telemetry(
 
     // Re-read the registry after request authentication. If the device was
     // revoked or its key rotated between the two operations, fail closed.
-    let device_key = registry
-        .verifying_key_for_authenticated_request(&authenticated)
+    let (device_key, owner_opted_in) = registry
+        .authenticated_device_status_for_request(&authenticated)
         .map_err(|_| AuthenticatedTelemetryAdmissionError::DeviceAuthenticationFailed)?;
+    if !owner_opted_in {
+        return Ok((
+            authenticated,
+            Admission::Reject(RejectReason::OwnerOptInMissing),
+        ));
+    }
     let enrolled_device_keys = [(authenticated.device_id().to_owned(), device_key)];
 
     let verified = verify_and_consume_scheduling_context(
@@ -2070,7 +2076,9 @@ mod tests {
         now: u64,
     ) -> DurableDeviceRegistry {
         use crate::device_trust::durable::DeviceTrustIntegrityKey;
-        use crate::device_trust::{DeviceCommandAction, SignedDeviceAdminCommand};
+        use crate::device_trust::{
+            DeviceCommandAction, SignedDeviceAdminCommand, SignedOwnerConsentCommand,
+        };
 
         let registry = DurableDeviceRegistry::open(
             path,
@@ -2101,7 +2109,49 @@ mod tests {
             .sign(&crate::device_trust::admin_command_bytes(&command))
             .to_bytes();
         registry.apply_admin_command(&command, now + 1).unwrap();
+        let mut consent = SignedOwnerConsentCommand {
+            tenant_id: "tenant-a".into(),
+            device_id: "worker-01".into(),
+            key_id: "worker-key-01".into(),
+            key_generation: 1,
+            revision: 1,
+            opted_in: true,
+            issued_at_unix_ms: now + 1,
+            expires_at_unix_ms: now + crate::device_trust::MAX_OWNER_CONSENT_TTL_MS,
+            nonce: fresh_test_challenge(),
+            signature: [0; 64],
+        };
+        consent.signature = device_key
+            .sign(&crate::device_trust::owner_consent_bytes(&consent))
+            .to_bytes();
+        registry.apply_owner_consent(&consent, now + 2).unwrap();
         registry
+    }
+
+    fn set_authenticated_test_owner_consent(
+        registry: &DurableDeviceRegistry,
+        device_key: &SigningKey,
+        opted_in: bool,
+        revision: u64,
+        now: u64,
+    ) {
+        use crate::device_trust::SignedOwnerConsentCommand;
+        let mut consent = SignedOwnerConsentCommand {
+            tenant_id: "tenant-a".into(),
+            device_id: "worker-01".into(),
+            key_id: "worker-key-01".into(),
+            key_generation: 1,
+            revision,
+            opted_in,
+            issued_at_unix_ms: now,
+            expires_at_unix_ms: now + crate::device_trust::MAX_OWNER_CONSENT_TTL_MS,
+            nonce: fresh_test_challenge(),
+            signature: [0; 64],
+        };
+        consent.signature = device_key
+            .sign(&crate::device_trust::owner_consent_bytes(&consent))
+            .to_bytes();
+        registry.apply_owner_consent(&consent, now + 1).unwrap();
     }
 
     fn signed_telemetry_request(
@@ -2240,6 +2290,59 @@ mod tests {
                 &lease_token,
             ),
             Err(AuthenticatedTelemetryAdmissionError::DeviceAuthenticationFailed)
+        );
+
+        drop(registry);
+        drop(ledger);
+        remove_authenticated_test_files(&registry_path);
+        remove_authenticated_test_files(&ledger_path);
+    }
+
+    #[test]
+    fn authenticated_telemetry_rejects_persisted_owner_opt_out_even_if_sample_is_stale() {
+        let registry_path = unique_authenticated_test_path("owner-opt-out-registry");
+        let ledger_path = unique_authenticated_test_path("owner-opt-out-ledger");
+        let now = 40_000;
+        let challenge = fresh_test_challenge();
+        let (telemetry, policy, device_key, admin_key) = signed_evidence(challenge, now);
+        let registry =
+            open_authenticated_test_registry(&registry_path, &admin_key, &device_key, now);
+        let ledger = open_authenticated_test_ledger(&ledger_path);
+        let device = device();
+        let workload = workload();
+        let (request, body) = signed_telemetry_request(&device_key, &workload, &telemetry, now);
+        let admin_keys = [(
+            policy.claims.policy_key_id.clone(),
+            admin_key.verifying_key(),
+        )];
+        let policies = [ClassPolicy {
+            class: "inference".into(),
+            requires_admin_approval: false,
+            max_cpu_millis: 4_000,
+            max_memory_mb: 8_192,
+        }];
+
+        set_authenticated_test_owner_consent(&registry, &device_key, false, 2, now + 10);
+        assert_eq!(
+            authenticate_verify_and_reserve_worker_telemetry(
+                &registry,
+                &ledger,
+                &request,
+                &body,
+                "tenant-a",
+                &device,
+                &workload,
+                &telemetry,
+                &policy,
+                &admin_keys,
+                &challenge,
+                &policies,
+                &[],
+                now + 20,
+                &fresh_test_lease_token(),
+            )
+            .map(|(_, admission)| admission),
+            Ok(Admission::Reject(RejectReason::OwnerOptInMissing))
         );
 
         drop(registry);
