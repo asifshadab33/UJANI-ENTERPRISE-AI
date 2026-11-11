@@ -676,7 +676,8 @@ fn require_regular_file_if_present(path: &Path) -> Result<(), DurableDeviceTrust
     match fs::symlink_metadata(path) {
         Ok(metadata) if metadata.file_type().is_file() => Ok(()),
         Ok(_) => Err(DurableDeviceTrustError::Io(format!(
-            "refusing non-regular registry path: {}", path.display()
+            "refusing non-regular registry path: {}",
+            path.display()
         ))),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(error.into()),
@@ -851,16 +852,35 @@ mod tests {
         fs::write(&target, b"do not modify").unwrap();
 
         symlink(&target, &path).unwrap();
-        assert!(DurableDeviceRegistry::open(&path, vec![("admin-v1".into(), admin.verifying_key())], DeviceTrustIntegrityKey::new("integrity-v1", [0x42; 32])).is_err(), "primary snapshot symlink must be rejected");
+        assert!(
+            DurableDeviceRegistry::open(
+                &path,
+                vec![("admin-v1".into(), admin.verifying_key())],
+                DeviceTrustIntegrityKey::new("integrity-v1", [0x42; 32])
+            )
+            .is_err(),
+            "primary snapshot symlink must be rejected"
+        );
         fs::remove_file(&path).unwrap();
 
         symlink(&target, suffix(&path, ".lock")).unwrap();
-        assert!(DurableDeviceRegistry::open(&path, vec![("admin-v1".into(), admin.verifying_key())], DeviceTrustIntegrityKey::new("integrity-v1", [0x42; 32])).is_err(), "lock symlink must be rejected");
+        assert!(
+            DurableDeviceRegistry::open(
+                &path,
+                vec![("admin-v1".into(), admin.verifying_key())],
+                DeviceTrustIntegrityKey::new("integrity-v1", [0x42; 32])
+            )
+            .is_err(),
+            "lock symlink must be rejected"
+        );
         fs::remove_file(suffix(&path, ".lock")).unwrap();
 
         symlink(&target, suffix(&path, ".tmp")).unwrap();
         let result = atomic_write(&path, b"replacement", false);
-        assert!(result.is_err(), "temporary snapshot symlink must be rejected");
+        assert!(
+            result.is_err(),
+            "temporary snapshot symlink must be rejected"
+        );
         assert_eq!(fs::read(&target).unwrap(), b"do not modify");
 
         let _ = fs::remove_file(suffix(&path, ".tmp"));
