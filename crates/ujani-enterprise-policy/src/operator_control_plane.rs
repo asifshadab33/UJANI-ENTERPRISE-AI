@@ -592,7 +592,7 @@ pub struct OperatorControlPlane<V, R, A> {
 }
 impl<V: OperatorSessionVerifier, R: OperatorOverviewRepository, A: OperatorAuditSink> OperatorControlPlane<V, R, A> {
     pub fn new(
-        authenticator: OperatorSessionAuthenticator,
+        authenticator: V,
         repository: Arc<R>,
         audit: Arc<A>,
     ) -> Self {
