@@ -22,9 +22,10 @@ SET ROLE ujani_runtime;
 BEGIN;
 SET LOCAL ujani.tenant_id = 'tenant-a';
 DO $$
-DECLARE visible_tenants integer;
-DECLARE visible_devices integer;
-DECLARE bypass_rls boolean;
+DECLARE
+ visible_tenants integer;
+ visible_devices integer;
+ bypass_rls boolean;
 BEGIN
  SELECT count(*) INTO visible_tenants FROM ujani_control.tenants;
  SELECT count(*) INTO visible_devices FROM ujani_control.devices;
