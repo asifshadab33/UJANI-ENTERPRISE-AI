@@ -408,7 +408,7 @@ impl DeviceRegistry {
             return Err(DeviceTrustError::ReplayDetected);
         }
 
-        let (key, current_revision) = {
+        let (key, current_revision, last_updated_at) = {
             let record = self
                 .devices
                 .get(&command.device_id)
@@ -422,9 +422,15 @@ impl DeviceRegistry {
             if record.key_id != command.key_id || record.generation != command.key_generation {
                 return Err(DeviceTrustError::StaleKeyGeneration);
             }
-            (record.key, record.owner_consent_revision)
+            (
+                record.key,
+                record.owner_consent_revision,
+                record.owner_consent_updated_at_unix_ms,
+            )
         };
-        if command.revision <= current_revision {
+        if command.revision <= current_revision
+            || command.issued_at_unix_ms < last_updated_at
+        {
             return Err(DeviceTrustError::InvalidConsentRevision);
         }
         key.verify_strict(
