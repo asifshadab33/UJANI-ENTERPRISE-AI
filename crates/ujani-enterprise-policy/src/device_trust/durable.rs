@@ -858,7 +858,11 @@ mod tests {
                 vec![("admin-v1".into(), admin.verifying_key())],
                 DeviceTrustIntegrityKey::new("integrity-v1", [0x42; 32])
             )
-            .is_err(),
+            .is_err_and(|error| matches!(
+                error,
+                DurableDeviceTrustError::Io(message)
+                    if message.contains("refusing non-regular registry path")
+            )),
             "primary snapshot symlink must be rejected"
         );
         fs::remove_file(&path).unwrap();
@@ -870,7 +874,11 @@ mod tests {
                 vec![("admin-v1".into(), admin.verifying_key())],
                 DeviceTrustIntegrityKey::new("integrity-v1", [0x42; 32])
             )
-            .is_err(),
+            .is_err_and(|error| matches!(
+                error,
+                DurableDeviceTrustError::Io(message)
+                    if message.contains("refusing non-regular registry path")
+            )),
             "lock symlink must be rejected"
         );
         fs::remove_file(suffix(&path, ".lock")).unwrap();
