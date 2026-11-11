@@ -139,6 +139,13 @@ fn append_string(bytes: &mut Vec<u8>, value: &str) {
     bytes.extend_from_slice(value.as_bytes());
 }
 
+/// Return the exact versioned canonical body bytes signed by worker telemetry
+/// and by the outer device request. HTTP adapters must pass these same bytes to
+/// the authentication boundary rather than reserializing the claims as JSON.
+pub fn canonical_worker_telemetry_body(claims: &WorkerTelemetryClaims) -> Vec<u8> {
+    worker_telemetry_bytes(claims)
+}
+
 fn worker_telemetry_bytes(claims: &WorkerTelemetryClaims) -> Vec<u8> {
     let mut bytes = TELEMETRY_DOMAIN.to_vec();
     append_string(&mut bytes, &claims.device_id);
@@ -434,7 +441,12 @@ pub fn authenticate_verify_and_reserve_worker_telemetry(
     now_unix_ms: u64,
     lease_token: &[u8; 32],
 ) -> Result<Admission, AuthenticatedTelemetryAdmissionError> {
-    let canonical_body = worker_telemetry_bytes(&telemetry.claims);
+    if telemetry.claims.device_id.len() > 128
+        || raw_body.len() > crate::device_trust::MAX_DEVICE_REQUEST_BODY_BYTES
+    {
+        return Err(AuthenticatedTelemetryAdmissionError::RequestBodyMismatch);
+    }
+    let canonical_body = canonical_worker_telemetry_body(&telemetry.claims);
     if raw_body != canonical_body.as_slice() {
         return Err(AuthenticatedTelemetryAdmissionError::RequestBodyMismatch);
     }
@@ -450,9 +462,9 @@ pub fn authenticate_verify_and_reserve_worker_telemetry(
         .map_err(|_| AuthenticatedTelemetryAdmissionError::DeviceAuthenticationFailed)?;
 
     if expected_tenant_id != authenticated.tenant_id()
-        || authenticated.device_id() != device.device_id
-        || telemetry.claims.device_id != authenticated.device_id()
-        || authenticated.workload_id() != workload.workload_id
+        || authenticated.device_id() != device.device_id.as_str()
+        || telemetry.claims.device_id.as_str() != authenticated.device_id()
+        || authenticated.workload_id() != workload.workload_id.as_str()
         || authenticated.manifest_sha256() != &workload.manifest_sha256
     {
         return Err(AuthenticatedTelemetryAdmissionError::RequestBindingMismatch);
