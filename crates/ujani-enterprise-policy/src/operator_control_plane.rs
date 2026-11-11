@@ -24,6 +24,8 @@ const MAX_MODEL_MEMORY_ESTIMATE_MB: u64 = 16_777_216;
 const MAX_DEVICES: usize = 10_000;
 const MAX_WORKLOADS: usize = 1_000;
 const MAX_APPROVALS: usize = 1_000;
+const MAX_TOTAL_MODEL_ROWS: usize = 100_000;
+const MAX_OVERVIEW_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OperatorRole {
@@ -627,8 +629,8 @@ impl OperatorOverview {
         let mut out = String::with_capacity(1024 + self.devices.len() * 256);
         let _ = write!(
             &mut out,
-            "{{\"schema_version\":{},\"generated_at_unix_ms\":{},\"fleet\":{{\"registered_devices\":{},\"trusted_consented_devices\":{},\"online_fresh_devices\":{},\"schedulable_devices\":{}}},\"devices\":[",
-            self.schema_version, self.generated_at_unix_ms,
+            "{{\"schema_version\":{},\"tenant_id\":{},\"generated_at_unix_ms\":{},\"fleet\":{{\"registered_devices\":{},\"trusted_consented_devices\":{},\"online_fresh_devices\":{},\"schedulable_devices\":{}}},\"devices\":[",
+            self.schema_version, json_string(&self.tenant_id), self.generated_at_unix_ms,
             self.fleet.registered_devices, self.fleet.trusted_consented_devices,
             self.fleet.online_fresh_devices, self.fleet.schedulable_devices
         );
@@ -675,13 +677,51 @@ impl OperatorOverview {
             );
         }
         out.push_str("],\"model_inventory\":[");
-        for (index, inventory) in self.model_inventory.iter().enumerate() {
-            if index > 0 {
+        let total_model_count = self
+            .model_inventory
+            .iter()
+            .fold(0usize, |total, inventory| total.saturating_add(inventory.models.len()));
+        let mut returned_model_count = 0usize;
+        let mut returned_device_count = 0usize;
+        let mut partial_response = false;
+        const SUMMARY_RESERVE_BYTES: usize = 256;
+        for inventory in &self.model_inventory {
+            let entry = json_model_inventory(inventory);
+            let separator_bytes = usize::from(returned_device_count > 0);
+            let projected_len = out
+                .len()
+                .saturating_add(separator_bytes)
+                .saturating_add(entry.len())
+                .saturating_add(SUMMARY_RESERVE_BYTES);
+            if projected_len > MAX_OVERVIEW_RESPONSE_BYTES {
+                partial_response = true;
+                break;
+            }
+            if returned_device_count > 0 {
                 out.push(',');
             }
-            out.push_str(&json_model_inventory(inventory));
+            out.push_str(&entry);
+            returned_device_count += 1;
+            returned_model_count = returned_model_count.saturating_add(inventory.models.len());
         }
-        out.push_str("]}");
+        out.push(']');
+        let inventory_status = if partial_response {
+            "partial_response_budget"
+        } else {
+            "complete"
+        };
+        let _ = write!(
+            &mut out,
+            ",\"model_inventory_status\":{},\"model_inventory_total_devices\":{},\"model_inventory_returned_devices\":{},\"model_inventory_total_models\":{},\"model_inventory_returned_models\":{}}}",
+            json_string(inventory_status),
+            self.model_inventory.len(),
+            returned_device_count,
+            total_model_count,
+            returned_model_count
+        );
+        if out.len() > MAX_OVERVIEW_RESPONSE_BYTES {
+            return "{\"error\":\"overview_exceeds_response_budget\"}".into();
+        }
         out
     }
 }
@@ -799,7 +839,28 @@ fn json_model_inventory(inventory: &OperatorModelInventoryView) -> String {
 fn valid_bounded_text(value: &str, max: usize) -> bool {
     !value.trim().is_empty() && value.len() <= max && !value.chars().any(char::is_control)
 }
-fn valid_inventory_evidence(evidence: &OperatorInventoryEvidence, now: u64) -> bool {
+fn contains_local_path(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    lower.contains("file://")
+        || value.split_whitespace().any(|token| {
+            let token = token.trim_matches(|character: char| {
+                matches!(character, '"' | '\'' | '(' | '[' | '{' | ',' | ';')
+            });
+            let bytes = token.as_bytes();
+            token.starts_with('/')
+                || token.starts_with("\\\\")
+                || (bytes.len() >= 3
+                    && bytes[0].is_ascii_alphabetic()
+                    && bytes[1] == b':'
+                    && matches!(bytes[2], b'/' | b'\\'))
+        })
+}
+
+fn valid_inventory_evidence(
+    evidence: &OperatorInventoryEvidence,
+    generated_at_unix_ms: u64,
+    now: u64,
+) -> bool {
     [
         "runtime_api",
         "os_api",
@@ -811,9 +872,11 @@ fn valid_inventory_evidence(evidence: &OperatorInventoryEvidence, now: u64) -> b
     ]
     .contains(&evidence.source.as_str())
         && ["verified", "reported", "estimated", "unknown"].contains(&evidence.confidence.as_str())
+        && !(evidence.source == "unknown" && evidence.confidence == "verified")
         && evidence.observed_at_unix_ms.is_none_or(|observed| {
             observed > 0
                 && observed <= now.saturating_add(CLOCK_SKEW_TOLERANCE_MS)
+                && observed <= generated_at_unix_ms.saturating_add(CLOCK_SKEW_TOLERANCE_MS)
                 && now.saturating_sub(observed) <= MAX_OVERVIEW_AGE_MS
         })
 }
@@ -1009,6 +1072,10 @@ where
     }
 }
 fn validate_overview(overview: &OperatorOverview, now: u64) -> Result<(), ()> {
+    let total_model_rows = overview.model_inventory.iter().try_fold(
+        0usize,
+        |total, inventory| total.checked_add(inventory.models.len()),
+    );
     if overview.schema_version != 1
         || !valid_identifier(&overview.tenant_id, 128)
         || overview.generated_at_unix_ms == 0
@@ -1018,6 +1085,7 @@ fn validate_overview(overview: &OperatorOverview, now: u64) -> Result<(), ()> {
         || overview.workloads.len() > MAX_WORKLOADS
         || overview.approvals.len() > MAX_APPROVALS
         || overview.model_inventory.len() > MAX_DEVICES
+        || total_model_rows.is_none_or(|count| count > MAX_TOTAL_MODEL_ROWS)
     {
         return Err(());
     }
@@ -1106,7 +1174,7 @@ fn validate_overview(overview: &OperatorOverview, now: u64) -> Result<(), ()> {
                     .runtime_api
                     .as_ref()
                     .is_some_and(|value| !valid_bounded_text(value, 64))
-                || !valid_inventory_evidence(&accelerator.evidence, now)
+                || !valid_inventory_evidence(&accelerator.evidence, inventory.generated_at_unix_ms, now)
             {
                 return Err(());
             }
@@ -1129,7 +1197,7 @@ fn validate_overview(overview: &OperatorOverview, now: u64) -> Result<(), ()> {
                 ]
                 .contains(&runtime.network_scope.as_str())
                 || !runtime_ids.insert(runtime.runtime_id.as_str())
-                || !valid_inventory_evidence(&runtime.evidence, now)
+                || !valid_inventory_evidence(&runtime.evidence, inventory.generated_at_unix_ms, now)
             {
                 return Err(());
             }
@@ -1137,8 +1205,10 @@ fn validate_overview(overview: &OperatorOverview, now: u64) -> Result<(), ()> {
         let mut model_ids = HashSet::with_capacity(inventory.models.len());
         for model in &inventory.models {
             if !valid_bounded_text(&model.model_ref, 160)
+                || contains_local_path(&model.model_ref)
                 || !valid_identifier(&model.runtime_id, 96)
                 || !valid_bounded_text(&model.display_name, 160)
+                || contains_local_path(&model.display_name)
                 || model
                     .family
                     .as_ref()
@@ -1173,7 +1243,7 @@ fn validate_overview(overview: &OperatorOverview, now: u64) -> Result<(), ()> {
                 })
                 || !model_ids.insert(model.model_ref.as_str())
                 || !runtime_ids.contains(model.runtime_id.as_str())
-                || !valid_inventory_evidence(&model.evidence, now)
+                || !valid_inventory_evidence(&model.evidence, inventory.generated_at_unix_ms, now)
             {
                 return Err(());
             }
@@ -1516,6 +1586,7 @@ mod tests {
         };
         let json = overview.to_json();
         assert!(json.contains("\"schema_version\":1"));
+        assert!(json.contains("\"tenant_id\":\"tenant-a\""));
         assert!(json.contains("\"remaining_memory_mb\":4096"));
         assert!(json.contains("Lab \\\"A\\\""));
         assert!(json.starts_with("{") && json.ends_with("}"));
@@ -1584,6 +1655,9 @@ mod tests {
         assert!(json.contains("\"model_ref\":\"llama3.2:latest\""));
         assert!(json.contains("\"memory_available_mb\":4096"));
         assert!(json.contains("\"capabilities\":[\"chat\"]"));
+        assert!(json.contains("\"model_inventory_status\":\"complete\""));
+        assert!(json.contains("\"model_inventory_total_models\":1"));
+        assert!(json.contains("\"model_inventory_returned_models\":1"));
     }
 
     #[test]
@@ -1665,6 +1739,79 @@ mod tests {
             Some(MAX_MODEL_MEMORY_ESTIMATE_MB + 1);
         overview.model_inventory.push(unbounded_estimate);
         assert!(validate_overview(&overview, 100_000).is_err());
+
+        overview.model_inventory.clear();
+        let mut unknown_verified = sample_model_inventory("device-1", 100_000);
+        unknown_verified.models[0].evidence.source = "unknown".into();
+        unknown_verified.models[0].evidence.confidence = "verified".into();
+        overview.model_inventory.push(unknown_verified);
+        assert!(validate_overview(&overview, 100_000).is_err());
+
+        overview.model_inventory.clear();
+        let mut evidence_after_snapshot = sample_model_inventory("device-1", 100_000);
+        evidence_after_snapshot.models[0].evidence.observed_at_unix_ms = Some(130_001);
+        overview.model_inventory.push(evidence_after_snapshot);
+        assert!(validate_overview(&overview, 100_000).is_err());
+
+        overview.model_inventory.clear();
+        let mut local_display_path = sample_model_inventory("device-1", 100_000);
+        local_display_path.models[0].display_name = "/home/operator/models/llama".into();
+        overview.model_inventory.push(local_display_path);
+        assert!(validate_overview(&overview, 100_000).is_err());
+
+        overview.model_inventory.clear();
+        let mut local_model_ref = sample_model_inventory("device-1", 100_000);
+        local_model_ref.models[0].model_ref = "C:\\\\Users\\\\operator\\\\models\\\\llama".into();
+        overview.model_inventory.push(local_model_ref);
+        assert!(validate_overview(&overview, 100_000).is_err());
+    }
+
+    #[test]
+    fn model_inventory_serialization_stays_within_response_budget() {
+        let mut overview = empty_overview("tenant-a");
+        overview.generated_at_unix_ms = 100_000;
+
+        for device_index in 0..1_000 {
+            let device_id = format!("device-{device_index}");
+            overview.devices.push(OperatorDeviceView {
+                device_id: device_id.clone(),
+                display_name: format!("Lab workstation {device_index}"),
+                platform: "linux".into(),
+                trust_state: "enrolled".into(),
+                availability: "schedulable".into(),
+                remaining_cpu_millis: Some(1500),
+                remaining_memory_mb: Some(4096),
+                last_seen_unix_ms: 100_000,
+            });
+
+            let mut inventory = sample_model_inventory(&device_id, 100_000);
+            let template = inventory.models[0].clone();
+            inventory.models = (0..50)
+                .map(|model_index| {
+                    let mut model = template.clone();
+                    model.model_ref = format!("model-{device_index}-{model_index}");
+                    model.display_name = format!("Model {device_index}-{model_index}");
+                    model
+                })
+                .collect();
+            overview.model_inventory.push(inventory);
+        }
+
+        let device_count = overview.devices.len();
+        overview.fleet = OperatorFleetCounts {
+            registered_devices: device_count,
+            trusted_consented_devices: device_count,
+            online_fresh_devices: device_count,
+            schedulable_devices: device_count,
+        };
+        assert!(validate_overview(&overview, 100_000).is_ok());
+
+        let json = overview.to_json();
+        assert!(json.len() <= MAX_OVERVIEW_RESPONSE_BYTES);
+        assert!(json.contains("\"tenant_id\":\"tenant-a\""));
+        assert!(json.contains("\"model_inventory_status\":\"partial_response_budget\""));
+        assert!(json.contains("\"model_inventory_total_devices\":1000"));
+        assert!(json.contains("\"model_inventory_total_models\":50000"));
     }
 
     #[test]
