@@ -20,6 +20,7 @@ pub const OPERATOR_SESSION_MAX_TTL_MS: u64 = 15 * 60 * 1000;
 const SESSION_KEYRING_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-OPERATOR-SESSION-KEYRING-V1\0";
 const CLOCK_SKEW_TOLERANCE_MS: u64 = 30_000;
 const MAX_OVERVIEW_AGE_MS: u64 = 60_000;
+const MAX_MODEL_MEMORY_ESTIMATE_MB: u64 = 16_777_216;
 const MAX_DEVICES: usize = 10_000;
 const MAX_WORKLOADS: usize = 1_000;
 const MAX_APPROVALS: usize = 1_000;
@@ -1150,6 +1151,9 @@ fn validate_overview(overview: &OperatorOverview, now: u64) -> Result<(), ()> {
                 || !["installed", "downloadable", "unavailable", "unknown"]
                     .contains(&model.availability.as_str())
                 || model.context_length_tokens == Some(0)
+                || model.estimated_min_memory_mb.is_some_and(|value| {
+                    value == 0 || value > MAX_MODEL_MEMORY_ESTIMATE_MB
+                })
                 || model.capabilities.len() > 16
                 || model.capabilities.iter().collect::<HashSet<_>>().len()
                     != model.capabilities.len()
@@ -1648,6 +1652,19 @@ mod tests {
         let mut impossible_memory = sample_model_inventory("device-1", 100_000);
         impossible_memory.hardware.memory_available_mb = Some(32_768);
         overview.model_inventory.push(impossible_memory);
+        assert!(validate_overview(&overview, 100_000).is_err());
+
+        overview.model_inventory.clear();
+        let mut zero_estimate = sample_model_inventory("device-1", 100_000);
+        zero_estimate.models[0].estimated_min_memory_mb = Some(0);
+        overview.model_inventory.push(zero_estimate);
+        assert!(validate_overview(&overview, 100_000).is_err());
+
+        overview.model_inventory.clear();
+        let mut unbounded_estimate = sample_model_inventory("device-1", 100_000);
+        unbounded_estimate.models[0].estimated_min_memory_mb =
+            Some(MAX_MODEL_MEMORY_ESTIMATE_MB + 1);
+        overview.model_inventory.push(unbounded_estimate);
         assert!(validate_overview(&overview, 100_000).is_err());
     }
 
