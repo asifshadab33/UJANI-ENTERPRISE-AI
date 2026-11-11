@@ -17,6 +17,47 @@ TEST_SIGNATURE = "A" * 86
 TEST_NONCE = "A" * 43
 
 
+def _reject_duplicate_object_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Reject ambiguous JSON objects instead of silently accepting the last key."""
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON object key: {key}")
+        result[key] = value
+    return result
+
+
+def _reject_non_json_constant(value: str) -> None:
+    """Reject NaN and Infinity, which are not valid JSON values."""
+    raise ValueError(f"non-JSON numeric constant: {value}")
+
+
+def _strict_json_loads(value: str) -> Any:
+    """Decode JSON while rejecting duplicate keys and non-standard constants."""
+    return json.loads(
+        value,
+        object_pairs_hook=_reject_duplicate_object_pairs,
+        parse_constant=_reject_non_json_constant,
+    )
+
+
+def _validate_strict_json_decoder() -> None:
+    """Keep the contract tooling fail-closed for ambiguous JSON encodings."""
+    sample = {"outer": {"name": "ujani", "version": 1}}
+    assert _strict_json_loads(json.dumps(sample)) == sample
+    for ambiguous in (
+        '{"message_type":"task_status","message_type":"task_envelope"}',
+        '{"outer":{"sequence":1,"sequence":2}}',
+        '{"value":NaN}',
+        '{"value":Infinity}',
+    ):
+        try:
+            _strict_json_loads(ambiguous)
+        except ValueError:
+            continue
+        raise AssertionError(f"ambiguous/non-JSON input unexpectedly accepted: {ambiguous}")
+
+
 def _consent_binding_sha256(envelope: dict[str, Any]) -> str:
     """Compute the v1 consent binding digest using the contract's restricted JCS profile."""
     binding = copy.deepcopy(envelope)
@@ -351,7 +392,8 @@ def _validate_instance_fixtures(schema: dict[str, Any]) -> None:
 
 def main() -> None:
     """Check shared message structure, bounded values, and optional instance fixtures."""
-    schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+    _validate_strict_json_decoder()
+    schema = _strict_json_loads(SCHEMA_PATH.read_text(encoding="utf-8"))
     assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
     assert schema["$id"] == "urn:ujani:personal-enterprise-task-contract:v1"
     assert len(schema["oneOf"]) == 3
