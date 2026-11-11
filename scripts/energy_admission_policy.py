@@ -20,7 +20,9 @@ def admission_reasons(snapshot: EnergySnapshot, *, allow_battery: bool = False,
     if not isinstance(snapshot, EnergySnapshot):
         return ["invalid_snapshot"]
 
-    if type(allow_battery) is not bool or type(minimum_battery_percent) is not int or not 0 <= minimum_battery_percent <= 100:
+    threshold_valid = type(minimum_battery_percent) is int and 0 <= minimum_battery_percent <= 100
+    battery_policy_valid = type(allow_battery) is bool and threshold_valid
+    if not battery_policy_valid:
         reasons.append("invalid_policy_configuration")
 
     if snapshot.fresh is not True:
@@ -32,13 +34,13 @@ def admission_reasons(snapshot: EnergySnapshot, *, allow_battery: bool = False,
 
     if type(snapshot.on_ac_power) is not bool:
         reasons.append("invalid_power_telemetry")
-    if snapshot.thermal_state not in {"nominal", "cool"}:
+    if not isinstance(snapshot.thermal_state, str) or snapshot.thermal_state not in {"nominal", "cool"}:
         reasons.append("thermal_state_not_safe")
 
     battery = snapshot.battery_percent
     if battery is not None and (type(battery) is not int or not 0 <= battery <= 100):
         reasons.append("invalid_battery_telemetry")
-    if snapshot.on_ac_power is False and type(allow_battery) is bool:
+    if snapshot.on_ac_power is False and battery_policy_valid:
         if allow_battery is not True:
             reasons.append("battery_compute_disabled")
         elif type(battery) is not int or not 0 <= battery <= 100 or battery < minimum_battery_percent:
