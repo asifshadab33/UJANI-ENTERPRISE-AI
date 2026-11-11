@@ -33,6 +33,13 @@ def main() -> None:
         raise SystemExit("replay request identifiers must be at least 128 bits")
     if "BYPASSRLS" in sql or "GRANT ALL" in sql or "CREATE ROLE" in sql:
         raise SystemExit("migration must not create a privileged runtime role")
+    test_sql = (ROOT / "scripts" / "test_customer_hosted_migration.sql").read_text(encoding="utf-8")
+    if "GET DIAGNOSTICS affected_rows = ROW_COUNT;" in test_sql and "affected_rows bigint;" not in test_sql:
+        raise SystemExit("PostgreSQL isolation test reads affected_rows without declaring it")
+    if "SET LOCAL ujani.tenant_id = 'tenant-a';" not in test_sql:
+        raise SystemExit("PostgreSQL isolation test must establish tenant context")
+    if "RESET ROLE;" not in test_sql:
+        raise SystemExit("PostgreSQL isolation test must restore the session role")
     print("Customer-hosted migration static checks passed.")
 
 
