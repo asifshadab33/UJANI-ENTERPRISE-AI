@@ -73,7 +73,7 @@ def _canonical_consent_binding_bytes(envelope: dict[str, Any]) -> bytes:
 def _consent_binding_sha256(envelope: dict[str, Any]) -> str:
     """Compute the domain-separated v1 consent binding digest."""
     return hashlib.sha256(
-        b"UJANI-CONSENT-BINDING-V1\\0" + _canonical_consent_binding_bytes(envelope)
+        b"UJANI-CONSENT-BINDING-V1\0" + _canonical_consent_binding_bytes(envelope)
     ).hexdigest()
 
 
