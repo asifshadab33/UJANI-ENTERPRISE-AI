@@ -96,9 +96,14 @@ BEGIN
 END $$;
 ROLLBACK;
 
--- SET LOCAL must not leak tenant A into the next transaction on a pooled connection.
+-- SET LOCAL must not leak tenant A after a committed transaction on a pooled connection.
 BEGIN;
-DO $$
+SET LOCAL ujani.tenant_id = 'tenant-a';
+COMMIT;
+
+-- A new transaction on the same session must not inherit the prior tenant context.
+BEGIN;
+DO $
 DECLARE visible_tenants integer; visible_devices integer;
 BEGIN
  SELECT count(*) INTO visible_tenants FROM ujani_control.tenants;
