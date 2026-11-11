@@ -147,12 +147,15 @@ function renderOverview(data) {
 async function refreshOverview() {
   refreshButton.disabled = true;
   setConnection("Connecting…", "unknown");
+  const controller = new AbortController();
+  const requestTimeout = window.setTimeout(() => controller.abort(), 10_000);
   try {
     const response = await fetch(API_PATH, {
       method: "GET",
       credentials: "same-origin",
       cache: "no-store",
       redirect: "error",
+      signal: controller.signal,
       headers: { "Accept": "application/json" }
     });
     if (response.status === 401 || response.status === 403) throw new Error("Sign in with an authorized Enterprise operator account to view this fleet.");
@@ -166,8 +169,11 @@ async function refreshOverview() {
     const heading = notice.querySelector("strong");
     const message = notice.querySelector("p");
     heading.textContent = "Live control-plane data unavailable";
-    message.textContent = error instanceof Error ? error.message : "Could not load the Enterprise overview.";
+    message.textContent = error instanceof Error && error.name === "AbortError"
+      ? "The control-plane request exceeded the 10-second time limit."
+      : error instanceof Error ? error.message : "Could not load the Enterprise overview.";
   } finally {
+    window.clearTimeout(requestTimeout);
     refreshButton.disabled = false;
   }
 }
