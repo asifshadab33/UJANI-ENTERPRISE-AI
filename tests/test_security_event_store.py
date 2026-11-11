@@ -49,7 +49,7 @@ class SecurityEventStoreTests(unittest.TestCase):
 
         store = SecurityEventStore(alias_parent / "events.sqlite3")
         try:
-            self.assertEqual(Path(store.database), real_parent / "events.sqlite3")
+            self.assertEqual(Path(store.database), real_parent.resolve(strict=True) / "events.sqlite3")
         finally:
             store.close()
         self.assertTrue((real_parent / "events.sqlite3").is_file())
