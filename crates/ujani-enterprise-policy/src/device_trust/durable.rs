@@ -864,11 +864,29 @@ mod tests {
             std::process::id()
         ))
     }
+    // Deterministic, domain-separated fixtures are confined to tests; runtime
+    // trust roots are always injected from protected deployment configuration.
+    fn test_signing_key(label: &str) -> SigningKey {
+        let seed: [u8; 32] = Sha256::digest(label.as_bytes()).into();
+        SigningKey::from_bytes(&seed)
+    }
+
+    fn test_nonce(label: &str) -> [u8; 16] {
+        let digest = Sha256::digest(label.as_bytes());
+        let mut nonce = [0u8; 16];
+        nonce.copy_from_slice(&digest[..16]);
+        nonce
+    }
+
+    fn test_integrity_key_bytes() -> [u8; 32] {
+        Sha256::digest(b"ujani-enterprise-device-trust-test-integrity-v1").into()
+    }
+
     fn open(path: &Path, admin: &SigningKey) -> DurableDeviceRegistry {
         DurableDeviceRegistry::open(
             path,
             vec![("admin-v1".into(), admin.verifying_key())],
-            DeviceTrustIntegrityKey::new("integrity-v1", [0x42; 32]),
+            DeviceTrustIntegrityKey::new("integrity-v1", test_integrity_key_bytes()),
         )
         .unwrap()
     }
@@ -897,7 +915,7 @@ mod tests {
         opted_in: bool,
         revision: u64,
         issued_at_unix_ms: u64,
-        nonce: u8,
+        nonce_label: &str,
     ) -> SignedOwnerConsentCommand {
         let mut command = SignedOwnerConsentCommand {
             tenant_id: "tenant-a".into(),
@@ -908,7 +926,7 @@ mod tests {
             opted_in,
             issued_at_unix_ms,
             expires_at_unix_ms: issued_at_unix_ms + MAX_OWNER_CONSENT_TTL_MS,
-            nonce: [nonce; 16],
+            nonce: test_nonce(nonce_label),
             signature: [0; 64],
         };
         command.signature = device.sign(&owner_consent_bytes(&command)).to_bytes();
@@ -978,13 +996,13 @@ mod tests {
     #[test]
     fn owner_consent_persists_and_rejects_stale_revisions() {
         let path = path();
-        let admin = SigningKey::from_bytes(&[7; 32]);
-        let device = SigningKey::from_bytes(&[9; 32]);
+        let admin = test_signing_key("owner-consent-admin");
+        let device = test_signing_key("owner-consent-device");
         let store = open(&path, &admin);
         store
             .apply_admin_command(&enroll(&admin, &device), 200)
             .unwrap();
-        let opt_in = owner_consent(&device, true, 1, 210, 2);
+        let opt_in = owner_consent(&device, true, 1, 210, "owner-opt-in");
         assert_eq!(store.apply_owner_consent(&opt_in, 220), Ok(1));
         assert!(store.tenant_device_summaries("tenant-a").unwrap()[0].owner_opted_in);
         drop(store);
@@ -995,18 +1013,18 @@ mod tests {
             reopened.apply_owner_consent(&opt_in, 225),
             Err(DurableDeviceTrustError::Trust(DeviceTrustError::ReplayDetected))
         );
-        let opt_out = owner_consent(&device, false, 2, 230, 3);
+        let opt_out = owner_consent(&device, false, 2, 230, "owner-opt-out");
         assert_eq!(reopened.apply_owner_consent(&opt_out, 240), Ok(2));
         assert!(!reopened.tenant_device_summaries("tenant-a").unwrap()[0].owner_opted_in);
 
-        let delayed_opt_in = owner_consent(&device, true, 1, 250, 4);
+        let delayed_opt_in = owner_consent(&device, true, 1, 250, "delayed-owner-opt-in");
         assert_eq!(
             reopened.apply_owner_consent(&delayed_opt_in, 260),
             Err(DurableDeviceTrustError::Trust(
                 DeviceTrustError::InvalidConsentRevision
             ))
         );
-        let out_of_order_opt_in = owner_consent(&device, true, 3, 225, 5);
+        let out_of_order_opt_in = owner_consent(&device, true, 3, 225, "out-of-order-owner-opt-in");
         assert_eq!(
             reopened.apply_owner_consent(&out_of_order_opt_in, 260),
             Err(DurableDeviceTrustError::Trust(
@@ -1014,11 +1032,11 @@ mod tests {
             ))
         );
 
-        let renewed_opt_in = owner_consent(&device, true, 3, 270, 6);
+        let renewed_opt_in = owner_consent(&device, true, 3, 270, "renewed-owner-opt-in");
         assert_eq!(reopened.apply_owner_consent(&renewed_opt_in, 280), Ok(3));
         assert!(reopened.tenant_device_summaries("tenant-a").unwrap()[0].owner_opted_in);
 
-        let replacement = SigningKey::from_bytes(&[11; 32]);
+        let replacement = test_signing_key("owner-consent-replacement");
         let mut rotate = SignedDeviceAdminCommand {
             action: DeviceCommandAction::RotateKey,
             tenant_id: "tenant-a".into(),
@@ -1028,7 +1046,7 @@ mod tests {
             target_public_key: Some(replacement.verifying_key().to_bytes()),
             issued_at_unix_ms: 290,
             expires_at_unix_ms: 1_000,
-            nonce: [7; 16],
+            nonce: test_nonce("owner-consent-rotation"),
             signature: [0; 64],
             old_device_signature: None,
             new_device_signature: None,
@@ -1042,7 +1060,7 @@ mod tests {
         rotate.signature = admin.sign(&admin_command_bytes(&rotate)).to_bytes();
         reopened.apply_admin_command(&rotate, 300).unwrap();
         assert!(!reopened.tenant_device_summaries("tenant-a").unwrap()[0].owner_opted_in);
-        let old_key_consent = owner_consent(&device, true, 4, 310, 8);
+        let old_key_consent = owner_consent(&device, true, 4, 310, "old-key-owner-consent");
         assert_eq!(
             reopened.apply_owner_consent(&old_key_consent, 320),
             Err(DurableDeviceTrustError::Trust(DeviceTrustError::StaleKeyGeneration))
@@ -1056,8 +1074,8 @@ mod tests {
     #[test]
     fn legacy_v1_registry_migrates_with_owner_consent_disabled() {
         let path = path();
-        let admin = SigningKey::from_bytes(&[7; 32]);
-        let device = SigningKey::from_bytes(&[9; 32]);
+        let admin = test_signing_key("legacy-v1-admin");
+        let device = test_signing_key("legacy-v1-device");
         let body = format!(
             "{HEADER_V1}\nD|{}|{}|E|{}|{}|1\n",
             hex(b"device-1"),
@@ -1065,7 +1083,7 @@ mod tests {
             hex(b"device-key-v1"),
             hex(&device.verifying_key().to_bytes())
         );
-        let mac = hmac(&[0x42; 32], "integrity-v1", body.as_bytes());
+        let mac = hmac(&test_integrity_key_bytes(), "integrity-v1", body.as_bytes());
         let legacy = format!("{body}H|{}|{}\n", hex(b"integrity-v1"), hex(&mac));
         fs::write(&path, legacy).unwrap();
 
