@@ -96,6 +96,14 @@ class SecurityEventStoreTests(unittest.TestCase):
                 locker.execute("ROLLBACK")
             locker.close()
 
+    def test_rejects_unhashable_search_filters_and_non_iterable_batches(self):
+        with self.assertRaises(StoreError):
+            self.store.search(tenant_id="tenant-a", provider_id=[])
+        with self.assertRaises(StoreError):
+            self.store.search(tenant_id="tenant-a", severity={})
+        with self.assertRaises(StoreError):
+            self.store.ingest(None, tenant_id="tenant-a", provider_id="zeek", now_ms=2000)
+
     def test_rejects_missing_tenant_and_bad_limits(self):
         with self.assertRaises(StoreError):
             self.store.search(tenant_id="../other")
