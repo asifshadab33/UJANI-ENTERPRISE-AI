@@ -46,7 +46,7 @@ jobs:
         run: python scripts/validate_operator_console.py
       - name: Check operator console JavaScript syntax
         run: node --check apps/operator-console/app.js
-      - name: Test local read-only network log adapters
+      - name: Test local read-only network log adapters and energy admission policy
         run: python -m unittest discover -s tests -v
       - name: Check formatting
         run: cargo fmt --all -- --check
