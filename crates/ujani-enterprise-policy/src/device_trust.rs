@@ -428,9 +428,7 @@ impl DeviceRegistry {
                 record.owner_consent_updated_at_unix_ms,
             )
         };
-        if command.revision <= current_revision
-            || command.issued_at_unix_ms < last_updated_at
-        {
+        if command.revision <= current_revision || command.issued_at_unix_ms < last_updated_at {
             return Err(DeviceTrustError::InvalidConsentRevision);
         }
         key.verify_strict(
@@ -655,7 +653,9 @@ fn validate_owner_consent_command(
     }
     if command.expires_at_unix_ms <= now
         || command.expires_at_unix_ms <= command.issued_at_unix_ms
-        || command.expires_at_unix_ms.saturating_sub(command.issued_at_unix_ms)
+        || command
+            .expires_at_unix_ms
+            .saturating_sub(command.issued_at_unix_ms)
             > MAX_OWNER_CONSENT_TTL_MS
     {
         return Err(DeviceTrustError::ExpiredCommand);
