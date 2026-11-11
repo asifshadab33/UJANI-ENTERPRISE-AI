@@ -450,7 +450,12 @@ fn snapshot_sha256(bytes: &[u8]) -> [u8; 32] {
 /// overwriting that backup with the stale primary snapshot.
 fn restore_snapshot_from_backup(path: &Path, bytes: &[u8]) -> Result<(), DurableDeviceTrustError> {
     let temp = suffix(path, ".anchor-restore.tmp");
-    let _ = fs::remove_file(&temp);
+    // A stale regular temporary file may be removed before the atomic restore,
+    // but never unlink a symlink, directory, device, or other unexpected object.
+    require_regular_file_if_present(&temp)?;
+    if temp.exists() {
+        fs::remove_file(&temp)?;
+    }
     let mut options = OpenOptions::new();
     options.create_new(true).write(true);
     #[cfg(unix)]
@@ -892,6 +897,12 @@ mod tests {
         assert_eq!(fs::read(&target).unwrap(), b"do not modify");
 
         let _ = fs::remove_file(suffix(&path, ".tmp"));
+
+        symlink(&target, suffix(&path, ".anchor-restore.tmp")).unwrap();
+        assert!(restore_snapshot_from_backup(&path, b"authenticated backup").is_err());
+        assert_eq!(fs::read(&target).unwrap(), b"do not modify");
+
+        let _ = fs::remove_file(suffix(&path, ".anchor-restore.tmp"));
         let _ = fs::remove_file(&target);
     }
 
