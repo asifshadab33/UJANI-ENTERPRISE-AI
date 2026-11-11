@@ -504,7 +504,7 @@ impl DurableDeviceRegistry {
                     // authoritative record before telling the caller to retry.
                     match anchor.load(namespace) {
                         Ok(Some(observed)) if observed == next => {}
-                        Ok(observed) if observed == anchor_record.cloned() => {
+                        Ok(observed) if observed == anchor_record => {
                             return Err(DurableDeviceTrustError::AnchorUnavailable(error));
                         }
                         Ok(_) => return Err(DurableDeviceTrustError::AnchorMismatch),
