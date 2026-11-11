@@ -362,9 +362,9 @@ pub fn validate_model_runtime_inventory(
                 .as_ref()
                 .is_some_and(|value| value.len() > 64 || value.chars().any(char::is_control))
             || model.context_length_tokens == Some(0)
-            || model.estimated_min_memory_mb.is_some_and(|value| {
-                value == 0 || value > MAX_MODEL_MEMORY_ESTIMATE_MB
-            })
+            || model
+                .estimated_min_memory_mb
+                .is_some_and(|value| value == 0 || value > MAX_MODEL_MEMORY_ESTIMATE_MB)
         {
             return Err(ModelInventoryValidationError::InvalidMetadata);
         }
@@ -733,7 +733,9 @@ mod tests {
         )
         .unwrap();
         assert_eq!(result.status, ModelFitStatus::Unknown);
-        assert!(result.reasons.contains(&ModelFitReason::RuntimeAvailabilityUnknown));
+        assert!(result
+            .reasons
+            .contains(&ModelFitReason::RuntimeAvailabilityUnknown));
 
         let mut unavailable_runtime = inventory();
         unavailable_runtime.runtimes[0].availability = RuntimeAvailability::Unavailable;
@@ -753,17 +755,15 @@ mod tests {
     fn insufficient_device_memory_is_an_explicit_incompatibility() {
         let mut value = inventory();
         value.hardware.memory_available_mb = Some(1_024);
-        let result = match_model_to_task(
-            &value,
-            "qwen2.5:7b",
-            &requirements(),
-            1_100,
-            10_000,
-        )
-        .unwrap();
+        let result =
+            match_model_to_task(&value, "qwen2.5:7b", &requirements(), 1_100, 10_000).unwrap();
         assert_eq!(result.status, ModelFitStatus::Incompatible);
-        assert!(result.reasons.contains(&ModelFitReason::HardwareMemoryBelowRequirement));
-        assert!(result.reasons.contains(&ModelFitReason::MemoryEstimateExceedsAvailable));
+        assert!(result
+            .reasons
+            .contains(&ModelFitReason::HardwareMemoryBelowRequirement));
+        assert!(result
+            .reasons
+            .contains(&ModelFitReason::MemoryEstimateExceedsAvailable));
     }
 
     #[test]
