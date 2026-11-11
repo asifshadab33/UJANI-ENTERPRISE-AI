@@ -66,6 +66,72 @@ function renderList(id, records, emptyText, detailKeys) {
     root.append(entry);
   }
 }
+
+function boundedString(value, max) {
+  return typeof value === "string" && value.length > 0 && value.length <= max;
+}
+function validEvidence(evidence) {
+  return evidence && ["runtime_api", "os_api", "runtime_metadata", "signed_catalogue", "published_catalogue", "estimate", "unknown"].includes(evidence.source)
+    && ["verified", "reported", "estimated", "unknown"].includes(evidence.confidence)
+    && (evidence.observed_at_unix_ms === null || (Number.isSafeInteger(evidence.observed_at_unix_ms) && evidence.observed_at_unix_ms > 0));
+}
+function validModelInventory(inventories) {
+  if (inventories === undefined) return true;
+  if (!Array.isArray(inventories) || inventories.length > 10000) return false;
+  return inventories.every((inventory) => inventory
+    && boundedString(inventory.device_id, 128)
+    && Number.isSafeInteger(inventory.generated_at_unix_ms) && inventory.generated_at_unix_ms > 0
+    && Array.isArray(inventory.runtimes) && inventory.runtimes.length <= 16
+    && inventory.runtimes.every((runtime) => runtime
+      && boundedString(runtime.runtime_id, 96) && boundedString(runtime.provider, 64)
+      && (runtime.version === null || boundedString(runtime.version, 64))
+      && ["available", "unavailable", "unknown"].includes(runtime.availability)
+      && ["loopback_only", "local_socket", "enterprise_internal", "not_applicable", "unknown"].includes(runtime.network_scope)
+      && validEvidence(runtime.evidence))
+    && Array.isArray(inventory.models) && inventory.models.length <= 512
+    && inventory.models.every((model) => model
+      && boundedString(model.model_ref, 160) && boundedString(model.runtime_id, 96)
+      && boundedString(model.display_name, 160)
+      && (model.family === null || model.family === undefined || boundedString(model.family, 96))
+      && (model.version === null || model.version === undefined || boundedString(model.version, 64))
+      && ["installed", "downloadable", "unavailable", "unknown"].includes(model.availability)
+      && (model.size_bytes === null || Number.isSafeInteger(model.size_bytes) && model.size_bytes >= 0)
+      && (model.context_length_tokens === null || Number.isSafeInteger(model.context_length_tokens) && model.context_length_tokens > 0)
+      && (model.estimated_min_memory_mb === null || Number.isSafeInteger(model.estimated_min_memory_mb) && model.estimated_min_memory_mb >= 0)
+      && Array.isArray(model.capabilities) && model.capabilities.length <= 16
+      && model.capabilities.every((capability) => ["chat", "reasoning", "coding", "vision", "embeddings", "tool_use", "streaming", "audio_input", "audio_output", "unknown"].includes(capability))
+      && validEvidence(model.evidence)));
+}
+function renderModelInventory(inventories) {
+  const body = byId("model-inventory");
+  body.replaceChildren();
+  const rows = [];
+  for (const inventory of inventories || []) {
+    for (const model of inventory.models) {
+      const runtime = inventory.runtimes.find((item) => item.runtime_id === model.runtime_id);
+      rows.push({ device_id: inventory.device_id, inventory_at: inventory.generated_at_unix_ms, model, runtime });
+    }
+  }
+  byId("model-count").textContent = rows.length + " model records";
+  if (!rows.length) {
+    const row = document.createElement("tr");
+    const cell = textCell("No authenticated model/runtime inventory is available.");
+    cell.colSpan = 7; cell.className = "empty"; row.append(cell); body.append(row); return;
+  }
+  for (const item of rows.slice(0, 5120)) {
+    const row = document.createElement("tr");
+    row.append(textCell(item.device_id));
+    row.append(textCell(item.model.display_name));
+    row.append(textCell(item.model.family));
+    row.append(textCell(item.runtime ? item.runtime.provider + " · " + (item.runtime.version || "version unknown") : item.model.runtime_id));
+    const availability = document.createElement("td"); availability.append(pill(item.model.availability)); row.append(availability);
+    row.append(textCell(item.model.capabilities.join(", ")));
+    const evidenceAt = item.model.evidence.observed_at_unix_ms;
+    const freshness = evidenceAt == null ? "Unknown" : snapshotIsFresh(evidenceAt) ? formatAge(evidenceAt) : "Stale";
+    row.append(textCell(item.model.evidence.confidence + " · " + freshness));
+    body.append(row);
+  }
+}
 const MAX_OVERVIEW_RESPONSE_BYTES = 8 * 1024 * 1024;
 const OVERVIEW_RESPONSE_LIMIT_LABEL = `${MAX_OVERVIEW_RESPONSE_BYTES / (1024 * 1024)} MiB`;
 const MAX_OVERVIEW_SNAPSHOT_AGE_MS = 5 * 60 * 1000;
@@ -137,6 +203,7 @@ function validOverview(data) {
     && Array.isArray(data.devices) && data.devices.length <= 10000
     && Array.isArray(data.workloads) && data.workloads.length <= 1000
     && Array.isArray(data.approvals) && data.approvals.length <= 1000
+    && validModelInventory(data.model_inventory)
     && data.devices.length === counts.registered_devices
     && Number.isSafeInteger(data.generated_at_unix_ms) && data.generated_at_unix_ms > 0;
 }
@@ -150,6 +217,7 @@ function renderOverview(data) {
   byId("online").textContent = data.fleet.online_fresh_devices.toLocaleString();
   byId("schedulable").textContent = data.fleet.schedulable_devices.toLocaleString();
   renderDevices(data.devices);
+  renderModelInventory(data.model_inventory);
   renderList("workloads", data.workloads, "No active workloads.", ["state", "class", "reason"]);
   renderList("approvals", data.approvals, "No pending approvals.", ["requester", "scope", "expires_at"]);
   byId("updated").textContent = "Snapshot: " + new Date(data.generated_at_unix_ms).toLocaleString();
