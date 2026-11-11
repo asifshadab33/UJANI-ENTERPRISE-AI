@@ -88,9 +88,14 @@ END $$;
 -- The admission operation participates in the caller's transaction. A caller
 -- rollback must undo both the monotonic checkpoint and the sample insert.
 SAVEPOINT telemetry_rollback_test;
-SELECT ujani_control.accept_device_telemetry(
- 'telemetry-test','telemetry-device',1,3,decode(repeat('09',16),'hex'),
- clock_timestamp(),decode(repeat('33',32),'hex'),1000,2048,'cool','ac','idle');
+DO $
+DECLARE accepted boolean;
+BEGIN
+ accepted := ujani_control.accept_device_telemetry(
+  'telemetry-test','telemetry-device',1,3,decode(repeat('09',16),'hex'),
+  clock_timestamp(),decode(repeat('33',32),'hex'),1000,2048,'cool','ac','idle');
+ IF NOT accepted THEN RAISE EXCEPTION 'fresh telemetry sample should be accepted before rollback'; END IF;
+END $;
 ROLLBACK TO SAVEPOINT telemetry_rollback_test;
 DO $
 DECLARE sample_count integer;
