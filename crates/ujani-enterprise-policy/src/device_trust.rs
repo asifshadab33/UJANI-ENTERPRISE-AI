@@ -222,7 +222,7 @@ struct DeviceRecord {
     owner_consent_updated_at_unix_ms: u64,
 }
 
-/// Tenant-scoped, non-secret projection of an enrolled device identity.
+/// Tenant-scoped, non-secret projection of device identity and explicit owner consent status.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeviceTrustSummary {
     pub tenant_id: String,
@@ -557,9 +557,9 @@ impl DeviceRegistry {
         })
     }
 
-    /// List only the non-secret device identity records belonging to one tenant.
-    /// Hardware telemetry and owner consent are separate inputs and must not be
-    /// inferred from enrollment alone.
+    /// List non-secret device identity and explicit owner-consent status for one tenant.
+    /// Hardware telemetry and live availability remain separate inputs; enrollment
+    /// alone never implies owner consent.
     pub fn tenant_device_summaries(
         &self,
         tenant_id: &str,
@@ -1064,6 +1064,7 @@ mod tests {
         assert_eq!(summaries.len(), 1);
         assert_eq!(summaries[0].device_id, "device-1");
         assert_eq!(summaries[0].key_generation, 1);
+        assert!(!summaries[0].owner_opted_in);
         assert!(registry
             .tenant_device_summaries("tenant-b")
             .unwrap()
