@@ -1,4 +1,5 @@
 import hashlib
+import os
 import sqlite3
 import tempfile
 import unittest
@@ -28,6 +29,15 @@ class SecurityEventStoreTests(unittest.TestCase):
     def tearDown(self):
         self.store.close()
         self.temp.cleanup()
+
+    @unittest.skipIf(os.name == "nt", "symlink creation may require elevated Windows privileges")
+    def test_rejects_dangling_database_symlink(self):
+        target = Path(self.temp.name) / "not-created.sqlite3"
+        link = Path(self.temp.name) / "dangling.sqlite3"
+        link.symlink_to(target)
+        with self.assertRaisesRegex(StoreError, "database path must not be a symlink"):
+            SecurityEventStore(link)
+        self.assertFalse(target.exists())
 
     def test_ingest_search_and_tenant_isolation(self):
         self.assertEqual(self.store.ingest([event()], tenant_id="tenant-a", provider_id="zeek", now_ms=2000), 1)
