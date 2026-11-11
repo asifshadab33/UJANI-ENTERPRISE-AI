@@ -54,6 +54,12 @@ def main():
     assert "No sample data is shown" in js and "No live device inventory" in html, "Missing no-demo-data fallback."
     assert "frame-ancestors" not in html, "Frame denial must be delivered as a server response header, not a meta policy."
     assert "schedulable_devices" in js and "remaining_memory_mb" in js, "Capacity fields missing."
+    assert 'id="model-inventory"' in html and 'id="model-count"' in html, "Model inventory table and count must be present."
+    assert "function validModelInventory" in js and "function validEvidence" in js, "Model inventory evidence must be structurally validated."
+    assert "inventory.runtimes.length <= 16" in js and "inventory.models.length <= 512" in js, "Runtime/model inventory bounds are missing."
+    assert "validEvidence(model.evidence)" in js and "snapshotIsFresh(evidenceAt)" in js, "Model evidence must expose confidence and freshness."
+    assert "renderModelInventory(data.model_inventory)" in js, "Authenticated model inventory must be rendered."
+    assert "prompts, model contents and local file paths are never displayed" in html, "Model inventory privacy boundary must be visible."
     assert "overflow" in css or "overflow-x" in css, "Responsive table overflow handling missing."
     print("Operator console static security/contract checks passed.")
 
