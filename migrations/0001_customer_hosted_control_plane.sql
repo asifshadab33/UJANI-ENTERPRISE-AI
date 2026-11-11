@@ -122,9 +122,10 @@ CREATE TABLE IF NOT EXISTS ujani_control.audit_events (
 DO $$
 DECLARE table_name text;
 BEGIN
- FOREACH table_name IN ARRAY ARRAY['operator_subjects','devices','device_keys','owner_consents','workloads','approvals','leases','request_replays','audit_events'] LOOP
+ FOREACH table_name IN ARRAY ARRAY['tenants','operator_subjects','devices','device_keys','owner_consents','workloads','approvals','leases','request_replays','audit_events'] LOOP
   EXECUTE format('ALTER TABLE ujani_control.%I ENABLE ROW LEVEL SECURITY', table_name);
   EXECUTE format('ALTER TABLE ujani_control.%I FORCE ROW LEVEL SECURITY', table_name);
+  EXECUTE format('DROP POLICY IF EXISTS tenant_isolation ON ujani_control.%I', table_name);
   EXECUTE format('CREATE POLICY tenant_isolation ON ujani_control.%I USING (tenant_id = current_setting(''ujani.tenant_id'', true)) WITH CHECK (tenant_id = current_setting(''ujani.tenant_id'', true))', table_name);
  END LOOP;
 END $$;
