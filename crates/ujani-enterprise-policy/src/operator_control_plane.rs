@@ -279,7 +279,6 @@ fn hex_decode(value: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
-
 /// Versioned operator-session signer/verifier with bounded, explicitly configured
 /// key overlap. The active key signs new sessions; previous keys verify only while
 /// they remain in the configured key set. Removing a key revokes all sessions
@@ -321,7 +320,10 @@ impl OperatorSessionKeyRing {
         }
         let mut indexed: HashMap<String, [u8; 32]> = HashMap::with_capacity(keys.len());
         for (key_id, mut key) in keys {
-            if !valid_identifier(&key_id, 128) || key_id.contains('.') || indexed.contains_key(&key_id) {
+            if !valid_identifier(&key_id, 128)
+                || key_id.contains('.')
+                || indexed.contains_key(&key_id)
+            {
                 key.zeroize();
                 for existing in indexed.values_mut() {
                     existing.zeroize();
@@ -359,8 +361,7 @@ impl OperatorSessionKeyRing {
             .get(&self.active_key_id)
             .ok_or(OperatorAuthError::UnknownKeyId)?;
         let payload = encode_claims(claims);
-        let mut mac = HmacSha256::new_from_slice(key)
-            .map_err(|_| OperatorAuthError::InvalidKey)?;
+        let mut mac = HmacSha256::new_from_slice(key).map_err(|_| OperatorAuthError::InvalidKey)?;
         mac.update(SESSION_KEYRING_DOMAIN);
         mac.update(self.active_key_id.as_bytes());
         mac.update(&[0]);
@@ -391,7 +392,10 @@ impl OperatorSessionKeyRing {
         if parts.next().is_some() || !valid_identifier(key_id, 128) || key_id.contains('.') {
             return Err(OperatorAuthError::MalformedToken);
         }
-        let key = self.keys.get(key_id).ok_or(OperatorAuthError::UnknownKeyId)?;
+        let key = self
+            .keys
+            .get(key_id)
+            .ok_or(OperatorAuthError::UnknownKeyId)?;
         let payload = hex_decode(payload_hex).ok_or(OperatorAuthError::MalformedToken)?;
         let signature = hex_decode(signature_hex).ok_or(OperatorAuthError::MalformedToken)?;
         if signature.len() != 32 {
@@ -629,11 +633,7 @@ where
     R: OperatorOverviewRepository,
     A: OperatorAuditSink,
 {
-    pub fn new(
-        authenticator: V,
-        repository: Arc<R>,
-        audit: Arc<A>,
-    ) -> Self {
+    pub fn new(authenticator: V, repository: Arc<R>, audit: Arc<A>) -> Self {
         Self {
             authenticator,
             repository,
@@ -880,13 +880,11 @@ mod tests {
 
     #[test]
     fn keyring_rejects_duplicate_keys_and_unknown_active_key() {
-        assert!(
-            OperatorSessionKeyRing::new(
-                "key-a",
-                vec![("key-a".into(), [1; 32]), ("key-a".into(), [2; 32])],
-            )
-            .is_err()
-        );
+        assert!(OperatorSessionKeyRing::new(
+            "key-a",
+            vec![("key-a".into(), [1; 32]), ("key-a".into(), [2; 32])],
+        )
+        .is_err());
         assert_eq!(
             OperatorSessionKeyRing::new("missing", vec![("key-a".into(), [1; 32])]).err(),
             Some(OperatorAuthError::UnknownKeyId)
