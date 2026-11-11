@@ -81,6 +81,7 @@ function validModelInventory(inventories) {
   return inventories.every((inventory) => inventory
     && boundedString(inventory.device_id, 128)
     && Number.isSafeInteger(inventory.generated_at_unix_ms) && inventory.generated_at_unix_ms > 0
+    && inventory.hardware && (inventory.hardware.memory_available_mb === null || Number.isSafeInteger(inventory.hardware.memory_available_mb) && inventory.hardware.memory_available_mb >= 0)
     && Array.isArray(inventory.runtimes) && inventory.runtimes.length <= 16
     && inventory.runtimes.every((runtime) => runtime
       && boundedString(runtime.runtime_id, 96) && boundedString(runtime.provider, 64)
@@ -109,10 +110,10 @@ function renderModelInventory(inventories) {
   for (const inventory of inventories || []) {
     for (const model of inventory.models) {
       const runtime = inventory.runtimes.find((item) => item.runtime_id === model.runtime_id);
-      rows.push({ device_id: inventory.device_id, inventory_at: inventory.generated_at_unix_ms, model, runtime });
+      rows.push({ device_id: inventory.device_id, inventory_at: inventory.generated_at_unix_ms, memory_available_mb: inventory.hardware.memory_available_mb, model, runtime });
     }
   }
-  byId("model-count").textContent = rows.length + " model records";
+  byId("model-count").textContent = rows.length + " model records" + (rows.length > 5120 ? " · showing first 5,120" : "");
   if (!rows.length) {
     const row = document.createElement("tr");
     const cell = textCell("No authenticated model/runtime inventory is available.");
@@ -126,6 +127,11 @@ function renderModelInventory(inventories) {
     row.append(textCell(item.runtime ? item.runtime.provider + " · " + (item.runtime.version || "version unknown") : item.model.runtime_id));
     const availability = document.createElement("td"); availability.append(pill(item.model.availability)); row.append(availability);
     row.append(textCell(item.model.capabilities.join(", ")));
+    const requiredRam = item.model.estimated_min_memory_mb;
+    const ramFit = requiredRam == null || item.memory_available_mb == null
+      ? "Unknown"
+      : requiredRam <= item.memory_available_mb ? "RAM estimate fits" : "Insufficient RAM";
+    const fitCell = document.createElement("td"); fitCell.append(pill(ramFit)); row.append(fitCell);
     const evidenceAt = item.model.evidence.observed_at_unix_ms;
     const freshness = evidenceAt == null ? "Unknown" : snapshotIsFresh(evidenceAt) ? formatAge(evidenceAt) : "Stale";
     row.append(textCell(item.model.evidence.confidence + " · " + freshness));
