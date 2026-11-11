@@ -43,6 +43,8 @@ def main():
     assert "innerHTML" not in js and "eval(" not in js and "new Function" not in js, "Unsafe DOM/code execution primitive found."
     assert "replaceChildren" in js and "textContent" in js, "Render API values using safe DOM text APIs."
     assert "MAX_OVERVIEW_RESPONSE_BYTES = 2 * 1024 * 1024" in js, "Overview response must have a hard byte ceiling."
+    assert "new AbortController()" in js and "controller.abort(), 10_000" in js and "signal: controller.signal" in js, "Overview requests must have a finite timeout."
+    assert "window.clearTimeout(requestTimeout)" in js, "Overview request timeout must always be cleared."
     assert "await readBoundedJson(response)" in js, "Overview JSON must be parsed only after bounded streaming."
     assert "content-length" in js and "reader.read()" in js and "reader.cancel()" in js, "Response stream must enforce declared and observed byte limits."
     assert "data.devices.length <= 10000" in js and "data.workloads.length <= 1000" in js and "data.approvals.length <= 1000" in js, "Overview collections must match backend bounds."
