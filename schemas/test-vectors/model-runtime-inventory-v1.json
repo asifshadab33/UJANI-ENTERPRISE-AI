@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "generated_at_unix_ms": 1000000,
+  "device_ref": "device-01",
+  "platform": {
+    "os": "linux",
+    "os_version": "6.8",
+    "architecture": "x86_64"
+  },
+  "hardware": {
+    "cpu_logical_cores": 8,
+    "memory_total_mb": 16384,
+    "memory_available_mb": 8192,
+    "storage_free_mb": null,
+    "accelerators": []
+  },
+  "runtimes": [
+    {
+      "runtime_id": "ollama-local",
+      "provider": "ollama",
+      "version": "0.5.12",
+      "availability": "available",
+      "network_scope": "loopback_only",
+      "evidence": {
+        "source": "runtime_api",
+        "confidence": "reported",
+        "observed_at_unix_ms": 1000000
+      }
+    }
+  ],
+  "models": [
+    {
+      "model_ref": "qwen2.5:7b",
+      "runtime_id": "ollama-local",
+      "display_name": "Qwen 2.5 7B",
+      "family": "qwen2.5",
+      "version": null,
+      "availability": "installed",
+      "size_bytes": 4500000000,
+      "context_length_tokens": 32768,
+      "estimated_min_memory_mb": 9096,
+      "capabilities": [
+        "chat",
+        "coding"
+      ],
+      "evidence": {
+        "source": "runtime_metadata",
+        "confidence": "reported",
+        "observed_at_unix_ms": 1000000
+      }
+    }
+  ],
+  "privacy": {
+    "contains_prompts": false,
+    "contains_user_files": false,
+    "contains_local_paths": false,
+    "contains_credentials": false
+  }
+}
