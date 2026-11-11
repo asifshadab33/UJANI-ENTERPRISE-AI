@@ -1434,11 +1434,15 @@ mod tests {
         let keys = vec![LedgerIntegrityKey::new("ledger-v1", [0x31; 32])];
 
         symlink(&target, append_suffix(&path, ".lock")).unwrap();
-        assert!(DurableLedger::open_with_integrity_keys(&path, "ledger-v1", keys.clone()).is_err());
+        assert!(
+            DurableLedger::open_with_integrity_keys(&path, "ledger-v1", keys.clone()).is_err()
+        );
         fs::remove_file(append_suffix(&path, ".lock")).unwrap();
 
         symlink(&target, append_suffix(&path, ".tmp")).unwrap();
-        assert!(DurableLedger::open_with_integrity_keys(&path, "ledger-v1", keys).is_err());
+        assert!(
+            DurableLedger::open_with_integrity_keys(&path, "ledger-v1", keys).is_err()
+        );
         assert_eq!(fs::read(&target).unwrap(), b"do not modify");
 
         let _ = fs::remove_file(append_suffix(&path, ".tmp"));
