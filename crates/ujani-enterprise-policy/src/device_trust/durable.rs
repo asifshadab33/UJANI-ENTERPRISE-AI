@@ -995,6 +995,13 @@ mod tests {
                 DeviceTrustError::InvalidConsentRevision
             ))
         );
+        let out_of_order_opt_in = owner_consent(&device, true, 3, 225, 5);
+        assert_eq!(
+            reopened.apply_owner_consent(&out_of_order_opt_in, 260),
+            Err(DurableDeviceTrustError::Trust(
+                DeviceTrustError::InvalidConsentRevision
+            ))
+        );
         drop(reopened);
         let _ = fs::remove_file(&path);
         let _ = fs::remove_file(suffix(&path, ".lock"));
