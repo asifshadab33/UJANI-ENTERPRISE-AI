@@ -44,10 +44,11 @@ Before production, add:
 1. OIDC/SAML integration and administrator-managed tenant/role provisioning.
 2. A durable, transactionally consistent multi-tenant inventory/telemetry/workload/approval repository.
 3. An external monotonic anchor or equivalent rollback protection for critical trust and lease state; local HMAC files alone do not provide rollback resistance.
-4. Key rotation, revocation and recovery procedures for operator sessions, device keys and storage integrity keys.
-5. Rate limits, request-size/time limits, structured security logging, metrics, health/readiness endpoints and backup/restore drills.
-6. Browser integration tests for unauthenticated, expired, revoked, cross-tenant, stale-snapshot and audit-unavailable cases.
-7. Independent security review and controlled lab validation.
+4. Production protected-provider loading, rotation authorization and revocation distribution. A versioned operator-session key ring with explicit key IDs and bounded overlap is now implemented in the policy core.
+5. Key rotation, revocation and recovery procedures for device keys and storage integrity keys.
+6. Rate limits, request-size/time limits, structured security logging, metrics, health/readiness endpoints and backup/restore drills.
+7. Browser integration tests for unauthenticated, expired, revoked, cross-tenant, stale-snapshot and audit-unavailable cases.
+8. Independent security review and controlled lab validation.
 
 ## Explicitly out of scope for this milestone
 
@@ -56,3 +57,7 @@ No remote command execution, workload dispatch, endpoint containment, firewall w
 ## Local validation
 
 The policy crate's unit tests exercise token integrity/expiry, tenant-boundary rejection, overview consistency and fail-closed audit behavior. Hosted CI additionally runs the workspace tests on Linux, Windows and macOS. These tests do not prove a production identity-provider integration, durable repository, live HTTP service, browser deployment or real device connectivity.
+
+## Customer-hosted deployment foundation
+
+The recommended customer-owned topology, initial PostgreSQL tenant/RLS migration, audit-event schema and implementation gates are documented in [Customer-hosted Control Plane Deployment](CUSTOMER-HOSTED-CONTROL-PLANE-DEPLOYMENT.md). The migration is a schema foundation, not a live database adapter; the operator console remains unavailable until a real authenticated service is deployed.
