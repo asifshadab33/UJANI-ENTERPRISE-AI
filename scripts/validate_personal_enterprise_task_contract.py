@@ -234,6 +234,10 @@ def _validate_instance_fixtures(schema: dict[str, Any]) -> None:
     validator = jsonschema.Draft202012Validator(schema)
     samples = _sample_messages()
     valid_fixtures = list(samples.items())
+    vector = _strict_json_loads(
+        (ROOT / "schemas/test-vectors/consent-binding-v1.json").read_text(encoding="utf-8")
+    )
+    valid_fixtures.append(("shared consent-binding vector envelope", vector["envelope"]))
 
     # Every active state must be valid only when all three authorities have approved.
     approved_status = copy.deepcopy(samples["task_status"])
