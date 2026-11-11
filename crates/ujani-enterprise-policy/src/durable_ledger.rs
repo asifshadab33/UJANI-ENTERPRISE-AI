@@ -472,6 +472,7 @@ impl DurableLedger {
             use std::os::unix::fs::OpenOptionsExt;
             lock_options.mode(0o600);
         }
+        ensure_regular_file_if_present(&self.lock_path, "lock")?;
         let lock_file = lock_options.open(&self.lock_path)?;
         lock_file.lock()?;
 
@@ -1138,6 +1139,9 @@ fn persist_snapshot(
     }
     let temp = append_suffix(path, ".tmp");
     let backup = append_suffix(path, ".bak");
+    ensure_regular_file_if_present(path, "primary snapshot")?;
+    ensure_regular_file_if_present(&temp, "temporary snapshot")?;
+    ensure_regular_file_if_present(&backup, "backup snapshot")?;
     if temp.exists() {
         fs::remove_file(&temp)?;
     }
@@ -1416,6 +1420,30 @@ mod tests {
         assert!(anchor.load("registry-test-a").unwrap().is_none());
         assert!(!path.exists());
         cleanup(&path);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn durable_ledger_rejects_symlinked_lock_and_temp_paths() {
+        use std::os::unix::fs::symlink;
+        let root = temp_path("symlink-path-guards");
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("ledger.snapshot");
+        let target = root.join("outside.txt");
+        fs::write(&target, b"do not modify").unwrap();
+        let keys = vec![LedgerIntegrityKey::new("ledger-v1", [0x31; 32])];
+
+        symlink(&target, append_suffix(&path, ".lock")).unwrap();
+        assert!(DurableLedger::open_with_integrity_keys(&path, "ledger-v1", keys.clone()).is_err());
+        fs::remove_file(append_suffix(&path, ".lock")).unwrap();
+
+        symlink(&target, append_suffix(&path, ".tmp")).unwrap();
+        assert!(DurableLedger::open_with_integrity_keys(&path, "ledger-v1", keys).is_err());
+        assert_eq!(fs::read(&target).unwrap(), b"do not modify");
+
+        let _ = fs::remove_file(append_suffix(&path, ".tmp"));
+        let _ = fs::remove_file(&target);
+        let _ = fs::remove_dir_all(root);
     }
 
     #[cfg(unix)]
