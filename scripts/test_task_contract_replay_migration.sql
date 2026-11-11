@@ -64,7 +64,7 @@ BEGIN
  -- Replaying the same sequence is a no-op; callers must reject the message.
  INSERT INTO ujani_control.task_contract_sequences
   (tenant_id, task_id, message_type, last_sequence, message_digest)
- VALUES ('tenant-a','task-a','task_status',2,decode(repeat('99',32))
+ VALUES ('tenant-a','task-a','task_status',2,decode(repeat('99',32),'hex')
  )
  ON CONFLICT (tenant_id, task_id, message_type) DO UPDATE
  SET last_sequence = EXCLUDED.last_sequence,
