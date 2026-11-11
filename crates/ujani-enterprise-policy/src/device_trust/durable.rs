@@ -363,6 +363,9 @@ impl DurableDeviceRegistry {
             .thread_lock
             .lock()
             .map_err(|_| DurableDeviceTrustError::LockPoisoned)?;
+        require_regular_file_if_present(&self.lock_path)?;
+        require_regular_file_if_present(&self.path)?;
+        require_regular_file_if_present(&suffix(&self.path, ".bak"))?;
         let mut options = OpenOptions::new();
         options.create(true).truncate(false).read(true).write(true);
         #[cfg(unix)]
@@ -666,6 +669,20 @@ fn decode_snapshot(
     }
     Ok(registry)
 }
+/// Rejects unexpected filesystem object types before a registry path is read or opened.
+/// This is a defense-in-depth check, not a substitute for a directory owned exclusively
+/// by the service account or platform-specific no-follow/openat handles against races.
+fn require_regular_file_if_present(path: &Path) -> Result<(), DurableDeviceTrustError> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_file() => Ok(()),
+        Ok(_) => Err(DurableDeviceTrustError::Io(format!(
+            "refusing non-regular registry path: {}", path.display()
+        ))),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
 fn atomic_write(
     path: &Path,
     bytes: &[u8],
@@ -673,6 +690,9 @@ fn atomic_write(
 ) -> Result<(), DurableDeviceTrustError> {
     let temp = suffix(path, ".tmp");
     let backup = suffix(path, ".bak");
+    require_regular_file_if_present(path)?;
+    require_regular_file_if_present(&temp)?;
+    require_regular_file_if_present(&backup)?;
     let mut options = OpenOptions::new();
     options.create(true).truncate(true).write(true);
     #[cfg(unix)]
@@ -821,6 +841,32 @@ mod tests {
         let _ = fs::remove_file(&path);
         let _ = fs::remove_file(suffix(&path, ".lock"));
     }
+    #[cfg(unix)]
+    #[test]
+    fn registry_rejects_symlinked_primary_lock_and_temp_paths() {
+        use std::os::unix::fs::symlink;
+        let path = path();
+        let admin = SigningKey::from_bytes(&[7; 32]);
+        let target = path.with_extension("outside");
+        fs::write(&target, b"do not modify").unwrap();
+
+        symlink(&target, &path).unwrap();
+        assert!(open(&path, &admin).is_err(), "primary snapshot symlink must be rejected");
+        fs::remove_file(&path).unwrap();
+
+        symlink(&target, suffix(&path, ".lock")).unwrap();
+        assert!(open(&path, &admin).is_err(), "lock symlink must be rejected");
+        fs::remove_file(suffix(&path, ".lock")).unwrap();
+
+        symlink(&target, suffix(&path, ".tmp")).unwrap();
+        let result = atomic_write(&path, b"replacement", false);
+        assert!(result.is_err(), "temporary snapshot symlink must be rejected");
+        assert_eq!(fs::read(&target).unwrap(), b"do not modify");
+
+        let _ = fs::remove_file(suffix(&path, ".tmp"));
+        let _ = fs::remove_file(&target);
+    }
+
     #[test]
     fn modified_snapshot_fails_closed() {
         let path = path();
