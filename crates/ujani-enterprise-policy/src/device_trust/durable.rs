@@ -495,11 +495,26 @@ impl DurableDeviceRegistry {
                 generation,
                 snapshot_sha256: snapshot_sha256(&bytes),
             };
-            let advanced = anchor
-                .compare_and_set(namespace, expected_generation, next)
-                .map_err(DurableDeviceTrustError::AnchorUnavailable)?;
-            if !advanced {
-                return Err(DurableDeviceTrustError::AnchorConflict);
+            match anchor.compare_and_set(namespace, expected_generation, next.clone()) {
+                Ok(true) => {}
+                Ok(false) => return Err(DurableDeviceTrustError::AnchorConflict),
+                Err(error) => {
+                    // A transport error can arrive after the provider committed.
+                    // Its load operation is a quiescence barrier, so read back the
+                    // authoritative record before telling the caller to retry.
+                    match anchor.load(namespace) {
+                        Ok(Some(observed)) if observed == next => {}
+                        Ok(observed) if observed == anchor_record.cloned() => {
+                            return Err(DurableDeviceTrustError::AnchorUnavailable(error));
+                        }
+                        Ok(_) => return Err(DurableDeviceTrustError::AnchorMismatch),
+                        Err(load_error) => {
+                            return Err(DurableDeviceTrustError::AnchorUnavailable(format!(
+                                "{error}; commit outcome could not be verified: {load_error}"
+                            )));
+                        }
+                    }
+                }
             }
         }
         Ok(result)
@@ -1213,6 +1228,7 @@ mod tests {
     struct MemoryAnchor {
         record: std::sync::Mutex<Option<SnapshotAnchorRecord>>,
         fail_next_cas: std::sync::atomic::AtomicBool,
+        lose_next_response_after_commit: std::sync::atomic::AtomicBool,
     }
 
     impl MonotonicSnapshotAnchor for MemoryAnchor {
@@ -1237,6 +1253,12 @@ mod tests {
                 return Ok(false);
             }
             *current = Some(next);
+            if self
+                .lose_next_response_after_commit
+                .swap(false, Ordering::SeqCst)
+            {
+                return Err("simulated lost compare-and-set response".into());
+            }
             Ok(true)
         }
     }
@@ -1364,6 +1386,63 @@ mod tests {
         )
         .unwrap();
         assert!(reopened.authenticate_request(&signed, b"", 251).is_ok());
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(suffix(&path, ".bak"));
+        let _ = fs::remove_file(suffix(&path, ".lock"));
+    }
+
+    #[test]
+    fn external_anchor_lost_cas_response_is_reconciled_as_committed() {
+        let path = path();
+        let admin = SigningKey::from_bytes(&[7; 32]);
+        let device = SigningKey::from_bytes(&[9; 32]);
+        let anchor = std::sync::Arc::new(MemoryAnchor::default());
+        let store = DurableDeviceRegistry::open_with_anchor(
+            &path,
+            "tenant-a-device-registry",
+            vec![("admin-v1".into(), admin.verifying_key())],
+            DeviceTrustIntegrityKey::new("integrity-v1", [0x42; 32]),
+            anchor.clone(),
+        )
+        .unwrap();
+        store
+            .apply_admin_command(&enroll(&admin, &device), 200)
+            .unwrap();
+
+        let claims = DeviceRequestClaims {
+            tenant_id: "tenant-a".into(),
+            device_id: "device-1".into(),
+            key_id: "device-key-v1".into(),
+            key_generation: 1,
+            request_id: [11; 16],
+            issued_at_unix_ms: 200,
+            expires_at_unix_ms: 500,
+            method: "POST".into(),
+            resource_id: "lease:acquire".into(),
+            workload_id: "workload-1".into(),
+            manifest_sha256: sha2::Sha256::digest(b"manifest-v1").into(),
+            body_sha256: sha2::Sha256::digest([]).into(),
+        };
+        let signed = SignedDeviceRequest {
+            signature: device.sign(&device_request_bytes(&claims)).to_bytes(),
+            claims,
+        };
+
+        anchor
+            .lose_next_response_after_commit
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let authenticated = store.authenticate_request(&signed, b"", 250).unwrap();
+        assert_eq!(authenticated.device_id(), "device-1");
+        assert_eq!(
+            anchor
+                .load("tenant-a-device-registry")
+                .unwrap()
+                .unwrap()
+                .generation(),
+            3
+        );
+
+        drop(store);
         let _ = fs::remove_file(&path);
         let _ = fs::remove_file(suffix(&path, ".bak"));
         let _ = fs::remove_file(suffix(&path, ".lock"));
