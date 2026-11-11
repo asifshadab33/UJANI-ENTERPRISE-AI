@@ -7,6 +7,8 @@ BEGIN
 END $$;
 GRANT USAGE ON SCHEMA ujani_control TO ujani_runtime;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA ujani_control TO ujani_runtime;
+-- Tenant creation/provisioning belongs to the separately controlled admin/migration plane.
+REVOKE INSERT, UPDATE, DELETE ON ujani_control.tenants FROM ujani_runtime;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA ujani_control TO ujani_runtime;
 INSERT INTO ujani_control.tenants (tenant_id, display_name)
 VALUES ('tenant-a','Tenant A'), ('tenant-b','Tenant B')
@@ -25,17 +27,27 @@ DO $$
 DECLARE
  visible_tenants integer;
  visible_devices integer;
+ affected_rows bigint;
  bypass_rls boolean;
- affected_rows integer;
+ can_insert_tenant boolean;
+ can_update_tenant boolean;
+ can_delete_tenant boolean;
 BEGIN
  SELECT count(*) INTO visible_tenants FROM ujani_control.tenants;
  SELECT count(*) INTO visible_devices FROM ujani_control.devices;
  SELECT rolbypassrls INTO bypass_rls FROM pg_roles WHERE rolname = current_user;
+ SELECT has_table_privilege(current_user, 'ujani_control.tenants', 'INSERT'),
+        has_table_privilege(current_user, 'ujani_control.tenants', 'UPDATE'),
+        has_table_privilege(current_user, 'ujani_control.tenants', 'DELETE')
+ INTO can_insert_tenant, can_update_tenant, can_delete_tenant;
  IF visible_tenants <> 1 OR visible_devices <> 1 THEN
   RAISE EXCEPTION 'tenant RLS leak: tenants %, devices %', visible_tenants, visible_devices;
  END IF;
  IF bypass_rls THEN
   RAISE EXCEPTION 'runtime role unexpectedly has BYPASSRLS';
+ END IF;
+ IF can_insert_tenant OR can_update_tenant OR can_delete_tenant THEN
+  RAISE EXCEPTION 'runtime role can mutate tenant registry; provisioning must use a separate privileged path';
  END IF;
  UPDATE ujani_control.devices SET display_name = 'cross-tenant-write'
   WHERE tenant_id = 'tenant-b';
