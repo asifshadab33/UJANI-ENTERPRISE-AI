@@ -47,10 +47,20 @@ class SecurityEventStore:
         self._lock = threading.RLock()
         if self.database != ":memory:":
             path = Path(self.database)
+            if not path.name:
+                raise StoreError("database path must name a file")
             if path.is_symlink():
                 raise StoreError("database path must not be a symlink")
             if not path.parent.exists() or not path.parent.is_dir():
                 raise StoreError("database parent directory must already exist")
+            try:
+                # Pin the database to the resolved parent directory so later
+                # changes to a caller-supplied symlink alias cannot redirect
+                # SQLite to a different directory. The resolved directory must
+                # still be protected from untrusted writers to prevent races.
+                self.database = str(path.parent.resolve(strict=True) / path.name)
+            except OSError:
+                raise StoreError("could not resolve database parent directory") from None
         self._db = sqlite3.connect(self.database, timeout=5.0, isolation_level=None,
                                    check_same_thread=False)
         self._db.row_factory = sqlite3.Row
