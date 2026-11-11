@@ -73,8 +73,8 @@ def main() -> None:
     if "verify the signed device request" not in telemetry_sql:
         raise SystemExit("telemetry migration must document upstream signature verification boundary")
     concurrency_test = (ROOT / "scripts" / "test_monotonic_device_telemetry_concurrency.sh").read_text(encoding="utf-8")
-    for required in ("pg_stat_activity", "pg_sleep(1)", "FOR UPDATE", "1:2:2", "--quiet"):
-        if required not in concurrency_test and required != "FOR UPDATE":
+    for required in ("pg_stat_activity", "pg_sleep(1)", "1:2:2", "--quiet"):
+        if required not in concurrency_test:
             raise SystemExit(f"telemetry concurrency regression test missing: {required}")
     print("Customer-hosted and monotonic telemetry migration static checks passed.")
 
