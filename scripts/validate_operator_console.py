@@ -69,7 +69,7 @@ def main():
     assert "model_inventory_status" in js and "model_inventory_total_models" in js, "Partial inventory responses must be explicitly summarized."
     assert "inventory.hardware.memory_available_mb" in js and "estimate fits" in js and "insufficient" in js, "Model RAM fit must be conservative and explicit."
     assert "<th>RAM fit</th>" in html, "Model RAM fit column is missing."
-    assert "renderModelInventory(data.model_inventory)" in js, "Authenticated model inventory must be rendered."
+    assert "renderModelInventory(data.model_inventory, data)" in js, "Authenticated model inventory must be rendered."
     assert "prompts, model contents and local file paths are never displayed" in html.lower(), "Model inventory privacy boundary must be visible."
     assert "overflow" in css or "overflow-x" in css, "Responsive table overflow handling missing."
     control_plane = (ROOT / "crates" / "ujani-enterprise-policy" / "src" / "operator_control_plane.rs").read_text(encoding="utf-8")
