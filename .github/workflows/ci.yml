@@ -48,7 +48,7 @@ jobs:
         run: python scripts/validate_customer_hosted_migration.py
       - name: Check operator console JavaScript syntax
         run: node --check apps/operator-console/app.js
-      - name: Test local read-only network log adapters
+      - name: Test local read-only network log adapters and admission policies
         run: python -m unittest discover -s tests -v
       - name: Check formatting
         run: cargo fmt --all -- --check
