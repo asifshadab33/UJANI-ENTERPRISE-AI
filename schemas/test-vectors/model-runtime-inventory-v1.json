@@ -30,15 +30,15 @@
   ],
   "models": [
     {
-      "model_ref": "qwen2.5:7b",
+      "model_ref": "qwen2.5:3b",
       "runtime_id": "ollama-local",
-      "display_name": "Qwen 2.5 7B",
+      "display_name": "Qwen 2.5 3B",
       "family": "qwen2.5",
       "version": null,
       "availability": "installed",
-      "size_bytes": 4500000000,
+      "size_bytes": 1500000000,
       "context_length_tokens": 32768,
-      "estimated_min_memory_mb": 9096,
+      "estimated_min_memory_mb": 3374,
       "capabilities": [
         "chat",
         "coding"
