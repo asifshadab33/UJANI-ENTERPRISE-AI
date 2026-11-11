@@ -25,6 +25,7 @@ The service core supports:
 - A versioned key-ring token format with an explicit key ID.
 - One active signing key plus up to three configured previous keys during a controlled overlap.
 - Immediate rejection of tokens signed by a key removed from the configured ring.
+- A provider interface that supports customer HSM/KMS/OS-backed MAC signing and verification without exporting key material into the service process; the current software key ring is the tested reference implementation.
 
 The key ring is only a verifier/signer primitive. Production key retrieval, rotation authorization, revocation distribution, secure cookie transport, CSRF, HTTPS and OIDC integration remain responsibilities of the not-yet-built hosting adapter. Do not place keys in environment dumps, logs, browser storage or writable application-data directories.
 
