@@ -1533,6 +1533,24 @@ mod tests {
         blank.models[0].display_name = "   ".into();
         overview.model_inventory.push(blank);
         assert!(validate_overview(&overview, 100_000).is_err());
+
+        overview.model_inventory.clear();
+        let mut wrong_version = sample_model_inventory("device-1", 100_000);
+        wrong_version.schema_version = 2;
+        overview.model_inventory.push(wrong_version);
+        assert!(validate_overview(&overview, 100_000).is_err());
+
+        overview.model_inventory.clear();
+        let mut privacy_violation = sample_model_inventory("device-1", 100_000);
+        privacy_violation.privacy.as_mut().unwrap().contains_prompts = true;
+        overview.model_inventory.push(privacy_violation);
+        assert!(validate_overview(&overview, 100_000).is_err());
+
+        overview.model_inventory.clear();
+        let mut impossible_memory = sample_model_inventory("device-1", 100_000);
+        impossible_memory.hardware.memory_available_mb = Some(32_768);
+        overview.model_inventory.push(impossible_memory);
+        assert!(validate_overview(&overview, 100_000).is_err());
     }
 
     #[test]
