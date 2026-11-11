@@ -17,7 +17,9 @@ const ADMIN_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-DEVICE-ADMIN-COMMAND-V1\0";
 // V2 signs the exact body digest and explicit workload/manifest binding fields.
 const DEVICE_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-DEVICE-REQUEST-V2\0";
 const ENROLLMENT_PROOF_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-DEVICE-KEY-PROOF-V1\0";
+const OWNER_CONSENT_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-DEVICE-OWNER-CONSENT-V1\0";
 const CLOCK_SKEW_MS: u64 = 30_000;
+pub const MAX_OWNER_CONSENT_TTL_MS: u64 = 5 * 60 * 1000;
 const MAX_REPLAY_ENTRIES: usize = 100_000;
 pub const MAX_DEVICE_REQUEST_BODY_BYTES: usize = 1024 * 1024;
 pub const MAX_DEVICE_REQUEST_TTL_MS: u64 = 30_000;
@@ -56,6 +58,7 @@ pub enum DeviceTrustError {
     StaleKeyGeneration,
     ReplayDetected,
     InvalidRequestWindow,
+    InvalidConsentRevision,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -98,6 +101,23 @@ pub struct DeviceRequestClaims {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SignedDeviceRequest {
     pub claims: DeviceRequestClaims,
+    pub signature: [u8; 64],
+}
+
+/// Device-owner consent is signed by the currently enrolled device key. The
+/// revision is monotonic per key generation so delayed opt-in messages cannot
+/// override a newer opt-out after restart or network reordering.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignedOwnerConsentCommand {
+    pub tenant_id: String,
+    pub device_id: String,
+    pub key_id: String,
+    pub key_generation: u64,
+    pub revision: u64,
+    pub opted_in: bool,
+    pub issued_at_unix_ms: u64,
+    pub expires_at_unix_ms: u64,
+    pub nonce: [u8; 16],
     pub signature: [u8; 64],
 }
 
@@ -196,6 +216,10 @@ struct DeviceRecord {
     key_id: String,
     key: VerifyingKey,
     generation: u64,
+    owner_opted_in: bool,
+    owner_consent_revision: u64,
+    owner_consent_generation: u64,
+    owner_consent_updated_at_unix_ms: u64,
 }
 
 /// Tenant-scoped, non-secret projection of an enrolled device identity.
@@ -205,6 +229,8 @@ pub struct DeviceTrustSummary {
     pub device_id: String,
     pub state: DeviceTrustState,
     pub key_generation: u64,
+    /// Persisted owner choice for resource sharing, not inferred from enrollment.
+    pub owner_opted_in: bool,
 }
 
 pub struct DeviceRegistry {
@@ -341,6 +367,10 @@ impl DeviceRegistry {
                         key_id: command.target_key_id.clone(),
                         key,
                         generation: next_generation,
+                        owner_opted_in: false,
+                        owner_consent_revision: 0,
+                        owner_consent_generation: 0,
+                        owner_consent_updated_at_unix_ms: 0,
                     },
                 );
             }
@@ -351,11 +381,69 @@ impl DeviceRegistry {
                     .ok_or(DeviceTrustError::DeviceNotFound)?;
                 current.state = DeviceTrustState::Revoked;
                 current.generation = next_generation;
+                current.owner_opted_in = false;
+                current.owner_consent_revision = 0;
+                current.owner_consent_generation = 0;
+                current.owner_consent_updated_at_unix_ms = 0;
             }
         }
         self.admin_nonces
             .insert(command.nonce, command.expires_at_unix_ms);
         Ok(next_generation)
+    }
+
+    /// Apply an explicit owner opt-in or opt-out signed by the current device key.
+    /// Consent defaults to false, is scoped to the current key generation, and
+    /// must advance its revision so delayed commands cannot restore old consent.
+    pub fn apply_owner_consent(
+        &mut self,
+        command: &SignedOwnerConsentCommand,
+        now: u64,
+    ) -> Result<u64, DeviceTrustError> {
+        validate_owner_consent_command(command, now)?;
+        self.request_nonces.retain(|_, expiry| *expiry > now);
+        if self.request_nonces.contains_key(&command.nonce)
+            || self.request_nonces.len() >= MAX_REPLAY_ENTRIES
+        {
+            return Err(DeviceTrustError::ReplayDetected);
+        }
+
+        let (key, current_revision) = {
+            let record = self
+                .devices
+                .get(&command.device_id)
+                .ok_or(DeviceTrustError::DeviceNotFound)?;
+            if record.state != DeviceTrustState::Enrolled {
+                return Err(DeviceTrustError::DeviceNotEnrolled);
+            }
+            if record.tenant_id != command.tenant_id {
+                return Err(DeviceTrustError::TenantMismatch);
+            }
+            if record.key_id != command.key_id || record.generation != command.key_generation {
+                return Err(DeviceTrustError::StaleKeyGeneration);
+            }
+            (record.key, record.owner_consent_revision)
+        };
+        if command.revision <= current_revision {
+            return Err(DeviceTrustError::InvalidConsentRevision);
+        }
+        key.verify_strict(
+            &owner_consent_bytes(command),
+            &Signature::from_bytes(&command.signature),
+        )
+        .map_err(|_| DeviceTrustError::InvalidDeviceSignature)?;
+
+        self.request_nonces
+            .insert(command.nonce, command.expires_at_unix_ms);
+        let record = self
+            .devices
+            .get_mut(&command.device_id)
+            .ok_or(DeviceTrustError::DeviceNotFound)?;
+        record.owner_opted_in = command.opted_in;
+        record.owner_consent_revision = command.revision;
+        record.owner_consent_generation = record.generation;
+        record.owner_consent_updated_at_unix_ms = command.issued_at_unix_ms;
+        Ok(command.revision)
     }
 
     /// Authenticates a request only for the method and resource selected by the server route.
@@ -482,6 +570,9 @@ impl DeviceRegistry {
                 device_id: device_id.clone(),
                 state: record.state,
                 key_generation: record.generation,
+                owner_opted_in: record.state == DeviceTrustState::Enrolled
+                    && record.owner_opted_in
+                    && record.owner_consent_generation == record.generation,
             })
             .collect();
         records.sort_by(|left, right| left.device_id.cmp(&right.device_id));
@@ -540,6 +631,32 @@ fn validate_admin_command(c: &SignedDeviceAdminCommand, now: u64) -> Result<(), 
     }
     Ok(())
 }
+fn validate_owner_consent_command(
+    command: &SignedOwnerConsentCommand,
+    now: u64,
+) -> Result<(), DeviceTrustError> {
+    if !valid_id(&command.tenant_id, 128)
+        || !valid_id(&command.device_id, 128)
+        || !valid_id(&command.key_id, 128)
+        || command.key_generation == 0
+        || command.revision == 0
+        || command.nonce.iter().all(|byte| *byte == 0)
+    {
+        return Err(DeviceTrustError::InvalidIdentifier);
+    }
+    if command.issued_at_unix_ms > now.saturating_add(CLOCK_SKEW_MS) {
+        return Err(DeviceTrustError::FutureTimestamp);
+    }
+    if command.expires_at_unix_ms <= now
+        || command.expires_at_unix_ms <= command.issued_at_unix_ms
+        || command.expires_at_unix_ms.saturating_sub(command.issued_at_unix_ms)
+            > MAX_OWNER_CONSENT_TTL_MS
+    {
+        return Err(DeviceTrustError::ExpiredCommand);
+    }
+    Ok(())
+}
+
 fn target_key(c: &SignedDeviceAdminCommand) -> Result<VerifyingKey, DeviceTrustError> {
     VerifyingKey::from_bytes(&c.target_public_key.ok_or(DeviceTrustError::InvalidKey)?)
         .map_err(|_| DeviceTrustError::InvalidKey)
@@ -595,6 +712,20 @@ fn verify_new_key_proof(
     key.verify_strict(&enrollment_proof_bytes(c), &Signature::from_bytes(&sig))
         .map_err(|_| DeviceTrustError::InvalidDeviceSignature)
 }
+pub(crate) fn owner_consent_bytes(command: &SignedOwnerConsentCommand) -> Vec<u8> {
+    let mut out = OWNER_CONSENT_DOMAIN.to_vec();
+    for value in [&command.tenant_id, &command.device_id, &command.key_id] {
+        put_string(&mut out, value);
+    }
+    out.extend_from_slice(&command.key_generation.to_be_bytes());
+    out.extend_from_slice(&command.revision.to_be_bytes());
+    out.push(u8::from(command.opted_in));
+    out.extend_from_slice(&command.issued_at_unix_ms.to_be_bytes());
+    out.extend_from_slice(&command.expires_at_unix_ms.to_be_bytes());
+    out.extend_from_slice(&command.nonce);
+    out
+}
+
 pub(crate) fn device_request_bytes(c: &DeviceRequestClaims) -> Vec<u8> {
     let mut out = DEVICE_DOMAIN.to_vec();
     for v in [
