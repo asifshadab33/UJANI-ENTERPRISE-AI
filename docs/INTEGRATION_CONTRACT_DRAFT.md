@@ -57,3 +57,18 @@ The schema rejects unknown fields and bounds identifiers, all signed integers to
 The schema is a draft compatibility boundary, not an active protocol. Existing v2 peer envelopes, Enterprise manifests/approvals and Public local receipts must not be relabelled as interoperable v1 messages. A future adapter must explicitly translate a user-approved task into the new envelope and independently verify the Enterprise status/receipt.
 
 A fixed RFC 8785 consent-binding vector now lives at `schemas/test-vectors/consent-binding-v1.json` in both repositories and is checked by both Python contract validators. Still required before any remote worker execution: cross-language Ed25519 signing/verification vectors; Rust/schema parity tests; sender/organisation/worker key enrollment and revocation; durable transactional replay; authenticated transport; atomic consent/policy/lease admission; OS-enforced isolation and egress; signed receipts and exact output verification; crash, timeout, cancellation and rollback recovery. No transport or remote execution is enabled by this RFC.
+
+
+## Implementation status and ordered compatibility gates (2026-11-11)
+
+- The task-contract v1 schema, model-runtime inventory v1 schema, shared fixtures and Python validators are present in both repositories. The matching fixture/validator blobs are byte-identical; this does not make the products runtime-dependent on one another.
+- Public PR #218 now adds a native, side-effect-free Rust decoder for the v1 envelope, status and receipt messages, including consent-binding JCS, Ed25519 domain/key-ID verification, exact payload-byte verification, dual-consent status checks and a monotonic-sequence comparison helper. Its exact-head CI is pending. It does not provide transport, durable replay storage, authenticated enrollment or dispatch.
+- Enterprise currently has the strict WorkloadManifest v1 and separate administrator/device-trust/ledger primitives plus the shared schema validator. It does not yet have a native decoder/verifier for the shared task envelope, status and receipt messages or an authenticated task-ingestion service.
+- There is deliberately no implicit conversion from Public peer protocol v2 or Enterprise WorkloadManifest v1 into the shared contract. The legacy formats lack fields such as a common sender/audience identity, shared privacy classification, consent references and interoperable receipt semantics. Missing trust or consent data must be supplied by authenticated policy context or the request must be rejected; it must never be fabricated.
+- **End-to-end interoperability is not complete.** The shared contract is an optional boundary specification and validation foundation only. Remote dispatch and worker execution remain disabled.
+
+Next gates, in order:
+
+1. Add an Enterprise-native v1 decoder/verifier and run the same cross-repository task/status/receipt vectors against both Rust implementations without introducing a shared runtime dependency.
+2. Bind sender, organisation audience, worker device and signing-key IDs to authenticated enrollment; atomically enforce user/admin/owner consent, nonce replay protection, monotonic status sequence and durable lease admission.
+3. Before any dispatch is enabled, verify exact payload bytes, bounded CPU/memory/runtime/output, cancellation acknowledgement, failure recovery and worker-signed receipts against the durable task/lease record.
