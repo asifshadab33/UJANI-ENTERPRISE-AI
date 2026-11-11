@@ -810,8 +810,7 @@ fn valid_inventory_evidence(evidence: &OperatorInventoryEvidence, now: u64) -> b
         "unknown",
     ]
     .contains(&evidence.source.as_str())
-        && ["verified", "reported", "estimated", "unknown"]
-            .contains(&evidence.confidence.as_str())
+        && ["verified", "reported", "estimated", "unknown"].contains(&evidence.confidence.as_str())
         && evidence.observed_at_unix_ms.map_or(true, |observed| {
             observed > 0
                 && observed <= now.saturating_add(CLOCK_SKEW_TOLERANCE_MS)
@@ -1151,9 +1150,9 @@ fn validate_overview(overview: &OperatorOverview, now: u64) -> Result<(), ()> {
                 || !["installed", "downloadable", "unavailable", "unknown"]
                     .contains(&model.availability.as_str())
                 || model.context_length_tokens == Some(0)
-                || model.estimated_min_memory_mb.is_some_and(|value| {
-                    value == 0 || value > MAX_MODEL_MEMORY_ESTIMATE_MB
-                })
+                || model
+                    .estimated_min_memory_mb
+                    .is_some_and(|value| value == 0 || value > MAX_MODEL_MEMORY_ESTIMATE_MB)
                 || model.capabilities.len() > 16
                 || model.capabilities.iter().collect::<HashSet<_>>().len()
                     != model.capabilities.len()
