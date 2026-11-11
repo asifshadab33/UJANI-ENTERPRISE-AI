@@ -557,6 +557,10 @@ fn validate_overview(overview: &OperatorOverview, now: u64) -> Result<(), ()> {
             || device.display_name.len() > 256
             || device.platform.is_empty()
             || device.platform.len() > 64
+            || device.trust_state.is_empty()
+            || device.trust_state.len() > 64
+            || device.availability.is_empty()
+            || device.availability.len() > 64
             || !ids.insert(device.device_id.as_str())
             || device.remaining_cpu_millis == Some(0)
             || device.remaining_memory_mb == Some(0)
@@ -738,6 +742,31 @@ mod tests {
         assert!(json.contains("\"remaining_memory_mb\":4096"));
         assert!(json.contains("Lab \\\"A\\\""));
         assert!(json.starts_with("{") && json.ends_with("}"));
+    }
+
+    #[test]
+    fn overview_rejects_empty_or_unbounded_device_state_labels() {
+        let mut overview = empty_overview("tenant-a");
+        overview.fleet.registered_devices = 1;
+        overview.devices.push(OperatorDeviceView {
+            device_id: "device-1".into(),
+            display_name: "Lab workstation".into(),
+            platform: "linux".into(),
+            trust_state: "enrolled".into(),
+            availability: "online".into(),
+            remaining_cpu_millis: Some(1000),
+            remaining_memory_mb: Some(2048),
+            last_seen_unix_ms: 10_100,
+        });
+        assert!(validate_overview(&overview, 10_100).is_ok());
+
+        overview.devices[0].trust_state = "t".repeat(65);
+        assert!(validate_overview(&overview, 10_100).is_err());
+        overview.devices[0].trust_state = "enrolled".into();
+        overview.devices[0].availability = String::new();
+        assert!(validate_overview(&overview, 10_100).is_err());
+        overview.devices[0].availability = "a".repeat(65);
+        assert!(validate_overview(&overview, 10_100).is_err());
     }
 
     #[test]
