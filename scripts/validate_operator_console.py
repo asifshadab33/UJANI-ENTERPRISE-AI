@@ -58,7 +58,7 @@ def main():
     assert "function validModelInventory" in js and "function validEvidence" in js, "Model inventory evidence must be structurally validated."
     assert "inventory.runtimes.length <= 16" in js and "inventory.models.length <= 512" in js, "Runtime/model inventory bounds are missing."
     assert "snapshotIsFresh(inventory.generated_at_unix_ms)" in js, "Model inventory snapshots must be fresh."
-    assert "rows.length < 5121" in js and "totalModels > 5120" in js, "Model row allocation must remain bounded."
+    assert "rows.length < 5120" in js and "totalModels > 5120" in js, "Model row allocation must remain bounded."
     assert "cell.colSpan = 9" in js, "Model inventory empty state must span all nine columns."
     assert "validEvidence(model.evidence)" in js and "snapshotIsFresh(evidenceAt)" in js, "Model evidence must expose confidence and freshness."
     assert "inventory.hardware.memory_available_mb" in js and "estimate fits" in js and "insufficient" in js, "Model RAM fit must be conservative and explicit."
