@@ -1183,13 +1183,7 @@ mod tests {
             claims,
         };
         let authenticated = store
-            .authenticate_request_for(
-                &signed,
-                "POST",
-                "worker-telemetry:admission",
-                body,
-                250,
-            )
+            .authenticate_request_for(&signed, "POST", "worker-telemetry:admission", body, 250)
             .unwrap();
         assert!(store
             .verifying_key_for_authenticated_request(&authenticated)
@@ -1210,10 +1204,12 @@ mod tests {
             old_device_signature: None,
             new_device_signature: None,
         };
-        rotate.old_device_signature =
-            Some(device.sign(&rotation_proof_bytes(&rotate)).to_bytes());
-        rotate.new_device_signature =
-            Some(replacement.sign(&enrollment_proof_bytes(&rotate)).to_bytes());
+        rotate.old_device_signature = Some(device.sign(&rotation_proof_bytes(&rotate)).to_bytes());
+        rotate.new_device_signature = Some(
+            replacement
+                .sign(&enrollment_proof_bytes(&rotate))
+                .to_bytes(),
+        );
         rotate.signature = admin.sign(&admin_command_bytes(&rotate)).to_bytes();
         assert_eq!(store.apply_admin_command(&rotate, 350), Ok(2));
 
