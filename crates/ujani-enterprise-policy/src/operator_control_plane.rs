@@ -308,10 +308,7 @@ impl Drop for OperatorSessionKeyRing {
 /// provider can implement this without exporting HMAC key material to UJANI.
 pub trait OperatorSessionMacProvider: Send + Sync {
     /// Sign with the active key and return its public, non-secret key identifier.
-    fn sign_active(
-        &self,
-        payload: &[u8],
-    ) -> Result<(String, Vec<u8>), OperatorAuthError>;
+    fn sign_active(&self, payload: &[u8]) -> Result<(String, Vec<u8>), OperatorAuthError>;
 
     /// Verify with the identified active/overlap key; revoked or unknown IDs fail closed.
     fn verify(
@@ -323,7 +320,8 @@ pub trait OperatorSessionMacProvider: Send + Sync {
 }
 
 fn operator_session_mac_input(key_id: &str, payload: &[u8]) -> Vec<u8> {
-    let mut input = Vec::with_capacity(SESSION_KEYRING_DOMAIN.len() + key_id.len() + 1 + payload.len());
+    let mut input =
+        Vec::with_capacity(SESSION_KEYRING_DOMAIN.len() + key_id.len() + 1 + payload.len());
     input.extend_from_slice(SESSION_KEYRING_DOMAIN);
     input.extend_from_slice(key_id.as_bytes());
     input.push(0);
@@ -352,7 +350,12 @@ impl<P: OperatorSessionMacProvider> OperatorSessionProviderVerifier<P> {
         if !valid_identifier(&key_id, 128) || key_id.contains('.') || signature.len() != 32 {
             return Err(OperatorAuthError::InvalidClaims);
         }
-        Ok(format!("{}.{}.{}", key_id, hex_encode(&payload), hex_encode(&signature)))
+        Ok(format!(
+            "{}.{}.{}",
+            key_id,
+            hex_encode(&payload),
+            hex_encode(&signature)
+        ))
     }
 
     pub fn authenticate(
@@ -686,10 +689,7 @@ pub trait OperatorSessionVerifier: Send + Sync {
     ) -> Result<OperatorSessionClaims, OperatorAuthError>;
 }
 impl OperatorSessionMacProvider for OperatorSessionKeyRing {
-    fn sign_active(
-        &self,
-        payload: &[u8],
-    ) -> Result<(String, Vec<u8>), OperatorAuthError> {
+    fn sign_active(&self, payload: &[u8]) -> Result<(String, Vec<u8>), OperatorAuthError> {
         let key_id = self.active_key_id.clone();
         let key = self
             .keys
@@ -707,7 +707,10 @@ impl OperatorSessionMacProvider for OperatorSessionKeyRing {
         payload: &[u8],
         signature: &[u8],
     ) -> Result<(), OperatorAuthError> {
-        let key = self.keys.get(key_id).ok_or(OperatorAuthError::UnknownKeyId)?;
+        let key = self
+            .keys
+            .get(key_id)
+            .ok_or(OperatorAuthError::UnknownKeyId)?;
         let message = operator_session_mac_input(key_id, payload);
         let mut mac = HmacSha256::new_from_slice(key).map_err(|_| OperatorAuthError::InvalidKey)?;
         mac.update(&message);
@@ -1002,11 +1005,9 @@ mod tests {
 
     #[test]
     fn provider_verifier_supports_customer_managed_non_exportable_key_adapters() {
-        let old_provider = OperatorSessionKeyRing::new(
-            "session-old",
-            vec![("session-old".into(), [11; 32])],
-        )
-        .unwrap();
+        let old_provider =
+            OperatorSessionKeyRing::new("session-old", vec![("session-old".into(), [11; 32])])
+                .unwrap();
         let old_verifier = OperatorSessionProviderVerifier::new(old_provider);
         let token = old_verifier
             .mint_after_identity_verification(&claims("tenant-a"), 10_000)
