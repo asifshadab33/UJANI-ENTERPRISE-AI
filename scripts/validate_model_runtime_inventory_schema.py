@@ -11,6 +11,7 @@ SCHEMA_PATH = Path(__file__).resolve().parents[1] / "schemas/model-runtime-inven
 
 
 def main() -> None:
+    """Validate the model-runtime inventory schema and its bounded fixtures."""
     schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
     assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
     assert schema["$id"] == "urn:ujani:model-runtime-inventory:v1"
