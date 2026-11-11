@@ -732,7 +732,7 @@ fn valid_bounded_text(value: &str, max: usize) -> bool {
 fn valid_inventory_evidence(evidence: &OperatorInventoryEvidence, now: u64) -> bool {
     ["runtime_api", "os_api", "runtime_metadata", "signed_catalogue", "published_catalogue", "estimate", "unknown"].contains(&evidence.source.as_str())
         && ["verified", "reported", "estimated", "unknown"].contains(&evidence.confidence.as_str())
-        && evidence.observed_at_unix_ms.is_none_or(|observed| observed > 0 && observed <= now.saturating_add(CLOCK_SKEW_TOLERANCE_MS))
+        && evidence.observed_at_unix_ms.map_or(true, |observed| observed > 0 && observed <= now.saturating_add(CLOCK_SKEW_TOLERANCE_MS))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1069,6 +1069,43 @@ mod tests {
             model_inventory: vec![],
         }
     }
+
+    fn sample_model_inventory(device_id: &str, generated_at_unix_ms: u64) -> OperatorModelInventoryView {
+        let evidence = OperatorInventoryEvidence {
+            source: "runtime_metadata".into(),
+            confidence: "reported".into(),
+            observed_at_unix_ms: Some(generated_at_unix_ms),
+        };
+        OperatorModelInventoryView {
+            device_id: device_id.into(),
+            generated_at_unix_ms,
+            hardware: OperatorModelInventoryHardware {
+                memory_available_mb: Some(4096),
+            },
+            runtimes: vec![OperatorModelRuntimeView {
+                runtime_id: "ollama.local".into(),
+                provider: "Ollama".into(),
+                version: Some("0.5.12".into()),
+                availability: "available".into(),
+                network_scope: "loopback_only".into(),
+                evidence: evidence.clone(),
+            }],
+            models: vec![OperatorModelView {
+                model_ref: "llama3.2:latest".into(),
+                runtime_id: "ollama.local".into(),
+                display_name: "llama3.2:latest".into(),
+                family: Some("llama".into()),
+                version: None,
+                availability: "installed".into(),
+                size_bytes: Some(1_000_000),
+                context_length_tokens: Some(8192),
+                estimated_min_memory_mb: Some(1536),
+                capabilities: vec!["chat".into()],
+                evidence,
+            }],
+        }
+    }
+
     struct TestRepo {
         values: Mutex<HashMap<String, OperatorOverview>>,
     }
@@ -1295,6 +1332,7 @@ mod tests {
         assert!(json.contains("\"remaining_memory_mb\":4096"));
         assert!(json.contains("Lab \\\"A\\\""));
         assert!(json.starts_with("{") && json.ends_with("}"));
+        assert!(json.contains("\"model_inventory\":[]"));
     }
 
     #[test]
@@ -1328,6 +1366,72 @@ mod tests {
         overview.fleet.schedulable_devices = 1;
         assert!(validate_overview(&overview, 10_100).is_err());
     }
+
+    #[test]
+    fn model_inventory_api_serializes_only_bounded_runtime_evidence() {
+        let mut overview = empty_overview("tenant-a");
+        overview.devices.push(OperatorDeviceView {
+            device_id: "device-1".into(),
+            display_name: "Lab workstation".into(),
+            platform: "linux".into(),
+            trust_state: "enrolled".into(),
+            availability: "schedulable".into(),
+            remaining_cpu_millis: Some(1500),
+            remaining_memory_mb: Some(4096),
+            last_seen_unix_ms: 10_100,
+        });
+        overview.fleet = OperatorFleetCounts {
+            registered_devices: 1,
+            trusted_consented_devices: 1,
+            online_fresh_devices: 1,
+            schedulable_devices: 1,
+        };
+        overview.model_inventory.push(sample_model_inventory("device-1", 10_100));
+        assert!(validate_overview(&overview, 10_100).is_ok());
+        let json = overview.to_json();
+        assert!(json.contains("\"model_inventory\":[{"));
+        assert!(json.contains("\"device_id\":\"device-1\""));
+        assert!(json.contains("\"model_ref\":\"llama3.2:latest\""));
+        assert!(json.contains("\"memory_available_mb\":4096"));
+        assert!(json.contains("\"capabilities\":[\"chat\"]"));
+    }
+
+    #[test]
+    fn model_inventory_rejects_foreign_stale_and_unverified_records() {
+        let mut overview = empty_overview("tenant-a");
+        overview.devices.push(OperatorDeviceView {
+            device_id: "device-1".into(),
+            display_name: "Lab workstation".into(),
+            platform: "linux".into(),
+            trust_state: "enrolled".into(),
+            availability: "schedulable".into(),
+            remaining_cpu_millis: Some(1500),
+            remaining_memory_mb: Some(4096),
+            last_seen_unix_ms: 10_100,
+        });
+        overview.fleet = OperatorFleetCounts {
+            registered_devices: 1,
+            trusted_consented_devices: 1,
+            online_fresh_devices: 1,
+            schedulable_devices: 1,
+        };
+
+        overview.model_inventory.push(sample_model_inventory("other-tenant-device", 10_100));
+        assert!(validate_overview(&overview, 10_100).is_err());
+
+        overview.model_inventory.clear();
+        let mut stale = sample_model_inventory("device-1", 1);
+        overview.model_inventory.push(stale.clone());
+        overview.generated_at_unix_ms = 100_000;
+        assert!(validate_overview(&overview, 100_000).is_err());
+
+        overview.model_inventory.clear();
+        stale = sample_model_inventory("device-1", 100_000);
+        stale.models[0].capabilities = vec!["execute_shell".into()];
+        overview.model_inventory.push(stale);
+        assert!(validate_overview(&overview, 100_000).is_err());
+    }
+
     #[test]
     fn audit_failure_fails_closed() {
         let auth = auth();
