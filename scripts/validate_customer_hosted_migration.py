@@ -40,6 +40,8 @@ def main() -> None:
     for privilege in ("INSERT", "UPDATE", "DELETE"):
         if f"has_table_privilege(current_user, 'ujani_control.tenants', '{privilege}')" not in test_sql:
             raise SystemExit(f"PostgreSQL test must verify runtime tenant-registry {privilege} privilege is absent")
+    if "GET DIAGNOSTICS affected_rows = ROW_COUNT;" in test_sql and "affected_rows bigint;" not in test_sql:
+        raise SystemExit("PostgreSQL isolation test reads affected_rows without declaring it")
     print("Customer-hosted migration static checks passed.")
 
 
