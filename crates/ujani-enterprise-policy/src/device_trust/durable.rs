@@ -872,9 +872,10 @@ mod tests {
 
         let admin = SigningKey::from_bytes(&[7; 32]);
         let registry_path = alias_parent.join("registry.db");
+        let canonical_parent = fs::canonicalize(&real_parent).unwrap();
         let store = open(&registry_path, &admin);
-        assert_eq!(store.path, real_parent.join("registry.db"));
-        assert_eq!(store.lock_path, real_parent.join("registry.db.lock"));
+        assert_eq!(store.path, canonical_parent.join("registry.db"));
+        assert_eq!(store.lock_path, canonical_parent.join("registry.db.lock"));
         drop(store);
 
         assert!(real_parent.join("registry.db").is_file());
