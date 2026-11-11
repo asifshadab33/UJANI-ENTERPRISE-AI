@@ -1046,7 +1046,6 @@ mod tests {
     }
 }
 
-
 // Negative vectors ensure key selection and every token component are authenticated.
 #[cfg(test)]
 mod session_keyring_negative_tests {
@@ -1070,13 +1069,16 @@ mod session_keyring_negative_tests {
                 ("key-old".into(), [0x31; 32]),
                 ("key-new".into(), [0xA5; 32]),
             ],
-        ).unwrap()
+        )
+            .unwrap()
     }
 
     #[test]
     fn keyring_binds_key_id_payload_and_signature() {
         let keyring = ring();
-        let token = keyring.mint_after_identity_verification(&claims(), 10_100).unwrap();
+        let token = keyring
+            .mint_after_identity_verification(&claims(), 10_100)
+            .unwrap();
         let parts: Vec<&str> = token.split('.').collect();
         assert_eq!(parts.len(), 3);
 
@@ -1119,7 +1121,8 @@ mod session_keyring_negative_tests {
     #[test]
     fn keyring_rejects_ambiguous_ids_and_excessive_overlap() {
         assert_eq!(
-            OperatorSessionKeyRing::new("key.with.dot", vec![("key.with.dot".into(), [1; 32])]).err(),
+            OperatorSessionKeyRing::new("key.with.dot", vec![("key.with.dot".into(), [1; 32])])
+                .err(),
             Some(OperatorAuthError::InvalidClaims)
         );
         assert_eq!(
@@ -1132,7 +1135,8 @@ mod session_keyring_negative_tests {
                     ("key-4".into(), [4; 32]),
                     ("key-5".into(), [5; 32]),
                 ],
-            ).err(),
+            )
+                .err(),
             Some(OperatorAuthError::InvalidClaims)
         );
         assert!(OperatorSessionKeyRing::new(
@@ -1143,7 +1147,8 @@ mod session_keyring_negative_tests {
                 ("key-3".into(), [3; 32]),
                 ("key-4".into(), [4; 32]),
             ],
-        ).is_ok());
+        )
+            .is_ok());
     }
 
     #[test]
