@@ -44,6 +44,8 @@ jobs:
         run: python scripts/validate_personal_enterprise_task_contract.py
       - name: Validate read-only operator console
         run: python scripts/validate_operator_console.py
+      - name: Validate customer-hosted tenant database migration
+        run: python scripts/validate_customer_hosted_migration.py
       - name: Check operator console JavaScript syntax
         run: node --check apps/operator-console/app.js
       - name: Test local read-only network log adapters
