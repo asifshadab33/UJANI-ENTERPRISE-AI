@@ -77,3 +77,6 @@ Next gates, in order:
 ### Model inventory v1 limits and future adapter extension
 
 Model/runtime inventory v1 reports host platform and observed hardware/accelerators, runtime identity/version/network scope, model identity/version/size/context, declared task capabilities, bounded memory estimates and model-level evidence source/confidence/freshness. It does not yet express per-capability provenance or model-specific supported-platform/accelerator constraints. Neither product may infer those facts from a provider name, model family or catalogue label. Unknown or unsupported runtime metadata stays unknown. A future inventory schema v2 may add per-capability evidence and explicit model platform/accelerator compatibility constraints; each runtime adapter must populate them only from a documented runtime API, OS observation or appropriately trusted catalogue source. Different runtimes must remain separate least-privilege adapters rather than being treated as behaviourally interchangeable.
+
+
+Both products must retain strict raw-JSON duplicate-key rejection tests for task envelopes, task-status messages and execution receipts; schema parity or schema-validator fixtures do not satisfy this parser-level gate. These tests are required before any remote worker execution.
