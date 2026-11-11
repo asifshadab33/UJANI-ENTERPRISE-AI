@@ -68,6 +68,14 @@ function renderList(id, records, emptyText, detailKeys) {
 }
 const MAX_OVERVIEW_RESPONSE_BYTES = 8 * 1024 * 1024;
 const OVERVIEW_RESPONSE_LIMIT_LABEL = `${MAX_OVERVIEW_RESPONSE_BYTES / (1024 * 1024)} MiB`;
+const MAX_OVERVIEW_SNAPSHOT_AGE_MS = 5 * 60 * 1000;
+const MAX_OVERVIEW_CLOCK_SKEW_MS = 60 * 1000;
+
+function snapshotIsFresh(generatedAtUnixMs, now = Date.now()) {
+  if (!Number.isSafeInteger(generatedAtUnixMs) || generatedAtUnixMs <= 0) return false;
+  const age = now - generatedAtUnixMs;
+  return age >= -MAX_OVERVIEW_CLOCK_SKEW_MS && age <= MAX_OVERVIEW_SNAPSHOT_AGE_MS;
+}
 
 async function readBoundedJson(response) {
   const contentType = response.headers.get("content-type") || "";
@@ -134,6 +142,9 @@ function validOverview(data) {
 }
 function renderOverview(data) {
   if (!validOverview(data)) throw new Error("The control plane returned an unsupported or incomplete overview schema.");
+  if (!snapshotIsFresh(data.generated_at_unix_ms)) {
+    throw new Error("The control plane overview is stale or has an invalid timestamp. Refresh after the service publishes a fresh snapshot.");
+  }
   byId("registered").textContent = data.fleet.registered_devices.toLocaleString();
   byId("trusted").textContent = data.fleet.trusted_consented_devices.toLocaleString();
   byId("online").textContent = data.fleet.online_fresh_devices.toLocaleString();

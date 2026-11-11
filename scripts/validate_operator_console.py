@@ -49,6 +49,8 @@ def main():
     assert "content-length" in js and "reader.read()" in js and "reader.cancel()" in js, "Response stream must enforce declared and observed byte limits."
     assert "data.devices.length <= 10000" in js and "data.workloads.length <= 1000" in js and "data.approvals.length <= 1000" in js, "Overview collections must match backend bounds."
     assert "counts.schedulable_devices <= counts.online_fresh_devices" in js, "Fleet counts must be internally consistent."
+    assert "MAX_OVERVIEW_SNAPSHOT_AGE_MS = 5 * 60 * 1000" in js, "Fleet snapshots must have a bounded freshness window."
+    assert "MAX_OVERVIEW_CLOCK_SKEW_MS = 60 * 1000" in js and "snapshotIsFresh(data.generated_at_unix_ms)" in js, "Future or stale snapshots must not appear live."
     assert "No sample data is shown" in js and "No live device inventory" in html, "Missing no-demo-data fallback."
     assert "frame-ancestors" not in html, "Frame denial must be delivered as a server response header, not a meta policy."
     assert "schedulable_devices" in js and "remaining_memory_mb" in js, "Capacity fields missing."
