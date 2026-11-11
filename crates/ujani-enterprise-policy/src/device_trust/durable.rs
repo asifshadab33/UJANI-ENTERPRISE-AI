@@ -11,7 +11,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-const HEADER: &str = "UJANI-DEVICE-TRUST-V1";
+const HEADER_V1: &str = "UJANI-DEVICE-TRUST-V1";
+const HEADER: &str = "UJANI-DEVICE-TRUST-V2";
 const DOMAIN: &[u8] = b"UJANI-DEVICE-TRUST-HMAC-SHA256-V1\0";
 const MAX_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_RECORDS: usize = MAX_REPLAY_ENTRIES;
@@ -273,6 +274,15 @@ impl DurableDeviceRegistry {
         })
     }
 
+    /// Persist an explicit owner opt-in or opt-out signed by the active device key.
+    pub fn apply_owner_consent(
+        &self,
+        command: &SignedOwnerConsentCommand,
+        now: u64,
+    ) -> Result<u64, DurableDeviceTrustError> {
+        self.transact(|registry| registry.apply_owner_consent(command, now).map_err(Into::into))
+    }
+
     /// Authenticates only when the signed method/resource match the server-selected route.
     ///
     /// A route mismatch does not consume the durable replay nonce.
@@ -291,14 +301,12 @@ impl DurableDeviceRegistry {
         })
     }
 
-    /// Re-read the current durable trust record and return its active public key
-    /// only while the authenticated request still matches the enrolled tenant,
-    /// key ID, and generation. This closes a rotation/revocation gap between
-    /// request authentication and verification of a separately signed evidence body.
-    pub fn verifying_key_for_authenticated_request(
+    /// Re-read the current durable trust record and consent state after request
+    /// authentication. Both values are checked against the exact active key generation.
+    pub fn authenticated_device_status_for_request(
         &self,
         authenticated: &AuthenticatedDeviceRequest,
-    ) -> Result<VerifyingKey, DurableDeviceTrustError> {
+    ) -> Result<(VerifyingKey, bool), DurableDeviceTrustError> {
         self.transact(|registry| {
             let record = registry
                 .devices
@@ -315,8 +323,20 @@ impl DurableDeviceRegistry {
             {
                 return Err(DeviceTrustError::StaleKeyGeneration.into());
             }
-            Ok(record.key)
+            let owner_opted_in = record.owner_opted_in
+                && record.owner_consent_generation == record.generation
+                && record.owner_consent_revision > 0;
+            Ok((record.key, owner_opted_in))
         })
+    }
+
+    /// Compatibility accessor for callers that need only the active public key.
+    pub fn verifying_key_for_authenticated_request(
+        &self,
+        authenticated: &AuthenticatedDeviceRequest,
+    ) -> Result<VerifyingKey, DurableDeviceTrustError> {
+        self.authenticated_device_status_for_request(authenticated)
+            .map(|(key, _)| key)
     }
 
     /// Authenticates a device request and durably records its replay nonce.
@@ -568,7 +588,7 @@ fn encode_snapshot(r: &DeviceRegistry, key_id: &str, key: &[u8; 32]) -> Vec<u8> 
     for id in ids {
         let d = r.devices.get(id).expect("key came from map");
         body.push_str(&format!(
-            "D|{}|{}|{}|{}|{}|{}\n",
+            "D|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}\n",
             hex(id.as_bytes()),
             hex(d.tenant_id.as_bytes()),
             if d.state == DeviceTrustState::Enrolled {
@@ -578,7 +598,11 @@ fn encode_snapshot(r: &DeviceRegistry, key_id: &str, key: &[u8; 32]) -> Vec<u8> 
             },
             hex(d.key_id.as_bytes()),
             hex(&d.key.to_bytes()),
-            d.generation
+            d.generation,
+            u8::from(d.owner_opted_in),
+            d.owner_consent_revision,
+            d.owner_consent_generation,
+            d.owner_consent_updated_at_unix_ms
         ));
     }
     let mut admins = r.admin_nonces.iter().collect::<Vec<_>>();
@@ -630,9 +654,11 @@ fn decode_snapshot(
     let mut registry = DeviceRegistry::new(admin_keys.to_vec())?;
     let mut records = 0usize;
     let mut lines = body.lines();
-    if lines.next() != Some(HEADER) {
-        return Err(DurableDeviceTrustError::CorruptState);
-    }
+    let version = match lines.next() {
+        Some(HEADER_V1) => 1,
+        Some(HEADER) => 2,
+        _ => return Err(DurableDeviceTrustError::CorruptState),
+    };
     for line in lines {
         let p = line.split('|').collect::<Vec<_>>();
         records += 1;
@@ -640,7 +666,9 @@ fn decode_snapshot(
             return Err(DurableDeviceTrustError::CapacityExceeded);
         }
         match p.first().copied() {
-            Some("D") if p.len() == 7 => {
+            Some("D")
+                if (version == 1 && p.len() == 7) || (version == 2 && p.len() == 11) =>
+            {
                 let id = String::from_utf8(unhex(p[1])?)
                     .map_err(|_| DurableDeviceTrustError::CorruptState)?;
                 let tenant = String::from_utf8(unhex(p[2])?)
@@ -665,6 +693,34 @@ fn decode_snapshot(
                 {
                     return Err(DurableDeviceTrustError::CorruptState);
                 }
+                let (owner_opted_in, owner_consent_revision, owner_consent_generation, owner_consent_updated_at_unix_ms) =
+                    if version == 2 {
+                        let opted_in = match p[7] {
+                            "0" => false,
+                            "1" => true,
+                            _ => return Err(DurableDeviceTrustError::CorruptState),
+                        };
+                        let revision = p[8]
+                            .parse::<u64>()
+                            .map_err(|_| DurableDeviceTrustError::CorruptState)?;
+                        let consent_generation = p[9]
+                            .parse::<u64>()
+                            .map_err(|_| DurableDeviceTrustError::CorruptState)?;
+                        let updated_at = p[10]
+                            .parse::<u64>()
+                            .map_err(|_| DurableDeviceTrustError::CorruptState)?;
+                        if (revision == 0
+                            && (opted_in || consent_generation != 0 || updated_at != 0))
+                            || (revision > 0
+                                && (state != DeviceTrustState::Enrolled
+                                    || consent_generation != generation))
+                        {
+                            return Err(DurableDeviceTrustError::CorruptState);
+                        }
+                        (opted_in, revision, consent_generation, updated_at)
+                    } else {
+                        (false, 0, 0, 0)
+                    };
                 let vk = VerifyingKey::from_bytes(&pubkey)
                     .map_err(|_| DurableDeviceTrustError::CorruptState)?;
                 if registry
@@ -677,6 +733,10 @@ fn decode_snapshot(
                             key_id,
                             key: vk,
                             generation,
+                            owner_opted_in,
+                            owner_consent_revision,
+                            owner_consent_generation,
+                            owner_consent_updated_at_unix_ms,
                         },
                     )
                     .is_some()
