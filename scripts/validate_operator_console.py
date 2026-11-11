@@ -66,7 +66,19 @@ def main():
     assert "renderModelInventory(data.model_inventory)" in js, "Authenticated model inventory must be rendered."
     assert "prompts, model contents and local file paths are never displayed" in html.lower(), "Model inventory privacy boundary must be visible."
     assert "overflow" in css or "overflow-x" in css, "Responsive table overflow handling missing."
-    print("Operator console static security/contract checks passed.")
+    control_plane = (ROOT / "crates" / "ujani-enterprise-policy" / "src" / "operator_control_plane.rs").read_text(encoding="utf-8")
+    for required in (
+        "pub model_inventory: Vec<OperatorModelInventoryView>",
+        "fn json_model_inventory(",
+        "fn valid_inventory_evidence(",
+        "inventory.generated_at_unix_ms",
+        "inventory.runtimes.len() > 16",
+        "inventory.models.len() > 512",
+        "inventory_devices.insert(inventory.device_id.as_str())",
+    ):
+        if required not in control_plane:
+            raise SystemExit(f"operator API model inventory contract is missing: {required}")
+    print("Operator console and model inventory API static security/contract checks passed.")
 
 if __name__ == "__main__":
     main()
