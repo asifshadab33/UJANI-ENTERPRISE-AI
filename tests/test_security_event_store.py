@@ -39,6 +39,21 @@ class SecurityEventStoreTests(unittest.TestCase):
             SecurityEventStore(link)
         self.assertFalse(target.exists())
 
+    @unittest.skipIf(os.name == "nt", "directory symlink creation may require elevated Windows privileges")
+    def test_pins_database_path_to_canonical_parent(self):
+        root = Path(self.temp.name)
+        real_parent = root / "real"
+        alias_parent = root / "alias"
+        real_parent.mkdir()
+        alias_parent.symlink_to(real_parent, target_is_directory=True)
+
+        store = SecurityEventStore(alias_parent / "events.sqlite3")
+        try:
+            self.assertEqual(Path(store.database), real_parent / "events.sqlite3")
+        finally:
+            store.close()
+        self.assertTrue((real_parent / "events.sqlite3").is_file())
+
     def test_ingest_search_and_tenant_isolation(self):
         self.assertEqual(self.store.ingest([event()], tenant_id="tenant-a", provider_id="zeek", now_ms=2000), 1)
         self.assertEqual(len(self.store.search(tenant_id="tenant-a", provider_id="zeek")), 1)
