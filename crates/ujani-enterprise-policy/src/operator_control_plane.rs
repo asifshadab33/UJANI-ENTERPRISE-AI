@@ -17,7 +17,7 @@ use zeroize::Zeroize;
 type HmacSha256 = Hmac<Sha256>;
 const SESSION_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-OPERATOR-SESSION-V1\0";
 pub const OPERATOR_SESSION_MAX_TTL_MS: u64 = 15 * 60 * 1000;
-const SESSION_KEYRING_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-OPERATOR-SESSION-KEYRING-V1\\0";
+const SESSION_KEYRING_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-OPERATOR-SESSION-KEYRING-V1\0";
 const CLOCK_SKEW_TOLERANCE_MS: u64 = 30_000;
 const MAX_OVERVIEW_AGE_MS: u64 = 60_000;
 const MAX_DEVICES: usize = 10_000;
@@ -317,7 +317,7 @@ impl OperatorSessionKeyRing {
         }
         let mut indexed = HashMap::with_capacity(keys.len());
         for (key_id, key) in keys {
-            if !valid_identifier(&key_id, 128) || indexed.insert(key_id, key).is_some() {
+            if !valid_identifier(&key_id, 128) || key_id.contains('.') || indexed.insert(key_id, key).is_some() {
                 return Err(OperatorAuthError::InvalidClaims);
             }
         }
@@ -564,12 +564,33 @@ pub enum OperatorServiceError {
     InvalidOverview,
     AuditUnavailable,
 }
-pub struct OperatorControlPlane<R, A> {
-    authenticator: OperatorSessionAuthenticator,
+
+/// Verifies an operator session issued only after trusted identity-provider validation.
+/// Implementations must reject expired sessions and unknown/revoked signing keys.
+pub trait OperatorSessionVerifier: Send + Sync {
+    fn verify_session(
+        &self,
+        token: &str,
+        now_unix_ms: u64,
+    ) -> Result<OperatorSessionClaims, OperatorAuthError>;
+}
+impl OperatorSessionVerifier for OperatorSessionAuthenticator {
+    fn verify_session(&self, token: &str, now_unix_ms: u64) -> Result<OperatorSessionClaims, OperatorAuthError> {
+        self.authenticate(token, now_unix_ms)
+    }
+}
+impl OperatorSessionVerifier for OperatorSessionKeyRing {
+    fn verify_session(&self, token: &str, now_unix_ms: u64) -> Result<OperatorSessionClaims, OperatorAuthError> {
+        self.authenticate(token, now_unix_ms)
+    }
+}
+
+pub struct OperatorControlPlane<V, R, A> {
+    authenticator: V,
     repository: Arc<R>,
     audit: Arc<A>,
 }
-impl<R: OperatorOverviewRepository, A: OperatorAuditSink> OperatorControlPlane<R, A> {
+impl<V: OperatorSessionVerifier, R: OperatorOverviewRepository, A: OperatorAuditSink> OperatorControlPlane<V, R, A> {
     pub fn new(
         authenticator: OperatorSessionAuthenticator,
         repository: Arc<R>,
@@ -591,7 +612,7 @@ impl<R: OperatorOverviewRepository, A: OperatorAuditSink> OperatorControlPlane<R
     ) -> Result<OperatorOverview, OperatorServiceError> {
         let claims = self
             .authenticator
-            .authenticate(session_token, now_unix_ms)
+            .verify_session(session_token, now_unix_ms)
             .map_err(|_| OperatorServiceError::Unauthorized)?;
         let overview = match self
             .repository
