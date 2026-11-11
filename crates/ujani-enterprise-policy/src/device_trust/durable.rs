@@ -1011,7 +1011,9 @@ mod tests {
         assert!(reopened.tenant_device_summaries("tenant-a").unwrap()[0].owner_opted_in);
         assert_eq!(
             reopened.apply_owner_consent(&opt_in, 225),
-            Err(DurableDeviceTrustError::Trust(DeviceTrustError::ReplayDetected))
+            Err(DurableDeviceTrustError::Trust(
+                DeviceTrustError::ReplayDetected
+            ))
         );
         let opt_out = owner_consent(&device, false, 2, 230, "owner-opt-out");
         assert_eq!(reopened.apply_owner_consent(&opt_out, 240), Ok(2));
@@ -1063,7 +1065,9 @@ mod tests {
         let old_key_consent = owner_consent(&device, true, 4, 310, "old-key-owner-consent");
         assert_eq!(
             reopened.apply_owner_consent(&old_key_consent, 320),
-            Err(DurableDeviceTrustError::Trust(DeviceTrustError::StaleKeyGeneration))
+            Err(DurableDeviceTrustError::Trust(
+                DeviceTrustError::StaleKeyGeneration
+            ))
         );
         drop(reopened);
         let _ = fs::remove_file(&path);
