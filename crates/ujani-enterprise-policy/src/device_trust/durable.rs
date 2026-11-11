@@ -851,11 +851,11 @@ mod tests {
         fs::write(&target, b"do not modify").unwrap();
 
         symlink(&target, &path).unwrap();
-        assert!(open(&path, &admin).is_err(), "primary snapshot symlink must be rejected");
+        assert!(DurableDeviceRegistry::open(&path, vec![("admin-v1".into(), admin.verifying_key())], DeviceTrustIntegrityKey::new("integrity-v1", [0x42; 32])).is_err(), "primary snapshot symlink must be rejected");
         fs::remove_file(&path).unwrap();
 
         symlink(&target, suffix(&path, ".lock")).unwrap();
-        assert!(open(&path, &admin).is_err(), "lock symlink must be rejected");
+        assert!(DurableDeviceRegistry::open(&path, vec![("admin-v1".into(), admin.verifying_key())], DeviceTrustIntegrityKey::new("integrity-v1", [0x42; 32])).is_err(), "lock symlink must be rejected");
         fs::remove_file(suffix(&path, ".lock")).unwrap();
 
         symlink(&target, suffix(&path, ".tmp")).unwrap();
