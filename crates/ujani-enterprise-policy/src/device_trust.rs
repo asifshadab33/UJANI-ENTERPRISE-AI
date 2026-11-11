@@ -548,7 +548,7 @@ fn put_string(out: &mut Vec<u8>, value: &str) {
     out.extend_from_slice(&(value.len() as u32).to_be_bytes());
     out.extend_from_slice(value.as_bytes());
 }
-fn admin_command_bytes(c: &SignedDeviceAdminCommand) -> Vec<u8> {
+pub(crate) fn admin_command_bytes(c: &SignedDeviceAdminCommand) -> Vec<u8> {
     let mut out = ADMIN_DOMAIN.to_vec();
     out.push(match c.action {
         DeviceCommandAction::Enroll => 1,
@@ -580,7 +580,7 @@ fn rotation_proof_bytes(c: &SignedDeviceAdminCommand) -> Vec<u8> {
     out.extend_from_slice(&admin_command_bytes(c));
     out
 }
-fn enrollment_proof_bytes(c: &SignedDeviceAdminCommand) -> Vec<u8> {
+pub(crate) fn enrollment_proof_bytes(c: &SignedDeviceAdminCommand) -> Vec<u8> {
     let mut out = ENROLLMENT_PROOF_DOMAIN.to_vec();
     out.extend_from_slice(&admin_command_bytes(c));
     out
@@ -595,7 +595,7 @@ fn verify_new_key_proof(
     key.verify_strict(&enrollment_proof_bytes(c), &Signature::from_bytes(&sig))
         .map_err(|_| DeviceTrustError::InvalidDeviceSignature)
 }
-fn device_request_bytes(c: &DeviceRequestClaims) -> Vec<u8> {
+pub(crate) fn device_request_bytes(c: &DeviceRequestClaims) -> Vec<u8> {
     let mut out = DEVICE_DOMAIN.to_vec();
     for v in [
         &c.tenant_id,
