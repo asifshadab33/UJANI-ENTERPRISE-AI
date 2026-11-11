@@ -75,60 +75,68 @@ function validEvidence(evidence) {
     && ["verified", "reported", "estimated", "unknown"].includes(evidence.confidence)
     && (evidence.observed_at_unix_ms === null || (Number.isSafeInteger(evidence.observed_at_unix_ms) && evidence.observed_at_unix_ms > 0));
 }
-function validModelInventory(inventories) {
-  if (inventories === undefined) return true;
-  if (!Array.isArray(inventories) || inventories.length > 10000) return false;
-  return inventories.every((inventory) => inventory
-    && inventory.schema_version === 1
-    && boundedString(inventory.device_id, 128)
-    && Number.isSafeInteger(inventory.generated_at_unix_ms) && inventory.generated_at_unix_ms > 0
-    && snapshotIsFresh(inventory.generated_at_unix_ms)
-    && inventory.platform && boundedString(inventory.platform.os, 32)
-    && (inventory.platform.os_version === null || inventory.platform.os_version === undefined || boundedString(inventory.platform.os_version, 64))
-    && boundedString(inventory.platform.architecture, 32)
-    && inventory.hardware
-    && (inventory.hardware.cpu_logical_cores === null || Number.isSafeInteger(inventory.hardware.cpu_logical_cores) && inventory.hardware.cpu_logical_cores > 0 && inventory.hardware.cpu_logical_cores <= 65535)
-    && (inventory.hardware.memory_total_mb === null || Number.isSafeInteger(inventory.hardware.memory_total_mb) && inventory.hardware.memory_total_mb > 0)
-    && (inventory.hardware.memory_available_mb === null || Number.isSafeInteger(inventory.hardware.memory_available_mb) && inventory.hardware.memory_available_mb >= 0)
-    && (inventory.hardware.memory_total_mb == null || inventory.hardware.memory_available_mb == null || inventory.hardware.memory_available_mb <= inventory.hardware.memory_total_mb)
-    && (inventory.hardware.storage_free_mb === null || inventory.hardware.storage_free_mb === undefined || Number.isSafeInteger(inventory.hardware.storage_free_mb) && inventory.hardware.storage_free_mb >= 0)
-    && Array.isArray(inventory.hardware.accelerators) && inventory.hardware.accelerators.length <= 32
-    && inventory.hardware.accelerators.every((item) => item
-      && ["gpu", "npu", "other"].includes(item.kind)
-      && (item.vendor === null || item.vendor === undefined || boundedString(item.vendor, 64))
-      && (item.device_family === null || item.device_family === undefined || boundedString(item.device_family, 96))
-      && (item.memory_mb === null || item.memory_mb === undefined || Number.isSafeInteger(item.memory_mb) && item.memory_mb >= 0)
-      && (item.runtime_api === null || item.runtime_api === undefined || boundedString(item.runtime_api, 64))
-      && validEvidence(item.evidence))
-    && (inventory.privacy === undefined || inventory.privacy && typeof inventory.privacy === "object" && !Array.isArray(inventory.privacy) && ["contains_prompts", "contains_user_files", "contains_local_paths", "contains_credentials"].every((key) => inventory.privacy[key] === undefined || inventory.privacy[key] === false))
-    && Array.isArray(inventory.runtimes) && inventory.runtimes.length <= 16
-    && inventory.runtimes.every((runtime) => runtime
-      && boundedString(runtime.runtime_id, 96) && boundedString(runtime.provider, 64)
-      && (runtime.version === null || boundedString(runtime.version, 64))
-      && ["available", "unavailable", "unknown"].includes(runtime.availability)
-      && ["loopback_only", "local_socket", "enterprise_internal", "not_applicable", "unknown"].includes(runtime.network_scope)
-      && validEvidence(runtime.evidence))
-    && Array.isArray(inventory.models) && inventory.models.length <= 512
-    && inventory.models.every((model) => model
-      && boundedString(model.model_ref, 160) && boundedString(model.runtime_id, 96)
-      && boundedString(model.display_name, 160)
-      && (model.family === null || model.family === undefined || boundedString(model.family, 96))
-      && (model.version === null || model.version === undefined || boundedString(model.version, 64))
-      && ["installed", "downloadable", "unavailable", "unknown"].includes(model.availability)
-      && (model.size_bytes === null || Number.isSafeInteger(model.size_bytes) && model.size_bytes >= 0)
-      && (model.context_length_tokens === null || model.context_length_tokens === undefined || Number.isSafeInteger(model.context_length_tokens) && model.context_length_tokens > 0)
-      && (model.estimated_min_memory_mb === null || model.estimated_min_memory_mb === undefined || Number.isSafeInteger(model.estimated_min_memory_mb) && model.estimated_min_memory_mb >= 0)
-      && Array.isArray(model.capabilities) && model.capabilities.length <= 16
-      && new Set(model.capabilities).size === model.capabilities.length
-      && model.capabilities.every((capability) => ["chat", "reasoning", "coding", "vision", "embeddings", "tool_use", "streaming", "audio_input", "audio_output", "unknown"].includes(capability))
-      && validEvidence(model.evidence)));
+function validModelInventory(entries) {
+  if (entries === undefined) return true;
+  if (!Array.isArray(entries) || entries.length > 10000) return false;
+  return entries.every((entry) => {
+    const inventory = entry && entry.inventory;
+    return entry && boundedString(entry.device_id, 128)
+      && inventory && inventory.schema_version === 1
+      && Number.isSafeInteger(inventory.generated_at_unix_ms) && inventory.generated_at_unix_ms > 0
+      && snapshotIsFresh(inventory.generated_at_unix_ms)
+      && inventory.platform && boundedString(inventory.platform.os, 32)
+      && (inventory.platform.os_version === null || inventory.platform.os_version === undefined || boundedString(inventory.platform.os_version, 64))
+      && boundedString(inventory.platform.architecture, 32)
+      && inventory.hardware
+      && (inventory.hardware.cpu_logical_cores === null || Number.isSafeInteger(inventory.hardware.cpu_logical_cores) && inventory.hardware.cpu_logical_cores > 0 && inventory.hardware.cpu_logical_cores <= 65535)
+      && (inventory.hardware.memory_total_mb === null || Number.isSafeInteger(inventory.hardware.memory_total_mb) && inventory.hardware.memory_total_mb > 0)
+      && (inventory.hardware.memory_available_mb === null || Number.isSafeInteger(inventory.hardware.memory_available_mb) && inventory.hardware.memory_available_mb >= 0)
+      && (inventory.hardware.memory_total_mb == null || inventory.hardware.memory_available_mb == null || inventory.hardware.memory_available_mb <= inventory.hardware.memory_total_mb)
+      && (inventory.hardware.storage_free_mb === null || inventory.hardware.storage_free_mb === undefined || Number.isSafeInteger(inventory.hardware.storage_free_mb) && inventory.hardware.storage_free_mb >= 0)
+      && Array.isArray(inventory.hardware.accelerators) && inventory.hardware.accelerators.length <= 32
+      && inventory.hardware.accelerators.every((item) => item
+        && ["gpu", "npu", "other"].includes(item.kind)
+        && (item.vendor === null || item.vendor === undefined || boundedString(item.vendor, 64))
+        && (item.device_family === null || item.device_family === undefined || boundedString(item.device_family, 96))
+        && (item.memory_mb === null || item.memory_mb === undefined || Number.isSafeInteger(item.memory_mb) && item.memory_mb >= 0)
+        && (item.runtime_api === null || item.runtime_api === undefined || boundedString(item.runtime_api, 64))
+        && validEvidence(item.evidence))
+      && (inventory.privacy === undefined || inventory.privacy && typeof inventory.privacy === "object" && !Array.isArray(inventory.privacy)
+        && Object.keys(inventory.privacy).every((key) => ["contains_prompts", "contains_user_files", "contains_local_paths", "contains_credentials"].includes(key))
+        && Object.values(inventory.privacy).every((value) => value === false))
+      && Array.isArray(inventory.runtimes) && inventory.runtimes.length <= 16
+      && inventory.runtimes.every((runtime) => runtime
+        && boundedString(runtime.runtime_id, 96) && boundedString(runtime.provider, 64)
+        && (runtime.version === null || boundedString(runtime.version, 64))
+        && ["available", "unavailable", "unknown"].includes(runtime.availability)
+        && ["loopback_only", "local_socket", "enterprise_internal", "not_applicable", "unknown"].includes(runtime.network_scope)
+        && validEvidence(runtime.evidence))
+      && new Set(inventory.runtimes.map((runtime) => runtime.runtime_id)).size === inventory.runtimes.length
+      && Array.isArray(inventory.models) && inventory.models.length <= 512
+      && inventory.models.every((model) => model
+        && boundedString(model.model_ref, 160) && boundedString(model.runtime_id, 96)
+        && boundedString(model.display_name, 160)
+        && (model.family === null || model.family === undefined || boundedString(model.family, 96))
+        && (model.version === null || model.version === undefined || boundedString(model.version, 64))
+        && ["installed", "downloadable", "unavailable", "unknown"].includes(model.availability)
+        && (model.size_bytes === null || Number.isSafeInteger(model.size_bytes) && model.size_bytes >= 0)
+        && (model.context_length_tokens === null || model.context_length_tokens === undefined || Number.isSafeInteger(model.context_length_tokens) && model.context_length_tokens > 0)
+        && (model.estimated_min_memory_mb === null || model.estimated_min_memory_mb === undefined || Number.isSafeInteger(model.estimated_min_memory_mb) && model.estimated_min_memory_mb >= 0)
+        && Array.isArray(model.capabilities) && model.capabilities.length <= 16
+        && new Set(model.capabilities).size === model.capabilities.length
+        && model.capabilities.every((capability) => ["chat", "reasoning", "coding", "vision", "embeddings", "tool_use", "streaming", "audio_input", "audio_output", "unknown"].includes(capability))
+        && validEvidence(model.evidence)
+        && inventory.runtimes.some((runtime) => runtime.runtime_id === model.runtime_id))
+      && new Set(inventory.models.map((model) => model.model_ref)).size === inventory.models.length;
+  });
 }
 function renderModelInventory(inventories) {
   const body = byId("model-inventory");
   body.replaceChildren();
   const rows = [];
   let totalModels = 0;
-  for (const inventory of inventories || []) {
+  for (const entry of inventories || []) {
+    const inventory = entry.inventory;
     for (const model of inventory.models) {
       totalModels += 1;
       if (rows.length < 5120) {
