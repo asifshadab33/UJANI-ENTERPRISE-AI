@@ -68,9 +68,9 @@ BEGIN
     OR p_observed_at > clock_timestamp() + interval '60 seconds'
     OR (p_cpu_available_millis IS NOT NULL AND p_cpu_available_millis NOT BETWEEN 0 AND 65535000)
     OR (p_memory_available_mb IS NOT NULL AND p_memory_available_mb NOT BETWEEN 0 AND 16777216)
-    OR p_thermal_state NOT IN ('cool','warm','hot','critical','unknown')
-    OR p_power_state NOT IN ('ac','battery','low_battery','unknown')
-    OR p_participation_state NOT IN ('idle','interactive','paused','disabled','unknown') THEN
+    OR p_thermal_state IS NULL OR p_thermal_state NOT IN ('cool','warm','hot','critical','unknown')
+    OR p_power_state IS NULL OR p_power_state NOT IN ('ac','battery','low_battery','unknown')
+    OR p_participation_state IS NULL OR p_participation_state NOT IN ('idle','interactive','paused','disabled','unknown') THEN
   RETURN false;
  END IF;
 
