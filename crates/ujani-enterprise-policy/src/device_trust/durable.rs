@@ -991,6 +991,10 @@ mod tests {
 
         let reopened = open(&path, &admin);
         assert!(reopened.tenant_device_summaries("tenant-a").unwrap()[0].owner_opted_in);
+        assert_eq!(
+            reopened.apply_owner_consent(&opt_in, 225),
+            Err(DurableDeviceTrustError::Trust(DeviceTrustError::ReplayDetected))
+        );
         let opt_out = owner_consent(&device, false, 2, 230, 3);
         assert_eq!(reopened.apply_owner_consent(&opt_out, 240), Ok(2));
         assert!(!reopened.tenant_device_summaries("tenant-a").unwrap()[0].owner_opted_in);
@@ -1008,6 +1012,40 @@ mod tests {
             Err(DurableDeviceTrustError::Trust(
                 DeviceTrustError::InvalidConsentRevision
             ))
+        );
+
+        let renewed_opt_in = owner_consent(&device, true, 3, 270, 6);
+        assert_eq!(reopened.apply_owner_consent(&renewed_opt_in, 280), Ok(3));
+        assert!(reopened.tenant_device_summaries("tenant-a").unwrap()[0].owner_opted_in);
+
+        let replacement = SigningKey::from_bytes(&[11; 32]);
+        let mut rotate = SignedDeviceAdminCommand {
+            action: DeviceCommandAction::RotateKey,
+            tenant_id: "tenant-a".into(),
+            device_id: "device-1".into(),
+            admin_key_id: "admin-v1".into(),
+            target_key_id: "device-key-v2".into(),
+            target_public_key: Some(replacement.verifying_key().to_bytes()),
+            issued_at_unix_ms: 290,
+            expires_at_unix_ms: 1_000,
+            nonce: [7; 16],
+            signature: [0; 64],
+            old_device_signature: None,
+            new_device_signature: None,
+        };
+        rotate.old_device_signature = Some(device.sign(&rotation_proof_bytes(&rotate)).to_bytes());
+        rotate.new_device_signature = Some(
+            replacement
+                .sign(&enrollment_proof_bytes(&rotate))
+                .to_bytes(),
+        );
+        rotate.signature = admin.sign(&admin_command_bytes(&rotate)).to_bytes();
+        reopened.apply_admin_command(&rotate, 300).unwrap();
+        assert!(!reopened.tenant_device_summaries("tenant-a").unwrap()[0].owner_opted_in);
+        let old_key_consent = owner_consent(&device, true, 4, 310, 8);
+        assert_eq!(
+            reopened.apply_owner_consent(&old_key_consent, 320),
+            Err(DurableDeviceTrustError::Trust(DeviceTrustError::StaleKeyGeneration))
         );
         drop(reopened);
         let _ = fs::remove_file(&path);
