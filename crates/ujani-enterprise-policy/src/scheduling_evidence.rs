@@ -440,7 +440,7 @@ pub fn authenticate_verify_and_reserve_worker_telemetry(
     approvals: &[VerifiedAdminApproval],
     now_unix_ms: u64,
     lease_token: &[u8; 32],
-) -> Result<Admission, AuthenticatedTelemetryAdmissionError> {
+) -> Result<(AuthenticatedDeviceRequest, Admission), AuthenticatedTelemetryAdmissionError> {
     if telemetry.claims.device_id.len() > 128
         || raw_body.len() > crate::device_trust::MAX_DEVICE_REQUEST_BODY_BYTES
     {
@@ -449,6 +449,17 @@ pub fn authenticate_verify_and_reserve_worker_telemetry(
     let canonical_body = canonical_worker_telemetry_body(&telemetry.claims);
     if raw_body != canonical_body.as_slice() {
         return Err(AuthenticatedTelemetryAdmissionError::RequestBodyMismatch);
+    }
+
+    // Reject obvious caller/record mismatches before consuming the durable
+    // request nonce. These untrusted claims are only a prefilter; the same
+    // bindings are checked again against the authenticated principal below.
+    if signed_request.claims.tenant_id != expected_tenant_id
+        || signed_request.claims.device_id != device.device_id
+        || signed_request.claims.workload_id != workload.workload_id
+        || signed_request.claims.manifest_sha256 != workload.manifest_sha256
+    {
+        return Err(AuthenticatedTelemetryAdmissionError::RequestBindingMismatch);
     }
 
     let authenticated: AuthenticatedDeviceRequest = registry
@@ -490,7 +501,7 @@ pub fn authenticate_verify_and_reserve_worker_telemetry(
     )
     .map_err(AuthenticatedTelemetryAdmissionError::SchedulingEvidence)?;
 
-    admit_and_reserve_durably_with_verified_lease(
+    let admission = admit_and_reserve_durably_with_verified_lease(
         ledger,
         device,
         workload,
@@ -505,7 +516,9 @@ pub fn authenticate_verify_and_reserve_worker_telemetry(
             AuthenticatedTelemetryAdmissionError::ReservationOutcomeUnknown
         }
         _ => AuthenticatedTelemetryAdmissionError::ReservationStoreUnavailable,
-    })
+    })?;
+
+    Ok((authenticated, admission))
 }
 
 fn capacity_rejection(
@@ -2184,26 +2197,30 @@ mod tests {
             Err(AuthenticatedTelemetryAdmissionError::RequestBodyMismatch)
         );
 
-        assert_eq!(
-            authenticate_verify_and_reserve_worker_telemetry(
-                &registry,
-                &ledger,
-                &request,
-                &body,
-                "tenant-a",
-                &device,
-                &workload,
-                &telemetry,
-                &policy,
-                &admin_keys,
-                &challenge,
-                &policies,
-                &[],
-                now + 2,
-                &lease_token,
-            ),
-            Ok(Admission::Accept)
-        );
+        let (authenticated, admission) = authenticate_verify_and_reserve_worker_telemetry(
+            &registry,
+            &ledger,
+            &request,
+            &body,
+            "tenant-a",
+            &device,
+            &workload,
+            &telemetry,
+            &policy,
+            &admin_keys,
+            &challenge,
+            &policies,
+            &[],
+            now + 2,
+            &lease_token,
+        )
+        .unwrap();
+        assert_eq!(admission, Admission::Accept);
+        assert_eq!(authenticated.tenant_id(), "tenant-a");
+        assert_eq!(authenticated.device_id(), "worker-01");
+        assert_eq!(authenticated.key_id(), "worker-key-01");
+        assert_eq!(authenticated.key_generation(), 1);
+        assert_eq!(authenticated.workload_id(), "job-01");
         assert_eq!(
             authenticate_verify_and_reserve_worker_telemetry(
                 &registry,
@@ -2280,7 +2297,8 @@ mod tests {
                 &[],
                 now + 2,
                 &lease_token,
-            ),
+            )
+            .map(|(_, admission)| admission),
             Ok(Admission::Reject(RejectReason::OwnerOptInMissing))
         );
 
@@ -2315,7 +2333,8 @@ mod tests {
                 &[],
                 now + 12,
                 &lease_token,
-            ),
+            )
+            .map(|(_, admission)| admission),
             Ok(Admission::Reject(RejectReason::OutsideAdminSchedule))
         );
 
