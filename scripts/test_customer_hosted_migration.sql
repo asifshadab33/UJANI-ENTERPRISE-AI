@@ -25,6 +25,7 @@ DO $$
 DECLARE
  visible_tenants integer;
  visible_devices integer;
+ affected_rows bigint;
  bypass_rls boolean;
 BEGIN
  SELECT count(*) INTO visible_tenants FROM ujani_control.tenants;
