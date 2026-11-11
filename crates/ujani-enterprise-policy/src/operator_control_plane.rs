@@ -1047,6 +1047,7 @@ mod tests {
 }
 
 
+// Negative vectors ensure key selection and every token component are authenticated.
 #[cfg(test)]
 mod session_keyring_negative_tests {
     use super::*;
