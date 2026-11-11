@@ -45,8 +45,27 @@ def _validate_strict_json_decoder() -> None:
     """Keep the contract tooling fail-closed for ambiguous JSON encodings."""
     sample = {"outer": {"name": "ujani", "version": 1}}
     assert _strict_json_loads(json.dumps(sample)) == sample
+
+    # Exercise duplicate-key rejection independently for every shared message type.
+    for message_type, message in _sample_messages().items():
+        encoded = json.dumps(message, separators=(",", ":"))
+        marker = '"message_type":' + json.dumps(message_type)
+        assert marker in encoded, f"sample missing message type marker: {message_type}"
+        duplicate = encoded.replace(
+            marker,
+            marker + ',"message_type":' + json.dumps(message_type),
+            1,
+        )
+        try:
+            _strict_json_loads(duplicate)
+        except ValueError as error:
+            assert "duplicate JSON object key: message_type" in str(error)
+        else:
+            raise AssertionError(
+                f"duplicate message_type key unexpectedly accepted for {message_type}"
+            )
+
     for ambiguous in (
-        '{"message_type":"task_status","message_type":"task_envelope"}',
         '{"outer":{"sequence":1,"sequence":2}}',
         '{"value":NaN}',
         '{"value":Infinity}',
