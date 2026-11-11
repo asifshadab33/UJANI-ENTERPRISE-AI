@@ -42,7 +42,7 @@ Tenant-owned tables enforce row-level security using the transaction-local setti
 
 The application database role must not own the schema/tables, must not have BYPASSRLS, and must not be superuser. Migration credentials are separate from runtime credentials. The audit append path must serialize/hash-chain event sequence and previous digest in the same transaction; the trigger prevents UPDATE/DELETE but is not, by itself, cryptographic tamper evidence against a database administrator. Export signed checkpoints to the external monotonic anchor.
 
-The migration is a foundation only: it does not yet provide SQLx repository code, transaction wrappers, connection-pool tenant context, an audit writer, or database integration tests. Those are the next implementation items.
+The migration is a foundation only: it does not yet provide SQLx repository code, transaction wrappers, connection-pool tenant context or a production audit writer. CI now applies the migration to a disposable PostgreSQL 16 service and tests cross-tenant read/write isolation plus audit update/delete rejection; this validates the schema boundary, not the future Rust repository or production deployment.
 
 ## Ordered implementation gates
 
