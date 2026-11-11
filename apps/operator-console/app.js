@@ -66,7 +66,7 @@ function renderList(id, records, emptyText, detailKeys) {
     root.append(entry);
   }
 }
-const MAX_OVERVIEW_RESPONSE_BYTES = 2 * 1024 * 1024;
+const MAX_OVERVIEW_RESPONSE_BYTES = 8 * 1024 * 1024;
 
 async function readBoundedJson(response) {
   const contentType = response.headers.get("content-type") || "";
@@ -75,7 +75,7 @@ async function readBoundedJson(response) {
   }
   const declaredLength = Number(response.headers.get("content-length"));
   if (Number.isFinite(declaredLength) && declaredLength > MAX_OVERVIEW_RESPONSE_BYTES) {
-    throw new Error("The control-plane overview exceeds the 2 MiB response limit.");
+    throw new Error("The control-plane overview exceeds the 8 MiB response limit.");
   }
   if (!response.body || typeof response.body.getReader !== "function") {
     throw new Error("This browser cannot safely stream the bounded control-plane response.");
