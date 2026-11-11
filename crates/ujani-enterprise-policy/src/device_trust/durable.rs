@@ -291,6 +291,34 @@ impl DurableDeviceRegistry {
         })
     }
 
+    /// Re-read the current durable trust record and return its active public key
+    /// only while the authenticated request still matches the enrolled tenant,
+    /// key ID, and generation. This closes a rotation/revocation gap between
+    /// request authentication and verification of a separately signed evidence body.
+    pub fn verifying_key_for_authenticated_request(
+        &self,
+        authenticated: &AuthenticatedDeviceRequest,
+    ) -> Result<VerifyingKey, DurableDeviceTrustError> {
+        self.transact(|registry| {
+            let record = registry
+                .devices
+                .get(authenticated.device_id())
+                .ok_or(DeviceTrustError::DeviceNotFound)?;
+            if record.state != DeviceTrustState::Enrolled {
+                return Err(DeviceTrustError::DeviceNotEnrolled.into());
+            }
+            if record.tenant_id != authenticated.tenant_id() {
+                return Err(DeviceTrustError::TenantMismatch.into());
+            }
+            if record.key_id != authenticated.key_id()
+                || record.generation != authenticated.key_generation()
+            {
+                return Err(DeviceTrustError::StaleKeyGeneration.into());
+            }
+            Ok(record.key.clone())
+        })
+    }
+
     /// Authenticates a device request and durably records its replay nonce.
     ///
     /// Pass the same raw body bytes that the request handler will process;
