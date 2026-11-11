@@ -2,7 +2,7 @@
 set -euo pipefail
 
 : "${PGPASSWORD:?PGPASSWORD must be set for the PostgreSQL integration test}"
-PSQL=(psql --host "${PGHOST:-localhost}" --username "${PGUSER:-postgres}" --dbname "${PGDATABASE:-ujani_test}" --set ON_ERROR_STOP=1 --tuples-only --no-align)
+PSQL=(psql --host "${PGHOST:-localhost}" --username "${PGUSER:-postgres}" --dbname "${PGDATABASE:-ujani_test}" --set ON_ERROR_STOP=1 --quiet --tuples-only --no-align)
 
 "${PSQL[@]}" <<'SQL'
 INSERT INTO ujani_control.tenants (tenant_id, display_name)
