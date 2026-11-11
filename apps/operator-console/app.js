@@ -71,7 +71,14 @@ function boundedString(value, max) {
   return typeof value === "string" && value.length > 0 && value.length <= max;
 }
 function containsLocalPath(value) {
-  return /(^|[\s"'(])(?:\/|\\\\|[A-Za-z]:[\\/]|file:\/\/)/i.test(value);
+  if (typeof value !== "string") return false;
+  if (value.toLowerCase().includes("file://")) return true;
+  return value.split(/[\\s=]+/).some((raw) => {
+    const token = raw.replace(/^["'([{,;]+|["')\\]},;]+$/g, "");
+    return token.startsWith("/") || token.startsWith("~/")
+      || token.startsWith("\\\\\\\\")
+      || /^[A-Za-z]:[\\\\/]/.test(token);
+  });
 }
 function validEvidence(evidence, generatedAtUnixMs) {
   const observedAt = evidence && evidence.observed_at_unix_ms;
