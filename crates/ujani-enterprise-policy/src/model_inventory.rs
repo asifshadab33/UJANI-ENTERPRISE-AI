@@ -13,6 +13,7 @@ const MAX_ACCELERATORS: usize = 32;
 const MAX_RUNTIMES: usize = 16;
 const MAX_MODELS: usize = 512;
 const MAX_CAPABILITIES: usize = 16;
+const MAX_MODEL_MEMORY_ESTIMATE_MB: u64 = 16_777_216;
 const CLOCK_SKEW_TOLERANCE_MS: u64 = 30_000;
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
@@ -361,6 +362,9 @@ pub fn validate_model_runtime_inventory(
                 .as_ref()
                 .is_some_and(|value| value.len() > 64 || value.chars().any(char::is_control))
             || model.context_length_tokens == Some(0)
+            || model.estimated_min_memory_mb.is_some_and(|value| {
+                value == 0 || value > MAX_MODEL_MEMORY_ESTIMATE_MB
+            })
         {
             return Err(ModelInventoryValidationError::InvalidMetadata);
         }
@@ -716,6 +720,23 @@ mod tests {
         assert_eq!(
             validate_model_runtime_inventory(&value, 1_100, 10_000),
             Err(ModelInventoryValidationError::InvalidHardware)
+        );
+    }
+
+    #[test]
+    fn rejects_zero_or_unbounded_model_memory_estimates() {
+        let mut value = inventory();
+        value.models[0].estimated_min_memory_mb = Some(0);
+        assert_eq!(
+            validate_model_runtime_inventory(&value, 1_100, 10_000),
+            Err(ModelInventoryValidationError::InvalidMetadata)
+        );
+
+        let mut value = inventory();
+        value.models[0].estimated_min_memory_mb = Some(MAX_MODEL_MEMORY_ESTIMATE_MB + 1);
+        assert_eq!(
+            validate_model_runtime_inventory(&value, 1_100, 10_000),
+            Err(ModelInventoryValidationError::InvalidMetadata)
         );
     }
 
