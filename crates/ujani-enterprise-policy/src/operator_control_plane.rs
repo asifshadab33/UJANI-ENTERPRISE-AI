@@ -848,32 +848,45 @@ mod tests {
 
     #[test]
     fn keyring_supports_rotation_overlap_and_key_revocation() {
-        let old = OperatorSessionKeyRing::new(
-            "key-old",
-            vec![("key-old".into(), [3; 32])],
-        ).unwrap();
-        let token = old.mint_after_identity_verification(&claims("tenant-a"), 10_000).unwrap();
+        let old =
+            OperatorSessionKeyRing::new("key-old", vec![("key-old".into(), [3; 32])]).unwrap();
+        let token = old
+            .mint_after_identity_verification(&claims("tenant-a"), 10_000)
+            .unwrap();
         let overlap = OperatorSessionKeyRing::new(
             "key-new",
             vec![("key-old".into(), [3; 32]), ("key-new".into(), [4; 32])],
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(overlap.active_key_id(), "key-new");
-        assert_eq!(overlap.authenticate(&token, 15_000).unwrap(), claims("tenant-a"));
-        let new_token = overlap.mint_after_identity_verification(&claims("tenant-a"), 10_000).unwrap();
-        assert_eq!(overlap.authenticate(&new_token, 15_000).unwrap(), claims("tenant-a"));
-        let retired = OperatorSessionKeyRing::new(
-            "key-new",
-            vec![("key-new".into(), [4; 32])],
-        ).unwrap();
-        assert_eq!(retired.authenticate(&token, 15_000), Err(OperatorAuthError::UnknownKeyId));
+        assert_eq!(
+            overlap.authenticate(&token, 15_000).unwrap(),
+            claims("tenant-a")
+        );
+        let new_token = overlap
+            .mint_after_identity_verification(&claims("tenant-a"), 10_000)
+            .unwrap();
+        assert_eq!(
+            overlap.authenticate(&new_token, 15_000).unwrap(),
+            claims("tenant-a")
+        );
+        let retired =
+            OperatorSessionKeyRing::new("key-new", vec![("key-new".into(), [4; 32])]).unwrap();
+        assert_eq!(
+            retired.authenticate(&token, 15_000),
+            Err(OperatorAuthError::UnknownKeyId)
+        );
     }
 
     #[test]
     fn keyring_rejects_duplicate_keys_and_unknown_active_key() {
-        assert!(OperatorSessionKeyRing::new(
-            "key-a",
-            vec![("key-a".into(), [1; 32]), ("key-a".into(), [2; 32])],
-        ).is_err());
+        assert!(
+            OperatorSessionKeyRing::new(
+                "key-a",
+                vec![("key-a".into(), [1; 32]), ("key-a".into(), [2; 32])],
+            )
+            .is_err()
+        );
         assert_eq!(
             OperatorSessionKeyRing::new("missing", vec![("key-a".into(), [1; 32])]).err(),
             Some(OperatorAuthError::UnknownKeyId)
@@ -901,7 +914,10 @@ mod tests {
     fn control_plane_accepts_rotatable_session_verifier() {
         let keyring = OperatorSessionKeyRing::new(
             "session-key-v2",
-            vec![("session-key-v1".into(), [8; 32]), ("session-key-v2".into(), [9; 32])],
+            vec![
+                ("session-key-v1".into(), [8; 32]),
+                ("session-key-v2".into(), [9; 32]),
+            ],
         )
         .unwrap();
         let token = keyring
