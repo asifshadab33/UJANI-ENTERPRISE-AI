@@ -12,7 +12,8 @@ CREATE TABLE IF NOT EXISTS ujani_control.task_contract_replays (
  payload_digest bytea NOT NULL CHECK (octet_length(payload_digest) = 32),
  expires_at timestamptz NOT NULL,
  state text NOT NULL CHECK (state IN (
-  'received','awaiting_approval','admitted','rejected','cancelled','completed','expired'
+  'received','validating','awaiting_approval','queued','reserved','running',
+  'completed','failed','cancelled','timed_out','rejected','expired'
  )),
  revision bigint NOT NULL DEFAULT 1 CHECK (revision > 0),
  created_at timestamptz NOT NULL DEFAULT now(),
