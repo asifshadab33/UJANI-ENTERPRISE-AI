@@ -46,7 +46,7 @@ class SecurityEventStore:
         self._lock = threading.RLock()
         if self.database != ":memory:":
             path = Path(self.database)
-            if path.exists() and path.is_symlink():
+            if path.is_symlink():
                 raise StoreError("database path must not be a symlink")
             if not path.parent.exists() or not path.parent.is_dir():
                 raise StoreError("database parent directory must already exist")
