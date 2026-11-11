@@ -86,3 +86,11 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: psql --host localhost --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file scripts/test_customer_hosted_migration.sql
+      - name: Apply monotonic device telemetry migration
+        env:
+          PGPASSWORD: postgres
+        run: psql --host localhost --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file migrations/0002_monotonic_device_telemetry.sql
+      - name: Verify monotonic telemetry admission and transaction rollback
+        env:
+          PGPASSWORD: postgres
+        run: psql --host localhost --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file scripts/test_monotonic_device_telemetry.sql
