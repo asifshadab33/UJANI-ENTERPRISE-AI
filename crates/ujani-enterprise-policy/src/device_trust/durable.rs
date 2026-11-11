@@ -228,10 +228,22 @@ impl DurableDeviceRegistry {
         {
             return Err(DurableDeviceTrustError::CorruptState);
         }
-        let path = path.as_ref().to_path_buf();
-        if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
-            fs::create_dir_all(parent)?;
-        }
+        // Resolve the caller-supplied parent directory once and retain the
+        // canonical parent path. This prevents later changes to a symlink alias
+        // from redirecting registry, lock, backup or temporary-file operations.
+        // The canonical directory must still be owned and protected by the service
+        // account; this does not replace handle-relative operations against races.
+        let requested_path = path.as_ref();
+        let file_name = requested_path
+            .file_name()
+            .ok_or(DurableDeviceTrustError::CorruptState)?;
+        let requested_parent = requested_path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        fs::create_dir_all(requested_parent)?;
+        let canonical_parent = fs::canonicalize(requested_parent)?;
+        let path = canonical_parent.join(file_name);
         let (anchor_namespace, anchor) = match anchor {
             Some((namespace, provider)) => (Some(namespace), Some(provider)),
             None => (None, None),
@@ -847,6 +859,30 @@ mod tests {
         let _ = fs::remove_file(&path);
         let _ = fs::remove_file(suffix(&path, ".lock"));
     }
+    #[cfg(unix)]
+    #[test]
+    fn registry_pins_symlinked_parent_to_its_canonical_directory() {
+        use std::os::unix::fs::symlink;
+        let root = path();
+        fs::create_dir(&root).unwrap();
+        let real_parent = root.join("real");
+        let alias_parent = root.join("alias");
+        fs::create_dir(&real_parent).unwrap();
+        symlink(&real_parent, &alias_parent).unwrap();
+
+        let admin = SigningKey::from_bytes(&[7; 32]);
+        let registry_path = alias_parent.join("registry.db");
+        let canonical_parent = fs::canonicalize(&real_parent).unwrap();
+        let store = open(&registry_path, &admin);
+        assert_eq!(store.path, canonical_parent.join("registry.db"));
+        assert_eq!(store.lock_path, canonical_parent.join("registry.db.lock"));
+        drop(store);
+
+        assert!(real_parent.join("registry.db").is_file());
+        assert!(real_parent.join("registry.db.lock").is_file());
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[cfg(unix)]
     #[test]
     fn registry_rejects_symlinked_primary_lock_and_temp_paths() {
