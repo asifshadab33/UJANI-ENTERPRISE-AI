@@ -312,10 +312,14 @@ impl OperatorSessionKeyRing {
         keys: Vec<(String, [u8; 32])>,
     ) -> Result<Self, OperatorAuthError> {
         let active_key_id = active_key_id.into();
-        if !valid_identifier(&active_key_id, 128) || keys.is_empty() || keys.len() > 4 {
+        if !valid_identifier(&active_key_id, 128)
+            || active_key_id.contains('.')
+            || keys.is_empty()
+            || keys.len() > 4
+        {
             return Err(OperatorAuthError::InvalidClaims);
         }
-        let mut indexed = HashMap::with_capacity(keys.len());
+        let mut indexed: HashMap<String, [u8; 32]> = HashMap::with_capacity(keys.len());
         for (key_id, mut key) in keys {
             if !valid_identifier(&key_id, 128) || key_id.contains('.') || indexed.contains_key(&key_id) {
                 key.zeroize();
