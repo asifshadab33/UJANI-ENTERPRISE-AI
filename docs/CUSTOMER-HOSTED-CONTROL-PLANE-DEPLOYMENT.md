@@ -31,7 +31,7 @@ The key ring is only a verifier/signer primitive. Production key retrieval, rota
 
 ## Database migration foundation
 
-The initial PostgreSQL schema is in migrations/0001_customer_hosted_control_plane.sql. It establishes composite tenant keys and foreign keys, device/key lifecycle state, owner-consent evidence, workload and approval records, leases, replay identifiers and append-only audit event rows.
+The PostgreSQL schema starts with migrations/0001_customer_hosted_control_plane.sql, followed by `0002_task_contract_replay_storage.sql` for tenant-scoped task nonce claims and separate monotonic task-status/execution-receipt sequence streams, and `0003_monotonic_device_telemetry.sql` for privacy-minimised device capacity/participation samples and monotonic telemetry checkpoints. The telemetry admission function is `SECURITY INVOKER`, tenant-scoped and transactionally updates device sequence state plus the sample row; the caller must verify the signed device request and set tenant context from authenticated identity. It is not a signature verifier, device agent, HTTP endpoint or live scheduler. These migrations establish database primitives only; they do not constitute a deployable service.
 
 Tenant-owned tables enforce row-level security using the transaction-local setting ujani.tenant_id. Every request must:
 1. Authenticate the operator/device before opening the business transaction.
@@ -45,7 +45,7 @@ The application database role must not own the schema/tables, must not have BYPA
 
 **RLS threat boundary:** the transaction-local custom setting is writable by SQL executed under the same application role. These policies protect against omitted tenant predicates and accidental cross-tenant queries; they do not, by themselves, withstand arbitrary SQL injection or a fully compromised runtime database credential. The service must use parameterized queries, prohibit dynamic SQL, expose no user-controlled SQL path and keep the runtime role least-privileged. Before production, security review must decide whether stronger isolation requires per-tenant database roles or a separately verified tenant-context mechanism. The PostgreSQL CI test validates policy behavior for correctly set context; it is not a SQL-injection or compromised-role test.
 
-The migration is a foundation only: it does not yet provide SQLx repository code, transaction wrappers, connection-pool tenant context or a production audit writer. CI now applies the migration to a disposable PostgreSQL 16 service and tests cross-tenant read/write isolation plus audit update/delete rejection; this validates the schema boundary, not the future Rust repository or production deployment.
+The migrations are foundations only: they do not yet provide SQLx repository code, transaction wrappers, connection-pool tenant context, an authenticated device agent/service adapter or a production audit writer. CI applies the migrations to a disposable PostgreSQL 16 service and tests cross-tenant read/write isolation, tenant-registry privilege restrictions, replay/sequence invariants, monotonic telemetry admission, rollback and concurrent telemetry serialization. These tests validate database boundaries, not a production Rust repository or deployable service.
 
 ## Ordered implementation gates
 
