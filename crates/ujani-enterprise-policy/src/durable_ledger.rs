@@ -422,7 +422,7 @@ impl DurableLedger {
     }
 
     /// Release only when the authenticated device and lease capability both match.
-    pub fn release_lease_for_device(
+    pub(crate) fn release_lease_for_device(
         &self,
         workload_id: &str,
         device_id: &str,
