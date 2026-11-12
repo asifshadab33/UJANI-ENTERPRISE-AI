@@ -2099,6 +2099,7 @@ mod tests {
             .unwrap();
         assert_eq!(replay, Err(TelemetryChallengeError::Replayed));
         assert_eq!(ledger.snapshot().unwrap().active_jobs, 1);
+        drop(ledger);
         cleanup(&path);
     }
 
@@ -2136,6 +2137,7 @@ mod tests {
             .unwrap();
         assert_eq!(retried, Ok(Admission::Accept));
         assert_eq!(ledger.snapshot().unwrap().active_jobs, 0);
+        drop(ledger);
         cleanup(&path);
     }
 
