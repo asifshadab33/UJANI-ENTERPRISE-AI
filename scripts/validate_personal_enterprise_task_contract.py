@@ -1,3 +1,4 @@
+"""Validate the shared Personal-to-Enterprise task contract and vectors."""
 #!/usr/bin/env python3
 """Validate the shared Public/Enterprise task-contract v1 schema boundary."""
 from __future__ import annotations
