@@ -5,7 +5,7 @@
 //! The HTTP adapter MUST resolve routes through this contract before dispatch,
 //! enforce the declared body limit, authenticate the declared principal, and
 //! fail closed for every unknown method/path. No remote-execution route exists.
-use super::{OperatorRole, OperatorServiceError};
+use super::operator_control_plane::{OperatorRole, OperatorServiceError};
 
 pub const MAX_OPERATOR_ACTION_BODY_BYTES: usize = 16 * 1024;
 pub const MAX_DEVICE_ENROLLMENT_BODY_BYTES: usize = 64 * 1024;
