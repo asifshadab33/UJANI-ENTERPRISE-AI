@@ -4,7 +4,9 @@
 //! terminate TLS, validate OIDC tokens, persist leases, or execute workloads.
 //! The HTTP adapter MUST resolve routes through this contract before dispatch,
 //! enforce the declared body limit, authenticate the declared principal, and
-//! fail closed for every unknown method/path. No remote-execution route exists.
+//! fail closed for every unknown method/path. The host adapter must authenticate
+//! `DeviceOwnerConsent` with the enrolled device signature and dispatch the verified
+//! command to `DurableDeviceRegistry::apply_owner_consent`. No remote-execution route exists.
 use super::operator_control_plane::{OperatorRole, OperatorServiceError};
 
 pub const MAX_OPERATOR_ACTION_BODY_BYTES: usize = 16 * 1024;
