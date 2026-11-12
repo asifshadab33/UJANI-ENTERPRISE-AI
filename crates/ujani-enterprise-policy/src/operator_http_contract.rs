@@ -68,6 +68,9 @@ fn role_rank(role: OperatorRole) -> u8 {
 /// segments are restricted to simple identifiers; encoded separators,
 /// dot-segments and empty identifiers are rejected by returning None.
 pub fn resolve_route(method: HttpMethod, path: &str) -> Option<RouteContract> {
+    if !path.starts_with('/') || path.starts_with("//") {
+        return None;
+    }
     if path == "/healthz" && method == HttpMethod::Get {
         return Some(RouteContract {
             route: OperatorHttpRoute::Health,
@@ -150,7 +153,9 @@ fn valid_path_segment(value: &str) -> bool {
 pub fn service_error_status(error: OperatorServiceError) -> u16 {
     match error {
         OperatorServiceError::Unauthorized => 401,
-        OperatorServiceError::InvalidTenantBoundary => 403,
+        // A repository returning another tenant's data is an internal boundary
+        // violation, not an authorization denial attributable to the caller.
+        OperatorServiceError::InvalidTenantBoundary => 500,
         OperatorServiceError::RepositoryUnavailable | OperatorServiceError::AuditUnavailable => 503,
         OperatorServiceError::InvalidOverview => 502,
     }
@@ -216,6 +221,9 @@ mod tests {
         assert!(resolve_route(HttpMethod::Post, "/v1/devices/%2fetc/telemetry").is_none());
         assert!(resolve_route(HttpMethod::Post, "/v1/leases/lease-1/execute").is_none());
         assert!(resolve_route(HttpMethod::Post, "/v1/workloads/execute").is_none());
+        assert!(resolve_route(HttpMethod::Post, "prefix/v1/devices/device-1/telemetry").is_none());
+        assert!(resolve_route(HttpMethod::Post, "prefix/v1/leases/lease-1/renew").is_none());
+        assert!(resolve_route(HttpMethod::Post, "//v1/devices/device-1/telemetry").is_none());
     }
 
     #[test]
@@ -226,7 +234,7 @@ mod tests {
         );
         assert_eq!(
             service_error_status(OperatorServiceError::InvalidTenantBoundary),
-            403
+            500
         );
         assert_eq!(
             service_error_status(OperatorServiceError::RepositoryUnavailable),
