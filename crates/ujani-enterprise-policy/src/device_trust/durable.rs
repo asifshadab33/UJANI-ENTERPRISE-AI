@@ -1782,4 +1782,84 @@ mod tests {
         let _ = fs::remove_file(suffix(&path, ".bak"));
         let _ = fs::remove_file(suffix(&path, ".lock"));
     }
+
+    #[test]
+    fn concurrent_anchored_handles_advance_distinct_generations_without_lost_updates() {
+        let path = path();
+        let admin = test_signing_key("anchored-concurrency-admin");
+        let device = test_signing_key("anchored-concurrency-device");
+        let anchor = std::sync::Arc::new(MemoryAnchor::default());
+
+        let first = DurableDeviceRegistry::open_with_anchor(
+            &path,
+            "tenant-a-concurrent-registry",
+            vec![("admin-v1".into(), admin.verifying_key())],
+            DeviceTrustIntegrityKey::new("integrity-v1", test_integrity_key_bytes()),
+            anchor.clone(),
+        )
+        .unwrap();
+        first
+            .apply_admin_command(&enroll(&admin, &device), 200)
+            .unwrap();
+
+        // A second independently opened handle models a second service worker
+        // sharing the same durable registry and external anchor namespace.
+        let second = DurableDeviceRegistry::open_with_anchor(
+            &path,
+            "tenant-a-concurrent-registry",
+            vec![("admin-v1".into(), admin.verifying_key())],
+            DeviceTrustIntegrityKey::new("integrity-v1", test_integrity_key_bytes()),
+            anchor.clone(),
+        )
+        .unwrap();
+
+        let make_request = |request_id: [u8; 16]| {
+            let claims = DeviceRequestClaims {
+                tenant_id: "tenant-a".into(),
+                device_id: "device-1".into(),
+                key_id: "device-key-v1".into(),
+                key_generation: 1,
+                request_id,
+                issued_at_unix_ms: 220,
+                expires_at_unix_ms: 500,
+                method: "POST".into(),
+                resource_id: "lease:acquire".into(),
+                workload_id: "workload-1".into(),
+                manifest_sha256: Sha256::digest(b"manifest-v1").into(),
+                body_sha256: Sha256::digest([]).into(),
+            };
+            SignedDeviceRequest {
+                signature: device.sign(&device_request_bytes(&claims)).to_bytes(),
+                claims,
+            }
+        };
+
+        let request_a = make_request([21; 16]);
+        let request_b = make_request([22; 16]);
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let first_barrier = barrier.clone();
+        let first_thread = std::thread::spawn(move || {
+            first_barrier.wait();
+            first.authenticate_request(&request_a, b"", 250)
+        });
+        let second_thread = std::thread::spawn(move || {
+            barrier.wait();
+            second.authenticate_request(&request_b, b"", 250)
+        });
+
+        assert!(first_thread.join().unwrap().is_ok());
+        assert!(second_thread.join().unwrap().is_ok());
+        let anchored = anchor
+            .load("tenant-a-concurrent-registry")
+            .unwrap()
+            .expect("concurrent writes must leave an anchored snapshot");
+        // Initial empty snapshot, enrollment, and two distinct replay claims.
+        assert_eq!(anchored.generation(), 4);
+
+        drop(anchor);
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(suffix(&path, ".lock"));
+        let _ = fs::remove_file(suffix(&path, ".bak"));
+    }
+
 }
