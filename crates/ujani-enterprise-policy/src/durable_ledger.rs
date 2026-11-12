@@ -5,9 +5,9 @@
 //! temp file plus backup/rename recovery. The raw lease capability is never
 //! persisted; only its domain-separated digest is stored.
 use crate::device_trust::durable::{MonotonicSnapshotAnchor, SnapshotAnchorRecord};
-use crate::{Ledger, TelemetryChallengeError};
 #[cfg(test)]
 use crate::{Admission, ClassPolicy, Device, SchedulingContext, VerifiedAdminApproval, Workload};
+use crate::{Ledger, TelemetryChallengeError};
 use hmac::KeyInit;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
