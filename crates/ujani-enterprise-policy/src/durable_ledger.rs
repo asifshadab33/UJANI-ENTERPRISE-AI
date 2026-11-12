@@ -298,8 +298,9 @@ impl DurableLedger {
         })
     }
 
-    /// Reserve against the latest consumed signed sample while reconciling
-    /// reservations committed after that sample's reservation watermark.
+    /// Test-only wrapper retained for focused ledger policy tests.
+    /// Production authenticated admission uses consume_telemetry_challenge_and_then.
+    #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn admit_and_reserve_with_lease_and_watermark(
         &self,
@@ -352,8 +353,8 @@ impl DurableLedger {
         })
     }
 
-    /// Consume a dispatch challenge and advance the enrolled worker's signed
-    /// telemetry generation in one durable transaction.
+    /// Test-only helper for challenge-consumption unit tests.
+    #[cfg(test)]
     pub(crate) fn consume_telemetry_challenge(
         &self,
         device_id: &str,
@@ -2119,7 +2120,7 @@ mod tests {
                 nonce,
                 20_000,
                 1_000,
-                |_| Err(DurableLedgerError::InvalidRecord),
+                |_| Err::<Admission, DurableLedgerError>(DurableLedgerError::InvalidRecord),
             ),
             Err(DurableLedgerError::InvalidRecord)
         );
