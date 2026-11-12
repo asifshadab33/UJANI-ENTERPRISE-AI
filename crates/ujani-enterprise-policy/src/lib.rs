@@ -522,7 +522,7 @@ impl Ledger {
 
     /// Renew a lease only when the caller is the device that owns the reservation.
     /// Authentication of the device request must happen before calling this method.
-    pub fn renew_lease_for_device(
+    pub(crate) fn renew_lease_for_device(
         &mut self,
         workload_id: &str,
         device_id: &str,
