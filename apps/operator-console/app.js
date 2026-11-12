@@ -67,6 +67,76 @@ function renderList(id, records, emptyText, detailKeys) {
   }
 }
 
+
+function renderModelCatalogue(catalogue) {
+  const root = byId("model-catalogue");
+  root.replaceChildren();
+  if (!catalogue || catalogue.schema_version !== 1
+      || !Array.isArray(catalogue.models) || catalogue.models.length > 64
+      || !Array.isArray(catalogue.specialist_tools) || catalogue.specialist_tools.length > 32) {
+    throw new Error("The local model catalogue has an unsupported structure.");
+  }
+  for (const model of catalogue.models) {
+    if (!model || !boundedString(model.id, 96) || !boundedString(model.display_name, 128)
+        || !boundedString(model.purpose, 600) || !Array.isArray(model.tasks)
+        || !Array.isArray(model.limitations) || !model.planning_ram_gib
+        || !Number.isSafeInteger(model.planning_ram_gib.minimum)
+        || !Number.isSafeInteger(model.planning_ram_gib.recommended)) {
+      throw new Error("A model catalogue entry failed validation.");
+    }
+    const card = document.createElement("article");
+    card.className = "catalogue-card";
+    const heading = document.createElement("h3");
+    heading.textContent = model.display_name + " · " + model.publisher;
+    const purpose = document.createElement("p");
+    purpose.textContent = model.purpose;
+    const tasks = document.createElement("p");
+    tasks.textContent = "Useful for: " + model.tasks.join(", ").replaceAll("_", " ") + ".";
+    const limits = document.createElement("p");
+    limits.textContent = "Limitations: " + model.limitations.join(" ");
+    const resources = document.createElement("p");
+    resources.textContent = "RAM planning guide: " + model.planning_ram_gib.minimum + " GiB minimum / "
+      + model.planning_ram_gib.recommended + " GiB recommended. This is advisory, not a fit guarantee.";
+    const size = document.createElement("p");
+    size.textContent = "Download and installed size: resolve from the exact quantised artifact before approval.";
+    const licence = document.createElement("small");
+    licence.textContent = "Licence: " + model.license;
+    card.append(heading, purpose, tasks, limits, resources, size, licence);
+    root.append(card);
+  }
+  for (const tool of catalogue.specialist_tools) {
+    if (!tool || !boundedString(tool.id, 96) || !boundedString(tool.display_name, 128)
+        || !boundedString(tool.purpose, 600) || !Array.isArray(tool.limitations)) {
+      throw new Error("A specialist tool catalogue entry failed validation.");
+    }
+    const card = document.createElement("article");
+    card.className = "catalogue-card catalogue-specialist";
+    const heading = document.createElement("h3");
+    heading.textContent = tool.display_name + " · specialist tool";
+    const purpose = document.createElement("p");
+    purpose.textContent = tool.purpose;
+    const limits = document.createElement("p");
+    limits.textContent = "Limitations: " + tool.limitations.join(" ");
+    card.append(heading, purpose, limits);
+    root.append(card);
+  }
+}
+async function loadModelCatalogue() {
+  const root = byId("model-catalogue");
+  try {
+    const response = await fetch("./model-catalog.json", {
+      method: "GET", credentials: "same-origin", cache: "no-store", redirect: "error",
+      headers: { "Accept": "application/json" }
+    });
+    if (!response.ok) throw new Error("Catalogue request returned HTTP " + response.status + ".");
+    const catalogue = await response.json();
+    renderModelCatalogue(catalogue);
+  } catch (error) {
+    root.textContent = error instanceof Error ? "Model catalogue unavailable: " + error.message : "Model catalogue unavailable.";
+    root.classList.add("empty");
+  }
+}
+
 function boundedString(value, max) {
   return typeof value === "string" && value.length > 0 && value.length <= max;
 }
@@ -357,3 +427,4 @@ async function refreshOverview() {
 }
 refreshButton.addEventListener("click", refreshOverview);
 setConnection("Control plane not connected", "unknown");
+loadModelCatalogue();

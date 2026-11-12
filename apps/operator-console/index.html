@@ -44,6 +44,12 @@
       <p class="muted">Read-only capability and evidence metadata from enrolled devices. Prompts, model contents and local file paths are never displayed.</p>
       <div class="table-wrap"><table><thead><tr><th>Device</th><th>Model</th><th>Model version</th><th>Family</th><th>Runtime</th><th>Availability</th><th>Capabilities</th><th>RAM fit</th><th>Evidence</th></tr></thead><tbody id="model-inventory"><tr><td colspan="9" class="empty">No authenticated model/runtime inventory is available.</td></tr></tbody></table></div>
     </section>
+    <section class="panel" aria-labelledby="model-choices-heading">
+      <div class="section-title"><div><p class="eyebrow">CUSTOMER MODEL CHOICES</p><h2 id="model-choices-heading">Available local model candidates</h2></div><span class="pill">Catalogue only · no distribution</span></div>
+      <p class="muted">Plain-language descriptions for customer planning. These are candidate models, not tenant-approved artifacts. Exact version, quantisation, digest, licence, download size and device compatibility must be verified before an administrator can approve distribution. No model is downloaded from this screen.</p>
+      <div id="model-catalogue" class="catalogue-grid"><p class="empty">Loading curated model catalogue…</p></div>
+      <p class="muted">Administrator allowlists, device-owner consent, internal distribution, rollback and audit require authenticated control-plane services. This preview intentionally exposes no fake approval or installation controls.</p>
+    </section>
     <section class="two-column">
       <article class="panel"><div class="section-title"><div><p class="eyebrow">ADMISSION</p><h2>Workload queue</h2></div></div><div id="workloads" class="list empty">No live workload data available.</div></article>
       <article class="panel"><div class="section-title"><div><p class="eyebrow">HUMAN CONTROL</p><h2>Approval requests</h2></div></div><div id="approvals" class="list empty">No live approval data available.</div></article>
