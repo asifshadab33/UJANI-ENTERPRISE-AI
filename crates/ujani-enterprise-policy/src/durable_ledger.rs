@@ -409,7 +409,7 @@ impl DurableLedger {
     }
 
     /// Renew only when the authenticated device matches the device that owns the lease.
-    pub fn renew_lease_for_device(
+    pub(crate) fn renew_lease_for_device(
         &self,
         workload_id: &str,
         device_id: &str,
