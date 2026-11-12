@@ -229,7 +229,8 @@ mod tests {
     }
 
     fn test_nonce(label: &str) -> [u8; 16] {
-        let digest = Sha256::digest(format!("ujani-lease-control-test-nonce-v1:{label}").as_bytes());
+        let digest =
+            Sha256::digest(format!("ujani-lease-control-test-nonce-v1:{label}").as_bytes());
         let mut nonce = [0u8; 16];
         nonce.copy_from_slice(&digest[..16]);
         nonce
@@ -354,7 +355,16 @@ mod tests {
             .apply_admin_command(&signed_enrollment(&admin, &device), 200)
             .expect("enrol test device");
         registry
-            .apply_owner_consent(&signed_owner_consent(&device, true, 1, 300, test_nonce("lease-control-owner-opt-in")), 400)
+            .apply_owner_consent(
+                &signed_owner_consent(
+                    &device,
+                    true,
+                    1,
+                    300,
+                    test_nonce("lease-control-owner-opt-in"),
+                ),
+                400,
+            )
             .expect("persist explicit device-owner opt-in");
 
         let manifest = manifest();
@@ -459,7 +469,13 @@ mod tests {
         fixture
             .registry
             .apply_owner_consent(
-                &signed_owner_consent(&fixture.device, false, 2, 1_600, test_nonce("lease-control-owner-opt-out")),
+                &signed_owner_consent(
+                    &fixture.device,
+                    false,
+                    2,
+                    1_600,
+                    test_nonce("lease-control-owner-opt-out"),
+                ),
                 1_700,
             )
             .expect("persist owner opt-out");
