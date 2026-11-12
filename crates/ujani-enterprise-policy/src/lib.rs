@@ -520,8 +520,45 @@ impl Ledger {
         decision
     }
 
+    /// Renew a lease only when the caller is the device that owns the reservation.
+    /// Authentication of the device request must happen before calling this method.
+    pub(crate) fn renew_lease_for_device(
+        &mut self,
+        workload_id: &str,
+        device_id: &str,
+        lease_token: &[u8; 32],
+        now_unix_ms: u64,
+    ) -> bool {
+        self.expire(now_unix_ms);
+        if !self
+            .jobs
+            .get(workload_id)
+            .is_some_and(|job| job.0 == device_id)
+        {
+            return false;
+        }
+        self.renew_lease(workload_id, lease_token, now_unix_ms)
+    }
+
+    /// Release a lease only when both the device owner and lease capability match.
+    pub(crate) fn release_lease_for_device(
+        &mut self,
+        workload_id: &str,
+        device_id: &str,
+        lease_token: &[u8; 32],
+    ) -> bool {
+        if !self
+            .jobs
+            .get(workload_id)
+            .is_some_and(|job| job.0 == device_id)
+        {
+            return false;
+        }
+        self.release_lease(workload_id, lease_token)
+    }
+
     /// Renew only when the caller proves possession of the lease capability.
-    pub fn renew_lease(
+    pub(crate) fn renew_lease(
         &mut self,
         workload_id: &str,
         lease_token: &[u8; 32],
@@ -554,7 +591,7 @@ impl Ledger {
     }
 
     /// Release only when the caller proves possession of the lease capability.
-    pub fn release_lease(&mut self, workload_id: &str, lease_token: &[u8; 32]) -> bool {
+    pub(crate) fn release_lease(&mut self, workload_id: &str, lease_token: &[u8; 32]) -> bool {
         let Some(expected) = self.lease_token_hashes.get(workload_id) else {
             return false;
         };
@@ -1370,6 +1407,32 @@ mod tests {
     }
 
     #[test]
+    fn lease_renewal_and_release_are_bound_to_the_enrolled_device() {
+        let mut ledger = Ledger::default();
+        let d = device();
+        let w = workload();
+        let token = [0x5au8; 32];
+        assert_eq!(
+            ledger.admit_and_reserve_with_lease(
+                &d,
+                &w,
+                &safe_context(),
+                &policies(),
+                &[],
+                1_000,
+                &token
+            ),
+            Admission::Accept
+        );
+
+        assert!(!ledger.renew_lease_for_device("job-001", "another-device", &token, 2_000));
+        assert!(!ledger.release_lease_for_device("job-001", "another-device", &token));
+        assert!(ledger.renew_lease_for_device("job-001", &d.device_id, &token, 2_000));
+        assert!(ledger.release_lease_for_device("job-001", &d.device_id, &token));
+        assert!(!ledger.renew_lease_for_device("job-001", &d.device_id, &token, 2_001));
+    }
+
+    #[test]
     fn lease_capabilities_cannot_be_zero_or_reused_for_another_workload() {
         let mut ledger = Ledger::default();
         let d = device();
@@ -1553,6 +1616,7 @@ mod tests {
 }
 
 pub mod inventory;
+pub mod lease_control;
 pub mod operator_control_plane;
 pub mod operator_http_contract;
 pub use inventory::{

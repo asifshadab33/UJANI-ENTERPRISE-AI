@@ -311,7 +311,7 @@ impl DurableDeviceRegistry {
         &self,
         authenticated: &AuthenticatedDeviceRequest,
     ) -> Result<(VerifyingKey, bool), DurableDeviceTrustError> {
-        self.transact(|registry| {
+        self.read(|registry| {
             let record = registry
                 .devices
                 .get(authenticated.device_id())
@@ -331,6 +331,41 @@ impl DurableDeviceRegistry {
                 && record.owner_consent_generation == record.generation
                 && record.owner_consent_revision > 0;
             Ok((record.key, owner_opted_in))
+        })
+    }
+
+    /// Execute a short authenticated admission or lease mutation while holding the durable device-trust lock.
+    ///
+    /// The callback runs after the active key generation and owner-consent state
+    /// are re-read, and before a competing mutation through this same durable
+    /// registry path can commit. Callers
+    /// must acquire the device-trust lock before the reservation-ledger lock
+    /// consistently across the service; never call back into this registry.
+    pub(crate) fn with_authenticated_device_status_for_request<T>(
+        &self,
+        authenticated: &AuthenticatedDeviceRequest,
+        action: impl FnOnce(&VerifyingKey, bool) -> T,
+    ) -> Result<T, DurableDeviceTrustError> {
+        self.read(|registry| {
+            let record = registry
+                .devices
+                .get(authenticated.device_id())
+                .ok_or(DeviceTrustError::DeviceNotFound)?;
+            if record.state != DeviceTrustState::Enrolled {
+                return Err(DeviceTrustError::DeviceNotEnrolled.into());
+            }
+            if record.tenant_id != authenticated.tenant_id() {
+                return Err(DeviceTrustError::TenantMismatch.into());
+            }
+            if record.key_id != authenticated.key_id()
+                || record.generation != authenticated.key_generation()
+            {
+                return Err(DeviceTrustError::StaleKeyGeneration.into());
+            }
+            let owner_opted_in = record.owner_opted_in
+                && record.owner_consent_generation == record.generation
+                && record.owner_consent_revision > 0;
+            Ok(action(&record.key, owner_opted_in))
         })
     }
 
@@ -366,7 +401,7 @@ impl DurableDeviceRegistry {
         &self,
         tenant_id: &str,
     ) -> Result<Vec<DeviceTrustSummary>, DurableDeviceTrustError> {
-        self.transact(|registry| {
+        self.read(|registry| {
             registry
                 .tenant_device_summaries(tenant_id)
                 .map_err(Into::into)
@@ -375,7 +410,7 @@ impl DurableDeviceRegistry {
 
     /// Returns the number of enrolled device records in the durable registry.
     pub fn device_count(&self) -> Result<usize, DurableDeviceTrustError> {
-        self.transact(|registry| Ok(registry.devices.len()))
+        self.read(|registry| Ok(registry.devices.len()))
     }
 
     fn load_anchored_registry(
@@ -419,6 +454,71 @@ impl DurableDeviceRegistry {
         }
     }
 
+    fn read<T>(
+        &self,
+        operation: impl FnOnce(&DeviceRegistry) -> Result<T, DurableDeviceTrustError>,
+    ) -> Result<T, DurableDeviceTrustError> {
+        let _guard = self
+            .thread_lock
+            .lock()
+            .map_err(|_| DurableDeviceTrustError::LockPoisoned)?;
+        require_regular_file_if_present(&self.lock_path)?;
+        require_regular_file_if_present(&self.path)?;
+        require_regular_file_if_present(&suffix(&self.path, ".bak"))?;
+        let mut options = OpenOptions::new();
+        options.create(true).truncate(false).read(true).write(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let lock = options.open(&self.lock_path)?;
+        lock.lock()?;
+
+        let anchor_record = match (&self.anchor, &self.anchor_namespace) {
+            (Some(anchor), Some(namespace)) => anchor
+                .load(namespace)
+                .map_err(DurableDeviceTrustError::AnchorUnavailable)?,
+            (None, None) => None,
+            _ => return Err(DurableDeviceTrustError::AnchorMismatch),
+        };
+        let registry = self.load_registry(anchor_record.as_ref())?;
+        operation(&registry)
+    }
+
+    fn load_registry(
+        &self,
+        anchor_record: Option<&SnapshotAnchorRecord>,
+    ) -> Result<DeviceRegistry, DurableDeviceTrustError> {
+        if self.anchor.is_some() {
+            return self.load_anchored_registry(anchor_record);
+        }
+
+        let backup = suffix(&self.path, ".bak");
+        if self.path.exists() {
+            decode_snapshot(
+                &fs::read(&self.path)?,
+                &self.admin_keys,
+                self.integrity_key.key_id(),
+                &self.integrity_key.bytes,
+            )
+        } else if backup.exists() {
+            // Recover only the interrupted-rename case. A present but invalid
+            // primary snapshot is never silently replaced by an older backup.
+            let bytes = fs::read(&backup)?;
+            let recovered = decode_snapshot(
+                &bytes,
+                &self.admin_keys,
+                self.integrity_key.key_id(),
+                &self.integrity_key.bytes,
+            )?;
+            atomic_write(&self.path, &bytes, false)?;
+            Ok(recovered)
+        } else {
+            DeviceRegistry::new(self.admin_keys.as_ref().clone()).map_err(Into::into)
+        }
+    }
+
     fn transact<T>(
         &self,
         operation: impl FnOnce(&mut DeviceRegistry) -> Result<T, DurableDeviceTrustError>,
@@ -447,33 +547,7 @@ impl DurableDeviceRegistry {
             (None, None) => None,
             _ => return Err(DurableDeviceTrustError::AnchorMismatch),
         };
-        let mut registry = if self.anchor.is_some() {
-            self.load_anchored_registry(anchor_record.as_ref())?
-        } else {
-            let backup = suffix(&self.path, ".bak");
-            if self.path.exists() {
-                decode_snapshot(
-                    &fs::read(&self.path)?,
-                    &self.admin_keys,
-                    self.integrity_key.key_id(),
-                    &self.integrity_key.bytes,
-                )?
-            } else if backup.exists() {
-                // Recover only the interrupted-rename case. A present but invalid
-                // primary snapshot is never silently replaced by an older backup.
-                let bytes = fs::read(&backup)?;
-                let recovered = decode_snapshot(
-                    &bytes,
-                    &self.admin_keys,
-                    self.integrity_key.key_id(),
-                    &self.integrity_key.bytes,
-                )?;
-                atomic_write(&self.path, &bytes, false)?;
-                recovered
-            } else {
-                DeviceRegistry::new(self.admin_keys.as_ref().clone())?
-            }
-        };
+        let mut registry = self.load_registry(anchor_record.as_ref())?;
         let result = operation(&mut registry)?;
         let bytes = encode_snapshot(
             &registry,
@@ -1261,6 +1335,75 @@ mod tests {
             }
             Ok(true)
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn authenticated_status_read_does_not_advance_external_anchor() {
+        let path = path();
+        let admin = test_signing_key("status-read-admin");
+        let device = test_signing_key("status-read-device");
+        let anchor = std::sync::Arc::new(MemoryAnchor::default());
+        let store = DurableDeviceRegistry::open_with_anchor(
+            &path,
+            "tenant-a-status-read-registry",
+            vec![("admin-v1".into(), admin.verifying_key())],
+            DeviceTrustIntegrityKey::new("integrity-v1", test_integrity_key_bytes()),
+            anchor.clone(),
+        )
+        .unwrap();
+        store
+            .apply_admin_command(&enroll(&admin, &device), 200)
+            .unwrap();
+        store
+            .apply_owner_consent(
+                &owner_consent(&device, true, 1, 210, "status-read-owner-opt-in"),
+                220,
+            )
+            .unwrap();
+
+        let body = b"authenticated status read";
+        let claims = DeviceRequestClaims {
+            tenant_id: "tenant-a".into(),
+            device_id: "device-1".into(),
+            key_id: "device-key-v1".into(),
+            key_generation: 1,
+            request_id: test_nonce("status-read-request"),
+            issued_at_unix_ms: 220,
+            expires_at_unix_ms: 500,
+            method: "POST".into(),
+            resource_id: "lease:acquire".into(),
+            workload_id: "workload-1".into(),
+            manifest_sha256: Sha256::digest(b"manifest-v1").into(),
+            body_sha256: Sha256::digest(body).into(),
+        };
+        let signed = SignedDeviceRequest {
+            signature: device.sign(&device_request_bytes(&claims)).to_bytes(),
+            claims,
+        };
+        let authenticated = store
+            .authenticate_request_for(&signed, "POST", "lease:acquire", body, 230)
+            .unwrap();
+        let before = anchor.record.lock().unwrap().as_ref().unwrap().generation();
+
+        let (key, owner_opted_in) = store
+            .with_authenticated_device_status_for_request(&authenticated, |key, opted_in| {
+                (*key, opted_in)
+            })
+            .unwrap();
+
+        let after = anchor.record.lock().unwrap().as_ref().unwrap().generation();
+        assert_eq!(key, device.verifying_key());
+        assert!(owner_opted_in);
+        assert_eq!(
+            after, before,
+            "a read-only consent recheck must not create a post-ledger anchor commit"
+        );
+
+        drop(store);
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(suffix(&path, ".lock"));
+        let _ = fs::remove_file(suffix(&path, ".bak"));
     }
 
     #[test]
