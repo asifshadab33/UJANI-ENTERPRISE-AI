@@ -340,7 +340,7 @@ impl DurableDeviceRegistry {
     /// are re-read, and before an owner opt-out or key rotation can commit. Callers
     /// must acquire the device-trust lock before the reservation-ledger lock
     /// consistently across the service; never call back into this registry.
-    pub fn with_authenticated_device_status_for_request<T>(
+    pub(crate) fn with_authenticated_device_status_for_request<T>
         &self,
         authenticated: &AuthenticatedDeviceRequest,
         action: impl FnOnce(&VerifyingKey, bool) -> T,
