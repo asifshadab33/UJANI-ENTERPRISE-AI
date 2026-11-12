@@ -541,7 +541,7 @@ impl Ledger {
     }
 
     /// Release a lease only when both the device owner and lease capability match.
-    pub fn release_lease_for_device(
+    pub(crate) fn release_lease_for_device(
         &mut self,
         workload_id: &str,
         device_id: &str,
