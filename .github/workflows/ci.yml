@@ -95,8 +95,18 @@ jobs:
           PGPASSWORD: postgres
         run: |
           "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < migrations/0001_customer_hosted_control_plane.sql
+      - name: Apply shared task-contract replay migration
+        env:
+          PGPASSWORD: postgres
+        run: |
+          "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < migrations/0002_task_contract_replay_storage.sql
       - name: Verify tenant isolation and append-only audit behavior
         env:
           PGPASSWORD: postgres
         run: |
           "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < scripts/test_customer_hosted_migration.sql
+      - name: Verify task replay and monotonic sequence isolation
+        env:
+          PGPASSWORD: postgres
+        run: |
+          "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < scripts/test_task_contract_replay_migration.sql
