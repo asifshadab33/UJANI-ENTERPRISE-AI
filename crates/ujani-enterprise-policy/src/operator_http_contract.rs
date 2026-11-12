@@ -276,7 +276,11 @@ mod tests {
         assert!(resolve_route(HttpMethod::Get, "/v1/leases/acquire").is_none());
         assert!(resolve_route(HttpMethod::Post, "/v1/devices/../telemetry").is_none());
         assert!(resolve_route(HttpMethod::Post, "/v1/devices/%2fetc/telemetry").is_none());
-        assert!(resolve_route(HttpMethod::Post, "/v1/devices/device-1/owner-consent/extra/segments").is_none());
+        assert!(resolve_route(
+            HttpMethod::Post,
+            "/v1/devices/device-1/owner-consent/extra/segments"
+        )
+        .is_none());
         assert!(resolve_route(HttpMethod::Post, "/v1/leases/lease-1/execute").is_none());
         assert!(resolve_route(HttpMethod::Post, "/v1/workloads/execute").is_none());
         assert!(resolve_route(HttpMethod::Post, "prefix/v1/devices/device-1/telemetry").is_none());
