@@ -1419,18 +1419,17 @@ mod tests {
     fn serialized_overview_matches_required_operator_console_contract() {
         let overview = empty_overview("tenant-a");
         let json = overview.to_json();
-        assert!(json.starts_with("{\\"schema_version\\":1,"));
-        assert!(json.contains("\\"tenant_id\\":\\"tenant-a\\""));
-        assert!(json.contains("\\"generated_at_unix_ms\\":"));
-        assert!(json.contains("\\"fleet\\":{"));
-        assert!(json.contains("\\"devices\\":[]"));
-        assert!(json.contains("\\"workloads\\":[]"));
-        assert!(json.contains("\\"approvals\\":[]"));
-        assert!(json.contains("\\"model_inventory\\":[]"));
-        assert!(json.contains("\\"model_inventory_returned_devices\\":0"));
-        assert!(json.contains("\\"model_inventory_returned_models\\":0"));
+        assert!(json.starts_with("{\"schema_version\":1,"));
+        assert!(json.contains("\"tenant_id\":\"tenant-a\""));
+        assert!(json.contains("\"generated_at_unix_ms\":"));
+        assert!(json.contains("\"fleet\":{"));
+        assert!(json.contains("\"devices\":[]"));
+        assert!(json.contains("\"workloads\":[]"));
+        assert!(json.contains("\"approvals\":[]"));
+        assert!(json.contains("\"model_inventory\":[]"));
+        assert!(json.contains("\"model_inventory_returned_devices\":0"));
+        assert!(json.contains("\"model_inventory_returned_models\":0"));
     }
-
     #[test]
     fn session_is_signed_expiring_and_tamper_evident() {
         let auth = auth();
