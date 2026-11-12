@@ -968,7 +968,8 @@ mod tests {
         expected_binding_sha256: String,
     }
 
-    const CONSENT_FIXTURE: &str = include_str!("../../../schemas/test-vectors/consent-binding-v1.json");
+    const CONSENT_FIXTURE: &str =
+        include_str!("../../../schemas/test-vectors/consent-binding-v1.json");
 
     fn sign_message<T: Serialize>(
         message: &T,
@@ -1150,7 +1151,9 @@ mod tests {
             br#"{"sender":{"principal_id":"user-1","device_id":"personal-1","device_id":"attacker"}}"#;
         let nested_envelope_error =
             serde_json::from_slice::<TaskEnvelopeV1>(duplicate_nested_envelope).unwrap_err();
-        assert!(nested_envelope_error.to_string().contains("duplicate field"));
+        assert!(nested_envelope_error
+            .to_string()
+            .contains("duplicate field"));
 
         let duplicate_nested_status = br#"{
             "message_type":"task_status","schema_version":1,"task_id":"task-1",
