@@ -34,7 +34,7 @@ fn authenticate_lease_request(
     expected_workload_id: &str,
     expected_manifest_sha256: &[u8; 32],
     now_unix_ms: u64,
-) -> Result<(AuthenticatedDeviceRequest, bool), LeaseControlError> {
+) -> Result<AuthenticatedDeviceRequest, LeaseControlError> {
     if raw_body.len() > MAX_DEVICE_REQUEST_BODY_BYTES {
         return Err(LeaseControlError::RequestBodyTooLarge);
     }
@@ -63,7 +63,7 @@ fn authenticate_lease_request(
         return Err(LeaseControlError::RequestBindingMismatch);
     }
 
-    Ok((authenticated, false))
+    Ok(authenticated)
 }
 
 /// Renew an existing lease from its currently enrolled device. The expected
@@ -80,7 +80,7 @@ pub fn authenticate_and_renew_device_lease(
     lease_token: &[u8; 32],
     now_unix_ms: u64,
 ) -> Result<(), LeaseControlError> {
-    let (authenticated, _) = authenticate_lease_request(
+    let authenticated = authenticate_lease_request(
         registry,
         signed_request,
         raw_body,
@@ -127,7 +127,7 @@ pub fn authenticate_and_release_device_lease(
     lease_token: &[u8; 32],
     now_unix_ms: u64,
 ) -> Result<(), LeaseControlError> {
-    let (authenticated, _) = authenticate_lease_request(
+    let authenticated = authenticate_lease_request(
         registry,
         signed_request,
         raw_body,
