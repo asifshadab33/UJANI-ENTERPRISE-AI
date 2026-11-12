@@ -6,7 +6,7 @@
 
 The current repository contains a transport-independent operator control-plane core and a read-only console contract. The core validates short-lived tenant-bound operator sessions, checks overview consistency and requires an audit sink acknowledgement. The repository does **not** yet contain a network listener, production OIDC/SAML identity adapter, durable multi-tenant overview repository, durable audit sink or deployed endpoint.
 
-Latest verified main commit: `730d2d958894e8f49ceb24b394b68c8a3ddf758e`. Latest main policy CI passed on Linux, macOS and Windows. This is not proof of a deployed service or live device connectivity.
+Current main commit at the 2026-11-12 audit: `7e37e27985de4d3024445da0298871799d3b433d`, including merged PR #130 (tenant-validated, read-only model/runtime inventory metadata) and PR #134 (shared task/model-inventory contract vectors and validators). Exact-head CI, CodeQL and dependency checks for both PRs passed before merge; a post-merge main workflow run was not available in this audit. PR #130 does not add the production authenticated device-sample adapter or a durable live inventory repository, so the inventory may remain empty. This is not proof of a deployed service or live device connectivity.
 
 ## Safe preview review
 
