@@ -224,11 +224,18 @@ mod tests {
         path
     }
 
+    fn test_key_bytes(label: &str) -> [u8; 32] {
+        Sha256::digest(label.as_bytes()).into()
+    }
+
     fn open_registry(path: &Path, admin: &SigningKey) -> DurableDeviceRegistry {
         DurableDeviceRegistry::open(
             path,
             vec![("admin-v1".to_owned(), admin.verifying_key())],
-            DeviceTrustIntegrityKey::new("trust-test-v1", [0x33; 32]),
+            DeviceTrustIntegrityKey::new(
+                "trust-test-v1",
+                test_key_bytes("ujani-lease-control-trust-integrity-test-v1"),
+            ),
         )
         .expect("open durable device registry")
     }
@@ -237,7 +244,10 @@ mod tests {
         DurableLedger::open_with_integrity_keys(
             path,
             "ledger-test-v1",
-            vec![LedgerIntegrityKey::new("ledger-test-v1", [0x44; 32])],
+            vec![LedgerIntegrityKey::new(
+                "ledger-test-v1",
+                test_key_bytes("ujani-lease-control-ledger-integrity-test-v1"),
+            )],
         )
         .expect("open durable reservation ledger")
     }
@@ -330,8 +340,8 @@ mod tests {
         let directory = test_directory();
         let registry_path = directory.join("device-trust.db");
         let ledger_path = directory.join("reservations.db");
-        let admin = SigningKey::from_bytes(&[7; 32]);
-        let device = SigningKey::from_bytes(&[9; 32]);
+        let admin = SigningKey::from_bytes(&test_key_bytes("ujani-lease-control-admin-test-v1"));
+        let device = SigningKey::from_bytes(&test_key_bytes("ujani-lease-control-device-test-v1"));
         let registry = open_registry(&registry_path, &admin);
         registry
             .apply_admin_command(&signed_enrollment(&admin, &device), 200)
@@ -558,8 +568,10 @@ mod tests {
             let lease_token = fixture.lease_token;
             let barrier = Arc::clone(&barrier);
             handles.push(thread::spawn(move || {
-                let admin = SigningKey::from_bytes(&[7; 32]);
-                let device = SigningKey::from_bytes(&[9; 32]);
+                let admin =
+                    SigningKey::from_bytes(&test_key_bytes("ujani-lease-control-admin-test-v1"));
+                let device =
+                    SigningKey::from_bytes(&test_key_bytes("ujani-lease-control-device-test-v1"));
                 let registry = open_registry(&registry_path, &admin);
                 let ledger = open_ledger(&ledger_path);
                 let body = b"concurrent release";
