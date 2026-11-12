@@ -10,6 +10,7 @@ use super::operator_control_plane::{OperatorRole, OperatorServiceError};
 pub const MAX_OPERATOR_ACTION_BODY_BYTES: usize = 16 * 1024;
 pub const MAX_DEVICE_ENROLLMENT_BODY_BYTES: usize = 64 * 1024;
 pub const MAX_DEVICE_INGEST_BODY_BYTES: usize = 1024 * 1024;
+pub const MAX_OWNER_CONSENT_BODY_BYTES: usize = 16 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HttpMethod {
@@ -30,6 +31,7 @@ pub enum OperatorHttpRoute {
     OperatorOverview,
     DeviceEnrollment,
     DeviceTelemetry,
+    DeviceOwnerConsent,
     LeaseAcquire,
     LeaseRenew,
     LeaseRelease,
@@ -104,7 +106,8 @@ pub fn resolve_route(method: HttpMethod, path: &str) -> Option<RouteContract> {
         });
     }
 
-    let parts: Vec<&str> = path.split('/').collect();
+    // Bound allocation even if a hostile request target contains many segments.
+    let parts: Vec<&str> = path.splitn(6, '/').collect();
     if parts.len() == 5
         && parts[1] == "v1"
         && parts[2] == "devices"
@@ -116,6 +119,19 @@ pub fn resolve_route(method: HttpMethod, path: &str) -> Option<RouteContract> {
             route: OperatorHttpRoute::DeviceTelemetry,
             principal: RoutePrincipal::EnrolledDeviceSignature,
             max_body_bytes: MAX_DEVICE_INGEST_BODY_BYTES,
+        });
+    }
+    if parts.len() == 5
+        && parts[1] == "v1"
+        && parts[2] == "devices"
+        && valid_path_segment(parts[3])
+        && parts[4] == "owner-consent"
+        && method == HttpMethod::Post
+    {
+        return Some(RouteContract {
+            route: OperatorHttpRoute::DeviceOwnerConsent,
+            principal: RoutePrincipal::EnrolledDeviceSignature,
+            max_body_bytes: MAX_OWNER_CONSENT_BODY_BYTES,
         });
     }
     if parts.len() == 5
@@ -214,11 +230,22 @@ mod tests {
     }
 
     #[test]
+    fn owner_consent_requires_device_signature_and_has_a_bounded_body() {
+        let route = resolve_route(HttpMethod::Post, "/v1/devices/device-1/owner-consent").unwrap();
+        assert_eq!(route.route, OperatorHttpRoute::DeviceOwnerConsent);
+        assert_eq!(route.principal, RoutePrincipal::EnrolledDeviceSignature);
+        assert!(route.permits_body_size(MAX_OWNER_CONSENT_BODY_BYTES));
+        assert!(!route.permits_body_size(MAX_OWNER_CONSENT_BODY_BYTES + 1));
+        assert!(resolve_route(HttpMethod::Get, "/v1/devices/device-1/owner-consent").is_none());
+    }
+
+    #[test]
     fn unknown_methods_paths_and_unsafe_segments_fail_closed() {
         assert!(resolve_route(HttpMethod::Post, "/v1/operator/overview").is_none());
         assert!(resolve_route(HttpMethod::Get, "/v1/leases/acquire").is_none());
         assert!(resolve_route(HttpMethod::Post, "/v1/devices/../telemetry").is_none());
         assert!(resolve_route(HttpMethod::Post, "/v1/devices/%2fetc/telemetry").is_none());
+        assert!(resolve_route(HttpMethod::Post, "/v1/devices/device-1/owner-consent/extra/segments").is_none());
         assert!(resolve_route(HttpMethod::Post, "/v1/leases/lease-1/execute").is_none());
         assert!(resolve_route(HttpMethod::Post, "/v1/workloads/execute").is_none());
         assert!(resolve_route(HttpMethod::Post, "prefix/v1/devices/device-1/telemetry").is_none());
