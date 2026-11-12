@@ -151,8 +151,7 @@ pub fn service_error_status(error: OperatorServiceError) -> u16 {
     match error {
         OperatorServiceError::Unauthorized => 401,
         OperatorServiceError::InvalidTenantBoundary => 403,
-        OperatorServiceError::RepositoryUnavailable
-        | OperatorServiceError::AuditUnavailable => 503,
+        OperatorServiceError::RepositoryUnavailable | OperatorServiceError::AuditUnavailable => 503,
         OperatorServiceError::InvalidOverview => 502,
     }
 }
@@ -192,10 +191,16 @@ mod tests {
     #[test]
     fn device_ingest_and_lease_routes_require_device_signatures() {
         for (path, expected) in [
-            ("/v1/devices/device-1/telemetry", OperatorHttpRoute::DeviceTelemetry),
+            (
+                "/v1/devices/device-1/telemetry",
+                OperatorHttpRoute::DeviceTelemetry,
+            ),
             ("/v1/leases/acquire", OperatorHttpRoute::LeaseAcquire),
             ("/v1/leases/lease-1/renew", OperatorHttpRoute::LeaseRenew),
-            ("/v1/leases/lease-1/release", OperatorHttpRoute::LeaseRelease),
+            (
+                "/v1/leases/lease-1/release",
+                OperatorHttpRoute::LeaseRelease,
+            ),
         ] {
             let route = resolve_route(HttpMethod::Post, path).unwrap();
             assert_eq!(route.route, expected);
@@ -215,10 +220,25 @@ mod tests {
 
     #[test]
     fn service_errors_map_to_non_leaky_http_statuses() {
-        assert_eq!(service_error_status(OperatorServiceError::Unauthorized), 401);
-        assert_eq!(service_error_status(OperatorServiceError::InvalidTenantBoundary), 403);
-        assert_eq!(service_error_status(OperatorServiceError::RepositoryUnavailable), 503);
-        assert_eq!(service_error_status(OperatorServiceError::AuditUnavailable), 503);
-        assert_eq!(service_error_status(OperatorServiceError::InvalidOverview), 502);
+        assert_eq!(
+            service_error_status(OperatorServiceError::Unauthorized),
+            401
+        );
+        assert_eq!(
+            service_error_status(OperatorServiceError::InvalidTenantBoundary),
+            403
+        );
+        assert_eq!(
+            service_error_status(OperatorServiceError::RepositoryUnavailable),
+            503
+        );
+        assert_eq!(
+            service_error_status(OperatorServiceError::AuditUnavailable),
+            503
+        );
+        assert_eq!(
+            service_error_status(OperatorServiceError::InvalidOverview),
+            502
+        );
     }
 }
