@@ -165,23 +165,20 @@ fn map_ledger_error(error: DurableLedgerError) -> LeaseControlError {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::device_trust::durable::{
-        DeviceTrustIntegrityKey, DurableDeviceRegistry,
-    };
+    use crate::device_trust::durable::{DeviceTrustIntegrityKey, DurableDeviceRegistry};
     use crate::device_trust::{
         admin_command_bytes, device_request_bytes, enrollment_proof_bytes, owner_consent_bytes,
         DeviceCommandAction, DeviceRequestClaims, SignedDeviceAdminCommand,
         SignedOwnerConsentCommand, MAX_OWNER_CONSENT_TTL_MS,
     };
+    use crate::durable_ledger::LedgerIntegrityKey;
     use crate::{
         workload_from_manifest, Admission, ClassPolicy, DataClassification, Device,
         SchedulingContext, WorkloadManifest, LEASE_MS,
     };
-    use crate::durable_ledger::LedgerIntegrityKey;
     use ed25519_dalek::{Signer, SigningKey};
     use sha2::{Digest, Sha256};
     use std::fs;
@@ -340,10 +337,7 @@ mod tests {
             .apply_admin_command(&signed_enrollment(&admin, &device), 200)
             .expect("enrol test device");
         registry
-            .apply_owner_consent(
-                &signed_owner_consent(&device, true, 1, 300, [2; 16]),
-                400,
-            )
+            .apply_owner_consent(&signed_owner_consent(&device, true, 1, 300, [2; 16]), 400)
             .expect("persist explicit device-owner opt-in");
 
         let manifest = manifest();
