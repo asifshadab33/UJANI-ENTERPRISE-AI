@@ -7,6 +7,7 @@ APP = ROOT / "apps" / "operator-console"
 
 class ConsoleParser(HTMLParser):
     def __init__(self):
+        """Initialize counters for prohibited inline resources and handlers."""
         super().__init__()
         self.inline_scripts = 0
         self.inline_styles = 0
@@ -14,6 +15,7 @@ class ConsoleParser(HTMLParser):
         self.script_sources = []
 
     def handle_starttag(self, tag, attrs):
+        """Collect inline executable resources and event-handler attributes."""
         values = dict(attrs)
         if tag == "script":
             if not values.get("src"):
@@ -27,6 +29,7 @@ class ConsoleParser(HTMLParser):
                 self.inline_handlers.append((tag, name))
 
 def main():
+    """Validate the operator console's static security and API contract."""
     html = (APP / "index.html").read_text(encoding="utf-8")
     js = (APP / "app.js").read_text(encoding="utf-8")
     css = (APP / "styles.css").read_text(encoding="utf-8")
@@ -65,6 +68,8 @@ def main():
     assert "inventory.privacy" in js, "Console must reject inventory privacy flags that disclose user data."
     assert "validEvidence(model.evidence, inventory.generated_at_unix_ms)" in js and "snapshotIsFresh(evidenceAt)" in js, "Model evidence must expose confidence and snapshot-relative freshness."
     assert "containsLocalPath(model.display_name)" in js and "containsLocalPath(model.model_ref)" in js, "Local paths must not be rendered as model labels."
+    assert "value.split(/[\\s=]+/)" in js, "Model labels must split on whitespace and assignment boundaries without splitting namespace separators."
+    assert "data.model_inventory_returned_devices === (data.model_inventory || []).length" in js, "An omitted inventory must render as not reported without breaking the overview."
     assert "model.estimated_min_memory_mb <= MAX_MODEL_MEMORY_ESTIMATE_MB" in js, "Model memory estimates must match the API bounds."
     assert "model_inventory_status" in js and "model_inventory_total_models" in js, "Partial inventory responses must be explicitly summarized."
     assert "inventory.hardware.memory_available_mb" in js and "estimate fits" in js and "insufficient" in js, "Model RAM fit must be conservative and explicit."
