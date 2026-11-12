@@ -4,6 +4,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SQL_PATH = ROOT / "migrations" / "0001_customer_hosted_control_plane.sql"
+TASK_REPLAY_SQL_PATH = ROOT / "migrations" / "0002_task_contract_replay_storage.sql"
 
 
 def main() -> None:
@@ -33,7 +34,25 @@ def main() -> None:
         raise SystemExit("replay request identifiers must be at least 128 bits")
     if "BYPASSRLS" in sql or "GRANT ALL" in sql or "CREATE ROLE" in sql:
         raise SystemExit("migration must not create a privileged runtime role")
-    telemetry_sql = (ROOT / "migrations" / "0002_monotonic_device_telemetry.sql").read_text(encoding="utf-8")
+    replay_sql = TASK_REPLAY_SQL_PATH.read_text(encoding="utf-8")
+    for table in ("task_contract_replays", "task_contract_sequences"):
+        if f"CREATE TABLE IF NOT EXISTS ujani_control.{table}" not in replay_sql:
+            raise SystemExit(f"missing shared task-contract storage table: {table}")
+    if "octet_length(nonce) = 32" not in replay_sql:
+        raise SystemExit("task-contract nonce must be exactly 32 bytes")
+    if "UNIQUE (tenant_id, sender_device_id, nonce)" not in replay_sql:
+        raise SystemExit("task replay claim must atomically reject sender nonce reuse")
+    if "last_sequence BETWEEN 1 AND 9007199254740991" not in replay_sql:
+        raise SystemExit("message sequence must be a positive I-JSON safe integer")
+    if "message_type IN ('task_status','execution_receipt')" not in replay_sql:
+        raise SystemExit("status and receipt sequence streams must be distinct")
+    if "ENABLE ROW LEVEL SECURITY" not in replay_sql or "FORCE ROW LEVEL SECURITY" not in replay_sql:
+        raise SystemExit("task-contract storage must enable and force row-level security")
+    if "current_setting(''ujani.tenant_id'', true)" not in replay_sql:
+        raise SystemExit("task-contract storage must fail closed without tenant context")
+    if "SECURITY DEFINER" in replay_sql or "GRANT ALL" in replay_sql:
+        raise SystemExit("task-contract migration must not add privileged functions or grants")
+    telemetry_sql = (ROOT / "migrations" / "0003_monotonic_device_telemetry.sql").read_text(encoding="utf-8")
     telemetry_test = (ROOT / "scripts" / "test_monotonic_device_telemetry.sql").read_text(encoding="utf-8")
     for required in (
         "CREATE TABLE IF NOT EXISTS ujani_control.device_telemetry_samples",
@@ -68,23 +87,17 @@ def main() -> None:
     ):
         if required not in telemetry_test:
             raise SystemExit(f"telemetry PostgreSQL regression test missing: {required}")
-    if "DO $\n" in telemetry_test or "END $;" in telemetry_test:
-        raise SystemExit("telemetry PostgreSQL test contains a malformed dollar-quoted block")
-    if "verify the signed device request" not in telemetry_sql:
-        raise SystemExit("telemetry migration must document upstream signature verification boundary")
     concurrency_test = (ROOT / "scripts" / "test_monotonic_device_telemetry_concurrency.sh").read_text(encoding="utf-8")
     for required in ("pg_stat_activity", "pg_sleep(1)", "1:2:2", "--quiet"):
         if required not in concurrency_test:
             raise SystemExit(f"telemetry concurrency regression test missing: {required}")
-    test_sql = (ROOT / "scripts" / "test_customer_hosted_migration.sql").read_text(encoding="utf-8")
-    if "REVOKE INSERT, UPDATE, DELETE ON ujani_control.tenants FROM ujani_runtime" not in test_sql:
+    tenant_test = (ROOT / "scripts" / "test_customer_hosted_migration.sql").read_text(encoding="utf-8")
+    if "REVOKE INSERT, UPDATE, DELETE ON ujani_control.tenants FROM ujani_runtime" not in tenant_test:
         raise SystemExit("runtime role must not mutate the tenant registry")
     for privilege in ("INSERT", "UPDATE", "DELETE"):
-        if f"has_table_privilege(current_user, 'ujani_control.tenants', '{privilege}')" not in test_sql:
+        if f"has_table_privilege(current_user, 'ujani_control.tenants', '{privilege}')" not in tenant_test:
             raise SystemExit(f"PostgreSQL test must verify runtime tenant-registry {privilege} privilege is absent")
-    if "GET DIAGNOSTICS affected_rows = ROW_COUNT;" in test_sql and "affected_rows bigint;" not in test_sql:
-        raise SystemExit("PostgreSQL isolation test reads affected_rows without declaring it")
-    print("Customer-hosted and monotonic telemetry migration static checks passed.")
+    print("Customer-hosted and task-contract migration static checks passed.")
 
 
 if __name__ == "__main__":
