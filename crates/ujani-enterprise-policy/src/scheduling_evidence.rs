@@ -492,10 +492,8 @@ pub fn authenticate_verify_and_reserve_worker_telemetry(
                 if !owner_opted_in {
                     return Ok(Admission::Reject(RejectReason::OwnerOptInMissing));
                 }
-                let enrolled_device_keys = [(
-                    authenticated.device_id().to_owned(),
-                    (*device_key).clone(),
-                )];
+                let enrolled_device_keys =
+                    [(authenticated.device_id().to_owned(), (*device_key).clone())];
                 let verified = verify_scheduling_context(
                     device,
                     workload,
@@ -544,16 +542,16 @@ pub fn authenticate_verify_and_reserve_worker_telemetry(
 
                 match challenge_result {
                     Ok(admission) => Ok(admission),
-                    Err(TelemetryChallengeError::Replayed) => Err(
-                        AuthenticatedTelemetryAdmissionError::SchedulingEvidence(
+                    Err(TelemetryChallengeError::Replayed) => {
+                        Err(AuthenticatedTelemetryAdmissionError::SchedulingEvidence(
                             SchedulingEvidenceError::ChallengeReplayed,
-                        ),
-                    ),
-                    Err(TelemetryChallengeError::InvalidReservationWatermark) => Err(
-                        AuthenticatedTelemetryAdmissionError::SchedulingEvidence(
+                        ))
+                    }
+                    Err(TelemetryChallengeError::InvalidReservationWatermark) => {
+                        Err(AuthenticatedTelemetryAdmissionError::SchedulingEvidence(
                             SchedulingEvidenceError::InvalidReservationWatermark,
-                        ),
-                    ),
+                        ))
+                    }
                 }
             },
         )
@@ -772,18 +770,16 @@ pub(crate) fn admit_and_reserve_with_verified_lease(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::device_trust::durable::{MonotonicSnapshotAnchor, SnapshotAnchorRecord};
     use crate::{
         workload_from_manifest, DataClassification, Ledger, LedgerIntegrityKey, WorkloadManifest,
-    };
-    use crate::device_trust::durable::{
-        MonotonicSnapshotAnchor, SnapshotAnchorRecord,
     };
     use ed25519_dalek::{Signer, SigningKey};
     use std::hash::{BuildHasher, Hash, Hasher};
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::{mpsc, Arc, Barrier, Mutex, OnceLock};
-    use std::time::Duration;
     use std::thread;
+    use std::time::Duration;
 
     // Test-only unpredictable challenge values avoid embedding fixed nonces in
     // signed-message fixtures. Production challenges are issued by the trust service.
@@ -2601,7 +2597,9 @@ mod tests {
         });
         started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
         assert!(
-            finished_rx.recv_timeout(Duration::from_millis(100)).is_err(),
+            finished_rx
+                .recv_timeout(Duration::from_millis(100))
+                .is_err(),
             "owner opt-out must wait until the in-flight admission releases the trust lock"
         );
 
