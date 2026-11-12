@@ -5,6 +5,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SQL_PATH = ROOT / "migrations" / "0001_customer_hosted_control_plane.sql"
 TASK_REPLAY_SQL_PATH = ROOT / "migrations" / "0002_task_contract_replay_storage.sql"
+TENANT_TEST_SQL_PATH = ROOT / "scripts" / "test_customer_hosted_migration.sql"
 
 
 def main() -> None:
@@ -95,6 +96,20 @@ def main() -> None:
     for required in ("pg_stat_activity", "pg_sleep(1)", "1:2:2", "--quiet"):
         if required not in concurrency_test:
             raise SystemExit(f"telemetry concurrency regression test missing: {required}")
+    tenant_test = TENANT_TEST_SQL_PATH.read_text(encoding="utf-8")
+    if "REVOKE INSERT, UPDATE, DELETE ON ujani_control.tenants FROM ujani_runtime" not in tenant_test:
+        raise SystemExit("runtime role must not mutate the tenant registry")
+    for required in (
+        "has_table_privilege(current_user, 'ujani_control.tenants', 'INSERT')",
+        "has_table_privilege(current_user, 'ujani_control.tenants', 'UPDATE')",
+        "has_table_privilege(current_user, 'ujani_control.tenants', 'DELETE')",
+        "runtime role can mutate tenant registry",
+    ):
+        if required not in tenant_test:
+            raise SystemExit(f"tenant provisioning privilege regression test missing: {required}")
+    concurrency_test = (ROOT / "scripts" / "test_monotonic_device_telemetry_concurrency.sh").read_text(encoding="utf-8")
+    if 'PSQL_BIN="${PSQL_BIN:-psql}"' not in concurrency_test:
+        raise SystemExit("telemetry concurrency test must use the configured PostgreSQL client adapter")
     print("Customer-hosted, task-contract and monotonic telemetry migration static checks passed.")
 
 
