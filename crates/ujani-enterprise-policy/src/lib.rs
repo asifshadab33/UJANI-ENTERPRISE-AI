@@ -547,7 +547,11 @@ impl Ledger {
         device_id: &str,
         lease_token: &[u8; 32],
     ) -> bool {
-        if !self.jobs.get(workload_id).is_some_and(|job| job.0 == device_id) {
+        if !self
+            .jobs
+            .get(workload_id)
+            .is_some_and(|job| job.0 == device_id)
+        {
             return false;
         }
         self.release_lease(workload_id, lease_token)
