@@ -1053,6 +1053,9 @@ where
         };
         let outcome = if overview.tenant_id != claims.tenant_id
             || validate_overview(&overview, now_unix_ms).is_err()
+            || overview
+                .to_json()
+                .starts_with("{\"error\":\"overview_exceeds_response_budget\"}")
         {
             OperatorAuditOutcome::InvalidOverview
         } else {
