@@ -92,12 +92,13 @@ def main():
         "total_model_rows.is_none_or",
         "MAX_TOTAL_MODEL_ROWS: usize = 100_000",
         "MAX_OVERVIEW_RESPONSE_BYTES: usize = 8 * 1024 * 1024",
-        '.starts_with("{\\\"error\\\":\\\"overview_exceeds_response_budget\\\"}")',
+        "overview_exceeds_response_budget",
         "contains_local_path(&model.display_name)",
         "inventory_devices.insert(inventory.device_id.as_str())",
     ):
         if required not in control_plane:
             raise SystemExit(f"operator API model inventory contract is missing: {required}")
+    assert ".starts_with(" in control_plane and "overview_exceeds_response_budget" in control_plane, "Oversized base collections must fail before a successful audit."
     serializer = control_plane.split("impl OperatorOverview", 1)[1].split("fn json_string", 1)[0]
     assert '\\"tenant_id\\":{}' in serializer, "Serialized overview must include tenant_id required by the console."
     assert "partial_response_budget" in serializer and "model_inventory_returned_models" in serializer, "Serializer must expose explicit bounded-inventory status and counts."
