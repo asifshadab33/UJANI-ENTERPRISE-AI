@@ -73,11 +73,11 @@ function boundedString(value, max) {
 function containsLocalPath(value) {
   if (typeof value !== "string") return false;
   if (value.toLowerCase().includes("file://")) return true;
-    return value.split(/[\s=]+/).some((raw) => {
-    const token = raw.replace(/^["'([{,;]+|["')\\]},;]+$/g, "");
+  return value.split(/[\s=]+/).some((raw) => {
+    const token = raw.replace(/^["'([{,;]+|["')\]},;]+$/g, "");
     return token.startsWith("/") || token.startsWith("~/")
-      || token.startsWith("\\\\\\\\")
-      || /^[A-Za-z]:[\\\\/]/.test(token);
+      || token.startsWith("\\\\")
+      || /^[A-Za-z]:[\\/]/.test(token);
   });
 }
 function validEvidence(evidence, generatedAtUnixMs) {
