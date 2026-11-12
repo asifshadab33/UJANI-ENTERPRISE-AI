@@ -1,4 +1,4 @@
--- Run after migrations 0001 and 0002 against a disposable PostgreSQL 16 database.
+-- Run after migrations 0001, 0002 and 0003 against a disposable PostgreSQL 16 database.
 -- Signature verification is an upstream service-adapter responsibility; this
 -- SQL test exercises tenant-scoped, post-authentication database admission.
 GRANT SELECT, INSERT, UPDATE, DELETE ON ujani_control.devices,
