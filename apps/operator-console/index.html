@@ -47,6 +47,7 @@
     <section class="panel" aria-labelledby="model-choices-heading">
       <div class="section-title"><div><p class="eyebrow">CUSTOMER MODEL CHOICES</p><h2 id="model-choices-heading">Available local model candidates</h2></div><span class="pill">Catalogue only · no distribution</span></div>
       <p class="muted">Plain-language descriptions for customer planning. These are candidate models, not tenant-approved artifacts. Exact version, quantisation, digest, licence, download size and device compatibility must be verified before an administrator can approve distribution. No model is downloaded from this screen.</p>
+      <div class="notice"><strong>Recommended fleet default: hardware-aware, not one-size-fits-all.</strong><p>Do not install a model automatically on 4 GiB devices. As a starting profile only: 6 GiB + 2.5 GiB free → Qwen3 0.6B; 8 GiB + 3.5 GiB free → Qwen3 1.7B; 16 GiB + 6 GiB free → Qwen3 4B; 24 GiB + 10 GiB free → Qwen3 8B. Administrators must choose the approved fleet profile, and every device must pass fresh memory, storage, runtime, licence and owner-consent checks. Unknown or stale evidence means no recommendation.</p></div>
       <div id="model-catalogue" class="catalogue-grid"><p class="empty">Loading curated model catalogue…</p></div>
       <p class="muted">Administrator allowlists, device-owner consent, internal distribution, rollback and audit require authenticated control-plane services. This preview intentionally exposes no fake approval or installation controls.</p>
     </section>
