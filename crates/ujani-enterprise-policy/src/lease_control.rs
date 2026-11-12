@@ -63,12 +63,7 @@ fn authenticate_lease_request(
         return Err(LeaseControlError::RequestBindingMismatch);
     }
 
-    // Re-read the durable registry after signature verification so a concurrent
-    // revocation or key rotation cannot authorize a stale request.
-    let (_, owner_opted_in) = registry
-        .authenticated_device_status_for_request(&authenticated)
-        .map_err(|_| LeaseControlError::DeviceAuthenticationFailed)?;
-    Ok((authenticated, owner_opted_in))
+    Ok((authenticated, false))
 }
 
 /// Renew an existing lease from its currently enrolled device. The expected
@@ -85,7 +80,7 @@ pub fn authenticate_and_renew_device_lease(
     lease_token: &[u8; 32],
     now_unix_ms: u64,
 ) -> Result<(), LeaseControlError> {
-    let (authenticated, owner_opted_in) = authenticate_lease_request(
+    let (authenticated, _) = authenticate_lease_request(
         registry,
         signed_request,
         raw_body,
@@ -95,20 +90,25 @@ pub fn authenticate_and_renew_device_lease(
         expected_manifest_sha256,
         now_unix_ms,
     )?;
-    if !owner_opted_in {
-        return Err(LeaseControlError::OwnerOptInMissing);
-    }
-    let renewed = ledger
-        .renew_lease_for_device(
-            authenticated.workload_id(),
-            authenticated.device_id(),
-            lease_token,
-            now_unix_ms,
-        )
-        .map_err(map_ledger_error)?;
-    if !renewed {
-        return Err(LeaseControlError::LeaseRejected);
-    }
+    registry
+        .with_authenticated_device_status_for_request(&authenticated, |_key, owner_opted_in| {
+            if !owner_opted_in {
+                return Err(LeaseControlError::OwnerOptInMissing);
+            }
+            let renewed = ledger
+                .renew_lease_for_device(
+                    authenticated.workload_id(),
+                    authenticated.device_id(),
+                    lease_token,
+                    now_unix_ms,
+                )
+                .map_err(map_ledger_error)?;
+            if !renewed {
+                return Err(LeaseControlError::LeaseRejected);
+            }
+            Ok(())
+        })
+        .map_err(|_| LeaseControlError::DeviceAuthenticationFailed)??;
     Ok(())
 }
 
@@ -127,7 +127,7 @@ pub fn authenticate_and_release_device_lease(
     lease_token: &[u8; 32],
     now_unix_ms: u64,
 ) -> Result<(), LeaseControlError> {
-    let (authenticated, _owner_opted_in) = authenticate_lease_request(
+    let (authenticated, _) = authenticate_lease_request(
         registry,
         signed_request,
         raw_body,
@@ -137,16 +137,21 @@ pub fn authenticate_and_release_device_lease(
         expected_manifest_sha256,
         now_unix_ms,
     )?;
-    let released = ledger
-        .release_lease_for_device(
-            authenticated.workload_id(),
-            authenticated.device_id(),
-            lease_token,
-        )
-        .map_err(map_ledger_error)?;
-    if !released {
-        return Err(LeaseControlError::LeaseRejected);
-    }
+    registry
+        .with_authenticated_device_status_for_request(&authenticated, |_key, _owner_opted_in| {
+            let released = ledger
+                .release_lease_for_device(
+                    authenticated.workload_id(),
+                    authenticated.device_id(),
+                    lease_token,
+                )
+                .map_err(map_ledger_error)?;
+            if !released {
+                return Err(LeaseControlError::LeaseRejected);
+            }
+            Ok(())
+        })
+        .map_err(|_| LeaseControlError::DeviceAuthenticationFailed)??;
     Ok(())
 }
 
