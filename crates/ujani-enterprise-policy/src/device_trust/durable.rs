@@ -1861,5 +1861,4 @@ mod tests {
         let _ = fs::remove_file(suffix(&path, ".lock"));
         let _ = fs::remove_file(suffix(&path, ".bak"));
     }
-
 }
