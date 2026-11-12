@@ -375,6 +375,33 @@ impl DurableLedger {
         })
     }
 
+    /// Renew only when the authenticated device matches the device that owns the lease.
+    pub fn renew_lease_for_device(
+        &self,
+        workload_id: &str,
+        device_id: &str,
+        lease_token: &[u8; 32],
+        now_unix_ms: u64,
+    ) -> Result<bool, DurableLedgerError> {
+        self.transact(|ledger| {
+            Ok(ledger.renew_lease_for_device(
+                workload_id, device_id, lease_token, now_unix_ms
+            ))
+        })
+    }
+
+    /// Release only when the authenticated device and lease capability both match.
+    pub fn release_lease_for_device(
+        &self,
+        workload_id: &str,
+        device_id: &str,
+        lease_token: &[u8; 32],
+    ) -> Result<bool, DurableLedgerError> {
+        self.transact(|ledger| {
+            Ok(ledger.release_lease_for_device(workload_id, device_id, lease_token))
+        })
+    }
+
     /// Renews a workload lease only when the supplied capability matches.
     pub fn renew_lease(
         &self,
