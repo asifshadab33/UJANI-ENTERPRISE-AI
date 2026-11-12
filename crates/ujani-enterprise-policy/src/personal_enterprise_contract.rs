@@ -19,8 +19,7 @@ pub const MAX_OUTPUT_BYTES: u64 = 64 * 1024 * 1024;
 const SAFE_INTEGER_MAX: u64 = 9_007_199_254_740_991;
 const CONSENT_BINDING_DOMAIN: &[u8] = b"UJANI-CONSENT-BINDING-V1\0";
 const SIGNATURE_DOMAIN: &[u8] = b"UJANI-PERSONAL-ENTERPRISE-TASK-V1\0";
-const BASE64URL: &[u8; 64] =
-    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+const BASE64URL: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContractError {
@@ -190,7 +189,11 @@ pub struct TaskEnvelopeV1 {
     pub privacy_classification: PrivacyClassification,
     pub required_scopes: Vec<String>,
     pub required_capabilities: Vec<String>,
-    #[serde(default, deserialize_with = "deserialize_optional_non_null", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub min_context_length_tokens: Option<u64>,
     pub resource_limits: ResourceLimits,
     pub network_access: NetworkAccess,
@@ -217,14 +220,17 @@ pub struct AuthenticatedTaskContext<'a> {
 impl TaskEnvelopeV1 {
     /// Parse one strict v1 envelope. Duplicate and unknown struct fields are rejected by Serde.
     pub fn parse(input: &[u8]) -> Result<Self, ContractError> {
-        let envelope: Self = serde_json::from_slice(input).map_err(|_| ContractError::InvalidJson)?;
+        let envelope: Self =
+            serde_json::from_slice(input).map_err(|_| ContractError::InvalidJson)?;
         Ok(envelope)
     }
 
     /// Validate structural and cross-field rules that JSON Schema cannot express.
     /// Cryptographic verification and payload-byte verification remain separate explicit calls.
     pub fn validate(&self, now_unix_ms: u64) -> Result<(), ContractError> {
-        if self.message_type != "task_envelope" || self.schema_version != TASK_CONTRACT_SCHEMA_VERSION {
+        if self.message_type != "task_envelope"
+            || self.schema_version != TASK_CONTRACT_SCHEMA_VERSION
+        {
             return Err(ContractError::UnsupportedVersion);
         }
         if !valid_identifier(&self.task_id, 128)
@@ -248,7 +254,11 @@ impl TaskEnvelopeV1 {
         if self.expires_at_unix_ms <= now_unix_ms {
             return Err(ContractError::Expired);
         }
-        if self.expires_at_unix_ms.saturating_sub(self.issued_at_unix_ms) > MAX_TASK_TTL_MS {
+        if self
+            .expires_at_unix_ms
+            .saturating_sub(self.issued_at_unix_ms)
+            > MAX_TASK_TTL_MS
+        {
             return Err(ContractError::ExcessiveLifetime);
         }
         if decode_base64url(&self.nonce, 32).is_err() {
@@ -268,14 +278,26 @@ impl TaskEnvelopeV1 {
             return Err(ContractError::InvalidCapability);
         }
         const CAPABILITIES: &[&str] = &[
-            "chat", "reasoning", "coding", "vision", "embeddings", "tool_use",
-            "streaming", "audio_input", "audio_output",
+            "chat",
+            "reasoning",
+            "coding",
+            "vision",
+            "embeddings",
+            "tool_use",
+            "streaming",
+            "audio_input",
+            "audio_output",
         ];
         if self.required_capabilities.is_empty()
             || self.required_capabilities.len() > 16
             || !unique(&self.required_capabilities)
-            || self.required_capabilities.iter().any(|capability| !CAPABILITIES.contains(&capability.as_str()))
-            || self.min_context_length_tokens.is_some_and(|value| value == 0 || value > 1_000_000)
+            || self
+                .required_capabilities
+                .iter()
+                .any(|capability| !CAPABILITIES.contains(&capability.as_str()))
+            || self
+                .min_context_length_tokens
+                .is_some_and(|value| value == 0 || value > 1_000_000)
         {
             return Err(ContractError::InvalidCapability);
         }
@@ -292,16 +314,27 @@ impl TaskEnvelopeV1 {
         }
         if self.network_destinations.len() > 8
             || !unique(&self.network_destinations)
-            || self.network_destinations.iter().any(|host| !valid_dns_hostname(host))
-            || (self.network_access == NetworkAccess::Allowlisted && self.network_destinations.is_empty())
-            || (self.network_access != NetworkAccess::Allowlisted && !self.network_destinations.is_empty())
+            || self
+                .network_destinations
+                .iter()
+                .any(|host| !valid_dns_hostname(host))
+            || (self.network_access == NetworkAccess::Allowlisted
+                && self.network_destinations.is_empty())
+            || (self.network_access != NetworkAccess::Allowlisted
+                && !self.network_destinations.is_empty())
         {
             return Err(ContractError::InvalidNetworkPolicy);
         }
         if self.consent.required_approvals.len() != 2
             || !unique(&self.consent.required_approvals)
-            || !self.consent.required_approvals.contains(&ApprovalAuthority::OrganisationAdmin)
-            || !self.consent.required_approvals.contains(&ApprovalAuthority::WorkerDeviceOwner)
+            || !self
+                .consent
+                .required_approvals
+                .contains(&ApprovalAuthority::OrganisationAdmin)
+            || !self
+                .consent
+                .required_approvals
+                .contains(&ApprovalAuthority::WorkerDeviceOwner)
             || !valid_identifier(&self.consent.user.consent_id, 128)
             || !valid_identifier(&self.consent.user.subject_id, 128)
             || self.consent.user.subject_id != self.sender.principal_id
@@ -332,9 +365,15 @@ impl TaskEnvelopeV1 {
 
     /// Validate identity/audience/target against authenticated context, then verify the
     /// domain-separated Ed25519 signature using the key bound to that authenticated identity.
-    pub fn verify_authenticated(&self, context: &AuthenticatedTaskContext<'_>) -> Result<(), ContractError> {
+    pub fn verify_authenticated(
+        &self,
+        context: &AuthenticatedTaskContext<'_>,
+    ) -> Result<(), ContractError> {
         self.validate(context.now_unix_ms)?;
-        let target_matches = match (&self.device_trust.target_device_id, context.target_device_id) {
+        let target_matches = match (
+            &self.device_trust.target_device_id,
+            context.target_device_id,
+        ) {
             (NullableIdentifier::Null(()), _) => true,
             (NullableIdentifier::Value(expected), Some(actual)) => expected == actual,
             (NullableIdentifier::Value(_), None) => false,
@@ -352,7 +391,9 @@ impl TaskEnvelopeV1 {
 
     /// Hash the exact received payload bytes; never hash a re-serialized payload.
     pub fn verify_payload(&self, payload: &[u8]) -> Result<(), ContractError> {
-        if payload.len() as u64 != self.payload.byte_length || sha256_hex(payload) != self.payload.sha256 {
+        if payload.len() as u64 != self.payload.byte_length
+            || sha256_hex(payload) != self.payload.sha256
+        {
             return Err(ContractError::PayloadMismatch);
         }
         Ok(())
@@ -363,8 +404,14 @@ impl TaskEnvelopeV1 {
         let mut value = serde_json::to_value(self).map_err(|_| ContractError::InvalidJson)?;
         let object = value.as_object_mut().ok_or(ContractError::InvalidJson)?;
         let _ = object.remove("signature");
-        let consent = object.get_mut("consent").and_then(Value::as_object_mut).ok_or(ContractError::InvalidConsent)?;
-        let user = consent.get_mut("user").and_then(Value::as_object_mut).ok_or(ContractError::InvalidConsent)?;
+        let consent = object
+            .get_mut("consent")
+            .and_then(Value::as_object_mut)
+            .ok_or(ContractError::InvalidConsent)?;
+        let user = consent
+            .get_mut("user")
+            .and_then(Value::as_object_mut)
+            .ok_or(ContractError::InvalidConsent)?;
         let _ = user.remove("binding_sha256");
         let mut canonical = Vec::new();
         canonical_json(&value, &mut canonical)?;
@@ -464,31 +511,47 @@ pub struct TaskStatusV1 {
     pub updated_at_unix_ms: u64,
     pub policy_version: String,
     pub consent_state: ConsentState,
-    #[serde(default, deserialize_with = "deserialize_optional_non_null", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub reason_code: Option<ReasonCode>,
     pub signature: ContractSignature,
 }
 
 impl TaskStatusV1 {
     pub fn validate(&self) -> Result<(), ContractError> {
-        if self.message_type != "task_status" || self.schema_version != TASK_CONTRACT_SCHEMA_VERSION {
+        if self.message_type != "task_status" || self.schema_version != TASK_CONTRACT_SCHEMA_VERSION
+        {
             return Err(ContractError::UnsupportedVersion);
         }
-        if !valid_identifier(&self.task_id, 128) || !valid_identifier(&self.policy_version, 128)
-            || self.sequence == 0 || self.sequence > SAFE_INTEGER_MAX
-            || self.updated_at_unix_ms == 0 || self.updated_at_unix_ms > SAFE_INTEGER_MAX
+        if !valid_identifier(&self.task_id, 128)
+            || !valid_identifier(&self.policy_version, 128)
+            || self.sequence == 0
+            || self.sequence > SAFE_INTEGER_MAX
+            || self.updated_at_unix_ms == 0
+            || self.updated_at_unix_ms > SAFE_INTEGER_MAX
         {
             return Err(ContractError::InvalidIdentifier);
         }
-        if matches!(self.state, TaskState::Queued | TaskState::Reserved | TaskState::Running | TaskState::Completed)
-            && (self.consent_state.user != UserConsentState::Granted
-                || self.consent_state.organisation_admin != ApprovalState::Approved
-                || self.consent_state.worker_device_owner != ApprovalState::Approved)
+        if matches!(
+            self.state,
+            TaskState::Queued | TaskState::Reserved | TaskState::Running | TaskState::Completed
+        ) && (self.consent_state.user != UserConsentState::Granted
+            || self.consent_state.organisation_admin != ApprovalState::Approved
+            || self.consent_state.worker_device_owner != ApprovalState::Approved)
         {
             return Err(ContractError::InvalidConsent);
         }
-        if matches!(self.state, TaskState::Failed | TaskState::Cancelled | TaskState::TimedOut | TaskState::Rejected | TaskState::Expired)
-            && self.reason_code.is_none()
+        if matches!(
+            self.state,
+            TaskState::Failed
+                | TaskState::Cancelled
+                | TaskState::TimedOut
+                | TaskState::Rejected
+                | TaskState::Expired
+        ) && self.reason_code.is_none()
         {
             return Err(ContractError::InvalidState);
         }
@@ -505,8 +568,18 @@ impl TaskStatusV1 {
         Ok(())
     }
 
-    pub fn verify_signature(&self, expected_key_id: &str, trusted_key: &VerifyingKey) -> Result<(), ContractError> {
-        verify_signed_value(self, "task_status", &self.signature, expected_key_id, trusted_key)
+    pub fn verify_signature(
+        &self,
+        expected_key_id: &str,
+        trusted_key: &VerifyingKey,
+    ) -> Result<(), ContractError> {
+        verify_signed_value(
+            self,
+            "task_status",
+            &self.signature,
+            expected_key_id,
+            trusted_key,
+        )
     }
 }
 
@@ -572,7 +645,11 @@ pub struct ExecutionReceiptV1 {
     pub started_at_unix_ms: u64,
     pub completed_at_unix_ms: u64,
     pub outcome: ExecutionOutcome,
-    #[serde(default, deserialize_with = "deserialize_optional_non_null", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub resource_usage: Option<ResourceUsage>,
     pub consent_refs: ConsentReferences,
     pub policy_version: String,
@@ -581,7 +658,9 @@ pub struct ExecutionReceiptV1 {
 
 impl ExecutionReceiptV1 {
     pub fn validate(&self) -> Result<(), ContractError> {
-        if self.message_type != "execution_receipt" || self.schema_version != TASK_CONTRACT_SCHEMA_VERSION {
+        if self.message_type != "execution_receipt"
+            || self.schema_version != TASK_CONTRACT_SCHEMA_VERSION
+        {
             return Err(ContractError::UnsupportedVersion);
         }
         if !valid_identifier(&self.task_id, 128)
@@ -591,7 +670,8 @@ impl ExecutionReceiptV1 {
             || !valid_identifier(&self.consent_refs.user_consent_id, 128)
             || !valid_identifier(&self.consent_refs.organisation_approval_id, 128)
             || !valid_identifier(&self.consent_refs.worker_owner_consent_id, 128)
-            || self.sequence == 0 || self.sequence > SAFE_INTEGER_MAX
+            || self.sequence == 0
+            || self.sequence > SAFE_INTEGER_MAX
         {
             return Err(ContractError::InvalidIdentifier);
         }
@@ -633,8 +713,18 @@ impl ExecutionReceiptV1 {
         Ok(())
     }
 
-    pub fn verify_signature(&self, expected_key_id: &str, trusted_key: &VerifyingKey) -> Result<(), ContractError> {
-        verify_signed_value(self, "execution_receipt", &self.signature, expected_key_id, trusted_key)
+    pub fn verify_signature(
+        &self,
+        expected_key_id: &str,
+        trusted_key: &VerifyingKey,
+    ) -> Result<(), ContractError> {
+        verify_signed_value(
+            self,
+            "execution_receipt",
+            &self.signature,
+            expected_key_id,
+            trusted_key,
+        )
     }
 }
 
@@ -650,7 +740,10 @@ fn verify_signed_value<T: Serialize>(
         return Err(ContractError::UnknownSigningKey);
     }
     let mut value = serde_json::to_value(message).map_err(|_| ContractError::InvalidJson)?;
-    let _ = value.as_object_mut().ok_or(ContractError::InvalidJson)?.remove("signature");
+    let _ = value
+        .as_object_mut()
+        .ok_or(ContractError::InvalidJson)?
+        .remove("signature");
     let mut canonical = Vec::new();
     canonical_json(&value, &mut canonical)?;
     let mut preimage = SIGNATURE_DOMAIN.to_vec();
@@ -660,9 +753,12 @@ fn verify_signed_value<T: Serialize>(
     preimage.extend_from_slice(signature.key_id.as_bytes());
     preimage.push(0);
     preimage.extend_from_slice(&canonical);
-    let bytes = decode_base64url(&signature.value, 64).map_err(|_| ContractError::InvalidSignature)?;
+    let bytes =
+        decode_base64url(&signature.value, 64).map_err(|_| ContractError::InvalidSignature)?;
     let parsed = Signature::from_slice(&bytes).map_err(|_| ContractError::InvalidSignature)?;
-    trusted_key.verify_strict(&preimage, &parsed).map_err(|_| ContractError::InvalidSignature)
+    trusted_key
+        .verify_strict(&preimage, &parsed)
+        .map_err(|_| ContractError::InvalidSignature)
 }
 
 fn validate_signature_shape(signature: &ContractSignature) -> Result<(), ContractError> {
@@ -696,7 +792,9 @@ fn canonical_json(value: &Value, output: &mut Vec<u8>) -> Result<(), ContractErr
         Value::Array(items) => {
             output.push(b'[');
             for (index, item) in items.iter().enumerate() {
-                if index > 0 { output.push(b','); }
+                if index > 0 {
+                    output.push(b',');
+                }
                 canonical_json(item, output)?;
             }
             output.push(b']');
@@ -706,9 +804,14 @@ fn canonical_json(value: &Value, output: &mut Vec<u8>) -> Result<(), ContractErr
             let mut keys: Vec<&String> = object.keys().collect();
             keys.sort_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
             for (index, key) in keys.iter().enumerate() {
-                if !key.is_ascii() { return Err(ContractError::InvalidJson); }
-                if index > 0 { output.push(b','); }
-                let encoded_key = serde_json::to_string(key).map_err(|_| ContractError::InvalidJson)?;
+                if !key.is_ascii() {
+                    return Err(ContractError::InvalidJson);
+                }
+                if index > 0 {
+                    output.push(b',');
+                }
+                let encoded_key =
+                    serde_json::to_string(key).map_err(|_| ContractError::InvalidJson)?;
                 output.extend_from_slice(encoded_key.as_bytes());
                 output.push(b':');
                 canonical_json(object.get(*key).ok_or(ContractError::InvalidJson)?, output)?;
@@ -722,14 +825,16 @@ fn canonical_json(value: &Value, output: &mut Vec<u8>) -> Result<(), ContractErr
 fn valid_identifier(value: &str, max_len: usize) -> bool {
     !value.is_empty()
         && value.len() <= max_len
-        && value.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'-')
-        })
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'-'))
 }
 
 fn valid_sha256(value: &str) -> bool {
     value.len() == 64
-        && value.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 fn valid_scope(value: &str) -> bool {
@@ -742,34 +847,46 @@ fn valid_scope(value: &str) -> bool {
 }
 
 fn valid_media_type(value: &str) -> bool {
-    let Some((kind, subtype)) = value.split_once('/') else { return false; };
+    let Some((kind, subtype)) = value.split_once('/') else {
+        return false;
+    };
     !kind.is_empty()
         && !subtype.is_empty()
         && !subtype.contains('/')
         && value.len() <= 96
-        && value.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric() || b"!#$&^_.+-/".contains(&byte)
-        })
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"!#$&^_.+-/".contains(&byte))
 }
 
 fn valid_dns_hostname(value: &str) -> bool {
-    if value.is_empty() || value.len() > 253 || !value.is_ascii() || value.to_ascii_lowercase() != value {
+    if value.is_empty()
+        || value.len() > 253
+        || !value.is_ascii()
+        || value.to_ascii_lowercase() != value
+    {
         return false;
     }
-    if value.parse::<std::net::IpAddr>().is_ok() { return false; }
+    if value.parse::<std::net::IpAddr>().is_ok() {
+        return false;
+    }
     let labels: Vec<&str> = value.split('.').collect();
     if labels.iter().any(|label| {
         label.is_empty()
             || label.len() > 63
             || !label.as_bytes()[0].is_ascii_alphanumeric()
             || !label.as_bytes()[label.len() - 1].is_ascii_alphanumeric()
-            || !label.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+            || !label
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
     }) {
         return false;
     }
     let numeric_address = labels.iter().all(|label| {
         label.bytes().all(|byte| byte.is_ascii_digit())
-            || label.strip_prefix("0x").is_some_and(|hex| !hex.is_empty() && hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            || label.strip_prefix("0x").is_some_and(|hex| {
+                !hex.is_empty() && hex.bytes().all(|byte| byte.is_ascii_hexdigit())
+            })
     });
     !numeric_address
 }
@@ -787,7 +904,9 @@ fn decode_base64url(value: &str, expected_len: usize) -> Result<Vec<u8>, Contrac
     let mut accumulator: u32 = 0;
     let mut bits: u32 = 0;
     for byte in value.bytes() {
-        let digit = BASE64URL.iter().position(|candidate| *candidate == byte)
+        let digit = BASE64URL
+            .iter()
+            .position(|candidate| *candidate == byte)
             .ok_or(ContractError::InvalidSignature)? as u32;
         accumulator = (accumulator << 6) | digit;
         bits += 6;
@@ -831,7 +950,10 @@ fn encode_base64url(input: &[u8]) -> String {
 }
 
 fn sha256_hex(input: &[u8]) -> String {
-    Sha256::digest(input).iter().map(|byte| format!("{byte:02x}")).collect()
+    Sha256::digest(input)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 #[cfg(test)]
@@ -944,7 +1066,10 @@ mod tests {
     fn shared_fixture_matches_the_native_consent_binding_profile() {
         let fixture: ConsentFixture = serde_json::from_str(CONSENT_FIXTURE).unwrap();
         fixture.envelope.validate(1_000).unwrap();
-        assert_eq!(fixture.envelope.consent_binding_sha256().unwrap(), fixture.expected_binding_sha256);
+        assert_eq!(
+            fixture.envelope.consent_binding_sha256().unwrap(),
+            fixture.expected_binding_sha256
+        );
         assert_eq!(
             String::from_utf8(fixture.envelope.consent_binding_preimage().unwrap()).unwrap(),
             fixture.canonical_preimage_utf8
@@ -976,7 +1101,9 @@ mod tests {
         preimage.extend_from_slice(b"task_envelope\0ed25519\0sender-key-1\0");
         preimage.extend_from_slice(&canonical);
         envelope.signature.value = encode_base64url(&key.sign(&preimage).to_bytes());
-        envelope.verify_signature("sender-key-1", &key.verifying_key()).unwrap();
+        envelope
+            .verify_signature("sender-key-1", &key.verifying_key())
+            .unwrap();
         assert_eq!(
             envelope.verify_signature("different-key", &key.verifying_key()),
             Err(ContractError::UnknownSigningKey)
@@ -996,7 +1123,10 @@ mod tests {
         unsupported.required_capabilities = vec!["unregistered.capability".into()];
         let binding = unsupported.consent_binding_sha256().unwrap();
         unsupported.consent.user.binding_sha256 = binding;
-        assert_eq!(unsupported.validate(1_000), Err(ContractError::InvalidCapability));
+        assert_eq!(
+            unsupported.validate(1_000),
+            Err(ContractError::InvalidCapability)
+        );
 
         let expired = fixture.envelope.clone();
         assert_eq!(expired.validate(301_000), Err(ContractError::Expired));
@@ -1006,7 +1136,10 @@ mod tests {
         long_lived.consent.user.expires_at_unix_ms += 1;
         let binding = long_lived.consent_binding_sha256().unwrap();
         long_lived.consent.user.binding_sha256 = binding;
-        assert_eq!(long_lived.validate(1_000), Err(ContractError::ExcessiveLifetime));
+        assert_eq!(
+            long_lived.validate(1_000),
+            Err(ContractError::ExcessiveLifetime)
+        );
     }
 
     #[test]
@@ -1033,38 +1166,57 @@ mod tests {
             organisation_id: "other-org",
             ..context
         };
-        assert_eq!(envelope.verify_authenticated(&wrong_audience), Err(ContractError::InvalidConsent));
+        assert_eq!(
+            envelope.verify_authenticated(&wrong_audience),
+            Err(ContractError::InvalidConsent)
+        );
     }
 
     #[test]
     fn payload_verification_uses_exact_bytes_and_length() {
         let fixture: ConsentFixture = serde_json::from_str(CONSENT_FIXTURE).unwrap();
-        assert_eq!(fixture.envelope.verify_payload(b""), Err(ContractError::PayloadMismatch));
+        assert_eq!(
+            fixture.envelope.verify_payload(b""),
+            Err(ContractError::PayloadMismatch)
+        );
         let mut envelope = fixture.envelope;
         let payload = b"approved bytes";
         envelope.payload.sha256 = sha256_hex(payload);
         envelope.payload.byte_length = payload.len() as u64;
         envelope.verify_payload(payload).unwrap();
-        assert_eq!(envelope.verify_payload(b"changed bytes"), Err(ContractError::PayloadMismatch));
+        assert_eq!(
+            envelope.verify_payload(b"changed bytes"),
+            Err(ContractError::PayloadMismatch)
+        );
     }
 
     #[test]
     fn strict_decoder_rejects_unknown_and_duplicate_fields() {
         let fixture: ConsentFixture = serde_json::from_str(CONSENT_FIXTURE).unwrap();
         let mut value = serde_json::to_value(fixture.envelope).unwrap();
-        value.as_object_mut().unwrap().insert("unrecognised".into(), Value::Bool(true));
+        value
+            .as_object_mut()
+            .unwrap()
+            .insert("unrecognised".into(), Value::Bool(true));
         let bytes = serde_json::to_vec(&value).unwrap();
-        assert_eq!(TaskEnvelopeV1::parse(&bytes), Err(ContractError::InvalidJson));
-        let duplicate_envelope = br#"{"message_type":"task_envelope","message_type":"task_envelope"}"#;
-        let envelope_error = serde_json::from_slice::<TaskEnvelopeV1>(duplicate_envelope).unwrap_err();
+        assert_eq!(
+            TaskEnvelopeV1::parse(&bytes),
+            Err(ContractError::InvalidJson)
+        );
+        let duplicate_envelope =
+            br#"{"message_type":"task_envelope","message_type":"task_envelope"}"#;
+        let envelope_error =
+            serde_json::from_slice::<TaskEnvelopeV1>(duplicate_envelope).unwrap_err();
         assert!(envelope_error.to_string().contains("duplicate field"));
 
         let duplicate_status = br#"{"message_type":"task_status","message_type":"task_status"}"#;
         let status_error = serde_json::from_slice::<TaskStatusV1>(duplicate_status).unwrap_err();
         assert!(status_error.to_string().contains("duplicate field"));
 
-        let duplicate_receipt = br#"{"message_type":"execution_receipt","message_type":"execution_receipt"}"#;
-        let receipt_error = serde_json::from_slice::<ExecutionReceiptV1>(duplicate_receipt).unwrap_err();
+        let duplicate_receipt =
+            br#"{"message_type":"execution_receipt","message_type":"execution_receipt"}"#;
+        let receipt_error =
+            serde_json::from_slice::<ExecutionReceiptV1>(duplicate_receipt).unwrap_err();
         assert!(receipt_error.to_string().contains("duplicate field"));
 
         let duplicate_nested_status = br#"{
@@ -1074,7 +1226,8 @@ mod tests {
             "consent_state":{"user":"granted","user":"revoked","organisation_admin":"pending","worker_device_owner":"pending"},
             "signature":{"algorithm":"ed25519","key_id":"service-key-1","value":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}
         }"#;
-        let nested_error = serde_json::from_slice::<TaskStatusV1>(duplicate_nested_status).unwrap_err();
+        let nested_error =
+            serde_json::from_slice::<TaskStatusV1>(duplicate_nested_status).unwrap_err();
         assert!(nested_error.to_string().contains("duplicate field"));
     }
 
@@ -1083,11 +1236,17 @@ mod tests {
         let fixture: ConsentFixture = serde_json::from_str(CONSENT_FIXTURE).unwrap();
 
         let mut missing_target = serde_json::to_value(&fixture.envelope).unwrap();
-        missing_target["device_trust"].as_object_mut().unwrap().remove("target_device_id");
+        missing_target["device_trust"]
+            .as_object_mut()
+            .unwrap()
+            .remove("target_device_id");
         assert!(TaskEnvelopeV1::parse(&serde_json::to_vec(&missing_target).unwrap()).is_err());
 
         let mut null_context = serde_json::to_value(&fixture.envelope).unwrap();
-        null_context.as_object_mut().unwrap().insert("min_context_length_tokens".into(), Value::Null);
+        null_context
+            .as_object_mut()
+            .unwrap()
+            .insert("min_context_length_tokens".into(), Value::Null);
         assert!(TaskEnvelopeV1::parse(&serde_json::to_vec(&null_context).unwrap()).is_err());
 
         let mut no_target = fixture.envelope;
@@ -1134,9 +1293,14 @@ mod tests {
         let key = SigningKey::from_bytes(&[8u8; 32]);
         let signature = sign_message(&status, "task_status", "service-key-1", &key);
         status.signature.value = signature;
-        status.verify_signature("service-key-1", &key.verifying_key()).unwrap();
+        status
+            .verify_signature("service-key-1", &key.verifying_key())
+            .unwrap();
         status.validate_after(Some(1)).unwrap();
-        assert_eq!(status.validate_after(Some(2)), Err(ContractError::StaleSequence));
+        assert_eq!(
+            status.validate_after(Some(2)),
+            Err(ContractError::StaleSequence)
+        );
         let mut tampered = status.clone();
         tampered.state = TaskState::Completed;
         assert_eq!(
@@ -1179,7 +1343,9 @@ mod tests {
         let signature = sign_message(&receipt, "execution_receipt", "worker-key-1", &key);
         receipt.signature.value = signature;
         receipt.validate().unwrap();
-        receipt.verify_signature("worker-key-1", &key.verifying_key()).unwrap();
+        receipt
+            .verify_signature("worker-key-1", &key.verifying_key())
+            .unwrap();
         receipt.validate_after(Some(0)).unwrap();
         let mut tampered = receipt.clone();
         tampered.outcome = ExecutionOutcome::Failed;
@@ -1187,7 +1353,10 @@ mod tests {
             tampered.verify_signature("worker-key-1", &key.verifying_key()),
             Err(ContractError::InvalidSignature)
         );
-        assert_eq!(receipt.validate_after(Some(1)), Err(ContractError::StaleSequence));
+        assert_eq!(
+            receipt.validate_after(Some(1)),
+            Err(ContractError::StaleSequence)
+        );
         receipt.output_byte_length = 1;
         assert_eq!(receipt.validate(), Err(ContractError::InvalidReceipt));
         receipt.output_sha256 = NullableSha256::Digest("0".repeat(64));
@@ -1199,6 +1368,9 @@ mod tests {
         assert_eq!(decode_base64url(&"A".repeat(86), 64).unwrap().len(), 64);
         let mut invalid = "A".repeat(85);
         invalid.push('B');
-        assert_eq!(decode_base64url(&invalid, 64), Err(ContractError::InvalidSignature));
+        assert_eq!(
+            decode_base64url(&invalid, 64),
+            Err(ContractError::InvalidSignature)
+        );
     }
 }
