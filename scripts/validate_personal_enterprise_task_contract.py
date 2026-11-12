@@ -45,8 +45,27 @@ def _validate_strict_json_decoder() -> None:
     """Keep the contract tooling fail-closed for ambiguous JSON encodings."""
     sample = {"outer": {"name": "ujani", "version": 1}}
     assert _strict_json_loads(json.dumps(sample)) == sample
+
+    # Exercise duplicate-key rejection independently for every shared message type.
+    for message_type, message in _sample_messages().items():
+        encoded = json.dumps(message, separators=(",", ":"))
+        marker = '"message_type":' + json.dumps(message_type)
+        assert marker in encoded, f"sample missing message type marker: {message_type}"
+        duplicate = encoded.replace(
+            marker,
+            marker + ',"message_type":' + json.dumps(message_type),
+            1,
+        )
+        try:
+            _strict_json_loads(duplicate)
+        except ValueError as error:
+            assert "duplicate JSON object key: message_type" in str(error)
+        else:
+            raise AssertionError(
+                f"duplicate message_type key unexpectedly accepted for {message_type}"
+            )
+
     for ambiguous in (
-        '{"message_type":"task_status","message_type":"task_envelope"}',
         '{"outer":{"sequence":1,"sequence":2}}',
         '{"value":NaN}',
         '{"value":Infinity}',
@@ -58,17 +77,46 @@ def _validate_strict_json_decoder() -> None:
         raise AssertionError(f"ambiguous/non-JSON input unexpectedly accepted: {ambiguous}")
 
 
-def _consent_binding_sha256(envelope: dict[str, Any]) -> str:
-    """Compute the v1 consent binding digest using the contract's restricted JCS profile."""
+def _canonical_consent_binding_bytes(envelope: dict[str, Any]) -> bytes:
+    """Return the restricted v1 JCS preimage with signature and self-digest removed."""
     binding = copy.deepcopy(envelope)
     binding.pop("signature")
     binding["consent"]["user"].pop("binding_sha256")
-    # The v1 envelope has ASCII property names/values and safe integers only, so this
-    # compact sorted-key UTF-8 serialization is byte-equivalent to RFC 8785 JCS here.
-    canonical = json.dumps(
+    # The v1 profile restricts property names/values to ASCII and numbers to safe
+    # integers, so this sorted compact UTF-8 form is byte-equivalent to RFC 8785 JCS.
+    return json.dumps(
         binding, ensure_ascii=False, separators=(",", ":"), sort_keys=True
     ).encode("utf-8")
-    return hashlib.sha256(b"UJANI-CONSENT-BINDING-V1\0" + canonical).hexdigest()
+
+
+def _consent_binding_sha256(envelope: dict[str, Any]) -> str:
+    """Compute the domain-separated v1 consent binding digest."""
+    return hashlib.sha256(
+        b"UJANI-CONSENT-BINDING-V1\0" + _canonical_consent_binding_bytes(envelope)
+    ).hexdigest()
+
+
+def _validate_consent_binding_vector() -> None:
+    """Verify the fixed cross-language canonicalization vector and field binding."""
+    vector_path = ROOT / "schemas/test-vectors/consent-binding-v1.json"
+    vector = _strict_json_loads(vector_path.read_text(encoding="utf-8"))
+    assert vector["canonicalization"] == "RFC 8785 JSON Canonicalization Scheme"
+    assert vector["domain_prefix"] == "UJANI-CONSENT-BINDING-V1"
+    assert vector["domain_prefix_nul_terminated"] is True
+    envelope = vector["envelope"]
+    expected = vector["expected_binding_sha256"]
+    canonical = _canonical_consent_binding_bytes(envelope)
+    assert canonical.decode("utf-8") == vector["canonical_preimage_utf8"]
+    assert envelope["consent"]["user"]["binding_sha256"] == expected
+    assert _consent_binding_sha256(envelope) == expected
+
+    changed = copy.deepcopy(envelope)
+    changed["resource_limits"]["memory_mb"] += 1
+    assert _consent_binding_sha256(changed) != expected
+
+    signature_only = copy.deepcopy(envelope)
+    signature_only["signature"]["value"] = "B" * 86
+    assert _consent_binding_sha256(signature_only) == expected
 
 
 def _refresh_consent_binding(envelope: dict[str, Any]) -> None:
@@ -205,6 +253,10 @@ def _validate_instance_fixtures(schema: dict[str, Any]) -> None:
     validator = jsonschema.Draft202012Validator(schema)
     samples = _sample_messages()
     valid_fixtures = list(samples.items())
+    vector = _strict_json_loads(
+        (ROOT / "schemas/test-vectors/consent-binding-v1.json").read_text(encoding="utf-8")
+    )
+    valid_fixtures.append(("shared consent-binding vector envelope", vector["envelope"]))
 
     # Every active state must be valid only when all three authorities have approved.
     approved_status = copy.deepcopy(samples["task_status"])
@@ -393,6 +445,7 @@ def _validate_instance_fixtures(schema: dict[str, Any]) -> None:
 def main() -> None:
     """Check shared message structure, bounded values, and optional instance fixtures."""
     _validate_strict_json_decoder()
+    _validate_consent_binding_vector()
     schema = _strict_json_loads(SCHEMA_PATH.read_text(encoding="utf-8"))
     assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
     assert schema["$id"] == "urn:ujani:personal-enterprise-task-contract:v1"
