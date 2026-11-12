@@ -334,6 +334,40 @@ impl DurableDeviceRegistry {
         })
     }
 
+    /// Execute a short lease mutation while holding the durable device-trust lock.
+    ///
+    /// The callback runs after the active key generation and owner-consent state
+    /// are re-read, and before an owner opt-out or key rotation can commit. Callers
+    /// must acquire the device-trust lock before the reservation-ledger lock
+    /// consistently across the service; never call back into this registry.
+    pub fn with_authenticated_device_status_for_request<T>(
+        &self,
+        authenticated: &AuthenticatedDeviceRequest,
+        action: impl FnOnce(&VerifyingKey, bool) -> T,
+    ) -> Result<T, DurableDeviceTrustError> {
+        self.transact(|registry| {
+            let record = registry
+                .devices
+                .get(authenticated.device_id())
+                .ok_or(DeviceTrustError::DeviceNotFound)?;
+            if record.state != DeviceTrustState::Enrolled {
+                return Err(DeviceTrustError::DeviceNotEnrolled.into());
+            }
+            if record.tenant_id != authenticated.tenant_id() {
+                return Err(DeviceTrustError::TenantMismatch.into());
+            }
+            if record.key_id != authenticated.key_id()
+                || record.generation != authenticated.key_generation()
+            {
+                return Err(DeviceTrustError::StaleKeyGeneration.into());
+            }
+            let owner_opted_in = record.owner_opted_in
+                && record.owner_consent_generation == record.generation
+                && record.owner_consent_revision > 0;
+            Ok(action(&record.key, owner_opted_in))
+        })
+    }
+
     /// Compatibility accessor for callers that need only the active public key.
     pub fn verifying_key_for_authenticated_request(
         &self,
