@@ -80,3 +80,8 @@ Model/runtime inventory v1 reports host platform and observed hardware/accelerat
 
 
 Both products must retain strict raw-JSON duplicate-key rejection tests for task envelopes, task-status messages and execution receipts; schema parity or schema-validator fixtures do not satisfy this parser-level gate. These parser tests must cover duplicate keys at the top level and in nested objects, and must run against the raw JSON decoder before typed deserialization. These tests are required before any remote worker execution.
+
+
+### Native verifier implementation status (2026-11-12)
+
+The Enterprise native v1 decoder/verifier is being rebased onto current `main` after the durable replay migration merged. It is a side-effect-free protocol boundary: it validates strict raw JSON, canonical consent binding, Ed25519 signatures, payload digests, bounded fields and message sequence values. It does not provide authenticated intake, device/key enrollment or revocation, atomic consent/policy/lease admission, transport, dispatch, or worker isolation. Durable replay storage now exists as a separate PostgreSQL migration, but no service adapter yet binds the verifier to that storage. Remote dispatch and worker execution remain disabled until all those gates are integrated and tested.
