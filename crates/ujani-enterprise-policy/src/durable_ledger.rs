@@ -434,7 +434,7 @@ impl DurableLedger {
     }
 
     /// Renews a workload lease only when the supplied capability matches.
-    pub fn renew_lease(
+    pub(crate) fn renew_lease(
         &self,
         workload_id: &str,
         lease_token: &[u8; 32],
