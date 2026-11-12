@@ -444,7 +444,7 @@ impl DurableLedger {
     }
 
     /// Releases a workload lease only when the supplied capability matches.
-    pub fn release_lease(
+    pub(crate) fn release_lease(
         &self,
         workload_id: &str,
         lease_token: &[u8; 32],
