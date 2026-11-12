@@ -769,15 +769,22 @@ pub(crate) fn admit_and_reserve_with_verified_lease(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::device_trust::durable::{MonotonicSnapshotAnchor, SnapshotAnchorRecord};
     use crate::{
         workload_from_manifest, DataClassification, Ledger, LedgerIntegrityKey, WorkloadManifest,
     };
     use ed25519_dalek::{Signer, SigningKey};
     use std::hash::{BuildHasher, Hash, Hasher};
-    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-    use std::sync::{mpsc, Arc, Barrier, Mutex, OnceLock};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::OnceLock;
+    #[cfg(unix)]
+    use crate::device_trust::durable::{MonotonicSnapshotAnchor, SnapshotAnchorRecord};
+    #[cfg(unix)]
+    use std::sync::atomic::AtomicBool;
+    #[cfg(unix)]
+    use std::sync::{mpsc, Arc, Barrier, Mutex};
+    #[cfg(unix)]
     use std::thread;
+    #[cfg(unix)]
     use std::time::Duration;
 
     // Test-only unpredictable challenge values avoid embedding fixed nonces in
@@ -2280,6 +2287,7 @@ mod tests {
         .unwrap()
     }
 
+    #[cfg(unix)]
     fn open_authenticated_test_ledger_with_anchor(
         path: &std::path::Path,
         anchor: Arc<dyn MonotonicSnapshotAnchor>,
@@ -2297,6 +2305,7 @@ mod tests {
         .unwrap()
     }
 
+    #[cfg(unix)]
     fn unique_authenticated_test_directory(label: &str) -> std::path::PathBuf {
         static NEXT: AtomicU64 = AtomicU64::new(1);
         let path = std::env::temp_dir().join(format!(
@@ -2313,6 +2322,7 @@ mod tests {
         path
     }
 
+    #[cfg(unix)]
     struct BlockingAnchor {
         record: Mutex<Option<SnapshotAnchorRecord>>,
         block_next_load: AtomicBool,
@@ -2320,6 +2330,7 @@ mod tests {
         release: Arc<Barrier>,
     }
 
+    #[cfg(unix)]
     impl BlockingAnchor {
         fn new() -> Self {
             Self {
@@ -2335,6 +2346,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     impl MonotonicSnapshotAnchor for BlockingAnchor {
         fn load(&self, _registry_id: &str) -> Result<Option<SnapshotAnchorRecord>, String> {
             if self.block_next_load.swap(false, Ordering::SeqCst) {
