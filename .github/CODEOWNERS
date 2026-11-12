@@ -1,7 +1,0 @@
-# CODEOWNERS identifies the maintainer responsible for reviewing these areas.
-# Enable "Require review from Code Owners" in the main-branch ruleset only
-# when an independent eligible reviewer is available.
-* @asifshadab33
-/.github/ @asifshadab33
-/crates/ujani-enterprise-policy/ @asifshadab33
-/apps/operator-console/ @asifshadab33
