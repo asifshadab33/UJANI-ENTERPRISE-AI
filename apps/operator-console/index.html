@@ -51,6 +51,15 @@
       <div id="model-catalogue" class="catalogue-grid"><p class="empty">Loading curated model catalogue…</p></div>
       <p class="muted">Administrator allowlists, device-owner consent, internal distribution, rollback and audit require authenticated control-plane services. This preview intentionally exposes no fake approval or installation controls.</p>
     </section>
+    <section class="panel" aria-labelledby="feature-risk-heading">
+      <div class="section-title"><div><p class="eyebrow">ADMINISTRATOR GUIDANCE</p><h2 id="feature-risk-heading">Feature readiness &amp; risk centre</h2></div><span class="pill">Read-only guidance · no enable switches</span></div>
+      <p class="muted">Review what each capability does, its current implementation state and the approvals required. This preview does not grant permissions or change tenant/device policy.</p>
+      <div class="notice"><strong>Collective Defence — high privacy impact · default off</strong><p>Correlates privacy-minimised security signals across explicitly enrolled devices. Requires independent tenant administrator opt-in and individual device-owner opt-in. Revocation must stop future sharing. It does not grant remote control or execution.</p></div>
+      <div class="notice"><strong>Security Centre orchestration — high impact · read-only foundations</strong><p>Coordinates status from customer-selected antivirus, firewall and network-security tools. Current integrations are limited; no firewall rules, files, processes or endpoint settings are changed by this preview.</p></div>
+      <div class="notice"><strong>Model distribution — supply-chain and resource risk · not enabled</strong><p>Future administrator allowlists must pin the exact artifact digest, publisher, licence and size, then check each device's fresh RAM/storage/runtime fit and owner consent. This catalogue does not download or distribute models.</p></div>
+      <div class="notice"><strong>Remote Worker / Partner execution — critical risk · blocked</strong><p>Would delegate approved workloads to enrolled devices. It remains disabled until production identity, authenticated transport, receiver-side authorization, OS-enforced isolation, resource limits, cancellation, revocation and independent security review are complete. No administrator override is available.</p></div>
+      <p class="muted">Unknown, stale or missing policy/consent must fail closed. A tenant administrator cannot override an individual device owner's consent or a missing security gate.</p>
+    </section>
     <section class="two-column">
       <article class="panel"><div class="section-title"><div><p class="eyebrow">ADMISSION</p><h2>Workload queue</h2></div></div><div id="workloads" class="list empty">No live workload data available.</div></article>
       <article class="panel"><div class="section-title"><div><p class="eyebrow">HUMAN CONTROL</p><h2>Approval requests</h2></div></div><div id="approvals" class="list empty">No live approval data available.</div></article>
