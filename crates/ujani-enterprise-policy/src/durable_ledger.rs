@@ -5,10 +5,9 @@
 //! temp file plus backup/rename recovery. The raw lease capability is never
 //! persisted; only its domain-separated digest is stored.
 use crate::device_trust::durable::{MonotonicSnapshotAnchor, SnapshotAnchorRecord};
-use crate::{
-    Admission, ClassPolicy, Device, Ledger, SchedulingContext, TelemetryChallengeError,
-    VerifiedAdminApproval, Workload,
-};
+use crate::{Ledger, TelemetryChallengeError};
+#[cfg(test)]
+use crate::{Admission, ClassPolicy, Device, SchedulingContext, VerifiedAdminApproval, Workload};
 use hmac::KeyInit;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
@@ -383,6 +382,7 @@ impl DurableLedger {
     /// The callback must not access the durable registry or acquire its lock:
     /// callers that need both stores must acquire the registry lock first, then
     /// enter this ledger transaction.
+    #[allow(clippy::too_many_arguments)] // Keep the replay watermark and commit callback explicit.
     pub(crate) fn consume_telemetry_challenge_and_then<T>(
         &self,
         device_id: &str,
