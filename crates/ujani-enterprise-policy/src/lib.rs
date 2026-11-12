@@ -16,6 +16,7 @@ pub use fleet_capacity::{
     summarize_fleet_capacity, DeviceCapacity, FleetCapacityError, FleetCapacitySummary,
 };
 pub mod local_first_placement;
+pub mod personal_enterprise_contract;
 use ed25519_dalek::{Signature, VerifyingKey};
 pub use local_first_placement::{
     plan_local_first_placement, CandidateRejection, LocalFirstPlacementPlan, PlacementCandidate,
