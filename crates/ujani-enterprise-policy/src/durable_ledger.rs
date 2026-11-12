@@ -384,9 +384,7 @@ impl DurableLedger {
         now_unix_ms: u64,
     ) -> Result<bool, DurableLedgerError> {
         self.transact(|ledger| {
-            Ok(ledger.renew_lease_for_device(
-                workload_id, device_id, lease_token, now_unix_ms
-            ))
+            Ok(ledger.renew_lease_for_device(workload_id, device_id, lease_token, now_unix_ms))
         })
     }
 
