@@ -181,7 +181,9 @@ mod tests {
     };
     use ed25519_dalek::{Signer, SigningKey};
     use sha2::{Digest, Sha256};
+    use std::collections::hash_map::RandomState;
     use std::fs;
+    use std::hash::{BuildHasher, Hash, Hasher};
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Arc, Barrier};
@@ -229,11 +231,20 @@ mod tests {
     }
 
     fn test_nonce(label: &str) -> [u8; 16] {
-        let digest =
-            Sha256::digest(format!("ujani-lease-control-test-nonce-v1:{label}").as_bytes());
-        let mut nonce = [0u8; 16];
-        nonce.copy_from_slice(&digest[..16]);
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        let sequence = NEXT.fetch_add(1, Ordering::Relaxed);
+        let mut nonce = Vec::with_capacity(16);
+        for half in 0..2 {
+            let mut hasher = RandomState::new().build_hasher();
+            label.hash(&mut hasher);
+            sequence.hash(&mut hasher);
+            std::process::id().hash(&mut hasher);
+            half.hash(&mut hasher);
+            nonce.extend_from_slice(&hasher.finish().to_le_bytes());
+        }
         nonce
+            .try_into()
+            .expect("two 8-byte test hashes produce a 16-byte nonce")
     }
 
     fn open_registry(path: &Path, admin: &SigningKey) -> DurableDeviceRegistry {
