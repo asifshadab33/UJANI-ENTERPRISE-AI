@@ -6,6 +6,8 @@ ROOT = Path(__file__).resolve().parents[1]
 APP = ROOT / "apps" / "operator-console"
 
 class ConsoleParser(HTMLParser):
+    """Inspect the static operator console for unsafe embedded resources."""
+
     def __init__(self):
         """Initialize counters for prohibited inline resources and handlers."""
         super().__init__()
