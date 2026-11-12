@@ -339,8 +339,8 @@ pub(crate) fn verify_scheduling_context(
     })
 }
 
-/// Verify signed evidence and atomically consume its dispatch challenge in the
-/// durable ledger. This is the only public constructor for VerifiedSchedulingContext.
+/// Test-only legacy helper for exercising the isolated challenge-consumption path.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)] // Keep both trust roots and the per-dispatch challenge explicit.
 pub(crate) fn verify_and_consume_scheduling_context(
     ledger: &DurableLedger,
@@ -671,6 +671,48 @@ fn admit_and_reserve_with_verified_lease_in_transaction(
 
 /// Test-only in-memory prototype; production callers must use the authenticated
 /// durable admission boundary.
+/// Test-only compatibility helper for the focused durable-admission unit tests.
+/// Production authenticated admission uses the atomic challenge-and-reservation path above.
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn admit_and_reserve_durably_with_verified_lease(
+    ledger: &DurableLedger,
+    device: &Device,
+    workload: &Workload,
+    context: VerifiedSchedulingContext,
+    policies: &[ClassPolicy],
+    approvals: &[VerifiedAdminApproval],
+    now_unix_ms: u64,
+    lease_token: &[u8; 32],
+) -> Result<Admission, DurableLedgerError> {
+    if let Some(reason) = context.rejection_for(device, workload, now_unix_ms) {
+        return Ok(Admission::Reject(reason));
+    }
+    if !context.challenge_consumed {
+        return Ok(Admission::Reject(RejectReason::SchedulingEvidenceMismatch));
+    }
+    let admission =
+        admit_with_verified_context(device, workload, &context, policies, approvals, now_unix_ms);
+    if admission != Admission::Accept {
+        return Ok(admission);
+    }
+    let (signed_cpu_headroom_millis, signed_memory_headroom_mb) =
+        signed_headroom(&context.cpu_worker_snapshot);
+    ledger.admit_and_reserve_with_lease_and_watermark(
+        device,
+        workload,
+        &context.context,
+        policies,
+        approvals,
+        now_unix_ms,
+        lease_token,
+        context.sample_generation,
+        context.reservation_revision,
+        signed_cpu_headroom_millis,
+        signed_memory_headroom_mb,
+    )
+}
+
 #[cfg(test)]
 #[allow(clippy::too_many_arguments)] // Preserve explicit admission evidence and reservation inputs.
 pub(crate) fn admit_and_reserve_with_verified_lease(
