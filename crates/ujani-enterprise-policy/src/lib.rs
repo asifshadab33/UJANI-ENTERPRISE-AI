@@ -1613,6 +1613,7 @@ mod tests {
 
 pub mod inventory;
 pub mod operator_control_plane;
+pub mod lease_control;
 pub use inventory::{
     summarize_inventory, validate_inventory_record, DeviceInventoryRecord, DevicePowerState,
     InventoryError, InventorySummary, InventoryTrust,
