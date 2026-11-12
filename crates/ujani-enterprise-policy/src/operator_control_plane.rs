@@ -1418,18 +1418,17 @@ mod tests {
     #[test]
     fn serialized_overview_matches_required_operator_console_contract() {
         let overview = empty_overview("tenant-a");
-        let value: serde_json::Value =
-            serde_json::from_str(&overview.to_json()).expect("overview JSON must parse");
-        assert_eq!(value["schema_version"], 1);
-        assert_eq!(value["tenant_id"], "tenant-a");
-        assert!(value["generated_at_unix_ms"].is_number());
-        assert!(value["fleet"].is_object());
-        assert!(value["devices"].is_array());
-        assert!(value["workloads"].is_array());
-        assert!(value["approvals"].is_array());
-        assert!(value["model_inventory"].is_array());
-        assert_eq!(value["model_inventory_returned_devices"], 0);
-        assert_eq!(value["model_inventory_returned_models"], 0);
+        let json = overview.to_json();
+        assert!(json.starts_with("{\\"schema_version\\":1,"));
+        assert!(json.contains("\\"tenant_id\\":\\"tenant-a\\""));
+        assert!(json.contains("\\"generated_at_unix_ms\\":"));
+        assert!(json.contains("\\"fleet\\":{"));
+        assert!(json.contains("\\"devices\\":[]"));
+        assert!(json.contains("\\"workloads\\":[]"));
+        assert!(json.contains("\\"approvals\\":[]"));
+        assert!(json.contains("\\"model_inventory\\":[]"));
+        assert!(json.contains("\\"model_inventory_returned_devices\\":0"));
+        assert!(json.contains("\\"model_inventory_returned_models\\":0"));
     }
 
     #[test]
