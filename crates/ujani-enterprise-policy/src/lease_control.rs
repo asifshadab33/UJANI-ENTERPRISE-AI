@@ -228,6 +228,13 @@ mod tests {
         Sha256::digest(label.as_bytes()).into()
     }
 
+    fn test_nonce(label: &str) -> [u8; 16] {
+        let digest = Sha256::digest(format!("ujani-lease-control-test-nonce-v1:{label}").as_bytes());
+        let mut nonce = [0u8; 16];
+        nonce.copy_from_slice(&digest[..16]);
+        nonce
+    }
+
     fn open_registry(path: &Path, admin: &SigningKey) -> DurableDeviceRegistry {
         DurableDeviceRegistry::open(
             path,
@@ -262,7 +269,7 @@ mod tests {
             target_public_key: Some(device.verifying_key().to_bytes()),
             issued_at_unix_ms: 100,
             expires_at_unix_ms: 1_000,
-            nonce: [1; 16],
+            nonce: test_nonce("lease-control-enrollment"),
             signature: [0; 64],
             old_device_signature: None,
             new_device_signature: None,
@@ -323,7 +330,7 @@ mod tests {
             device_id: DEVICE_ID.to_owned(),
             key_id: "device-key-v1".to_owned(),
             key_generation: 1,
-            request_id: [request_id; 16],
+            request_id: test_nonce(&format!("lease-control-request-{request_id}")),
             issued_at_unix_ms: now_unix_ms.saturating_sub(100),
             expires_at_unix_ms: now_unix_ms.saturating_add(5_000),
             method: "POST".to_owned(),
@@ -347,7 +354,7 @@ mod tests {
             .apply_admin_command(&signed_enrollment(&admin, &device), 200)
             .expect("enrol test device");
         registry
-            .apply_owner_consent(&signed_owner_consent(&device, true, 1, 300, [2; 16]), 400)
+            .apply_owner_consent(&signed_owner_consent(&device, true, 1, 300, test_nonce("lease-control-owner-opt-in")), 400)
             .expect("persist explicit device-owner opt-in");
 
         let manifest = manifest();
@@ -381,7 +388,7 @@ mod tests {
             max_cpu_millis: 2_000,
             max_memory_mb: 4_096,
         }];
-        let lease_token = [0x55; 32];
+        let lease_token = test_key_bytes("ujani-lease-control-test-lease-token-v1");
         assert_eq!(
             ledger
                 .admit_and_reserve_with_lease(
@@ -452,7 +459,7 @@ mod tests {
         fixture
             .registry
             .apply_owner_consent(
-                &signed_owner_consent(&fixture.device, false, 2, 1_600, [4; 16]),
+                &signed_owner_consent(&fixture.device, false, 2, 1_600, test_nonce("lease-control-owner-opt-out")),
                 1_700,
             )
             .expect("persist owner opt-out");
