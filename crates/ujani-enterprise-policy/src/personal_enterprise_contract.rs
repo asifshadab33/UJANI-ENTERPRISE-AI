@@ -1146,6 +1146,12 @@ mod tests {
             serde_json::from_slice::<ExecutionReceiptV1>(duplicate_receipt).unwrap_err();
         assert!(receipt_error.to_string().contains("duplicate field"));
 
+        let duplicate_nested_envelope =
+            br#"{"sender":{"principal_id":"user-1","device_id":"personal-1","device_id":"attacker"}}"#;
+        let nested_envelope_error =
+            serde_json::from_slice::<TaskEnvelopeV1>(duplicate_nested_envelope).unwrap_err();
+        assert!(nested_envelope_error.to_string().contains("duplicate field"));
+
         let duplicate_nested_status = br#"{
             "message_type":"task_status","schema_version":1,"task_id":"task-1",
             "sequence":1,"state":"received","updated_at_unix_ms":1000,
@@ -1156,6 +1162,12 @@ mod tests {
         let nested_error =
             serde_json::from_slice::<TaskStatusV1>(duplicate_nested_status).unwrap_err();
         assert!(nested_error.to_string().contains("duplicate field"));
+
+        let duplicate_nested_receipt =
+            br#"{"worker":{"organisation_id":"org-1","device_id":"worker-1","device_id":"attacker"}}"#;
+        let nested_receipt_error =
+            serde_json::from_slice::<ExecutionReceiptV1>(duplicate_nested_receipt).unwrap_err();
+        assert!(nested_receipt_error.to_string().contains("duplicate field"));
     }
 
     #[test]
