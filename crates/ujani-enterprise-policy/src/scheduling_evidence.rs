@@ -733,10 +733,15 @@ mod tests {
     use crate::{
         workload_from_manifest, DataClassification, Ledger, LedgerIntegrityKey, WorkloadManifest,
     };
+    use crate::device_trust::durable::{
+        MonotonicSnapshotAnchor, SnapshotAnchorRecord,
+    };
     use ed25519_dalek::{Signer, SigningKey};
     use std::hash::{BuildHasher, Hash, Hasher};
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use std::sync::OnceLock;
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::sync::{mpsc, Arc, Barrier, Mutex, OnceLock};
+    use std::time::Duration;
+    use std::thread;
 
     // Test-only unpredictable challenge values avoid embedding fixed nonces in
     // signed-message fixtures. Production challenges are issued by the trust service.
@@ -2238,6 +2243,99 @@ mod tests {
         .unwrap()
     }
 
+    fn open_authenticated_test_ledger_with_anchor(
+        path: &std::path::Path,
+        anchor: Arc<dyn MonotonicSnapshotAnchor>,
+    ) -> DurableLedger {
+        DurableLedger::open_with_anchor(
+            path,
+            "telemetry-ledger-test-anchor",
+            "telemetry-ledger-test",
+            vec![LedgerIntegrityKey::new(
+                "telemetry-ledger-test",
+                fresh_test_lease_token(),
+            )],
+            anchor,
+        )
+        .unwrap()
+    }
+
+    fn unique_authenticated_test_directory(label: &str) -> std::path::PathBuf {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        let path = std::env::temp_dir().join(format!(
+            "ujani-authenticated-telemetry-{label}-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed),
+        ));
+        std::fs::create_dir(&path).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        path
+    }
+
+    struct BlockingAnchor {
+        record: Mutex<Option<SnapshotAnchorRecord>>,
+        block_next_load: AtomicBool,
+        entered: Arc<Barrier>,
+        release: Arc<Barrier>,
+    }
+
+    impl BlockingAnchor {
+        fn new() -> Self {
+            Self {
+                record: Mutex::new(None),
+                block_next_load: AtomicBool::new(false),
+                entered: Arc::new(Barrier::new(2)),
+                release: Arc::new(Barrier::new(2)),
+            }
+        }
+
+        fn arm(&self) {
+            self.block_next_load.store(true, Ordering::SeqCst);
+        }
+    }
+
+    impl MonotonicSnapshotAnchor for BlockingAnchor {
+        fn load(&self, _registry_id: &str) -> Result<Option<SnapshotAnchorRecord>, String> {
+            if self.block_next_load.swap(false, Ordering::SeqCst) {
+                self.entered.wait();
+                self.release.wait();
+            }
+            self.record
+                .lock()
+                .map(|record| record.clone())
+                .map_err(|_| "test anchor mutex poisoned".to_owned())
+        }
+
+        fn compare_and_set(
+            &self,
+            _registry_id: &str,
+            expected_generation: Option<u64>,
+            next: SnapshotAnchorRecord,
+        ) -> Result<bool, String> {
+            let mut record = self
+                .record
+                .lock()
+                .map_err(|_| "test anchor mutex poisoned".to_owned())?;
+            let matches = match (expected_generation, record.as_ref()) {
+                (None, None) => next.generation() == 1,
+                (Some(expected), Some(current)) => {
+                    current.generation() == expected
+                        && next.generation() == expected.saturating_add(1)
+                }
+                _ => false,
+            };
+            if !matches {
+                return Ok(false);
+            }
+            *record = Some(next);
+            Ok(true)
+        }
+    }
+
     #[test]
     fn authenticated_telemetry_uses_durable_device_identity_and_rejects_replay() {
         let registry_path = unique_authenticated_test_path("registry");
@@ -2388,6 +2486,99 @@ mod tests {
         drop(ledger);
         remove_authenticated_test_files(&registry_path);
         remove_authenticated_test_files(&ledger_path);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn authenticated_admission_serializes_owner_opt_out_with_lease_commit() {
+        let registry_path = unique_authenticated_test_path("consent-race-registry");
+        let ledger_directory = unique_authenticated_test_directory("consent-race-ledger");
+        let ledger_path = ledger_directory.join("ledger.db");
+        let now = 50_000;
+        let challenge = fresh_test_challenge();
+        let (telemetry, policy, device_key, admin_key) = signed_evidence(challenge, now);
+        let registry =
+            open_authenticated_test_registry(&registry_path, &admin_key, &device_key, now);
+        let anchor = Arc::new(BlockingAnchor::new());
+        let ledger = open_authenticated_test_ledger_with_anchor(&ledger_path, anchor.clone());
+        let device = device();
+        let workload = workload();
+        let (request, body) = signed_telemetry_request(&device_key, &workload, &telemetry, now);
+        let admin_keys = [(
+            policy.claims.policy_key_id.clone(),
+            admin_key.verifying_key(),
+        )];
+        let policies = [ClassPolicy {
+            class: "inference".into(),
+            requires_admin_approval: false,
+            max_cpu_millis: 4_000,
+            max_memory_mb: 8_192,
+        }];
+        let lease_token = fresh_test_lease_token();
+
+        // Pause the next ledger transaction after it has entered the provider.
+        // The admission service must already hold the device-trust lock here.
+        anchor.arm();
+        let admission_registry = registry.clone();
+        let admission_ledger = ledger.clone();
+        let admission = thread::spawn(move || {
+            authenticate_verify_and_reserve_worker_telemetry(
+                &admission_registry,
+                &admission_ledger,
+                &request,
+                &body,
+                "tenant-a",
+                &device,
+                &workload,
+                &telemetry,
+                &policy,
+                &admin_keys,
+                &challenge,
+                &policies,
+                &[],
+                now + 2,
+                &lease_token,
+            )
+        });
+        anchor.entered.wait();
+
+        let opt_out_registry = registry.clone();
+        let opt_out_device_key = device_key.clone();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (finished_tx, finished_rx) = mpsc::channel();
+        let opt_out = thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            set_authenticated_test_owner_consent(
+                &opt_out_registry,
+                &opt_out_device_key,
+                false,
+                2,
+                now + 10,
+            );
+            finished_tx.send(()).unwrap();
+        });
+        started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(
+            finished_rx.recv_timeout(Duration::from_millis(100)).is_err(),
+            "owner opt-out must wait until the in-flight admission releases the trust lock"
+        );
+
+        anchor.release.wait();
+        let (_, admission) = admission.join().unwrap().unwrap();
+        assert_eq!(admission, Admission::Accept);
+        finished_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        opt_out.join().unwrap();
+
+        assert!(!registry.tenant_device_summaries("tenant-a").unwrap()[0].owner_opted_in);
+        let snapshot = ledger.snapshot().unwrap();
+        assert_eq!(snapshot.active_jobs, 1);
+        assert_eq!(snapshot.reserved_cpu_millis, 1_000);
+        assert_eq!(snapshot.reserved_memory_mb, 1_024);
+
+        drop(registry);
+        drop(ledger);
+        remove_authenticated_test_files(&registry_path);
+        std::fs::remove_dir_all(ledger_directory).unwrap();
     }
 
     #[test]
