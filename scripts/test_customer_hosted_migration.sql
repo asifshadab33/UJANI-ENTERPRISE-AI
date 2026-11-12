@@ -7,7 +7,7 @@ BEGIN
 END $$;
 GRANT USAGE ON SCHEMA ujani_control TO ujani_runtime;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA ujani_control TO ujani_runtime;
--- Tenant creation/provisioning belongs to the separately controlled admin/migration plane.
+-- Tenant creation/provisioning is reserved for a separately controlled administrative plane.
 REVOKE INSERT, UPDATE, DELETE ON ujani_control.tenants FROM ujani_runtime;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA ujani_control TO ujani_runtime;
 INSERT INTO ujani_control.tenants (tenant_id, display_name)
@@ -21,17 +21,30 @@ VALUES
 ON CONFLICT (tenant_id, device_id) DO NOTHING;
 
 SET ROLE ujani_runtime;
+
+-- A fresh runtime session has no tenant context and must see no tenant rows.
+DO $$
+DECLARE visible_tenants integer; visible_devices integer;
+BEGIN
+ SELECT count(*) INTO visible_tenants FROM ujani_control.tenants;
+ SELECT count(*) INTO visible_devices FROM ujani_control.devices;
+ IF visible_tenants <> 0 OR visible_devices <> 0 THEN
+  RAISE EXCEPTION 'unset tenant context did not fail closed: tenants %, devices %',
+   visible_tenants, visible_devices;
+ END IF;
+END $$;
+
 BEGIN;
 SET LOCAL ujani.tenant_id = 'tenant-a';
 DO $$
 DECLARE
  visible_tenants integer;
  visible_devices integer;
- affected_rows bigint;
  bypass_rls boolean;
  can_insert_tenant boolean;
  can_update_tenant boolean;
  can_delete_tenant boolean;
+ affected_rows integer;
 BEGIN
  SELECT count(*) INTO visible_tenants FROM ujani_control.tenants;
  SELECT count(*) INTO visible_devices FROM ujani_control.devices;
@@ -92,6 +105,24 @@ BEGIN
  EXCEPTION WHEN raise_exception THEN
   IF SQLERRM = 'audit delete unexpectedly succeeded' THEN RAISE; END IF;
  END;
+END $$;
+ROLLBACK;
+
+-- SET LOCAL must not leak tenant A after a committed transaction on a pooled connection.
+BEGIN;
+SET LOCAL ujani.tenant_id = 'tenant-a';
+COMMIT;
+
+-- A new transaction on the same session must not inherit the prior tenant context.
+BEGIN;
+DO $$DECLARE visible_tenants integer; visible_devices integer;
+BEGIN
+ SELECT count(*) INTO visible_tenants FROM ujani_control.tenants;
+ SELECT count(*) INTO visible_devices FROM ujani_control.devices;
+ IF visible_tenants <> 0 OR visible_devices <> 0 THEN
+  RAISE EXCEPTION 'tenant context leaked across transactions: tenants %, devices %',
+   visible_tenants, visible_devices;
+ END IF;
 END $$;
 ROLLBACK;
 RESET ROLE;
