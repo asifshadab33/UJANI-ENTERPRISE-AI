@@ -5,6 +5,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SQL_PATH = ROOT / "migrations" / "0001_customer_hosted_control_plane.sql"
 TASK_REPLAY_SQL_PATH = ROOT / "migrations" / "0002_task_contract_replay_storage.sql"
+TENANT_TEST_SQL_PATH = ROOT / "scripts" / "test_customer_hosted_migration.sql"
 
 
 def main() -> None:
@@ -52,7 +53,64 @@ def main() -> None:
         raise SystemExit("task-contract storage must fail closed without tenant context")
     if "SECURITY DEFINER" in replay_sql or "GRANT ALL" in replay_sql:
         raise SystemExit("task-contract migration must not add privileged functions or grants")
-    print("Customer-hosted and task-contract migration static checks passed.")
+    telemetry_sql = (ROOT / "migrations" / "0003_monotonic_device_telemetry.sql").read_text(encoding="utf-8")
+    telemetry_test = (ROOT / "scripts" / "test_monotonic_device_telemetry.sql").read_text(encoding="utf-8")
+    for required in (
+        "CREATE TABLE IF NOT EXISTS ujani_control.device_telemetry_samples",
+        "ENABLE ROW LEVEL SECURITY",
+        "FORCE ROW LEVEL SECURITY",
+        "SECURITY INVOKER",
+        "current_setting('ujani.tenant_id', true)",
+        "p_generation > telemetry_generation",
+        "p_generation = telemetry_generation AND p_sequence > telemetry_sequence",
+        "owner_consent_state = 'granted'",
+        "admin_approval_state = 'approved'",
+        "trust_state = 'enrolled'",
+        "interval '5 minutes'",
+        "interval '60 seconds'",
+        "p_observed_at >= last_seen_at",
+        "ON CONFLICT (tenant_id, device_id, request_id) DO NOTHING",
+    ):
+        if required not in telemetry_sql:
+            raise SystemExit(f"monotonic telemetry migration is missing invariant: {required}")
+    if "SECURITY DEFINER" in telemetry_sql:
+        raise SystemExit("telemetry admission must not bypass tenant RLS with SECURITY DEFINER")
+    for required in (
+        "replayed request id should be rejected",
+        "duplicate generation/sequence should be rejected",
+        "older observation timestamp must not roll back last_seen",
+        "stale telemetry timestamp should be rejected",
+        "future telemetry timestamp should be rejected",
+        "owner opt-out should reject admission",
+        "organization denial should reject admission",
+        "revoked device should reject admission",
+        "caller rollback did not atomically restore telemetry state",
+    ):
+        if required not in telemetry_test:
+            raise SystemExit(f"telemetry PostgreSQL regression test missing: {required}")
+    if "DO $\n" in telemetry_test or "END $;" in telemetry_test:
+        raise SystemExit("telemetry PostgreSQL test contains a malformed dollar-quoted block")
+    if "verify the signed device request" not in telemetry_sql:
+        raise SystemExit("telemetry migration must document upstream signature verification boundary")
+    concurrency_test = (ROOT / "scripts" / "test_monotonic_device_telemetry_concurrency.sh").read_text(encoding="utf-8")
+    for required in ("pg_stat_activity", "pg_sleep(1)", "1:2:2", "--quiet"):
+        if required not in concurrency_test:
+            raise SystemExit(f"telemetry concurrency regression test missing: {required}")
+    tenant_test = TENANT_TEST_SQL_PATH.read_text(encoding="utf-8")
+    if "REVOKE INSERT, UPDATE, DELETE ON ujani_control.tenants FROM ujani_runtime" not in tenant_test:
+        raise SystemExit("runtime role must not mutate the tenant registry")
+    for required in (
+        "has_table_privilege(current_user, 'ujani_control.tenants', 'INSERT')",
+        "has_table_privilege(current_user, 'ujani_control.tenants', 'UPDATE')",
+        "has_table_privilege(current_user, 'ujani_control.tenants', 'DELETE')",
+        "runtime role can mutate tenant registry",
+    ):
+        if required not in tenant_test:
+            raise SystemExit(f"tenant provisioning privilege regression test missing: {required}")
+    concurrency_test = (ROOT / "scripts" / "test_monotonic_device_telemetry_concurrency.sh").read_text(encoding="utf-8")
+    if 'PSQL_BIN="${PSQL_BIN:-psql}"' not in concurrency_test:
+        raise SystemExit("telemetry concurrency test must use the configured PostgreSQL client adapter")
+    print("Customer-hosted, task-contract and monotonic telemetry migration static checks passed.")
 
 
 if __name__ == "__main__":
