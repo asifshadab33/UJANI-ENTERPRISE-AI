@@ -311,7 +311,7 @@ impl DurableDeviceRegistry {
         &self,
         authenticated: &AuthenticatedDeviceRequest,
     ) -> Result<(VerifyingKey, bool), DurableDeviceTrustError> {
-        self.transact(|registry| {
+        self.read(|registry| {
             let record = registry
                 .devices
                 .get(authenticated.device_id())
@@ -334,7 +334,7 @@ impl DurableDeviceRegistry {
         })
     }
 
-    /// Execute a short lease mutation while holding the durable device-trust lock.
+    /// Execute a short authenticated admission or lease mutation while holding the durable device-trust lock.
     ///
     /// The callback runs after the active key generation and owner-consent state
     /// are re-read, and before an owner opt-out or key rotation can commit. Callers
@@ -400,7 +400,7 @@ impl DurableDeviceRegistry {
         &self,
         tenant_id: &str,
     ) -> Result<Vec<DeviceTrustSummary>, DurableDeviceTrustError> {
-        self.transact(|registry| {
+        self.read(|registry| {
             registry
                 .tenant_device_summaries(tenant_id)
                 .map_err(Into::into)
@@ -409,7 +409,7 @@ impl DurableDeviceRegistry {
 
     /// Returns the number of enrolled device records in the durable registry.
     pub fn device_count(&self) -> Result<usize, DurableDeviceTrustError> {
-        self.transact(|registry| Ok(registry.devices.len()))
+        self.read(|registry| Ok(registry.devices.len()))
     }
 
     fn load_anchored_registry(
