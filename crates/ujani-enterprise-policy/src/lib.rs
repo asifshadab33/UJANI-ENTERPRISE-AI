@@ -520,7 +520,6 @@ impl Ledger {
         decision
     }
 
-    /// Renew only when the caller proves possession of the lease capability.
     /// Renew a lease only when the caller is the device that owns the reservation.
     /// Authentication of the device request must happen before calling this method.
     pub fn renew_lease_for_device(
@@ -550,6 +549,7 @@ impl Ledger {
         self.release_lease(workload_id, lease_token)
     }
 
+    /// Renew only when the caller proves possession of the lease capability.
     pub fn renew_lease(
         &mut self,
         workload_id: &str,
