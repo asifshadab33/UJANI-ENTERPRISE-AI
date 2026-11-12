@@ -558,7 +558,7 @@ impl Ledger {
     }
 
     /// Renew only when the caller proves possession of the lease capability.
-    pub fn renew_lease(
+    pub(crate) fn renew_lease(
         &mut self,
         workload_id: &str,
         lease_token: &[u8; 32],
