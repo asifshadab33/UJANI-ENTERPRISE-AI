@@ -769,17 +769,17 @@ pub(crate) fn admit_and_reserve_with_verified_lease(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use crate::device_trust::durable::{MonotonicSnapshotAnchor, SnapshotAnchorRecord};
     use crate::{
         workload_from_manifest, DataClassification, Ledger, LedgerIntegrityKey, WorkloadManifest,
     };
     use ed25519_dalek::{Signer, SigningKey};
     use std::hash::{BuildHasher, Hash, Hasher};
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use std::sync::OnceLock;
-    #[cfg(unix)]
-    use crate::device_trust::durable::{MonotonicSnapshotAnchor, SnapshotAnchorRecord};
     #[cfg(unix)]
     use std::sync::atomic::AtomicBool;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::OnceLock;
     #[cfg(unix)]
     use std::sync::{mpsc, Arc, Barrier, Mutex};
     #[cfg(unix)]
