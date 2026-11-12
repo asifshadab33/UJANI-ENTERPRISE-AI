@@ -92,6 +92,7 @@ def main():
         "total_model_rows.is_none_or",
         "MAX_TOTAL_MODEL_ROWS: usize = 100_000",
         "MAX_OVERVIEW_RESPONSE_BYTES: usize = 8 * 1024 * 1024",
+        '.starts_with("{\\\"error\\\":\\\"overview_exceeds_response_budget\\\"}")',
         "contains_local_path(&model.display_name)",
         "inventory_devices.insert(inventory.device_id.as_str())",
     ):
