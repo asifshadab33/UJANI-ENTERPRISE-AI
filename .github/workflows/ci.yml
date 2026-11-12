@@ -110,3 +110,19 @@ jobs:
           PGPASSWORD: postgres
         run: |
           "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < scripts/test_task_contract_replay_migration.sql
+      - name: Apply monotonic device telemetry migration
+        env:
+          PGPASSWORD: postgres
+        run: |
+          "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < migrations/0003_monotonic_device_telemetry.sql
+      - name: Verify monotonic telemetry admission and transaction rollback
+        env:
+          PGPASSWORD: postgres
+        run: |
+          "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < scripts/test_monotonic_device_telemetry.sql
+      - name: Verify concurrent monotonic telemetry serialization
+        env:
+          PGPASSWORD: postgres
+          PGUSER: postgres
+          PGDATABASE: ujani_test
+        run: bash scripts/test_monotonic_device_telemetry_concurrency.sh
