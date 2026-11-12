@@ -20,9 +20,12 @@ pub const OPERATOR_SESSION_MAX_TTL_MS: u64 = 15 * 60 * 1000;
 const SESSION_KEYRING_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-OPERATOR-SESSION-KEYRING-V1\0";
 const CLOCK_SKEW_TOLERANCE_MS: u64 = 30_000;
 const MAX_OVERVIEW_AGE_MS: u64 = 60_000;
+const MAX_MODEL_MEMORY_ESTIMATE_MB: u64 = 16_777_216;
 const MAX_DEVICES: usize = 10_000;
 const MAX_WORKLOADS: usize = 1_000;
 const MAX_APPROVALS: usize = 1_000;
+const MAX_TOTAL_MODEL_ROWS: usize = 100_000;
+const MAX_OVERVIEW_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OperatorRole {
@@ -534,6 +537,78 @@ pub struct OperatorApprovalView {
     pub scope: String,
     pub expires_at: Option<String>,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OperatorInventoryEvidence {
+    pub source: String,
+    pub confidence: String,
+    pub observed_at_unix_ms: Option<u64>,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OperatorModelRuntimeView {
+    pub runtime_id: String,
+    pub provider: String,
+    pub version: Option<String>,
+    pub availability: String,
+    pub network_scope: String,
+    pub evidence: OperatorInventoryEvidence,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OperatorModelView {
+    pub model_ref: String,
+    pub runtime_id: String,
+    pub display_name: String,
+    pub family: Option<String>,
+    pub version: Option<String>,
+    pub availability: String,
+    pub size_bytes: Option<u64>,
+    pub context_length_tokens: Option<u64>,
+    pub estimated_min_memory_mb: Option<u64>,
+    pub capabilities: Vec<String>,
+    pub evidence: OperatorInventoryEvidence,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OperatorModelInventoryPlatform {
+    pub os: String,
+    pub os_version: Option<String>,
+    pub architecture: String,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OperatorModelAcceleratorView {
+    pub kind: String,
+    pub vendor: Option<String>,
+    pub device_family: Option<String>,
+    pub memory_mb: Option<u64>,
+    pub runtime_api: Option<String>,
+    pub evidence: OperatorInventoryEvidence,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OperatorModelInventoryHardware {
+    pub cpu_logical_cores: Option<u32>,
+    pub memory_total_mb: Option<u64>,
+    pub memory_available_mb: Option<u64>,
+    pub storage_free_mb: Option<u64>,
+    pub accelerators: Vec<OperatorModelAcceleratorView>,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OperatorModelInventoryPrivacy {
+    pub contains_prompts: bool,
+    pub contains_user_files: bool,
+    pub contains_local_paths: bool,
+    pub contains_credentials: bool,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OperatorModelInventoryView {
+    pub device_id: String,
+    pub schema_version: u8,
+    pub generated_at_unix_ms: u64,
+    pub platform: OperatorModelInventoryPlatform,
+    pub hardware: OperatorModelInventoryHardware,
+    pub runtimes: Vec<OperatorModelRuntimeView>,
+    pub models: Vec<OperatorModelView>,
+    pub privacy: Option<OperatorModelInventoryPrivacy>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OperatorOverview {
     pub schema_version: u16,
@@ -543,6 +618,8 @@ pub struct OperatorOverview {
     pub devices: Vec<OperatorDeviceView>,
     pub workloads: Vec<OperatorWorkloadView>,
     pub approvals: Vec<OperatorApprovalView>,
+    /// Optional, privacy-minimised inventory from authenticated device telemetry.
+    pub model_inventory: Vec<OperatorModelInventoryView>,
 }
 
 impl OperatorOverview {
@@ -552,8 +629,8 @@ impl OperatorOverview {
         let mut out = String::with_capacity(1024 + self.devices.len() * 256);
         let _ = write!(
             &mut out,
-            "{{\"schema_version\":{},\"generated_at_unix_ms\":{},\"fleet\":{{\"registered_devices\":{},\"trusted_consented_devices\":{},\"online_fresh_devices\":{},\"schedulable_devices\":{}}},\"devices\":[",
-            self.schema_version, self.generated_at_unix_ms,
+            "{{\"schema_version\":{},\"tenant_id\":{},\"generated_at_unix_ms\":{},\"fleet\":{{\"registered_devices\":{},\"trusted_consented_devices\":{},\"online_fresh_devices\":{},\"schedulable_devices\":{}}},\"devices\":[",
+            self.schema_version, json_string(&self.tenant_id), self.generated_at_unix_ms,
             self.fleet.registered_devices, self.fleet.trusted_consented_devices,
             self.fleet.online_fresh_devices, self.fleet.schedulable_devices
         );
@@ -599,7 +676,54 @@ impl OperatorOverview {
                 json_string(&approval.scope), json_optional_string(approval.expires_at.as_deref())
             );
         }
-        out.push_str("]}");
+        out.push_str("],\"model_inventory\":[");
+        let total_model_count = self
+            .model_inventory
+            .iter()
+            .fold(0usize, |total, inventory| {
+                total.saturating_add(inventory.models.len())
+            });
+        let mut returned_model_count = 0usize;
+        let mut returned_device_count = 0usize;
+        let mut partial_response = false;
+        const SUMMARY_RESERVE_BYTES: usize = 256;
+        for inventory in &self.model_inventory {
+            let entry = json_model_inventory(inventory);
+            let separator_bytes = usize::from(returned_device_count > 0);
+            let projected_len = out
+                .len()
+                .saturating_add(separator_bytes)
+                .saturating_add(entry.len())
+                .saturating_add(SUMMARY_RESERVE_BYTES);
+            if projected_len > MAX_OVERVIEW_RESPONSE_BYTES {
+                partial_response = true;
+                break;
+            }
+            if returned_device_count > 0 {
+                out.push(',');
+            }
+            out.push_str(&entry);
+            returned_device_count += 1;
+            returned_model_count = returned_model_count.saturating_add(inventory.models.len());
+        }
+        out.push(']');
+        let inventory_status = if partial_response {
+            "partial_response_budget"
+        } else {
+            "complete"
+        };
+        let _ = write!(
+            &mut out,
+            ",\"model_inventory_status\":{},\"model_inventory_total_devices\":{},\"model_inventory_returned_devices\":{},\"model_inventory_total_models\":{},\"model_inventory_returned_models\":{}}}",
+            json_string(inventory_status),
+            self.model_inventory.len(),
+            returned_device_count,
+            total_model_count,
+            returned_model_count
+        );
+        if out.len() > MAX_OVERVIEW_RESPONSE_BYTES {
+            return "{\"error\":\"overview_exceeds_response_budget\"}".into();
+        }
         out
     }
 }
@@ -631,6 +755,138 @@ fn json_optional_number<T: std::fmt::Display>(value: Option<T>) -> String {
     value
         .map(|number| number.to_string())
         .unwrap_or_else(|| "null".into())
+}
+
+fn json_evidence(evidence: &OperatorInventoryEvidence) -> String {
+    format!(
+        "{{\"source\":{},\"confidence\":{},\"observed_at_unix_ms\":{}}}",
+        json_string(&evidence.source),
+        json_string(&evidence.confidence),
+        json_optional_number(evidence.observed_at_unix_ms)
+    )
+}
+fn json_model_inventory(inventory: &OperatorModelInventoryView) -> String {
+    let mut out = String::with_capacity(768 + inventory.models.len() * 256);
+    let _ = write!(
+        &mut out,
+        "{{\"device_id\":{},\"inventory\":{{\"schema_version\":{},\"generated_at_unix_ms\":{},\"platform\":{{\"os\":{},\"os_version\":{},\"architecture\":{}}},\"hardware\":{{\"cpu_logical_cores\":{},\"memory_total_mb\":{},\"memory_available_mb\":{},\"storage_free_mb\":{},\"accelerators\":[",
+        json_string(&inventory.device_id), inventory.schema_version, inventory.generated_at_unix_ms,
+        json_string(&inventory.platform.os), json_optional_string(inventory.platform.os_version.as_deref()),
+        json_string(&inventory.platform.architecture),
+        json_optional_number(inventory.hardware.cpu_logical_cores),
+        json_optional_number(inventory.hardware.memory_total_mb),
+        json_optional_number(inventory.hardware.memory_available_mb),
+        json_optional_number(inventory.hardware.storage_free_mb)
+    );
+    for (index, accelerator) in inventory.hardware.accelerators.iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        let _ = write!(
+            &mut out,
+            "{{\"kind\":{},\"vendor\":{},\"device_family\":{},\"memory_mb\":{},\"runtime_api\":{},\"evidence\":{}}}",
+            json_string(&accelerator.kind), json_optional_string(accelerator.vendor.as_deref()),
+            json_optional_string(accelerator.device_family.as_deref()),
+            json_optional_number(accelerator.memory_mb),
+            json_optional_string(accelerator.runtime_api.as_deref()),
+            json_evidence(&accelerator.evidence)
+        );
+    }
+    out.push_str("]},\"runtimes\":[");
+    for (index, runtime) in inventory.runtimes.iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        let _ = write!(
+            &mut out,
+            "{{\"runtime_id\":{},\"provider\":{},\"version\":{},\"availability\":{},\"network_scope\":{},\"evidence\":{}}}",
+            json_string(&runtime.runtime_id), json_string(&runtime.provider),
+            json_optional_string(runtime.version.as_deref()), json_string(&runtime.availability),
+            json_string(&runtime.network_scope), json_evidence(&runtime.evidence)
+        );
+    }
+    out.push_str("],\"models\":[");
+    for (index, model) in inventory.models.iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        let capabilities = model
+            .capabilities
+            .iter()
+            .map(|value| json_string(value))
+            .collect::<Vec<_>>()
+            .join(",");
+        let _ = write!(
+            &mut out,
+            "{{\"model_ref\":{},\"runtime_id\":{},\"display_name\":{},\"family\":{},\"version\":{},\"availability\":{},\"size_bytes\":{},\"context_length_tokens\":{},\"estimated_min_memory_mb\":{},\"capabilities\":[{}],\"evidence\":{}}}",
+            json_string(&model.model_ref), json_string(&model.runtime_id), json_string(&model.display_name),
+            json_optional_string(model.family.as_deref()), json_optional_string(model.version.as_deref()),
+            json_string(&model.availability), json_optional_number(model.size_bytes),
+            json_optional_number(model.context_length_tokens), json_optional_number(model.estimated_min_memory_mb),
+            capabilities, json_evidence(&model.evidence)
+        );
+    }
+    out.push(']');
+    if let Some(privacy) = &inventory.privacy {
+        let _ = write!(
+            &mut out,
+            ",\"privacy\":{{\"contains_prompts\":{},\"contains_user_files\":{},\"contains_local_paths\":{},\"contains_credentials\":{}}}",
+            privacy.contains_prompts, privacy.contains_user_files,
+            privacy.contains_local_paths, privacy.contains_credentials
+        );
+    }
+    out.push_str("}}");
+    out
+}
+fn valid_bounded_text(value: &str, max: usize) -> bool {
+    !value.trim().is_empty() && value.len() <= max && !value.chars().any(char::is_control)
+}
+fn contains_local_path(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    lower.contains("file://")
+        || value
+            .split(|character: char| character.is_whitespace() || character == '=')
+            .any(|token| {
+                let token = token.trim_matches(|character: char| {
+                    matches!(
+                        character,
+                        '"' | '\'' | '(' | '[' | '{' | ',' | ';' | ')' | ']' | '}'
+                    )
+                });
+                let bytes = token.as_bytes();
+                token.starts_with('/')
+                    || token.starts_with("~/")
+                    || token.starts_with("\\\\")
+                    || (bytes.len() >= 3
+                        && bytes[0].is_ascii_alphabetic()
+                        && bytes[1] == b':'
+                        && matches!(bytes[2], b'/' | b'\\'))
+            })
+}
+
+fn valid_inventory_evidence(
+    evidence: &OperatorInventoryEvidence,
+    generated_at_unix_ms: u64,
+    now: u64,
+) -> bool {
+    [
+        "runtime_api",
+        "os_api",
+        "runtime_metadata",
+        "signed_catalogue",
+        "published_catalogue",
+        "estimate",
+        "unknown",
+    ]
+    .contains(&evidence.source.as_str())
+        && ["verified", "reported", "estimated", "unknown"].contains(&evidence.confidence.as_str())
+        && !(evidence.source == "unknown" && evidence.confidence == "verified")
+        && evidence.observed_at_unix_ms.is_none_or(|observed| {
+            observed > 0
+                && observed <= now.saturating_add(CLOCK_SKEW_TOLERANCE_MS)
+                && observed <= generated_at_unix_ms.saturating_add(CLOCK_SKEW_TOLERANCE_MS)
+                && now.saturating_sub(observed) <= MAX_OVERVIEW_AGE_MS
+        })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -797,6 +1053,9 @@ where
         };
         let outcome = if overview.tenant_id != claims.tenant_id
             || validate_overview(&overview, now_unix_ms).is_err()
+            || overview
+                .to_json()
+                .starts_with("{\"error\":\"overview_exceeds_response_budget\"}")
         {
             OperatorAuditOutcome::InvalidOverview
         } else {
@@ -824,6 +1083,12 @@ where
     }
 }
 fn validate_overview(overview: &OperatorOverview, now: u64) -> Result<(), ()> {
+    let total_model_rows = overview
+        .model_inventory
+        .iter()
+        .try_fold(0usize, |total, inventory| {
+            total.checked_add(inventory.models.len())
+        });
     if overview.schema_version != 1
         || !valid_identifier(&overview.tenant_id, 128)
         || overview.generated_at_unix_ms == 0
@@ -832,6 +1097,8 @@ fn validate_overview(overview: &OperatorOverview, now: u64) -> Result<(), ()> {
         || overview.devices.len() > MAX_DEVICES
         || overview.workloads.len() > MAX_WORKLOADS
         || overview.approvals.len() > MAX_APPROVALS
+        || overview.model_inventory.len() > MAX_DEVICES
+        || total_model_rows.is_none_or(|count| count > MAX_TOTAL_MODEL_ROWS)
     {
         return Err(());
     }
@@ -860,6 +1127,146 @@ fn validate_overview(overview: &OperatorOverview, now: u64) -> Result<(), ()> {
             return Err(());
         }
     }
+
+    let mut inventory_devices = HashSet::with_capacity(overview.model_inventory.len());
+    for inventory in &overview.model_inventory {
+        if !valid_identifier(&inventory.device_id, 128)
+            || !ids.contains(inventory.device_id.as_str())
+            || !inventory_devices.insert(inventory.device_id.as_str())
+            || inventory.schema_version != 1
+            || inventory.generated_at_unix_ms == 0
+            || !valid_bounded_text(&inventory.platform.os, 32)
+            || inventory
+                .platform
+                .os_version
+                .as_ref()
+                .is_some_and(|value| !valid_bounded_text(value, 64))
+            || !valid_bounded_text(&inventory.platform.architecture, 32)
+            || inventory
+                .hardware
+                .cpu_logical_cores
+                .is_some_and(|value| value == 0 || value > 65_535)
+            || inventory
+                .hardware
+                .memory_total_mb
+                .is_some_and(|value| value == 0 || value > 16_777_216)
+            || inventory
+                .hardware
+                .memory_total_mb
+                .zip(inventory.hardware.memory_available_mb)
+                .is_some_and(|(total, available)| available > total)
+            || inventory.hardware.accelerators.len() > 32
+            || inventory.privacy.as_ref().is_some_and(|privacy| {
+                privacy.contains_prompts
+                    || privacy.contains_user_files
+                    || privacy.contains_local_paths
+                    || privacy.contains_credentials
+            })
+            || inventory.generated_at_unix_ms > now.saturating_add(CLOCK_SKEW_TOLERANCE_MS)
+            || now.saturating_sub(inventory.generated_at_unix_ms) > MAX_OVERVIEW_AGE_MS
+            || inventory
+                .hardware
+                .memory_available_mb
+                .is_some_and(|value| value > 16_777_216)
+            || inventory.runtimes.len() > 16
+            || inventory.models.len() > 512
+        {
+            return Err(());
+        }
+        for accelerator in &inventory.hardware.accelerators {
+            if !["gpu", "npu", "other"].contains(&accelerator.kind.as_str())
+                || accelerator
+                    .vendor
+                    .as_ref()
+                    .is_some_and(|value| !valid_bounded_text(value, 64))
+                || accelerator
+                    .device_family
+                    .as_ref()
+                    .is_some_and(|value| !valid_bounded_text(value, 96))
+                || accelerator
+                    .runtime_api
+                    .as_ref()
+                    .is_some_and(|value| !valid_bounded_text(value, 64))
+                || !valid_inventory_evidence(
+                    &accelerator.evidence,
+                    inventory.generated_at_unix_ms,
+                    now,
+                )
+            {
+                return Err(());
+            }
+        }
+        let mut runtime_ids = HashSet::with_capacity(inventory.runtimes.len());
+        for runtime in &inventory.runtimes {
+            if !valid_identifier(&runtime.runtime_id, 96)
+                || !valid_bounded_text(&runtime.provider, 64)
+                || runtime
+                    .version
+                    .as_ref()
+                    .is_some_and(|value| !valid_bounded_text(value, 64))
+                || !["available", "unavailable", "unknown"].contains(&runtime.availability.as_str())
+                || ![
+                    "loopback_only",
+                    "local_socket",
+                    "enterprise_internal",
+                    "not_applicable",
+                    "unknown",
+                ]
+                .contains(&runtime.network_scope.as_str())
+                || !runtime_ids.insert(runtime.runtime_id.as_str())
+                || !valid_inventory_evidence(&runtime.evidence, inventory.generated_at_unix_ms, now)
+            {
+                return Err(());
+            }
+        }
+        let mut model_ids = HashSet::with_capacity(inventory.models.len());
+        for model in &inventory.models {
+            if !valid_bounded_text(&model.model_ref, 160)
+                || contains_local_path(&model.model_ref)
+                || !valid_identifier(&model.runtime_id, 96)
+                || !valid_bounded_text(&model.display_name, 160)
+                || contains_local_path(&model.display_name)
+                || model
+                    .family
+                    .as_ref()
+                    .is_some_and(|value| !valid_bounded_text(value, 96))
+                || model
+                    .version
+                    .as_ref()
+                    .is_some_and(|value| !valid_bounded_text(value, 64))
+                || !["installed", "downloadable", "unavailable", "unknown"]
+                    .contains(&model.availability.as_str())
+                || model.context_length_tokens == Some(0)
+                || model
+                    .estimated_min_memory_mb
+                    .is_some_and(|value| value == 0 || value > MAX_MODEL_MEMORY_ESTIMATE_MB)
+                || model.capabilities.len() > 16
+                || model.capabilities.iter().collect::<HashSet<_>>().len()
+                    != model.capabilities.len()
+                || model.capabilities.iter().any(|value| {
+                    ![
+                        "chat",
+                        "reasoning",
+                        "coding",
+                        "vision",
+                        "embeddings",
+                        "tool_use",
+                        "streaming",
+                        "audio_input",
+                        "audio_output",
+                        "unknown",
+                    ]
+                    .contains(&value.as_str())
+                })
+                || !model_ids.insert(model.model_ref.as_str())
+                || !runtime_ids.contains(model.runtime_id.as_str())
+                || !valid_inventory_evidence(&model.evidence, inventory.generated_at_unix_ms, now)
+            {
+                return Err(());
+            }
+        }
+    }
+
     for workload in &overview.workloads {
         if !valid_identifier(&workload.workload_id, 128)
             || workload.title.len() > 256
@@ -914,8 +1321,65 @@ mod tests {
             devices: vec![],
             workloads: vec![],
             approvals: vec![],
+            model_inventory: vec![],
         }
     }
+
+    fn sample_model_inventory(
+        device_id: &str,
+        generated_at_unix_ms: u64,
+    ) -> OperatorModelInventoryView {
+        let evidence = OperatorInventoryEvidence {
+            source: "runtime_metadata".into(),
+            confidence: "reported".into(),
+            observed_at_unix_ms: Some(generated_at_unix_ms),
+        };
+        OperatorModelInventoryView {
+            device_id: device_id.into(),
+            schema_version: 1,
+            generated_at_unix_ms,
+            platform: OperatorModelInventoryPlatform {
+                os: "Linux".into(),
+                os_version: Some("6.8".into()),
+                architecture: "x86_64".into(),
+            },
+            hardware: OperatorModelInventoryHardware {
+                cpu_logical_cores: Some(8),
+                memory_total_mb: Some(16_384),
+                memory_available_mb: Some(4096),
+                storage_free_mb: None,
+                accelerators: vec![],
+            },
+            runtimes: vec![OperatorModelRuntimeView {
+                runtime_id: "ollama.local".into(),
+                provider: "Ollama".into(),
+                version: Some("0.5.12".into()),
+                availability: "available".into(),
+                network_scope: "loopback_only".into(),
+                evidence: evidence.clone(),
+            }],
+            models: vec![OperatorModelView {
+                model_ref: "llama3.2:latest".into(),
+                runtime_id: "ollama.local".into(),
+                display_name: "llama3.2:latest".into(),
+                family: Some("llama".into()),
+                version: None,
+                availability: "installed".into(),
+                size_bytes: Some(1_000_000),
+                context_length_tokens: Some(8192),
+                estimated_min_memory_mb: Some(1536),
+                capabilities: vec!["chat".into()],
+                evidence,
+            }],
+            privacy: Some(OperatorModelInventoryPrivacy {
+                contains_prompts: false,
+                contains_user_files: false,
+                contains_local_paths: false,
+                contains_credentials: false,
+            }),
+        }
+    }
+
     struct TestRepo {
         values: Mutex<HashMap<String, OperatorOverview>>,
     }
@@ -951,6 +1415,21 @@ mod tests {
         OperatorSessionAuthenticator::new("session-key-1", [9; 32]).unwrap()
     }
 
+    #[test]
+    fn serialized_overview_matches_required_operator_console_contract() {
+        let overview = empty_overview("tenant-a");
+        let json = overview.to_json();
+        assert!(json.starts_with("{\"schema_version\":1,"));
+        assert!(json.contains("\"tenant_id\":\"tenant-a\""));
+        assert!(json.contains("\"generated_at_unix_ms\":"));
+        assert!(json.contains("\"fleet\":{"));
+        assert!(json.contains("\"devices\":[]"));
+        assert!(json.contains("\"workloads\":[]"));
+        assert!(json.contains("\"approvals\":[]"));
+        assert!(json.contains("\"model_inventory\":[]"));
+        assert!(json.contains("\"model_inventory_returned_devices\":0"));
+        assert!(json.contains("\"model_inventory_returned_models\":0"));
+    }
     #[test]
     fn session_is_signed_expiring_and_tamper_evident() {
         let auth = auth();
@@ -1139,9 +1618,11 @@ mod tests {
         };
         let json = overview.to_json();
         assert!(json.contains("\"schema_version\":1"));
+        assert!(json.contains("\"tenant_id\":\"tenant-a\""));
         assert!(json.contains("\"remaining_memory_mb\":4096"));
         assert!(json.contains("Lab \\\"A\\\""));
         assert!(json.starts_with("{") && json.ends_with("}"));
+        assert!(json.contains("\"model_inventory\":[]"));
     }
 
     #[test]
@@ -1175,6 +1656,198 @@ mod tests {
         overview.fleet.schedulable_devices = 1;
         assert!(validate_overview(&overview, 10_100).is_err());
     }
+
+    #[test]
+    fn model_inventory_api_serializes_only_bounded_runtime_evidence() {
+        let mut overview = empty_overview("tenant-a");
+        overview.devices.push(OperatorDeviceView {
+            device_id: "device-1".into(),
+            display_name: "Lab workstation".into(),
+            platform: "linux".into(),
+            trust_state: "enrolled".into(),
+            availability: "schedulable".into(),
+            remaining_cpu_millis: Some(1500),
+            remaining_memory_mb: Some(4096),
+            last_seen_unix_ms: 10_100,
+        });
+        overview.fleet = OperatorFleetCounts {
+            registered_devices: 1,
+            trusted_consented_devices: 1,
+            online_fresh_devices: 1,
+            schedulable_devices: 1,
+        };
+        overview
+            .model_inventory
+            .push(sample_model_inventory("device-1", 10_100));
+        assert!(validate_overview(&overview, 10_100).is_ok());
+        let json = overview.to_json();
+        assert!(json.contains("\"model_inventory\":[{"));
+        assert!(json.contains("\"device_id\":\"device-1\""));
+        assert!(json.contains("\"inventory\":{\"schema_version\":1"));
+        assert!(json.contains("\"model_ref\":\"llama3.2:latest\""));
+        assert!(json.contains("\"memory_available_mb\":4096"));
+        assert!(json.contains("\"capabilities\":[\"chat\"]"));
+        assert!(json.contains("\"model_inventory_status\":\"complete\""));
+        assert!(json.contains("\"model_inventory_total_models\":1"));
+        assert!(json.contains("\"model_inventory_returned_models\":1"));
+    }
+
+    #[test]
+    fn model_inventory_rejects_foreign_stale_and_unverified_records() {
+        let mut overview = empty_overview("tenant-a");
+        overview.devices.push(OperatorDeviceView {
+            device_id: "device-1".into(),
+            display_name: "Lab workstation".into(),
+            platform: "linux".into(),
+            trust_state: "enrolled".into(),
+            availability: "schedulable".into(),
+            remaining_cpu_millis: Some(1500),
+            remaining_memory_mb: Some(4096),
+            last_seen_unix_ms: 10_100,
+        });
+        overview.fleet = OperatorFleetCounts {
+            registered_devices: 1,
+            trusted_consented_devices: 1,
+            online_fresh_devices: 1,
+            schedulable_devices: 1,
+        };
+
+        overview
+            .model_inventory
+            .push(sample_model_inventory("other-tenant-device", 10_100));
+        assert!(validate_overview(&overview, 10_100).is_err());
+
+        overview.model_inventory.clear();
+        let mut stale = sample_model_inventory("device-1", 1);
+        overview.model_inventory.push(stale.clone());
+        overview.generated_at_unix_ms = 100_000;
+        assert!(validate_overview(&overview, 100_000).is_err());
+
+        overview.model_inventory.clear();
+        stale = sample_model_inventory("device-1", 100_000);
+        stale.models[0].capabilities = vec!["execute_shell".into()];
+        overview.model_inventory.push(stale);
+        assert!(validate_overview(&overview, 100_000).is_err());
+
+        overview.model_inventory.clear();
+        let mut stale_evidence = sample_model_inventory("device-1", 100_000);
+        stale_evidence.models[0].evidence.observed_at_unix_ms = Some(1);
+        overview.model_inventory.push(stale_evidence);
+        assert!(validate_overview(&overview, 100_000).is_err());
+
+        overview.model_inventory.clear();
+        let mut blank = sample_model_inventory("device-1", 100_000);
+        blank.models[0].display_name = "   ".into();
+        overview.model_inventory.push(blank);
+        assert!(validate_overview(&overview, 100_000).is_err());
+
+        overview.model_inventory.clear();
+        let mut wrong_version = sample_model_inventory("device-1", 100_000);
+        wrong_version.schema_version = 2;
+        overview.model_inventory.push(wrong_version);
+        assert!(validate_overview(&overview, 100_000).is_err());
+
+        overview.model_inventory.clear();
+        let mut privacy_violation = sample_model_inventory("device-1", 100_000);
+        privacy_violation.privacy.as_mut().unwrap().contains_prompts = true;
+        overview.model_inventory.push(privacy_violation);
+        assert!(validate_overview(&overview, 100_000).is_err());
+
+        overview.model_inventory.clear();
+        let mut impossible_memory = sample_model_inventory("device-1", 100_000);
+        impossible_memory.hardware.memory_available_mb = Some(32_768);
+        overview.model_inventory.push(impossible_memory);
+        assert!(validate_overview(&overview, 100_000).is_err());
+
+        overview.model_inventory.clear();
+        let mut zero_estimate = sample_model_inventory("device-1", 100_000);
+        zero_estimate.models[0].estimated_min_memory_mb = Some(0);
+        overview.model_inventory.push(zero_estimate);
+        assert!(validate_overview(&overview, 100_000).is_err());
+
+        overview.model_inventory.clear();
+        let mut unbounded_estimate = sample_model_inventory("device-1", 100_000);
+        unbounded_estimate.models[0].estimated_min_memory_mb =
+            Some(MAX_MODEL_MEMORY_ESTIMATE_MB + 1);
+        overview.model_inventory.push(unbounded_estimate);
+        assert!(validate_overview(&overview, 100_000).is_err());
+
+        overview.model_inventory.clear();
+        let mut unknown_verified = sample_model_inventory("device-1", 100_000);
+        unknown_verified.models[0].evidence.source = "unknown".into();
+        unknown_verified.models[0].evidence.confidence = "verified".into();
+        overview.model_inventory.push(unknown_verified);
+        assert!(validate_overview(&overview, 100_000).is_err());
+
+        overview.model_inventory.clear();
+        let mut evidence_after_snapshot = sample_model_inventory("device-1", 100_000);
+        evidence_after_snapshot.models[0]
+            .evidence
+            .observed_at_unix_ms = Some(130_001);
+        overview.model_inventory.push(evidence_after_snapshot);
+        assert!(validate_overview(&overview, 100_000).is_err());
+
+        overview.model_inventory.clear();
+        let mut local_display_path = sample_model_inventory("device-1", 100_000);
+        local_display_path.models[0].display_name = "/home/operator/models/llama".into();
+        overview.model_inventory.push(local_display_path);
+        assert!(validate_overview(&overview, 100_000).is_err());
+
+        overview.model_inventory.clear();
+        let mut local_model_ref = sample_model_inventory("device-1", 100_000);
+        local_model_ref.models[0].model_ref = "C:\\\\Users\\\\operator\\\\models\\\\llama".into();
+        overview.model_inventory.push(local_model_ref);
+        assert!(validate_overview(&overview, 100_000).is_err());
+    }
+
+    #[test]
+    fn model_inventory_serialization_stays_within_response_budget() {
+        let mut overview = empty_overview("tenant-a");
+        overview.generated_at_unix_ms = 100_000;
+
+        for device_index in 0..1_000 {
+            let device_id = format!("device-{device_index}");
+            overview.devices.push(OperatorDeviceView {
+                device_id: device_id.clone(),
+                display_name: format!("Lab workstation {device_index}"),
+                platform: "linux".into(),
+                trust_state: "enrolled".into(),
+                availability: "schedulable".into(),
+                remaining_cpu_millis: Some(1500),
+                remaining_memory_mb: Some(4096),
+                last_seen_unix_ms: 100_000,
+            });
+
+            let mut inventory = sample_model_inventory(&device_id, 100_000);
+            let template = inventory.models[0].clone();
+            inventory.models = (0..50)
+                .map(|model_index| {
+                    let mut model = template.clone();
+                    model.model_ref = format!("model-{device_index}-{model_index}");
+                    model.display_name = format!("Model {device_index}-{model_index}");
+                    model
+                })
+                .collect();
+            overview.model_inventory.push(inventory);
+        }
+
+        let device_count = overview.devices.len();
+        overview.fleet = OperatorFleetCounts {
+            registered_devices: device_count,
+            trusted_consented_devices: device_count,
+            online_fresh_devices: device_count,
+            schedulable_devices: device_count,
+        };
+        assert!(validate_overview(&overview, 100_000).is_ok());
+
+        let json = overview.to_json();
+        assert!(json.len() <= MAX_OVERVIEW_RESPONSE_BYTES);
+        assert!(json.contains("\"tenant_id\":\"tenant-a\""));
+        assert!(json.contains("\"model_inventory_status\":\"partial_response_budget\""));
+        assert!(json.contains("\"model_inventory_total_devices\":1000"));
+        assert!(json.contains("\"model_inventory_total_models\":50000"));
+    }
+
     #[test]
     fn audit_failure_fails_closed() {
         let auth = auth();
@@ -1196,5 +1869,119 @@ mod tests {
             service.get_overview(&token, 10_100),
             Err(OperatorServiceError::AuditUnavailable)
         );
+    }
+}
+
+// Negative vectors ensure key selection and every token component are authenticated.
+#[cfg(test)]
+mod session_keyring_negative_tests {
+    use super::*;
+
+    fn claims() -> OperatorSessionClaims {
+        OperatorSessionClaims {
+            subject_id: "lab-operator".into(),
+            tenant_id: "lab-tenant".into(),
+            role: OperatorRole::Administrator,
+            issued_at_unix_ms: 10_000,
+            expires_at_unix_ms: 20_000,
+            nonce: [7; 16],
+        }
+    }
+
+    fn ring() -> OperatorSessionKeyRing {
+        OperatorSessionKeyRing::new(
+            "key-new",
+            vec![
+                ("key-old".into(), [0x31; 32]),
+                ("key-new".into(), [0xA5; 32]),
+            ],
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn keyring_binds_key_id_payload_and_signature() {
+        let keyring = ring();
+        let token = keyring
+            .mint_after_identity_verification(&claims(), 10_100)
+            .unwrap();
+        let parts: Vec<&str> = token.split('.').collect();
+        assert_eq!(parts.len(), 3);
+
+        let unknown_key = format!("unknown.{}.{}", parts[1], parts[2]);
+        assert_eq!(
+            keyring.authenticate(&unknown_key, 10_200),
+            Err(OperatorAuthError::UnknownKeyId)
+        );
+
+        let alternate_known_key = format!("key-old.{}.{}", parts[1], parts[2]);
+        assert_eq!(
+            keyring.authenticate(&alternate_known_key, 10_200),
+            Err(OperatorAuthError::InvalidSignature)
+        );
+
+        let mut changed_payload = parts[1].to_owned();
+        let first = changed_payload.remove(0);
+        changed_payload.insert(0, if first == '0' { '1' } else { '0' });
+        let payload_tamper = format!("{}.{}.{}", parts[0], changed_payload, parts[2]);
+        assert_eq!(
+            keyring.authenticate(&payload_tamper, 10_200),
+            Err(OperatorAuthError::InvalidSignature)
+        );
+
+        let mut changed_signature = parts[2].to_owned();
+        let first = changed_signature.remove(0);
+        changed_signature.insert(0, if first == '0' { '1' } else { '0' });
+        let signature_tamper = format!("{}.{}.{}", parts[0], parts[1], changed_signature);
+        assert_eq!(
+            keyring.authenticate(&signature_tamper, 10_200),
+            Err(OperatorAuthError::InvalidSignature)
+        );
+
+        assert_eq!(
+            keyring.authenticate(&format!("{token}.extra"), 10_200),
+            Err(OperatorAuthError::MalformedToken)
+        );
+    }
+
+    #[test]
+    fn keyring_rejects_ambiguous_ids_and_excessive_overlap() {
+        assert_eq!(
+            OperatorSessionKeyRing::new("key.with.dot", vec![("key.with.dot".into(), [1; 32])])
+                .err(),
+            Some(OperatorAuthError::InvalidClaims)
+        );
+        assert_eq!(
+            OperatorSessionKeyRing::new(
+                "key-1",
+                vec![
+                    ("key-1".into(), [1; 32]),
+                    ("key-2".into(), [2; 32]),
+                    ("key-3".into(), [3; 32]),
+                    ("key-4".into(), [4; 32]),
+                    ("key-5".into(), [5; 32]),
+                ],
+            )
+            .err(),
+            Some(OperatorAuthError::InvalidClaims)
+        );
+        assert!(OperatorSessionKeyRing::new(
+            "key-1",
+            vec![
+                ("key-1".into(), [1; 32]),
+                ("key-2".into(), [2; 32]),
+                ("key-3".into(), [3; 32]),
+                ("key-4".into(), [4; 32]),
+            ],
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn keyring_debug_output_never_contains_key_material() {
+        let keyring = ring();
+        let rendered = format!("{keyring:?}");
+        assert!(rendered.contains("[REDACTED]"));
+        assert!(!rendered.contains("165"));
     }
 }

@@ -70,58 +70,119 @@ function renderList(id, records, emptyText, detailKeys) {
 function boundedString(value, max) {
   return typeof value === "string" && value.length > 0 && value.length <= max;
 }
-function validEvidence(evidence) {
+function containsLocalPath(value) {
+  if (typeof value !== "string") return false;
+  if (value.toLowerCase().includes("file://")) return true;
+  return value.split(/[\s=]+/).some((raw) => {
+    const token = raw.replace(/^["'([{,;]+|["')\]},;]+$/g, "");
+    return token.startsWith("/") || token.startsWith("~/")
+      || token.startsWith("\\\\")
+      || /^[A-Za-z]:[\\/]/.test(token);
+  });
+}
+function validEvidence(evidence, generatedAtUnixMs) {
+  const observedAt = evidence && evidence.observed_at_unix_ms;
   return evidence && ["runtime_api", "os_api", "runtime_metadata", "signed_catalogue", "published_catalogue", "estimate", "unknown"].includes(evidence.source)
     && ["verified", "reported", "estimated", "unknown"].includes(evidence.confidence)
-    && (evidence.observed_at_unix_ms === null || (Number.isSafeInteger(evidence.observed_at_unix_ms) && evidence.observed_at_unix_ms > 0));
+    && !(evidence.source === "unknown" && evidence.confidence === "verified")
+    && (observedAt === null || (Number.isSafeInteger(observedAt) && observedAt > 0
+      && observedAt <= generatedAtUnixMs + MAX_INVENTORY_EVIDENCE_SKEW_MS));
 }
-function validModelInventory(inventories) {
-  if (inventories === undefined) return true;
-  if (!Array.isArray(inventories) || inventories.length > 10000) return false;
-  return inventories.every((inventory) => inventory
-    && boundedString(inventory.device_id, 128)
-    && Number.isSafeInteger(inventory.generated_at_unix_ms) && inventory.generated_at_unix_ms > 0
-    && snapshotIsFresh(inventory.generated_at_unix_ms)
-    && inventory.hardware && (inventory.hardware.memory_available_mb === null || Number.isSafeInteger(inventory.hardware.memory_available_mb) && inventory.hardware.memory_available_mb >= 0)
-    && Array.isArray(inventory.runtimes) && inventory.runtimes.length <= 16
-    && inventory.runtimes.every((runtime) => runtime
-      && boundedString(runtime.runtime_id, 96) && boundedString(runtime.provider, 64)
-      && (runtime.version === null || boundedString(runtime.version, 64))
-      && ["available", "unavailable", "unknown"].includes(runtime.availability)
-      && ["loopback_only", "local_socket", "enterprise_internal", "not_applicable", "unknown"].includes(runtime.network_scope)
-      && validEvidence(runtime.evidence))
-    && Array.isArray(inventory.models) && inventory.models.length <= 512
-    && inventory.models.every((model) => model
-      && boundedString(model.model_ref, 160) && boundedString(model.runtime_id, 96)
-      && boundedString(model.display_name, 160)
-      && (model.family === null || model.family === undefined || boundedString(model.family, 96))
-      && (model.version === null || model.version === undefined || boundedString(model.version, 64))
-      && ["installed", "downloadable", "unavailable", "unknown"].includes(model.availability)
-      && (model.size_bytes === null || Number.isSafeInteger(model.size_bytes) && model.size_bytes >= 0)
-      && (model.context_length_tokens === null || Number.isSafeInteger(model.context_length_tokens) && model.context_length_tokens > 0)
-      && (model.estimated_min_memory_mb === null || Number.isSafeInteger(model.estimated_min_memory_mb) && model.estimated_min_memory_mb >= 0)
-      && Array.isArray(model.capabilities) && model.capabilities.length <= 16
-      && model.capabilities.every((capability) => ["chat", "reasoning", "coding", "vision", "embeddings", "tool_use", "streaming", "audio_input", "audio_output", "unknown"].includes(capability))
-      && validEvidence(model.evidence)));
+function validModelInventory(entries) {
+  if (entries === undefined) return true;
+  if (!Array.isArray(entries) || entries.length > 10000) return false;
+  let totalModels = 0;
+  for (const entry of entries) {
+    const models = entry && entry.inventory && entry.inventory.models;
+    if (!Array.isArray(models)) return false;
+    totalModels += models.length;
+    if (totalModels > MAX_TOTAL_MODEL_ROWS) return false;
+  }
+  return entries.every((entry) => {
+    const inventory = entry && entry.inventory;
+    return entry && boundedString(entry.device_id, 128)
+      && inventory && inventory.schema_version === 1
+      && Number.isSafeInteger(inventory.generated_at_unix_ms) && inventory.generated_at_unix_ms > 0
+      && snapshotIsFresh(inventory.generated_at_unix_ms)
+      && inventory.platform && boundedString(inventory.platform.os, 32)
+      && (inventory.platform.os_version === null || inventory.platform.os_version === undefined || boundedString(inventory.platform.os_version, 64))
+      && boundedString(inventory.platform.architecture, 32)
+      && inventory.hardware
+      && (inventory.hardware.cpu_logical_cores === null || Number.isSafeInteger(inventory.hardware.cpu_logical_cores) && inventory.hardware.cpu_logical_cores > 0 && inventory.hardware.cpu_logical_cores <= 65535)
+      && (inventory.hardware.memory_total_mb === null || Number.isSafeInteger(inventory.hardware.memory_total_mb) && inventory.hardware.memory_total_mb > 0)
+      && (inventory.hardware.memory_available_mb === null || Number.isSafeInteger(inventory.hardware.memory_available_mb) && inventory.hardware.memory_available_mb >= 0)
+      && (inventory.hardware.memory_total_mb == null || inventory.hardware.memory_available_mb == null || inventory.hardware.memory_available_mb <= inventory.hardware.memory_total_mb)
+      && (inventory.hardware.storage_free_mb === null || inventory.hardware.storage_free_mb === undefined || Number.isSafeInteger(inventory.hardware.storage_free_mb) && inventory.hardware.storage_free_mb >= 0)
+      && Array.isArray(inventory.hardware.accelerators) && inventory.hardware.accelerators.length <= 32
+      && inventory.hardware.accelerators.every((item) => item
+        && ["gpu", "npu", "other"].includes(item.kind)
+        && (item.vendor === null || item.vendor === undefined || boundedString(item.vendor, 64))
+        && (item.device_family === null || item.device_family === undefined || boundedString(item.device_family, 96))
+        && (item.memory_mb === null || item.memory_mb === undefined || Number.isSafeInteger(item.memory_mb) && item.memory_mb >= 0)
+        && (item.runtime_api === null || item.runtime_api === undefined || boundedString(item.runtime_api, 64))
+        && validEvidence(item.evidence, inventory.generated_at_unix_ms))
+      && (inventory.privacy === undefined || inventory.privacy && typeof inventory.privacy === "object" && !Array.isArray(inventory.privacy)
+        && Object.keys(inventory.privacy).every((key) => ["contains_prompts", "contains_user_files", "contains_local_paths", "contains_credentials"].includes(key))
+        && Object.values(inventory.privacy).every((value) => value === false))
+      && Array.isArray(inventory.runtimes) && inventory.runtimes.length <= 16
+      && inventory.runtimes.every((runtime) => runtime
+        && boundedString(runtime.runtime_id, 96) && boundedString(runtime.provider, 64)
+        && (runtime.version === null || boundedString(runtime.version, 64))
+        && ["available", "unavailable", "unknown"].includes(runtime.availability)
+        && ["loopback_only", "local_socket", "enterprise_internal", "not_applicable", "unknown"].includes(runtime.network_scope)
+        && validEvidence(runtime.evidence, inventory.generated_at_unix_ms))
+      && new Set(inventory.runtimes.map((runtime) => runtime.runtime_id)).size === inventory.runtimes.length
+      && Array.isArray(inventory.models) && inventory.models.length <= 512
+      && inventory.models.every((model) => model
+        && boundedString(model.model_ref, 160) && !containsLocalPath(model.model_ref)
+        && boundedString(model.runtime_id, 96)
+        && boundedString(model.display_name, 160) && !containsLocalPath(model.display_name)
+        && (model.family === null || model.family === undefined || boundedString(model.family, 96))
+        && (model.version === null || model.version === undefined || boundedString(model.version, 64))
+        && ["installed", "downloadable", "unavailable", "unknown"].includes(model.availability)
+        && (model.size_bytes === null || Number.isSafeInteger(model.size_bytes) && model.size_bytes >= 0)
+        && (model.context_length_tokens === null || model.context_length_tokens === undefined || Number.isSafeInteger(model.context_length_tokens) && model.context_length_tokens > 0)
+        && (model.estimated_min_memory_mb === null || model.estimated_min_memory_mb === undefined
+          || Number.isSafeInteger(model.estimated_min_memory_mb) && model.estimated_min_memory_mb > 0
+          && model.estimated_min_memory_mb <= MAX_MODEL_MEMORY_ESTIMATE_MB)
+        && Array.isArray(model.capabilities) && model.capabilities.length <= 16
+        && new Set(model.capabilities).size === model.capabilities.length
+        && model.capabilities.every((capability) => ["chat", "reasoning", "coding", "vision", "embeddings", "tool_use", "streaming", "audio_input", "audio_output", "unknown"].includes(capability))
+        && validEvidence(model.evidence, inventory.generated_at_unix_ms)
+        && inventory.runtimes.some((runtime) => runtime.runtime_id === model.runtime_id))
+      && new Set(inventory.models.map((model) => model.model_ref)).size === inventory.models.length;
+  });
 }
-function renderModelInventory(inventories) {
+function renderModelInventory(inventories, overview) {
   const body = byId("model-inventory");
   body.replaceChildren();
   const rows = [];
-  let totalModels = 0;
-  for (const inventory of inventories || []) {
+  let returnedModels = 0;
+  for (const entry of inventories || []) {
+    const inventory = entry.inventory;
     for (const model of inventory.models) {
-      totalModels += 1;
-      if (rows.length < 5121) {
+      returnedModels += 1;
+      if (rows.length < 5120) {
         const runtime = inventory.runtimes.find((item) => item.runtime_id === model.runtime_id);
-        rows.push({ device_id: inventory.device_id, inventory_at: inventory.generated_at_unix_ms, memory_available_mb: inventory.hardware.memory_available_mb, model, runtime });
+        rows.push({ device_id: entry.device_id, inventory_at: inventory.generated_at_unix_ms, memory_available_mb: inventory.hardware.memory_available_mb, model, runtime });
       }
     }
   }
-  byId("model-count").textContent = totalModels + " model records" + (totalModels > 5120 ? " · showing first 5,120" : "");
-  if (!totalModels) {
+  const totalModels = overview.model_inventory_total_models;
+  let countLabel = totalModels.toLocaleString() + " model records across "
+    + overview.model_inventory_total_devices.toLocaleString() + " devices";
+  if (overview.model_inventory_status === "partial_response_budget") {
+    countLabel += " · response budget limited; " + returnedModels.toLocaleString()
+      + " models from " + overview.model_inventory_returned_devices.toLocaleString() + " devices returned";
+  }
+  if (totalModels > rows.length) countLabel += " · showing first " + rows.length.toLocaleString();
+  byId("model-count").textContent = countLabel;
+  if (!returnedModels) {
     const row = document.createElement("tr");
-    const cell = textCell("No authenticated model/runtime inventory is available.");
+    const message = overview.model_inventory_status === "partial_response_budget"
+      ? "The response budget did not fit a complete device inventory; retry with a narrower fleet filter."
+      : "No model records were reported by authorised devices.";
+    const cell = textCell(message);
     cell.colSpan = 9; cell.className = "empty"; row.append(cell); body.append(row); return;
   }
   for (const item of rows.slice(0, 5120)) {
@@ -152,6 +213,9 @@ const MAX_OVERVIEW_RESPONSE_BYTES = 8 * 1024 * 1024;
 const OVERVIEW_RESPONSE_LIMIT_LABEL = `${MAX_OVERVIEW_RESPONSE_BYTES / (1024 * 1024)} MiB`;
 const MAX_OVERVIEW_SNAPSHOT_AGE_MS = 5 * 60 * 1000;
 const MAX_OVERVIEW_CLOCK_SKEW_MS = 60 * 1000;
+const MAX_INVENTORY_EVIDENCE_SKEW_MS = 30 * 1000;
+const MAX_MODEL_MEMORY_ESTIMATE_MB = 16_777_216;
+const MAX_TOTAL_MODEL_ROWS = 100_000;
 
 function snapshotIsFresh(generatedAtUnixMs, now = Date.now()) {
   if (!Number.isSafeInteger(generatedAtUnixMs) || generatedAtUnixMs <= 0) return false;
@@ -206,6 +270,10 @@ async function readBoundedJson(response) {
 function validOverview(data) {
   const counts = data && data.fleet;
   const validCount = (value) => Number.isSafeInteger(value) && value >= 0;
+  const returnedModelCount = Array.isArray(data && data.model_inventory)
+    ? data.model_inventory.reduce((total, entry) => total
+      + (entry && entry.inventory && Array.isArray(entry.inventory.models) ? entry.inventory.models.length : 0), 0)
+    : data && data.model_inventory === undefined ? 0 : -1;
   return data && data.schema_version === 1
     && typeof data.tenant_id === "string" && data.tenant_id.length > 0 && data.tenant_id.length <= 128
     && counts && validCount(counts.registered_devices)
@@ -219,7 +287,21 @@ function validOverview(data) {
     && Array.isArray(data.devices) && data.devices.length <= 10000
     && Array.isArray(data.workloads) && data.workloads.length <= 1000
     && Array.isArray(data.approvals) && data.approvals.length <= 1000
-    && validModelInventory(data.model_inventory)
+    && (data.model_inventory === undefined || Array.isArray(data.model_inventory) && validModelInventory(data.model_inventory))
+    && validCount(data.model_inventory_total_devices) && data.model_inventory_total_devices <= 10000
+    && validCount(data.model_inventory_returned_devices)
+    && data.model_inventory_returned_devices === (data.model_inventory || []).length
+    && data.model_inventory_total_devices >= data.model_inventory_returned_devices
+    && validCount(data.model_inventory_total_models) && data.model_inventory_total_models <= MAX_TOTAL_MODEL_ROWS
+    && validCount(data.model_inventory_returned_models)
+    && data.model_inventory_returned_models === returnedModelCount
+    && data.model_inventory_total_models >= data.model_inventory_returned_models
+    && ["complete", "partial_response_budget"].includes(data.model_inventory_status)
+    && (data.model_inventory_status === "complete"
+      ? data.model_inventory_total_devices === data.model_inventory_returned_devices
+        && data.model_inventory_total_models === data.model_inventory_returned_models
+      : data.model_inventory_total_devices > data.model_inventory_returned_devices
+        || data.model_inventory_total_models > data.model_inventory_returned_models)
     && data.devices.length === counts.registered_devices
     && Number.isSafeInteger(data.generated_at_unix_ms) && data.generated_at_unix_ms > 0;
 }
@@ -233,7 +315,7 @@ function renderOverview(data) {
   byId("online").textContent = data.fleet.online_fresh_devices.toLocaleString();
   byId("schedulable").textContent = data.fleet.schedulable_devices.toLocaleString();
   renderDevices(data.devices);
-  renderModelInventory(data.model_inventory);
+  renderModelInventory(data.model_inventory || [], data);
   renderList("workloads", data.workloads, "No active workloads.", ["state", "class", "reason"]);
   renderList("approvals", data.approvals, "No pending approvals.", ["requester", "scope", "expires_at"]);
   byId("updated").textContent = "Snapshot: " + new Date(data.generated_at_unix_ms).toLocaleString();

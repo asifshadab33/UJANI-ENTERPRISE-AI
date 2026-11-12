@@ -6,7 +6,10 @@ ROOT = Path(__file__).resolve().parents[1]
 APP = ROOT / "apps" / "operator-console"
 
 class ConsoleParser(HTMLParser):
+    """Inspect the static operator console for unsafe embedded resources."""
+
     def __init__(self):
+        """Initialize counters for prohibited inline resources and handlers."""
         super().__init__()
         self.inline_scripts = 0
         self.inline_styles = 0
@@ -14,6 +17,7 @@ class ConsoleParser(HTMLParser):
         self.script_sources = []
 
     def handle_starttag(self, tag, attrs):
+        """Collect inline executable resources and event-handler attributes."""
         values = dict(attrs)
         if tag == "script":
             if not values.get("src"):
@@ -27,6 +31,7 @@ class ConsoleParser(HTMLParser):
                 self.inline_handlers.append((tag, name))
 
 def main():
+    """Validate the operator console's static security and API contract."""
     html = (APP / "index.html").read_text(encoding="utf-8")
     js = (APP / "app.js").read_text(encoding="utf-8")
     css = (APP / "styles.css").read_text(encoding="utf-8")
@@ -58,15 +63,49 @@ def main():
     assert "function validModelInventory" in js and "function validEvidence" in js, "Model inventory evidence must be structurally validated."
     assert "inventory.runtimes.length <= 16" in js and "inventory.models.length <= 512" in js, "Runtime/model inventory bounds are missing."
     assert "snapshotIsFresh(inventory.generated_at_unix_ms)" in js, "Model inventory snapshots must be fresh."
-    assert "rows.length < 5121" in js and "totalModels > 5120" in js, "Model row allocation must remain bounded."
+    assert "rows.length < 5120" in js and "totalModels > rows.length" in js, "Model row allocation must remain bounded."
     assert "cell.colSpan = 9" in js, "Model inventory empty state must span all nine columns."
-    assert "validEvidence(model.evidence)" in js and "snapshotIsFresh(evidenceAt)" in js, "Model evidence must expose confidence and freshness."
+    assert "entry.inventory" in js and "inventory.schema_version === 1" in js, "Console must consume the shared v1 inventory wrapper."
+    assert "device_id: entry.device_id" in js, "Console must preserve the outer tenant-scoped device identifier."
+    assert "inventory.privacy" in js, "Console must reject inventory privacy flags that disclose user data."
+    assert "validEvidence(model.evidence, inventory.generated_at_unix_ms)" in js and "snapshotIsFresh(evidenceAt)" in js, "Model evidence must expose confidence and snapshot-relative freshness."
+    assert "containsLocalPath(model.display_name)" in js and "containsLocalPath(model.model_ref)" in js, "Local paths must not be rendered as model labels."
+    assert "value.split(/[\\s=]+/)" in js, "Model labels must split on whitespace and assignment boundaries without splitting namespace separators."
+    assert "data.model_inventory_returned_devices === (data.model_inventory || []).length" in js, "An omitted inventory must render as not reported without breaking the overview."
+    assert "model.estimated_min_memory_mb <= MAX_MODEL_MEMORY_ESTIMATE_MB" in js, "Model memory estimates must match the API bounds."
+    assert "model_inventory_status" in js and "model_inventory_total_models" in js, "Partial inventory responses must be explicitly summarized."
     assert "inventory.hardware.memory_available_mb" in js and "estimate fits" in js and "insufficient" in js, "Model RAM fit must be conservative and explicit."
     assert "<th>RAM fit</th>" in html, "Model RAM fit column is missing."
-    assert "renderModelInventory(data.model_inventory)" in js, "Authenticated model inventory must be rendered."
+    assert "renderModelInventory(data.model_inventory || [], data)" in js, "Authenticated model inventory must be rendered."
     assert "prompts, model contents and local file paths are never displayed" in html.lower(), "Model inventory privacy boundary must be visible."
     assert "overflow" in css or "overflow-x" in css, "Responsive table overflow handling missing."
-    print("Operator console static security/contract checks passed.")
+    control_plane = (ROOT / "crates" / "ujani-enterprise-policy" / "src" / "operator_control_plane.rs").read_text(encoding="utf-8")
+    for required in (
+        "pub model_inventory: Vec<OperatorModelInventoryView>",
+        "fn json_model_inventory(",
+        "fn valid_inventory_evidence(",
+        "inventory.schema_version != 1",
+        "inventory.platform.os",
+        "inventory.hardware.accelerators.len() > 32",
+        "inventory.privacy.as_ref()",
+        "inventory.generated_at_unix_ms",
+        "inventory.runtimes.len() > 16",
+        "inventory.models.len() > 512",
+        "total_model_rows.is_none_or",
+        "MAX_TOTAL_MODEL_ROWS: usize = 100_000",
+        "MAX_OVERVIEW_RESPONSE_BYTES: usize = 8 * 1024 * 1024",
+        "overview_exceeds_response_budget",
+        "contains_local_path(&model.display_name)",
+        "inventory_devices.insert(inventory.device_id.as_str())",
+    ):
+        if required not in control_plane:
+            raise SystemExit(f"operator API model inventory contract is missing: {required}")
+    assert ".starts_with(" in control_plane and "overview_exceeds_response_budget" in control_plane, "Oversized base collections must fail before a successful audit."
+    serializer = control_plane.split("impl OperatorOverview", 1)[1].split("fn json_string", 1)[0]
+    assert '\\"tenant_id\\":{}' in serializer, "Serialized overview must include tenant_id required by the console."
+    assert "partial_response_budget" in serializer and "model_inventory_returned_models" in serializer, "Serializer must expose explicit bounded-inventory status and counts."
+    assert "MAX_OVERVIEW_RESPONSE_BYTES" in serializer, "Serializer must enforce the console response byte ceiling."
+    print("Operator console and model inventory API static security/contract checks passed.")
 
 if __name__ == "__main__":
     main()
