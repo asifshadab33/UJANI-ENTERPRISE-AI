@@ -434,6 +434,7 @@ impl DurableLedger {
     }
 
     /// Renews a workload lease only when the supplied capability matches.
+    #[cfg(test)]
     pub(crate) fn renew_lease(
         &self,
         workload_id: &str,
@@ -444,6 +445,7 @@ impl DurableLedger {
     }
 
     /// Releases a workload lease only when the supplied capability matches.
+    #[cfg(test)]
     pub(crate) fn release_lease(
         &self,
         workload_id: &str,
