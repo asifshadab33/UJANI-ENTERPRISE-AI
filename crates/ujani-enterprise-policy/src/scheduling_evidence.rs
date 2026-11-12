@@ -492,8 +492,7 @@ pub fn authenticate_verify_and_reserve_worker_telemetry(
                 if !owner_opted_in {
                     return Ok(Admission::Reject(RejectReason::OwnerOptInMissing));
                 }
-                let enrolled_device_keys =
-                    [(authenticated.device_id().to_owned(), *device_key)];
+                let enrolled_device_keys = [(authenticated.device_id().to_owned(), *device_key)];
                 let verified = verify_scheduling_context(
                     device,
                     workload,
