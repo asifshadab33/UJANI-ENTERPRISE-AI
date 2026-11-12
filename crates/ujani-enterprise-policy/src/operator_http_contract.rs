@@ -156,6 +156,35 @@ pub fn resolve_route(method: HttpMethod, path: &str) -> Option<RouteContract> {
     None
 }
 
+/// Dispatch a parsed owner-consent command only for its device-authenticated route.
+///
+/// The hosting adapter must enforce `RouteContract::max_body_bytes` against the
+/// raw request body before parsing. Signature, expiry, generation, tenant and
+/// replay checks are performed by the durable registry.
+pub fn dispatch_owner_consent_command(
+    method: HttpMethod,
+    path: &str,
+    registry: &super::device_trust::durable::DurableDeviceRegistry,
+    command: &super::device_trust::SignedOwnerConsentCommand,
+    now_unix_ms: u64,
+) -> Result<Option<u64>, super::device_trust::durable::DurableDeviceTrustError> {
+    let Some(contract) = resolve_route(method, path) else {
+        return Ok(None);
+    };
+    if contract.route != OperatorHttpRoute::DeviceOwnerConsent
+        || contract.principal != RoutePrincipal::EnrolledDeviceSignature
+    {
+        return Ok(None);
+    }
+    let Some(device_id) = path.split('/').nth(3) else {
+        return Ok(None);
+    };
+    if device_id != command.device_id {
+        return Ok(None);
+    }
+    registry.apply_owner_consent(command, now_unix_ms).map(Some)
+}
+
 fn valid_path_segment(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 128
