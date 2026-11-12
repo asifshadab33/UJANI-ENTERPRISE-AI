@@ -2,7 +2,12 @@
 set -euo pipefail
 
 : "${PGPASSWORD:?PGPASSWORD must be set for the PostgreSQL integration test}"
-PSQL=(psql --host "${PGHOST:-localhost}" --username "${PGUSER:-postgres}" --dbname "${PGDATABASE:-ujani_test}" --set ON_ERROR_STOP=1 --quiet --tuples-only --no-align)
+if [[ -n "${PSQL_BIN:-}" ]]; then
+  # CI uses the PostgreSQL service container's own psql client via docker exec.
+  PSQL=("$PSQL_BIN" --username "${PGUSER:-postgres}" --dbname "${PGDATABASE:-ujani_test}" --set ON_ERROR_STOP=1 --quiet --tuples-only --no-align)
+else
+  PSQL=(psql --host "${PGHOST:-localhost}" --username "${PGUSER:-postgres}" --dbname "${PGDATABASE:-ujani_test}" --set ON_ERROR_STOP=1 --quiet --tuples-only --no-align)
+fi
 
 "${PSQL[@]}" <<'SQL'
 INSERT INTO ujani_control.tenants (tenant_id, display_name)
