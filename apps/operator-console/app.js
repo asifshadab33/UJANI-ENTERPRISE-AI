@@ -73,7 +73,7 @@ function boundedString(value, max) {
 function containsLocalPath(value) {
   if (typeof value !== "string") return false;
   if (value.toLowerCase().includes("file://")) return true;
-  return value.split(/[\\s=]+/).some((raw) => {
+    return value.split(/[\s=]+/).some((raw) => {
     const token = raw.replace(/^["'([{,;]+|["')\\]},;]+$/g, "");
     return token.startsWith("/") || token.startsWith("~/")
       || token.startsWith("\\\\\\\\")
@@ -290,7 +290,7 @@ function validOverview(data) {
     && (data.model_inventory === undefined || Array.isArray(data.model_inventory) && validModelInventory(data.model_inventory))
     && validCount(data.model_inventory_total_devices) && data.model_inventory_total_devices <= 10000
     && validCount(data.model_inventory_returned_devices)
-    && data.model_inventory_returned_devices === data.model_inventory.length
+    && data.model_inventory_returned_devices === (data.model_inventory || []).length
     && data.model_inventory_total_devices >= data.model_inventory_returned_devices
     && validCount(data.model_inventory_total_models) && data.model_inventory_total_models <= MAX_TOTAL_MODEL_ROWS
     && validCount(data.model_inventory_returned_models)
