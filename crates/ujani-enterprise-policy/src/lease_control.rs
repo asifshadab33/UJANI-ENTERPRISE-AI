@@ -175,7 +175,7 @@ mod tests {
     use crate::device_trust::{
         admin_command_bytes, device_request_bytes, enrollment_proof_bytes, owner_consent_bytes,
         DeviceCommandAction, DeviceRequestClaims, SignedDeviceAdminCommand,
-        SignedOwnerConsentCommand, MAX_DEVICE_REQUEST_TTL_MS, MAX_OWNER_CONSENT_TTL_MS,
+        SignedOwnerConsentCommand, MAX_OWNER_CONSENT_TTL_MS,
     };
     use crate::{
         workload_from_manifest, Admission, ClassPolicy, DataClassification, Device,
@@ -199,7 +199,6 @@ mod tests {
         directory: PathBuf,
         registry_path: PathBuf,
         ledger_path: PathBuf,
-        admin: SigningKey,
         device: SigningKey,
         registry: DurableDeviceRegistry,
         ledger: DurableLedger,
@@ -398,7 +397,6 @@ mod tests {
             directory,
             registry_path,
             ledger_path,
-            admin,
             device,
             registry,
             ledger,
