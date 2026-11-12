@@ -375,6 +375,36 @@ impl DurableLedger {
         })
     }
 
+    /// Consume a signed telemetry challenge and apply its admission/reservation
+    /// mutation in the same durable ledger transaction. A policy rejection is
+    /// still a committed challenge consumption; a storage error aborts both.
+    ///
+    /// The callback must not access the durable registry or acquire its lock:
+    /// callers that need both stores must acquire the registry lock first, then
+    /// enter this ledger transaction.
+    pub(crate) fn consume_telemetry_challenge_and_then<T>(
+        &self,
+        device_id: &str,
+        generation: u64,
+        reservation_revision: u64,
+        nonce: [u8; 16],
+        expires_unix_ms: u64,
+        now_unix_ms: u64,
+        operation: impl FnOnce(&mut Ledger) -> Result<T, DurableLedgerError>,
+    ) -> Result<Result<T, TelemetryChallengeError>, DurableLedgerError> {
+        self.transact(|ledger| match ledger.consume_telemetry_challenge(
+            device_id,
+            generation,
+            reservation_revision,
+            nonce,
+            expires_unix_ms,
+            now_unix_ms,
+        ) {
+            Ok(()) => operation(ledger).map(Ok),
+            Err(error) => Ok(Err(error)),
+        })
+    }
+
     /// Renew only when the authenticated device matches the device that owns the lease.
     pub fn renew_lease_for_device(
         &self,
@@ -2013,6 +2043,100 @@ mod tests {
         assert!(String::from_utf8_lossy(&encoded).starts_with("UJANI-ENTERPRISE-LEDGER-V4\n"));
         let restored = deserialize_snapshot(&encoded, &keys).unwrap();
         assert_eq!(restored.telemetry_generations.get("worker-01"), Some(&7));
+    }
+
+    #[test]
+    fn telemetry_challenge_and_reservation_share_one_durable_transaction() {
+        let path = temp_path("atomic-telemetry-reservation");
+        let ledger = open_ledger(&path).unwrap();
+        let device = device();
+        let workload = workload("job-atomic-telemetry");
+        let token = fresh_test_token();
+        let nonce_bytes = fresh_test_token();
+        let nonce: [u8; 16] = nonce_bytes[..16].try_into().unwrap();
+
+        let committed = ledger
+            .consume_telemetry_challenge_and_then(
+                &device.device_id,
+                1,
+                0,
+                nonce,
+                20_000,
+                1_000,
+                |state| {
+                    let admission = state.admit_and_reserve_with_lease_and_watermark(
+                        &device,
+                        &workload,
+                        &context(),
+                        &policies(),
+                        &[],
+                        1_000,
+                        &token,
+                        1,
+                        0,
+                        1_000,
+                        1_024,
+                    );
+                    Ok(admission)
+                },
+            )
+            .unwrap();
+        assert_eq!(committed, Ok(Admission::Accept));
+        assert_eq!(ledger.snapshot().unwrap().active_jobs, 1);
+        assert_eq!(ledger.snapshot().unwrap().reserved_cpu_millis, 1_000);
+        assert_eq!(ledger.snapshot().unwrap().reserved_memory_mb, 1_024);
+
+        let replay = ledger
+            .consume_telemetry_challenge_and_then(
+                &device.device_id,
+                1,
+                0,
+                nonce,
+                20_000,
+                1_001,
+                |_| Ok(Admission::Accept),
+            )
+            .unwrap();
+        assert_eq!(replay, Err(TelemetryChallengeError::Replayed));
+        assert_eq!(ledger.snapshot().unwrap().active_jobs, 1);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn telemetry_challenge_is_rolled_back_when_its_admission_transaction_fails() {
+        let path = temp_path("rollback-telemetry-reservation");
+        let ledger = open_ledger(&path).unwrap();
+        let device = device();
+        let nonce_bytes = fresh_test_token();
+        let nonce: [u8; 16] = nonce_bytes[..16].try_into().unwrap();
+
+        assert_eq!(
+            ledger.consume_telemetry_challenge_and_then(
+                &device.device_id,
+                1,
+                0,
+                nonce,
+                20_000,
+                1_000,
+                |_| Err(DurableLedgerError::InvalidRecord),
+            ),
+            Err(DurableLedgerError::InvalidRecord)
+        );
+
+        let retried = ledger
+            .consume_telemetry_challenge_and_then(
+                &device.device_id,
+                1,
+                0,
+                nonce,
+                20_000,
+                1_001,
+                |_| Ok(Admission::Accept),
+            )
+            .unwrap();
+        assert_eq!(retried, Ok(Admission::Accept));
+        assert_eq!(ledger.snapshot().unwrap().active_jobs, 0);
+        cleanup(&path);
     }
 
     #[test]
