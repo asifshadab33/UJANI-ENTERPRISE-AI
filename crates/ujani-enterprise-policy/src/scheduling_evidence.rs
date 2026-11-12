@@ -339,8 +339,8 @@ pub(crate) fn verify_scheduling_context(
     })
 }
 
-/// Verify signed evidence and atomically consume its dispatch challenge in the
-/// durable ledger. This is the only public constructor for VerifiedSchedulingContext.
+/// Test-only legacy helper for exercising the isolated challenge-consumption path.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)] // Keep both trust roots and the per-dispatch challenge explicit.
 pub(crate) fn verify_and_consume_scheduling_context(
     ledger: &DurableLedger,
@@ -481,48 +481,80 @@ pub fn authenticate_verify_and_reserve_worker_telemetry(
         return Err(AuthenticatedTelemetryAdmissionError::RequestBindingMismatch);
     }
 
-    // Re-read the registry after request authentication. If the device was
-    // revoked or its key rotated between the two operations, fail closed.
-    let (device_key, owner_opted_in) = registry
-        .authenticated_device_status_for_request(&authenticated)
-        .map_err(|_| AuthenticatedTelemetryAdmissionError::DeviceAuthenticationFailed)?;
-    if !owner_opted_in {
-        return Ok((
-            authenticated,
-            Admission::Reject(RejectReason::OwnerOptInMissing),
-        ));
-    }
-    let enrolled_device_keys = [(authenticated.device_id().to_owned(), device_key)];
+    // Hold the trust-registry lock from the authoritative consent/key-generation
+    // recheck through the durable ledger commit. Every path that needs both locks
+    // must acquire registry first, then ledger; the ledger callback must not re-enter
+    // the registry. This closes the opt-out/key-rotation race at admission time.
+    let admission = registry
+        .with_authenticated_device_status_for_request(
+            &authenticated,
+            |device_key, owner_opted_in| {
+                if !owner_opted_in {
+                    return Ok(Admission::Reject(RejectReason::OwnerOptInMissing));
+                }
+                let enrolled_device_keys = [(authenticated.device_id().to_owned(), *device_key)];
+                let verified = verify_scheduling_context(
+                    device,
+                    workload,
+                    telemetry,
+                    policy,
+                    &enrolled_device_keys,
+                    enrolled_admin_keys,
+                    expected_challenge_nonce,
+                    now_unix_ms,
+                )
+                .map_err(AuthenticatedTelemetryAdmissionError::SchedulingEvidence)?;
+                let expires_unix_ms = verified.expires_at_unix_ms;
 
-    let verified = verify_and_consume_scheduling_context(
-        ledger,
-        device,
-        workload,
-        telemetry,
-        policy,
-        &enrolled_device_keys,
-        enrolled_admin_keys,
-        expected_challenge_nonce,
-        now_unix_ms,
-    )
-    .map_err(AuthenticatedTelemetryAdmissionError::SchedulingEvidence)?;
+                // The challenge generation/watermark and any resulting lease
+                // reservation now commit in one ledger transaction. A policy
+                // rejection consumes the challenge; a storage error aborts both.
+                let challenge_result = ledger
+                    .consume_telemetry_challenge_and_then(
+                        &telemetry.claims.device_id,
+                        telemetry.claims.sample_generation,
+                        telemetry.claims.reservation_revision,
+                        *expected_challenge_nonce,
+                        expires_unix_ms,
+                        now_unix_ms,
+                        |ledger_state| {
+                            let mut verified = verified;
+                            verified.challenge_consumed = true;
+                            Ok(admit_and_reserve_with_verified_lease_in_transaction(
+                                ledger_state,
+                                device,
+                                workload,
+                                verified,
+                                policies,
+                                approvals,
+                                now_unix_ms,
+                                lease_token,
+                            ))
+                        },
+                    )
+                    .map_err(|error| match error {
+                        DurableLedgerError::AnchorUnavailable(_) => {
+                            AuthenticatedTelemetryAdmissionError::ReservationOutcomeUnknown
+                        }
+                        _ => AuthenticatedTelemetryAdmissionError::ReservationStoreUnavailable,
+                    })?;
 
-    let admission = admit_and_reserve_durably_with_verified_lease(
-        ledger,
-        device,
-        workload,
-        verified,
-        policies,
-        approvals,
-        now_unix_ms,
-        lease_token,
-    )
-    .map_err(|error| match error {
-        DurableLedgerError::AnchorUnavailable(_) => {
-            AuthenticatedTelemetryAdmissionError::ReservationOutcomeUnknown
-        }
-        _ => AuthenticatedTelemetryAdmissionError::ReservationStoreUnavailable,
-    })?;
+                match challenge_result {
+                    Ok(admission) => Ok(admission),
+                    Err(TelemetryChallengeError::Replayed) => {
+                        Err(AuthenticatedTelemetryAdmissionError::SchedulingEvidence(
+                            SchedulingEvidenceError::ChallengeReplayed,
+                        ))
+                    }
+                    Err(TelemetryChallengeError::InvalidReservationWatermark) => {
+                        Err(AuthenticatedTelemetryAdmissionError::SchedulingEvidence(
+                            SchedulingEvidenceError::InvalidReservationWatermark,
+                        ))
+                    }
+                }
+            },
+        )
+        .map_err(|_| AuthenticatedTelemetryAdmissionError::DeviceAuthenticationFailed)??;
 
     Ok((authenticated, admission))
 }
@@ -593,8 +625,53 @@ pub(crate) fn admit_with_verified_context(
     )
 }
 
-/// Atomically persist a reservation after verifying signed scheduling evidence.
+/// Apply the verified policy and reservation mutation inside the caller's
+/// already-open durable ledger transaction, after its challenge was consumed.
 #[allow(clippy::too_many_arguments)] // Keep all policy, identity and capability inputs explicit.
+fn admit_and_reserve_with_verified_lease_in_transaction(
+    ledger: &mut crate::Ledger,
+    device: &Device,
+    workload: &Workload,
+    context: VerifiedSchedulingContext,
+    policies: &[ClassPolicy],
+    approvals: &[VerifiedAdminApproval],
+    now_unix_ms: u64,
+    lease_token: &[u8; 32],
+) -> Admission {
+    if let Some(reason) = context.rejection_for(device, workload, now_unix_ms) {
+        return Admission::Reject(reason);
+    }
+    if !context.challenge_consumed {
+        return Admission::Reject(RejectReason::SchedulingEvidenceMismatch);
+    }
+    let admission =
+        admit_with_verified_context(device, workload, &context, policies, approvals, now_unix_ms);
+    if admission != Admission::Accept {
+        return admission;
+    }
+    let (signed_cpu_headroom_millis, signed_memory_headroom_mb) =
+        signed_headroom(&context.cpu_worker_snapshot);
+    ledger.admit_and_reserve_with_lease_and_watermark(
+        device,
+        workload,
+        &context.context,
+        policies,
+        approvals,
+        now_unix_ms,
+        lease_token,
+        context.sample_generation,
+        context.reservation_revision,
+        signed_cpu_headroom_millis,
+        signed_memory_headroom_mb,
+    )
+}
+
+/// Test-only in-memory prototype; production callers must use the authenticated
+/// durable admission boundary.
+/// Test-only compatibility helper for the focused durable-admission unit tests.
+/// Production authenticated admission uses the atomic challenge-and-reservation path above.
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn admit_and_reserve_durably_with_verified_lease(
     ledger: &DurableLedger,
     device: &Device,
@@ -633,8 +710,6 @@ pub(crate) fn admit_and_reserve_durably_with_verified_lease(
     )
 }
 
-/// Test-only in-memory prototype; production callers must use the authenticated
-/// durable admission boundary.
 #[cfg(test)]
 #[allow(clippy::too_many_arguments)] // Preserve explicit admission evidence and reservation inputs.
 pub(crate) fn admit_and_reserve_with_verified_lease(
@@ -694,13 +769,23 @@ pub(crate) fn admit_and_reserve_with_verified_lease(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use crate::device_trust::durable::{MonotonicSnapshotAnchor, SnapshotAnchorRecord};
     use crate::{
         workload_from_manifest, DataClassification, Ledger, LedgerIntegrityKey, WorkloadManifest,
     };
     use ed25519_dalek::{Signer, SigningKey};
     use std::hash::{BuildHasher, Hash, Hasher};
+    #[cfg(unix)]
+    use std::sync::atomic::AtomicBool;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::OnceLock;
+    #[cfg(unix)]
+    use std::sync::{mpsc, Arc, Barrier, Mutex};
+    #[cfg(unix)]
+    use std::thread;
+    #[cfg(unix)]
+    use std::time::Duration;
 
     // Test-only unpredictable challenge values avoid embedding fixed nonces in
     // signed-message fixtures. Production challenges are issued by the trust service.
@@ -2202,6 +2287,104 @@ mod tests {
         .unwrap()
     }
 
+    #[cfg(unix)]
+    fn open_authenticated_test_ledger_with_anchor(
+        path: &std::path::Path,
+        anchor: Arc<dyn MonotonicSnapshotAnchor>,
+    ) -> DurableLedger {
+        DurableLedger::open_with_anchor(
+            path,
+            "telemetry-ledger-test-anchor",
+            "telemetry-ledger-test",
+            vec![LedgerIntegrityKey::new(
+                "telemetry-ledger-test",
+                fresh_test_lease_token(),
+            )],
+            anchor,
+        )
+        .unwrap()
+    }
+
+    #[cfg(unix)]
+    fn unique_authenticated_test_directory(label: &str) -> std::path::PathBuf {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        let path = std::env::temp_dir().join(format!(
+            "ujani-authenticated-telemetry-{label}-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed),
+        ));
+        std::fs::create_dir(&path).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        path
+    }
+
+    #[cfg(unix)]
+    struct BlockingAnchor {
+        record: Mutex<Option<SnapshotAnchorRecord>>,
+        block_next_load: AtomicBool,
+        entered: Arc<Barrier>,
+        release: Arc<Barrier>,
+    }
+
+    #[cfg(unix)]
+    impl BlockingAnchor {
+        fn new() -> Self {
+            Self {
+                record: Mutex::new(None),
+                block_next_load: AtomicBool::new(false),
+                entered: Arc::new(Barrier::new(2)),
+                release: Arc::new(Barrier::new(2)),
+            }
+        }
+
+        fn arm(&self) {
+            self.block_next_load.store(true, Ordering::SeqCst);
+        }
+    }
+
+    #[cfg(unix)]
+    impl MonotonicSnapshotAnchor for BlockingAnchor {
+        fn load(&self, _registry_id: &str) -> Result<Option<SnapshotAnchorRecord>, String> {
+            if self.block_next_load.swap(false, Ordering::SeqCst) {
+                self.entered.wait();
+                self.release.wait();
+            }
+            self.record
+                .lock()
+                .map(|record| record.clone())
+                .map_err(|_| "test anchor mutex poisoned".to_owned())
+        }
+
+        fn compare_and_set(
+            &self,
+            _registry_id: &str,
+            expected_generation: Option<u64>,
+            next: SnapshotAnchorRecord,
+        ) -> Result<bool, String> {
+            let mut record = self
+                .record
+                .lock()
+                .map_err(|_| "test anchor mutex poisoned".to_owned())?;
+            let matches = match (expected_generation, record.as_ref()) {
+                (None, None) => next.generation() == 1,
+                (Some(expected), Some(current)) => {
+                    current.generation() == expected
+                        && next.generation() == expected.saturating_add(1)
+                }
+                _ => false,
+            };
+            if !matches {
+                return Ok(false);
+            }
+            *record = Some(next);
+            Ok(true)
+        }
+    }
+
     #[test]
     fn authenticated_telemetry_uses_durable_device_identity_and_rejects_replay() {
         let registry_path = unique_authenticated_test_path("registry");
@@ -2352,6 +2535,101 @@ mod tests {
         drop(ledger);
         remove_authenticated_test_files(&registry_path);
         remove_authenticated_test_files(&ledger_path);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn authenticated_admission_serializes_owner_opt_out_with_lease_commit() {
+        let registry_path = unique_authenticated_test_path("consent-race-registry");
+        let ledger_directory = unique_authenticated_test_directory("consent-race-ledger");
+        let ledger_path = ledger_directory.join("ledger.db");
+        let now = 50_000;
+        let challenge = fresh_test_challenge();
+        let (telemetry, policy, device_key, admin_key) = signed_evidence(challenge, now);
+        let registry =
+            open_authenticated_test_registry(&registry_path, &admin_key, &device_key, now);
+        let anchor = Arc::new(BlockingAnchor::new());
+        let ledger = open_authenticated_test_ledger_with_anchor(&ledger_path, anchor.clone());
+        let device = device();
+        let workload = workload();
+        let (request, body) = signed_telemetry_request(&device_key, &workload, &telemetry, now);
+        let admin_keys = [(
+            policy.claims.policy_key_id.clone(),
+            admin_key.verifying_key(),
+        )];
+        let policies = [ClassPolicy {
+            class: "inference".into(),
+            requires_admin_approval: false,
+            max_cpu_millis: 4_000,
+            max_memory_mb: 8_192,
+        }];
+        let lease_token = fresh_test_lease_token();
+
+        // Pause the next ledger transaction after it has entered the provider.
+        // The admission service must already hold the device-trust lock here.
+        anchor.arm();
+        let admission_registry = registry.clone();
+        let admission_ledger = ledger.clone();
+        let admission = thread::spawn(move || {
+            authenticate_verify_and_reserve_worker_telemetry(
+                &admission_registry,
+                &admission_ledger,
+                &request,
+                &body,
+                "tenant-a",
+                &device,
+                &workload,
+                &telemetry,
+                &policy,
+                &admin_keys,
+                &challenge,
+                &policies,
+                &[],
+                now + 2,
+                &lease_token,
+            )
+        });
+        anchor.entered.wait();
+
+        let opt_out_registry = registry.clone();
+        let opt_out_device_key = device_key.clone();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (finished_tx, finished_rx) = mpsc::channel();
+        let opt_out = thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            set_authenticated_test_owner_consent(
+                &opt_out_registry,
+                &opt_out_device_key,
+                false,
+                2,
+                now + 10,
+            );
+            finished_tx.send(()).unwrap();
+        });
+        started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(
+            finished_rx
+                .recv_timeout(Duration::from_millis(100))
+                .is_err(),
+            "owner opt-out must wait until the in-flight admission releases the trust lock"
+        );
+
+        anchor.release.wait();
+        let (_, admission) = admission.join().unwrap().unwrap();
+        assert_eq!(admission, Admission::Accept);
+        finished_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        opt_out.join().unwrap();
+
+        assert!(!registry.tenant_device_summaries("tenant-a").unwrap()[0].owner_opted_in);
+        let snapshot = ledger.snapshot().unwrap();
+        assert_eq!(snapshot.active_jobs, 1);
+        assert_eq!(snapshot.reserved_cpu_millis, 1_000);
+        assert_eq!(snapshot.reserved_memory_mb, 1_024);
+
+        drop(registry);
+        drop(ledger);
+        remove_authenticated_test_files(&registry_path);
+        std::fs::remove_dir_all(ledger_directory).unwrap();
     }
 
     #[test]
