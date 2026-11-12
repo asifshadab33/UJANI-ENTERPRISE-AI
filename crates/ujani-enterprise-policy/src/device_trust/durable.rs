@@ -1853,8 +1853,8 @@ mod tests {
             .load("tenant-a-concurrent-registry")
             .unwrap()
             .expect("concurrent writes must leave an anchored snapshot");
-        // Initial empty snapshot, enrollment, and two distinct replay claims.
-        assert_eq!(anchored.generation(), 4);
+        // Initial snapshot, enrollment, second-handle open validation, and two distinct replay claims.
+        assert_eq!(anchored.generation(), 5);
 
         drop(anchor);
         let _ = fs::remove_file(&path);
