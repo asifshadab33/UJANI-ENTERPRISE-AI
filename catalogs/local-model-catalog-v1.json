@@ -319,7 +319,7 @@
         "available_ram_gib_min": 2.5,
         "model": "qwen3:0.6b",
         "decision": "Lightweight default candidate",
-        "context_tokens": 2048
+        "context_tokens": 4096
       },
       {
         "total_ram_gib_min": 8,
