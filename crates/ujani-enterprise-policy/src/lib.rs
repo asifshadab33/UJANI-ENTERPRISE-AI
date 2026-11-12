@@ -591,7 +591,7 @@ impl Ledger {
     }
 
     /// Release only when the caller proves possession of the lease capability.
-    pub fn release_lease(&mut self, workload_id: &str, lease_token: &[u8; 32]) -> bool {
+    pub(crate) fn release_lease(&mut self, workload_id: &str, lease_token: &[u8; 32]) -> bool {
         let Some(expected) = self.lease_token_hashes.get(workload_id) else {
             return false;
         };
