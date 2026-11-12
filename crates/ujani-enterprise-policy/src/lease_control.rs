@@ -7,7 +7,9 @@
 //! network listener or dispatch/execute workloads.
 
 use crate::device_trust::durable::DurableDeviceRegistry;
-use crate::device_trust::{AuthenticatedDeviceRequest, SignedDeviceRequest, MAX_DEVICE_REQUEST_BODY_BYTES};
+use crate::device_trust::{
+    AuthenticatedDeviceRequest, SignedDeviceRequest, MAX_DEVICE_REQUEST_BODY_BYTES,
+};
 use crate::durable_ledger::{DurableLedger, DurableLedgerError};
 
 const LEASE_REQUEST_METHOD: &str = "POST";
@@ -25,6 +27,7 @@ pub enum LeaseControlError {
     ReservationOutcomeUnknown,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn authenticate_lease_request(
     registry: &DurableDeviceRegistry,
     signed_request: &SignedDeviceRequest,
