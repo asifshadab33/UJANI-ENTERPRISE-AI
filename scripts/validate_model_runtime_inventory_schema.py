@@ -1,4 +1,3 @@
-"""Validate the shared model/runtime inventory schema and fixtures."""
 #!/usr/bin/env python3
 """Validate the shared UJANI model/runtime inventory and task contracts."""
 from __future__ import annotations
