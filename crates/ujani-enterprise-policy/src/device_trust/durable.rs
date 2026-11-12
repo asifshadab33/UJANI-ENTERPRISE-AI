@@ -1384,13 +1384,7 @@ mod tests {
         let authenticated = store
             .authenticate_request_for(&signed, "POST", "lease:acquire", body, 230)
             .unwrap();
-        let before = anchor
-            .record
-            .lock()
-            .unwrap()
-            .as_ref()
-            .unwrap()
-            .generation();
+        let before = anchor.record.lock().unwrap().as_ref().unwrap().generation();
 
         let (key, owner_opted_in) = store
             .with_authenticated_device_status_for_request(&authenticated, |key, opted_in| {
@@ -1398,13 +1392,7 @@ mod tests {
             })
             .unwrap();
 
-        let after = anchor
-            .record
-            .lock()
-            .unwrap()
-            .as_ref()
-            .unwrap()
-            .generation();
+        let after = anchor.record.lock().unwrap().as_ref().unwrap().generation();
         assert_eq!(key, device.verifying_key());
         assert!(owner_opted_in);
         assert_eq!(
