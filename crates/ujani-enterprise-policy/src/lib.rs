@@ -530,7 +530,11 @@ impl Ledger {
         now_unix_ms: u64,
     ) -> bool {
         self.expire(now_unix_ms);
-        if !self.jobs.get(workload_id).is_some_and(|job| job.0 == device_id) {
+        if !self
+            .jobs
+            .get(workload_id)
+            .is_some_and(|job| job.0 == device_id)
+        {
             return false;
         }
         self.renew_lease(workload_id, lease_token, now_unix_ms)
@@ -1406,26 +1410,22 @@ mod tests {
         let token = [0x5au8; 32];
         assert_eq!(
             ledger.admit_and_reserve_with_lease(
-                &d, &w, &safe_context(), &policies(), &[], 1_000, &token
+                &d,
+                &w,
+                &safe_context(),
+                &policies(),
+                &[],
+                1_000,
+                &token
             ),
             Admission::Accept
         );
 
-        assert!(!ledger.renew_lease_for_device(
-            "job-001", "another-device", &token, 2_000
-        ));
-        assert!(!ledger.release_lease_for_device(
-            "job-001", "another-device", &token
-        ));
-        assert!(ledger.renew_lease_for_device(
-            "job-001", &d.device_id, &token, 2_000
-        ));
-        assert!(ledger.release_lease_for_device(
-            "job-001", &d.device_id, &token
-        ));
-        assert!(!ledger.renew_lease_for_device(
-            "job-001", &d.device_id, &token, 2_001
-        ));
+        assert!(!ledger.renew_lease_for_device("job-001", "another-device", &token, 2_000));
+        assert!(!ledger.release_lease_for_device("job-001", "another-device", &token));
+        assert!(ledger.renew_lease_for_device("job-001", &d.device_id, &token, 2_000));
+        assert!(ledger.release_lease_for_device("job-001", &d.device_id, &token));
+        assert!(!ledger.renew_lease_for_device("job-001", &d.device_id, &token, 2_001));
     }
 
     #[test]
@@ -1612,8 +1612,8 @@ mod tests {
 }
 
 pub mod inventory;
-pub mod operator_control_plane;
 pub mod lease_control;
+pub mod operator_control_plane;
 pub use inventory::{
     summarize_inventory, validate_inventory_record, DeviceInventoryRecord, DevicePowerState,
     InventoryError, InventorySummary, InventoryTrust,
