@@ -345,7 +345,7 @@ impl DurableDeviceRegistry {
         authenticated: &AuthenticatedDeviceRequest,
         action: impl FnOnce(&VerifyingKey, bool) -> T,
     ) -> Result<T, DurableDeviceTrustError> {
-        self.transact(|registry| {
+        self.read(|registry| {
             let record = registry
                 .devices
                 .get(authenticated.device_id())
@@ -453,6 +453,71 @@ impl DurableDeviceRegistry {
         }
     }
 
+    fn read<T>(
+        &self,
+        operation: impl FnOnce(&DeviceRegistry) -> Result<T, DurableDeviceTrustError>,
+    ) -> Result<T, DurableDeviceTrustError> {
+        let _guard = self
+            .thread_lock
+            .lock()
+            .map_err(|_| DurableDeviceTrustError::LockPoisoned)?;
+        require_regular_file_if_present(&self.lock_path)?;
+        require_regular_file_if_present(&self.path)?;
+        require_regular_file_if_present(&suffix(&self.path, ".bak"))?;
+        let mut options = OpenOptions::new();
+        options.create(true).truncate(false).read(true).write(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let lock = options.open(&self.lock_path)?;
+        lock.lock()?;
+
+        let anchor_record = match (&self.anchor, &self.anchor_namespace) {
+            (Some(anchor), Some(namespace)) => anchor
+                .load(namespace)
+                .map_err(DurableDeviceTrustError::AnchorUnavailable)?,
+            (None, None) => None,
+            _ => return Err(DurableDeviceTrustError::AnchorMismatch),
+        };
+        let registry = self.load_registry(anchor_record.as_ref())?;
+        operation(&registry)
+    }
+
+    fn load_registry(
+        &self,
+        anchor_record: Option<&SnapshotAnchorRecord>,
+    ) -> Result<DeviceRegistry, DurableDeviceTrustError> {
+        if self.anchor.is_some() {
+            return self.load_anchored_registry(anchor_record);
+        }
+
+        let backup = suffix(&self.path, ".bak");
+        if self.path.exists() {
+            decode_snapshot(
+                &fs::read(&self.path)?,
+                &self.admin_keys,
+                self.integrity_key.key_id(),
+                &self.integrity_key.bytes,
+            )
+        } else if backup.exists() {
+            // Recover only the interrupted-rename case. A present but invalid
+            // primary snapshot is never silently replaced by an older backup.
+            let bytes = fs::read(&backup)?;
+            let recovered = decode_snapshot(
+                &bytes,
+                &self.admin_keys,
+                self.integrity_key.key_id(),
+                &self.integrity_key.bytes,
+            )?;
+            atomic_write(&self.path, &bytes, false)?;
+            Ok(recovered)
+        } else {
+            DeviceRegistry::new(self.admin_keys.as_ref().clone()).map_err(Into::into)
+        }
+    }
+
     fn transact<T>(
         &self,
         operation: impl FnOnce(&mut DeviceRegistry) -> Result<T, DurableDeviceTrustError>,
@@ -481,33 +546,7 @@ impl DurableDeviceRegistry {
             (None, None) => None,
             _ => return Err(DurableDeviceTrustError::AnchorMismatch),
         };
-        let mut registry = if self.anchor.is_some() {
-            self.load_anchored_registry(anchor_record.as_ref())?
-        } else {
-            let backup = suffix(&self.path, ".bak");
-            if self.path.exists() {
-                decode_snapshot(
-                    &fs::read(&self.path)?,
-                    &self.admin_keys,
-                    self.integrity_key.key_id(),
-                    &self.integrity_key.bytes,
-                )?
-            } else if backup.exists() {
-                // Recover only the interrupted-rename case. A present but invalid
-                // primary snapshot is never silently replaced by an older backup.
-                let bytes = fs::read(&backup)?;
-                let recovered = decode_snapshot(
-                    &bytes,
-                    &self.admin_keys,
-                    self.integrity_key.key_id(),
-                    &self.integrity_key.bytes,
-                )?;
-                atomic_write(&self.path, &bytes, false)?;
-                recovered
-            } else {
-                DeviceRegistry::new(self.admin_keys.as_ref().clone())?
-            }
-        };
+        let mut registry = self.load_registry(anchor_record.as_ref())?;
         let result = operation(&mut registry)?;
         let bytes = encode_snapshot(
             &registry,
