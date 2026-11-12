@@ -1336,6 +1336,87 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn authenticated_status_read_does_not_advance_external_anchor() {
+        let path = path();
+        let admin = test_signing_key("status-read-admin");
+        let device = test_signing_key("status-read-device");
+        let anchor = std::sync::Arc::new(MemoryAnchor::default());
+        let store = DurableDeviceRegistry::open_with_anchor(
+            &path,
+            "tenant-a-status-read-registry",
+            vec![("admin-v1".into(), admin.verifying_key())],
+            DeviceTrustIntegrityKey::new("integrity-v1", test_integrity_key_bytes()),
+            anchor.clone(),
+        )
+        .unwrap();
+        store
+            .apply_admin_command(&enroll(&admin, &device), 200)
+            .unwrap();
+        store
+            .apply_owner_consent(
+                &owner_consent(&device, true, 1, 210, "status-read-owner-opt-in"),
+                220,
+            )
+            .unwrap();
+
+        let body = b"authenticated status read";
+        let claims = DeviceRequestClaims {
+            tenant_id: "tenant-a".into(),
+            device_id: "device-1".into(),
+            key_id: "device-key-v1".into(),
+            key_generation: 1,
+            request_id: test_nonce("status-read-request"),
+            issued_at_unix_ms: 220,
+            expires_at_unix_ms: 500,
+            method: "POST".into(),
+            resource_id: "lease:acquire".into(),
+            workload_id: "workload-1".into(),
+            manifest_sha256: Sha256::digest(b"manifest-v1").into(),
+            body_sha256: Sha256::digest(body).into(),
+        };
+        let signed = SignedDeviceRequest {
+            signature: device.sign(&device_request_bytes(&claims)).to_bytes(),
+            claims,
+        };
+        let authenticated = store
+            .authenticate_request_for(&signed, "POST", "lease:acquire", body, 230)
+            .unwrap();
+        let before = anchor
+            .record
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .generation();
+
+        let (key, owner_opted_in) = store
+            .with_authenticated_device_status_for_request(&authenticated, |key, opted_in| {
+                (*key, opted_in)
+            })
+            .unwrap();
+
+        let after = anchor
+            .record
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .generation();
+        assert_eq!(key, device.verifying_key());
+        assert!(owner_opted_in);
+        assert_eq!(
+            after, before,
+            "a read-only consent recheck must not create a post-ledger anchor commit"
+        );
+
+        drop(store);
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(suffix(&path, ".lock"));
+        let _ = fs::remove_file(suffix(&path, ".bak"));
+    }
+
     #[test]
     fn external_anchor_detects_rollback_to_an_older_valid_hmac_snapshot() {
         let path = path();
