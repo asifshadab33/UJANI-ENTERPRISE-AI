@@ -393,16 +393,18 @@ impl DurableLedger {
         now_unix_ms: u64,
         operation: impl FnOnce(&mut Ledger) -> Result<T, DurableLedgerError>,
     ) -> Result<Result<T, TelemetryChallengeError>, DurableLedgerError> {
-        self.transact(|ledger| match ledger.consume_telemetry_challenge(
-            device_id,
-            generation,
-            reservation_revision,
-            nonce,
-            expires_unix_ms,
-            now_unix_ms,
-        ) {
-            Ok(()) => operation(ledger).map(Ok),
-            Err(error) => Ok(Err(error)),
+        self.transact(|ledger| {
+            match ledger.consume_telemetry_challenge(
+                device_id,
+                generation,
+                reservation_revision,
+                nonce,
+                expires_unix_ms,
+                now_unix_ms,
+            ) {
+                Ok(()) => operation(ledger).map(Ok),
+                Err(error) => Ok(Err(error)),
+            }
         })
     }
 
