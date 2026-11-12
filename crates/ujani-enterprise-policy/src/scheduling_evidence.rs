@@ -481,48 +481,83 @@ pub fn authenticate_verify_and_reserve_worker_telemetry(
         return Err(AuthenticatedTelemetryAdmissionError::RequestBindingMismatch);
     }
 
-    // Re-read the registry after request authentication. If the device was
-    // revoked or its key rotated between the two operations, fail closed.
-    let (device_key, owner_opted_in) = registry
-        .authenticated_device_status_for_request(&authenticated)
-        .map_err(|_| AuthenticatedTelemetryAdmissionError::DeviceAuthenticationFailed)?;
-    if !owner_opted_in {
-        return Ok((
-            authenticated,
-            Admission::Reject(RejectReason::OwnerOptInMissing),
-        ));
-    }
-    let enrolled_device_keys = [(authenticated.device_id().to_owned(), device_key)];
+    // Hold the trust-registry lock from the authoritative consent/key-generation
+    // recheck through the durable ledger commit. Every path that needs both locks
+    // must acquire registry first, then ledger; the ledger callback must not re-enter
+    // the registry. This closes the opt-out/key-rotation race at admission time.
+    let admission = registry
+        .with_authenticated_device_status_for_request(
+            &authenticated,
+            |device_key, owner_opted_in| {
+                if !owner_opted_in {
+                    return Ok(Admission::Reject(RejectReason::OwnerOptInMissing));
+                }
+                let enrolled_device_keys = [(
+                    authenticated.device_id().to_owned(),
+                    (*device_key).clone(),
+                )];
+                let verified = verify_scheduling_context(
+                    device,
+                    workload,
+                    telemetry,
+                    policy,
+                    &enrolled_device_keys,
+                    enrolled_admin_keys,
+                    expected_challenge_nonce,
+                    now_unix_ms,
+                )
+                .map_err(AuthenticatedTelemetryAdmissionError::SchedulingEvidence)?;
+                let expires_unix_ms = verified.expires_at_unix_ms;
 
-    let verified = verify_and_consume_scheduling_context(
-        ledger,
-        device,
-        workload,
-        telemetry,
-        policy,
-        &enrolled_device_keys,
-        enrolled_admin_keys,
-        expected_challenge_nonce,
-        now_unix_ms,
-    )
-    .map_err(AuthenticatedTelemetryAdmissionError::SchedulingEvidence)?;
+                // The challenge generation/watermark and any resulting lease
+                // reservation now commit in one ledger transaction. A policy
+                // rejection consumes the challenge; a storage error aborts both.
+                let challenge_result = ledger
+                    .consume_telemetry_challenge_and_then(
+                        &telemetry.claims.device_id,
+                        telemetry.claims.sample_generation,
+                        telemetry.claims.reservation_revision,
+                        *expected_challenge_nonce,
+                        expires_unix_ms,
+                        now_unix_ms,
+                        |ledger_state| {
+                            let mut verified = verified;
+                            verified.challenge_consumed = true;
+                            Ok(admit_and_reserve_with_verified_lease_in_transaction(
+                                ledger_state,
+                                device,
+                                workload,
+                                verified,
+                                policies,
+                                approvals,
+                                now_unix_ms,
+                                lease_token,
+                            ))
+                        },
+                    )
+                    .map_err(|error| match error {
+                        DurableLedgerError::AnchorUnavailable(_) => {
+                            AuthenticatedTelemetryAdmissionError::ReservationOutcomeUnknown
+                        }
+                        _ => AuthenticatedTelemetryAdmissionError::ReservationStoreUnavailable,
+                    })?;
 
-    let admission = admit_and_reserve_durably_with_verified_lease(
-        ledger,
-        device,
-        workload,
-        verified,
-        policies,
-        approvals,
-        now_unix_ms,
-        lease_token,
-    )
-    .map_err(|error| match error {
-        DurableLedgerError::AnchorUnavailable(_) => {
-            AuthenticatedTelemetryAdmissionError::ReservationOutcomeUnknown
-        }
-        _ => AuthenticatedTelemetryAdmissionError::ReservationStoreUnavailable,
-    })?;
+                match challenge_result {
+                    Ok(admission) => Ok(admission),
+                    Err(TelemetryChallengeError::Replayed) => Err(
+                        AuthenticatedTelemetryAdmissionError::SchedulingEvidence(
+                            SchedulingEvidenceError::ChallengeReplayed,
+                        ),
+                    ),
+                    Err(TelemetryChallengeError::InvalidReservationWatermark) => Err(
+                        AuthenticatedTelemetryAdmissionError::SchedulingEvidence(
+                            SchedulingEvidenceError::InvalidReservationWatermark,
+                        ),
+                    ),
+                }
+            },
+        )
+        .map_err(|_| AuthenticatedTelemetryAdmissionError::DeviceAuthenticationFailed)??;
 
     Ok((authenticated, admission))
 }
@@ -593,10 +628,11 @@ pub(crate) fn admit_with_verified_context(
     )
 }
 
-/// Atomically persist a reservation after verifying signed scheduling evidence.
+/// Apply the verified policy and reservation mutation inside the caller's
+/// already-open durable ledger transaction, after its challenge was consumed.
 #[allow(clippy::too_many_arguments)] // Keep all policy, identity and capability inputs explicit.
-pub(crate) fn admit_and_reserve_durably_with_verified_lease(
-    ledger: &DurableLedger,
+fn admit_and_reserve_with_verified_lease_in_transaction(
+    ledger: &mut crate::Ledger,
     device: &Device,
     workload: &Workload,
     context: VerifiedSchedulingContext,
@@ -604,17 +640,17 @@ pub(crate) fn admit_and_reserve_durably_with_verified_lease(
     approvals: &[VerifiedAdminApproval],
     now_unix_ms: u64,
     lease_token: &[u8; 32],
-) -> Result<Admission, DurableLedgerError> {
+) -> Admission {
     if let Some(reason) = context.rejection_for(device, workload, now_unix_ms) {
-        return Ok(Admission::Reject(reason));
+        return Admission::Reject(reason);
     }
     if !context.challenge_consumed {
-        return Ok(Admission::Reject(RejectReason::SchedulingEvidenceMismatch));
+        return Admission::Reject(RejectReason::SchedulingEvidenceMismatch);
     }
     let admission =
         admit_with_verified_context(device, workload, &context, policies, approvals, now_unix_ms);
     if admission != Admission::Accept {
-        return Ok(admission);
+        return admission;
     }
     let (signed_cpu_headroom_millis, signed_memory_headroom_mb) =
         signed_headroom(&context.cpu_worker_snapshot);
