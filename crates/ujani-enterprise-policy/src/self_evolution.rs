@@ -184,6 +184,23 @@ fn is_protected_path(path: &str) -> bool {
             || segment == ".ssh"
             || segment == ".npmrc"
             || segment == ".pypirc"
+            || segment == ".netrc"
+            || segment == ".aws"
+            || segment == ".azure"
+            || segment == ".kube"
+            || segment == ".docker"
+            || segment == ".git-credentials"
+            || segment == "kubeconfig"
+            || segment == "service_account.json"
+            || segment == "token"
+            || segment == "access_token"
+            || segment == "refresh_token"
+            || segment.starts_with("credentials.")
+            || segment.starts_with("secret.")
+            || segment.starts_with("secrets.")
+            || segment.ends_with(".secret")
+            || segment.ends_with(".crt")
+            || segment.ends_with(".p8")
             || segment == "credentials"
             || segment == "secret"
             || segment == "secrets"
@@ -406,6 +423,16 @@ mod tests {
     fn rejects_secret_and_credential_paths() {
         let mut proposal = valid_proposal();
         proposal.changes[0].path = "apps/operator-console/.env.production".into();
+        assert_eq!(
+            proposal.validate(),
+            Err(ProposalValidationError::ProtectedPath)
+        );
+    }
+
+    #[test]
+    fn rejects_credential_bundle_paths() {
+        let mut proposal = valid_proposal();
+        proposal.changes[0].path = "apps/operator-console/credentials.json".into();
         assert_eq!(
             proposal.validate(),
             Err(ProposalValidationError::ProtectedPath)
