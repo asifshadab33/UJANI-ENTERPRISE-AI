@@ -304,7 +304,9 @@ mod tests {
             "/v1/devices/device-1/telemetry#fragment",
             "/v1/devices/device-1%2Fother/telemetry",
             "/v1/devices/device-1\\telemetry",
-            "/v1/devices/device-1/telemetry\\r\\nX-Injected: yes",
+            "/v1/devices/device-1/telemetry\r\nX-Injected: yes",
+            "/v1/devices/device-1/telemetry\tX-Injected: yes",
+            "/v1/devices/device-1/telemetry\0X-Injected: yes",
             "/v1/devices/device-1//telemetry",
         ] {
             assert!(
