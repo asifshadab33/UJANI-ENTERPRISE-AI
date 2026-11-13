@@ -14,22 +14,13 @@ pub const MAX_PROPOSAL_CHANGES: usize = 128;
 
 const PROTECTED_PATHS: &[&str] = &[
     ".github/workflows",
+    "scripts",
+    "migrations",
     "Cargo.toml",
     "Cargo.lock",
-    "migrations",
-    "crates/ujani-enterprise-policy/Cargo.toml",
-    "crates/ujani-enterprise-policy/src/lib.rs",
-    "crates/ujani-enterprise-policy/src/device_trust.rs",
-    "crates/ujani-enterprise-policy/src/device_trust",
-    "crates/ujani-enterprise-policy/src/lease_control.rs",
-    "crates/ujani-enterprise-policy/src/durable_ledger.rs",
-    "crates/ujani-enterprise-policy/src/operator_control_plane.rs",
-    "crates/ujani-enterprise-policy/src/operator_http_contract.rs",
-    "crates/ujani-enterprise-policy/src/collective_defence_authority.rs",
-    "crates/ujani-enterprise-policy/src/collective_defence_consent.rs",
-    "crates/ujani-enterprise-policy/src/collective_defence_snapshot.rs",
-    "crates/ujani-enterprise-policy/src/scheduling_evidence.rs",
-    "crates/ujani-enterprise-policy/src/self_evolution.rs",
+    "crates/ujani-enterprise-policy",
+    "apps/operator-console/package.json",
+    "apps/operator-console/package-lock.json",
 ];
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
