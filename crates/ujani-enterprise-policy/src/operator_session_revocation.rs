@@ -1,8 +1,9 @@
 //! Durable revocation boundary for short-lived Enterprise operator sessions.
 //!
 //! Session signing-key rotation can revoke a whole key, but operators also need
-//! targeted logout and incident-response revocation. This module adds a
-//! tenant/subject/nonce-scoped persistence contract. It does not implement a
+//! targeted logout. This module adds a tenant/subject/nonce-scoped persistence
+//! contract. The current verifier wrapper represents user logout; administrative
+//! incident reasons require an actor-aware host extension. It does not implement a
 //! database, identity provider, HTTP endpoint or browser session handling.
 
 use crate::operator_control_plane::{
