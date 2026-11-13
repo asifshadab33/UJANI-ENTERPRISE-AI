@@ -1,8 +1,9 @@
-//! Side-effect-free validator for model-authored Enterprise AI self-evolution proposals.
+//! Side-effect-free validator for model-authored self-evolution proposals.
 //!
-//! This module validates untrusted proposal metadata and changed paths only. It does not
-//! read repository files, generate patches, execute code, approve changes, sign artifacts,
-//! install updates, or access the network.
+//! The model supplies findings and proposed changes only. Repository identity,
+//! source revision, approved write scope, proposal ID, model identity and approval
+//! are supplied and recorded by trusted host code. This module performs no file
+//! access, patch application, code execution, signing, installation or networking.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -25,36 +26,20 @@ const PROTECTED_PATHS: &[&str] = &[
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum FindingSeverity {
-    Info,
-    Low,
-    Medium,
-    High,
-    Critical,
-}
+pub enum FindingSeverity { Info, Low, Medium, High, Critical }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum FindingCategory {
-    Bug,
-    Reliability,
-    Performance,
-    Accessibility,
-    Documentation,
-    Feature,
-    Compatibility,
-    Privacy,
-    Security,
+    Bug, Reliability, Performance, Accessibility, Documentation,
+    Feature, Compatibility, Privacy, Security,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum ProposedChangeKind {
-    Add,
-    Modify,
-    Delete,
-}
+pub enum ProposedChangeKind { Add, Modify, Delete }
 
+/// Trusted host context. Never accept this value as model-authored authority.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalTarget {
@@ -84,15 +69,12 @@ pub struct ProposedChange {
     pub patch_sha256: String,
 }
 
+/// Untrusted model output. Trusted task identity and permissions are deliberately absent.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct SelfEvolutionProposalV1 {
     pub schema_version: u16,
-    pub proposal_id: String,
-    pub target: ProposalTarget,
     pub summary: String,
-    /// Relative file/directory prefixes explicitly approved for this proposal.
-    pub scope: Vec<String>,
     pub findings: Vec<SelfEvolutionFinding>,
     pub changes: Vec<ProposedChange>,
 }
@@ -100,7 +82,6 @@ pub struct SelfEvolutionProposalV1 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProposalValidationError {
     UnsupportedVersion,
-    InvalidIdentifier,
     InvalidTarget,
     InvalidText,
     InvalidScope,
@@ -114,17 +95,10 @@ pub enum ProposalValidationError {
     InvalidPatchDigest,
 }
 
-fn valid_identifier(value: &str, max_bytes: usize) -> bool {
-    !value.is_empty()
-        && value.len() <= max_bytes
-        && value.trim() == value
-        && value
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b"._:-".contains(&b))
-}
-
 fn valid_text(value: &str, max_bytes: usize) -> bool {
-    !value.trim().is_empty() && value.len() <= max_bytes && !value.chars().any(char::is_control)
+    !value.trim().is_empty()
+        && value.len() <= max_bytes
+        && !value.chars().any(char::is_control)
 }
 
 fn valid_path_component(value: &str) -> bool {
@@ -133,13 +107,16 @@ fn valid_path_component(value: &str) -> bool {
         && value != ".."
         && value
             .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
 }
 
 fn valid_repository(value: &str) -> bool {
     let mut parts = value.split('/');
-    matches!((parts.next(), parts.next(), parts.next()),
-        (Some(owner), Some(repo), None) if valid_path_component(owner) && valid_path_component(repo))
+    matches!(
+        (parts.next(), parts.next(), parts.next()),
+        (Some(owner), Some(repository), None)
+            if valid_path_component(owner) && valid_path_component(repository)
+    )
 }
 
 fn valid_git_ref(value: &str) -> bool {
@@ -151,14 +128,18 @@ fn valid_git_ref(value: &str) -> bool {
         && !value.contains("..")
         && value
             .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b"._/-".contains(&b))
-        && value
-            .split('/')
-            .all(|part| !part.is_empty() && part != "." && part != ".." && !part.ends_with(".lock"))
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._/-".contains(&byte))
+        && value.split('/').all(|part| {
+            !part.is_empty()
+                && part != "."
+                && part != ".."
+                && !part.ends_with(".lock")
+        })
 }
 
 fn valid_revision(value: &str) -> bool {
-    (value.len() == 40 || value.len() == 64) && value.bytes().all(|b| b.is_ascii_hexdigit())
+    (value.len() == 40 || value.len() == 64)
+        && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 fn valid_relative_path(value: &str) -> bool {
@@ -167,10 +148,11 @@ fn valid_relative_path(value: &str) -> bool {
         || value.starts_with('/')
         || value.contains('\\')
         || value.contains(':')
-        || value.bytes().any(|b| b.is_ascii_control())
+        || value.bytes().any(|byte| byte.is_ascii_control())
     {
         return false;
     }
+
     value
         .split('/')
         .all(|part| valid_path_component(part) && !part.eq_ignore_ascii_case(".git"))
@@ -195,24 +177,25 @@ fn is_protected_path(path: &str) -> bool {
             || segment == "token"
             || segment == "access_token"
             || segment == "refresh_token"
-            || segment.starts_with("credentials.")
-            || segment.starts_with("secret.")
-            || segment.starts_with("secrets.")
-            || segment.ends_with(".secret")
-            || segment.ends_with(".crt")
-            || segment.ends_with(".p8")
             || segment == "credentials"
             || segment == "secret"
             || segment == "secrets"
             || segment == "id_rsa"
             || segment == "id_ed25519"
+            || segment.starts_with("credentials.")
+            || segment.starts_with("secret.")
+            || segment.starts_with("secrets.")
+            || segment.ends_with(".secret")
             || segment.ends_with(".pem")
             || segment.ends_with(".key")
             || segment.ends_with(".p12")
             || segment.ends_with(".pfx")
             || segment.ends_with(".jks")
             || segment.ends_with(".keystore")
+            || segment.ends_with(".crt")
+            || segment.ends_with(".p8")
     });
+
     contains_secret_material
         || PROTECTED_PATHS.iter().any(|protected| {
             let protected = protected.to_ascii_lowercase();
@@ -227,34 +210,35 @@ fn path_is_in_scope(path: &str, scope: &str) -> bool {
 }
 
 fn valid_patch_digest(value: &str) -> bool {
-    value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit())
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 impl SelfEvolutionProposalV1 {
-    /// Validate an untrusted proposal before any file write is considered.
-    /// The caller must separately bind repository/revision to trusted checkout state.
-    pub fn validate(&self) -> Result<(), ProposalValidationError> {
-        if self.schema_version != SELF_EVOLUTION_PROPOSAL_SCHEMA_VERSION {
-            return Err(ProposalValidationError::UnsupportedVersion);
-        }
-        if !valid_identifier(&self.proposal_id, 128) {
-            return Err(ProposalValidationError::InvalidIdentifier);
-        }
-        if !valid_repository(&self.target.repository)
-            || !valid_git_ref(&self.target.base_ref)
-            || !valid_revision(&self.target.source_revision)
+    /// Validate model output against repository and scope supplied by trusted host code.
+    /// The model cannot choose or widen either value.
+    pub fn validate_against(
+        &self,
+        trusted_target: &ProposalTarget,
+        approved_scope: &[String],
+    ) -> Result<(), ProposalValidationError> {
+        if !valid_repository(&trusted_target.repository)
+            || !valid_git_ref(&trusted_target.base_ref)
+            || !valid_revision(&trusted_target.source_revision)
         {
             return Err(ProposalValidationError::InvalidTarget);
+        }
+        if self.schema_version != SELF_EVOLUTION_PROPOSAL_SCHEMA_VERSION {
+            return Err(ProposalValidationError::UnsupportedVersion);
         }
         if !valid_text(&self.summary, 2_000) {
             return Err(ProposalValidationError::InvalidText);
         }
-        if self.scope.is_empty() || self.scope.len() > MAX_PROPOSAL_SCOPE_PATHS {
+        if approved_scope.is_empty() || approved_scope.len() > MAX_PROPOSAL_SCOPE_PATHS {
             return Err(ProposalValidationError::InvalidScope);
         }
 
         let mut scopes = BTreeSet::new();
-        for scope in &self.scope {
+        for scope in approved_scope {
             if !valid_relative_path(scope) {
                 return Err(ProposalValidationError::InvalidScope);
             }
@@ -294,8 +278,7 @@ impl SelfEvolutionProposalV1 {
             if is_protected_path(&change.path) {
                 return Err(ProposalValidationError::ProtectedPath);
             }
-            if !self
-                .scope
+            if !approved_scope
                 .iter()
                 .any(|scope| path_is_in_scope(&change.path, scope))
             {
@@ -308,6 +291,7 @@ impl SelfEvolutionProposalV1 {
                 return Err(ProposalValidationError::InvalidPatchDigest);
             }
         }
+
         Ok(())
     }
 }
@@ -316,149 +300,123 @@ impl SelfEvolutionProposalV1 {
 mod tests {
     use super::*;
 
+    fn trusted_target() -> ProposalTarget {
+        ProposalTarget {
+            repository: "asifshadab33/UJANI-ENTERPRISE-AI".into(),
+            base_ref: "main".into(),
+            source_revision: "a".repeat(40),
+        }
+    }
+
+    fn approved_scope() -> Vec<String> {
+        vec!["apps/operator-console".into()]
+    }
+
     fn valid_proposal() -> SelfEvolutionProposalV1 {
         SelfEvolutionProposalV1 {
             schema_version: SELF_EVOLUTION_PROPOSAL_SCHEMA_VERSION,
-            proposal_id: "proposal-2026-001".into(),
-            target: ProposalTarget {
-                repository: "asifshadab33/UJANI-ENTERPRISE-AI".into(),
-                base_ref: "main".into(),
-                source_revision: "a".repeat(40),
-            },
-            summary: "Improve the operator console presentation.".into(),
-            scope: vec!["apps/operator-console".into()],
+            summary: "Improve an accessible label in a non-core interface module.".into(),
             findings: vec![SelfEvolutionFinding {
                 category: FindingCategory::Accessibility,
                 severity: FindingSeverity::Low,
                 path: "apps/operator-console/app.js".into(),
                 line_start: Some(10),
                 line_end: Some(15),
-                description: "The operator status label is not explicit.".into(),
+                description: "The result label is not explicit.".into(),
                 recommendation: "Add an accessible label.".into(),
             }],
             changes: vec![ProposedChange {
                 path: "apps/operator-console/app.js".into(),
                 operation: ProposedChangeKind::Modify,
-                summary: "Add an accessible label to the operator status control.".into(),
+                summary: "Add an accessible label to the result control.".into(),
                 patch_sha256: "b".repeat(64),
             }],
         }
     }
 
+    fn validate(proposal: &SelfEvolutionProposalV1, scope: &[String]) -> Result<(), ProposalValidationError> {
+        proposal.validate_against(&trusted_target(), scope)
+    }
+
     #[test]
     fn accepts_a_scoped_non_core_proposal() {
-        assert_eq!(valid_proposal().validate(), Ok(()));
+        assert_eq!(validate(&valid_proposal(), &approved_scope()), Ok(()));
     }
 
     #[test]
     fn rejects_path_traversal_and_absolute_paths() {
         let mut proposal = valid_proposal();
         proposal.changes[0].path = "../security_store.rs".into();
-        assert_eq!(
-            proposal.validate(),
-            Err(ProposalValidationError::InvalidPath)
-        );
+        assert_eq!(validate(&proposal, &approved_scope()), Err(ProposalValidationError::InvalidPath));
         proposal.changes[0].path = "/tmp/generated.rs".into();
-        assert_eq!(
-            proposal.validate(),
-            Err(ProposalValidationError::InvalidPath)
-        );
+        assert_eq!(validate(&proposal, &approved_scope()), Err(ProposalValidationError::InvalidPath));
     }
 
     #[test]
     fn rejects_protected_core_changes_case_insensitively() {
         let mut proposal = valid_proposal();
-        proposal.scope = vec!["apps/operator-console".into()];
-        proposal.changes[0].path = "crates/ujani-enterprise-policy/src/DEVICE_TRUST.rs".into();
-        assert_eq!(
-            proposal.validate(),
-            Err(ProposalValidationError::ProtectedPath)
-        );
+        proposal.changes[0].path = "crates/ujani-enterprise-policy/src/device_trust.rs".into();
+        assert_eq!(validate(&proposal, &approved_scope()), Err(ProposalValidationError::ProtectedPath));
     }
 
     #[test]
-    fn rejects_changes_outside_the_user_approved_scope_case_insensitively() {
+    fn rejects_changes_outside_the_host_approved_scope_case_insensitively() {
         let mut proposal = valid_proposal();
-        proposal.scope = vec!["apps/operator-console/app.js".into()];
-        proposal.changes[0].path = "APPS/desktop/src/styles.css".into();
-        assert_eq!(
-            proposal.validate(),
-            Err(ProposalValidationError::OutOfScope)
-        );
+        proposal.changes[0].path = "APPS/operator-console/styles.css".into();
+        let scope = vec!["apps/operator-console/app.js".into()];
+        assert_eq!(validate(&proposal, &scope), Err(ProposalValidationError::OutOfScope));
     }
 
     #[test]
     fn rejects_duplicate_paths_and_invalid_patch_digests() {
         let mut proposal = valid_proposal();
         proposal.changes.push(proposal.changes[0].clone());
-        assert_eq!(
-            proposal.validate(),
-            Err(ProposalValidationError::DuplicatePath)
-        );
+        assert_eq!(validate(&proposal, &approved_scope()), Err(ProposalValidationError::DuplicatePath));
         let mut proposal = valid_proposal();
         proposal.changes[0].patch_sha256 = "not-a-digest".into();
-        assert_eq!(
-            proposal.validate(),
-            Err(ProposalValidationError::InvalidPatchDigest)
-        );
+        assert_eq!(validate(&proposal, &approved_scope()), Err(ProposalValidationError::InvalidPatchDigest));
     }
 
     #[test]
-    fn rejects_invalid_revision_and_unknown_schema_version() {
-        let mut proposal = valid_proposal();
-        proposal.target.source_revision = "not-a-commit".into();
-        assert_eq!(
-            proposal.validate(),
-            Err(ProposalValidationError::InvalidTarget)
-        );
+    fn rejects_invalid_trusted_target_and_unknown_schema_version() {
+        let mut target = trusted_target();
+        target.source_revision = "not-a-commit".into();
+        assert_eq!(valid_proposal().validate_against(&target, &approved_scope()), Err(ProposalValidationError::InvalidTarget));
         let mut proposal = valid_proposal();
         proposal.schema_version = 2;
-        assert_eq!(
-            proposal.validate(),
-            Err(ProposalValidationError::UnsupportedVersion)
-        );
+        assert_eq!(validate(&proposal, &approved_scope()), Err(ProposalValidationError::UnsupportedVersion));
     }
 
     #[test]
-    fn rejects_secret_and_credential_paths() {
+    fn rejects_protected_or_invalid_host_scopes() {
+        let protected = vec![".github/workflows".into()];
+        assert_eq!(validate(&valid_proposal(), &protected), Err(ProposalValidationError::ProtectedPath));
+        let traversal = vec!["../".into()];
+        assert_eq!(validate(&valid_proposal(), &traversal), Err(ProposalValidationError::InvalidScope));
+    }
+
+    #[test]
+    fn rejects_secret_and_credential_bundle_paths() {
         let mut proposal = valid_proposal();
         proposal.changes[0].path = "apps/operator-console/.env.production".into();
-        assert_eq!(
-            proposal.validate(),
-            Err(ProposalValidationError::ProtectedPath)
-        );
-    }
-
-    #[test]
-    fn rejects_credential_bundle_paths() {
-        let mut proposal = valid_proposal();
+        assert_eq!(validate(&proposal, &approved_scope()), Err(ProposalValidationError::ProtectedPath));
         proposal.changes[0].path = "apps/operator-console/credentials.json".into();
-        assert_eq!(
-            proposal.validate(),
-            Err(ProposalValidationError::ProtectedPath)
-        );
+        assert_eq!(validate(&proposal, &approved_scope()), Err(ProposalValidationError::ProtectedPath));
     }
 
     #[test]
-    fn rejects_protected_scopes_and_excessive_change_counts() {
+    fn rejects_invalid_finding_line_ranges_and_excessive_change_counts() {
         let mut proposal = valid_proposal();
-        proposal.scope = vec![".github/workflows".into()];
-        assert_eq!(
-            proposal.validate(),
-            Err(ProposalValidationError::ProtectedPath)
-        );
+        proposal.findings[0].line_start = Some(20);
+        proposal.findings[0].line_end = Some(10);
+        assert_eq!(validate(&proposal, &approved_scope()), Err(ProposalValidationError::InvalidLineRange));
         let mut proposal = valid_proposal();
-        proposal.changes = (0..=MAX_PROPOSAL_CHANGES)
-            .map(|index| ProposedChange {
-                path: format!("apps/desktop/src/Component{index}.tsx"),
-                operation: ProposedChangeKind::Add,
-                summary: "Add a scoped component.".into(),
-                patch_sha256: "c".repeat(64),
-            })
-            .collect();
-        assert_eq!(
-            proposal.validate(),
-            Err(ProposalValidationError::TooManyChanges)
-        );
+        proposal.changes = (0..=MAX_PROPOSAL_CHANGES).map(|index| ProposedChange {
+            path: format!("apps/operator-console/Component{index}.tsx"),
+            operation: ProposedChangeKind::Add,
+            summary: "Add a scoped component.".into(),
+            patch_sha256: "c".repeat(64),
+        }).collect();
+        assert_eq!(validate(&proposal, &approved_scope()), Err(ProposalValidationError::TooManyChanges));
     }
 }
