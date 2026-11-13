@@ -5,10 +5,14 @@ set -euo pipefail
 PSQL_BIN="${PSQL_BIN:-psql}"
 PSQL=("$PSQL_BIN" --host "${PGHOST:-localhost}" --username "${PGUSER:-postgres}" --dbname "${PGDATABASE:-ujani_test}" --set ON_ERROR_STOP=1 --quiet --tuples-only --no-align)
 
-"${PSQL[@]}" <<'SQL'
+run_id="$(date -u +%Y%m%d%H%M%S)-$$-${RANDOM}"
+tenant_id="audit-concurrency-${run_id}"
+first_event_id="$("${PSQL[@]}" -c "SELECT gen_random_uuid()")"
+second_event_id="$("${PSQL[@]}" -c "SELECT gen_random_uuid()")"
+
+"${PSQL[@]}" -v tenant_id="$tenant_id" <<'SQL'
 INSERT INTO ujani_control.tenants (tenant_id, display_name)
-VALUES ('audit-concurrency-test','Audit Concurrency Test')
-ON CONFLICT (tenant_id) DO NOTHING;
+VALUES (:'tenant_id','Audit Concurrency Test');
 SQL
 
 first_out="$(mktemp)"
@@ -17,15 +21,14 @@ cleanup() { rm -f "$first_out" "$second_out"; }
 trap cleanup EXIT
 
 (
- PGAPPNAME=ujani-audit-first "${PSQL[@]}" >"$first_out" <<'SQL'
+ PGAPPNAME=ujani-audit-first "${PSQL[@]}" -v tenant_id="$tenant_id" -v event_id="$first_event_id" >"$first_out" <<'SQL'
 SET ROLE ujani_runtime;
 BEGIN;
-SET LOCAL ujani.tenant_id = 'audit-concurrency-test';
+SET LOCAL ujani.tenant_id = :'tenant_id';
 INSERT INTO ujani_control.audit_events
  (tenant_id, event_id, actor_ref, actor_role, event_type, outcome)
 VALUES
- ('audit-concurrency-test','00000000-0000-4000-8000-000000000201',
-  'operator-a','administrator','audit.concurrent.first','accepted');
+ (:'tenant_id', :'event_id'::uuid, 'operator-a','administrator','audit.concurrent.first','accepted');
 SELECT pg_sleep(1);
 COMMIT;
 RESET ROLE;
@@ -45,15 +48,14 @@ if [[ "$locked" != "1" ]]; then
  exit 1
 fi
 
-"${PSQL[@]}" >"$second_out" <<'SQL'
+"${PSQL[@]}" -v tenant_id="$tenant_id" -v event_id="$second_event_id" >"$second_out" <<'SQL'
 SET ROLE ujani_runtime;
 BEGIN;
-SET LOCAL ujani.tenant_id = 'audit-concurrency-test';
+SET LOCAL ujani.tenant_id = :'tenant_id';
 INSERT INTO ujani_control.audit_events
  (tenant_id, event_id, actor_ref, actor_role, event_type, outcome)
 VALUES
- ('audit-concurrency-test','00000000-0000-4000-8000-000000000202',
-  'operator-b','administrator','audit.concurrent.second','accepted');
+ (:'tenant_id', :'event_id'::uuid, 'operator-b','administrator','audit.concurrent.second','accepted');
 COMMIT;
 RESET ROLE;
 SQL
@@ -66,7 +68,7 @@ chain_state="$("${PSQL[@]}" -c "
   ((array_agg(previous_digest ORDER BY sequence_id))[2] =
    (array_agg(event_digest ORDER BY sequence_id))[1])::text
  FROM ujani_control.audit_events
- WHERE tenant_id='audit-concurrency-test'
+ WHERE tenant_id='${tenant_id}'
 ")"
 if [[ "$chain_state" != "2:true:true" ]]; then
  echo "concurrent audit writes forked or lost the tenant hash chain: $chain_state" >&2

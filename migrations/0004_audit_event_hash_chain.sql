@@ -6,6 +6,18 @@ ALTER TABLE ujani_control.audit_events
  ALTER COLUMN sequence_id DROP DEFAULT,
  ALTER COLUMN event_digest SET DEFAULT decode(repeat('00', 32), 'hex');
 
+DO $
+DECLARE
+ sequence_name text;
+BEGIN
+ sequence_name := pg_get_serial_sequence('ujani_control.audit_events', 'sequence_id');
+ IF sequence_name IS NULL THEN
+  RAISE EXCEPTION 'audit sequence is not configured';
+ END IF;
+ EXECUTE format('GRANT USAGE ON SEQUENCE %s TO %I', sequence_name, 'ujani_runtime');
+END;
+$;
+
 CREATE OR REPLACE FUNCTION ujani_control.enforce_audit_event_chain()
 RETURNS trigger
 LANGUAGE plpgsql

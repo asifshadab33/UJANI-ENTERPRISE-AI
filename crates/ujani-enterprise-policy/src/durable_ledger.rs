@@ -1421,12 +1421,17 @@ mod tests {
     }
 
     fn temp_path(label: &str) -> PathBuf {
+        // SystemTime::as_nanos may have lower effective resolution on some
+        // platforms. Tests run in parallel and may request the same label in
+        // the same clock tick, so include a process-local atomic sequence.
+        static NEXT_TEMP_DIRECTORY: AtomicU64 = AtomicU64::new(1);
+        let sequence = NEXT_TEMP_DIRECTORY.fetch_add(1, Ordering::Relaxed);
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
         let directory = std::env::temp_dir().join(format!(
-            "ujani-enterprise-{label}-{}-{nonce}",
+            "ujani-enterprise-{label}-{}-{nonce}-{sequence}",
             std::process::id()
         ));
         fs::create_dir(&directory).expect("create private ledger test directory");
@@ -1437,6 +1442,15 @@ mod tests {
                 .expect("restrict ledger test directory permissions");
         }
         directory.join("ledger")
+    }
+
+    #[test]
+    fn temp_path_uses_unique_directories_for_repeated_labels() {
+        let first = temp_path("same-label");
+        let second = temp_path("same-label");
+        assert_ne!(first, second);
+        cleanup(&first);
+        cleanup(&second);
     }
 
     fn cleanup(path: &Path) {
