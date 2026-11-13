@@ -22,15 +22,11 @@ def validate_self_evolution_schema() -> None:
     validator.validate(fixture)
 
     # The schema is a structural contract, not an authorization grant.
-    # It must reject traversal, malformed refs/digests, missing paired line bounds,
-    # and unknown fields before the Rust protected-path policy is consulted.
+    # The model must not be able to supply a repository, source revision,
+    # proposal ID or writable scope; trusted host code binds those values.
     invalid_path = copy.deepcopy(fixture)
     invalid_path["changes"][0]["path"] = "../outside.rs"
     assert list(validator.iter_errors(invalid_path))
-
-    invalid_ref = copy.deepcopy(fixture)
-    invalid_ref["target"]["base_ref"] = "feature/../main"
-    assert list(validator.iter_errors(invalid_ref))
 
     invalid_digest = copy.deepcopy(fixture)
     invalid_digest["changes"][0]["patch_sha256"] = "not-a-digest"
@@ -43,6 +39,12 @@ def validate_self_evolution_schema() -> None:
     unknown_field = copy.deepcopy(fixture)
     unknown_field["changes"][0]["unreviewed_permission"] = "shell"
     assert list(validator.iter_errors(unknown_field))
+
+    # Authority-bearing fields are supplied only by the trusted host envelope.
+    for forbidden_field in ("proposal_id", "target", "scope"):
+        model_claim = copy.deepcopy(fixture)
+        model_claim[forbidden_field] = "model-must-not-authorize-this"
+        assert list(validator.iter_errors(model_claim))
     print("Self-evolution proposal v1 schema and fixture checks passed.")
 
 
