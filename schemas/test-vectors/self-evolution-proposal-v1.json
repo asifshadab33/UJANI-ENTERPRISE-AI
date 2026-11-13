@@ -1,15 +1,6 @@
 {
   "schema_version": 1,
-  "proposal_id": "proposal-2026-001",
-  "target": {
-    "repository": "asifshadab33/UJANI-ENTERPRISE-AI",
-    "base_ref": "main",
-    "source_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-  },
   "summary": "Improve an accessible label in a non-core interface module.",
-  "scope": [
-    "apps/operator-console"
-  ],
   "findings": [
     {
       "category": "accessibility",
