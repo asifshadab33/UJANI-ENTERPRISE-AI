@@ -9,6 +9,17 @@ Allow an authorized administrator to use an approved AI model to analyse Enterpr
 
 The AI model is a proposal author, not a trusted administrator, release authority, scheduler or endpoint agent.
 
+## 1A. Source availability and endpoint boundary
+
+The enrolled fleet endpoint is not a development workstation and must not rewrite its own executable or run generated code. The Enterprise Self-Evolution workflow belongs in the authenticated organization control plane and an organization-managed source/build environment.
+
+For a later implementation:
+- An authorized administrator selects a tenant-scoped source repository and approved release line. The control plane receives only bounded source paths; production tenant data, device secrets and customer content are excluded.
+- Generated patches are created in an isolated workspace and validated in CI. They are proposals until reviewed and approved.
+- Trusted organization release infrastructure builds and signs the artifact using organization-controlled KMS/HSM keys. The model never receives signing authority.
+- Enrolled devices accept only verified signed artifacts through the existing trusted update channel; no model-generated code is executed on worker devices.
+- If the organization has not configured a trusted source/build/signing environment, UJANI may prepare an analysis report but must not claim it can deploy a self-modification.
+
 ## 2. Trust boundaries
 
 ### Protected control-plane authority
