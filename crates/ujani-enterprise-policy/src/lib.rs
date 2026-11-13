@@ -1621,6 +1621,8 @@ pub mod inventory;
 pub mod lease_control;
 pub mod operator_control_plane;
 pub mod operator_http_contract;
+/// Fail-closed durable revocation boundary for operator sessions.
+pub mod operator_session_revocation;
 pub use inventory::{
     summarize_inventory, validate_inventory_record, DeviceInventoryRecord, DevicePowerState,
     InventoryError, InventorySummary, InventoryTrust,
