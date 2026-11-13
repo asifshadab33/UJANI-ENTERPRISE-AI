@@ -44,6 +44,10 @@ Subject to policy and review:
 ### Isolated extension surfaces
 New plugins and connectors require signed manifests, tenant-scoped capabilities, explicit data classification, resource budgets, network allow-lists and revocation. Generated extensions must not gain ambient access to fleet devices or customer data.
 
+## 2A. Host-owned authority envelope
+
+The model-authored proposal body contains only a schema version, summary, findings and proposed file changes. It must not contain or choose the repository, source revision, approved write scope, proposal ID, model identity, permissions, reviewer decisions or signing authority. The authenticated control plane binds the proposal to a tenant-scoped source checkout and administrator-approved path scope, generates the proposal ID, and records model/provider/version and approval metadata in a separate trusted audit envelope. The host rejects unknown model fields rather than accepting model-supplied authority.
+
 ## 3. Governed lifecycle
 
 1. An authenticated administrator initiates an improvement request and selects the target repository, release line and permitted scope.
