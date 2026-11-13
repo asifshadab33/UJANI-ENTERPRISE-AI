@@ -173,7 +173,10 @@ mod tests {
             if self.unavailable {
                 return Err(SessionRevocationStoreError::Unavailable);
             }
-            let entries = self.entries.lock().map_err(|_| SessionRevocationStoreError::IntegrityFailure)?;
+            let entries = self
+                .entries
+                .lock()
+                .map_err(|_| SessionRevocationStoreError::IntegrityFailure)?;
             Ok(entries.contains(&(tenant_id.into(), subject_id.into(), *nonce)))
         }
 
@@ -191,7 +194,10 @@ mod tests {
             if expires_at_unix_ms <= now_unix_ms {
                 return Err(SessionRevocationStoreError::IntegrityFailure);
             }
-            let mut entries = self.entries.lock().map_err(|_| SessionRevocationStoreError::IntegrityFailure)?;
+            let mut entries = self
+                .entries
+                .lock()
+                .map_err(|_| SessionRevocationStoreError::IntegrityFailure)?;
             entries.insert((tenant_id.into(), subject_id.into(), *nonce));
             Ok(())
         }
@@ -212,15 +218,10 @@ mod tests {
 
     #[test]
     fn session_is_accepted_until_explicitly_revoked() {
-        let wrapped = RevocableOperatorSessionVerifier::new(
-            verifier(),
-            MemoryRevocations::default(),
-        );
+        let wrapped =
+            RevocableOperatorSessionVerifier::new(verifier(), MemoryRevocations::default());
         assert!(wrapped.verify_session("valid-test-token", 2_000).is_ok());
-        assert_eq!(
-            wrapped.revoke_token("valid-test-token", 2_001),
-            Ok(())
-        );
+        assert_eq!(wrapped.revoke_token("valid-test-token", 2_001), Ok(()));
         assert_eq!(
             wrapped.verify_session("valid-test-token", 2_002),
             Err(OperatorAuthError::InvalidClaims)
@@ -231,7 +232,10 @@ mod tests {
     fn revocation_store_failure_denies_authentication() {
         let wrapped = RevocableOperatorSessionVerifier::new(
             verifier(),
-            MemoryRevocations { unavailable: true, ..MemoryRevocations::default() },
+            MemoryRevocations {
+                unavailable: true,
+                ..MemoryRevocations::default()
+            },
         );
         assert_eq!(
             wrapped.verify_session("valid-test-token", 2_000),
@@ -258,10 +262,20 @@ mod tests {
     #[test]
     fn revocation_is_scoped_to_tenant_subject_and_nonce() {
         let store = MemoryRevocations::default();
-        store.revoke("tenant-1", "operator-1", &[7; 16], 900_000, 2_000).unwrap();
-        assert!(store.is_revoked("tenant-1", "operator-1", &[7; 16], 2_001).unwrap());
-        assert!(!store.is_revoked("tenant-2", "operator-1", &[7; 16], 2_001).unwrap());
-        assert!(!store.is_revoked("tenant-1", "operator-2", &[7; 16], 2_001).unwrap());
-        assert!(!store.is_revoked("tenant-1", "operator-1", &[8; 16], 2_001).unwrap());
+        store
+            .revoke("tenant-1", "operator-1", &[7; 16], 900_000, 2_000)
+            .unwrap();
+        assert!(store
+            .is_revoked("tenant-1", "operator-1", &[7; 16], 2_001)
+            .unwrap());
+        assert!(!store
+            .is_revoked("tenant-2", "operator-1", &[7; 16], 2_001)
+            .unwrap());
+        assert!(!store
+            .is_revoked("tenant-1", "operator-2", &[7; 16], 2_001)
+            .unwrap());
+        assert!(!store
+            .is_revoked("tenant-1", "operator-1", &[8; 16], 2_001)
+            .unwrap());
     }
 }
