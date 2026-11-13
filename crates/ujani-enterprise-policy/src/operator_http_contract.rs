@@ -78,9 +78,9 @@ pub fn resolve_route(method: HttpMethod, path: &str) -> Option<RouteContract> {
     if path.len() > 2048
         || !path.starts_with('/')
         || path.starts_with("//")
-        || path.bytes().any(|byte| {
-            byte.is_ascii_control() || matches!(byte, b'?' | b'#' | b'\\' | b'%')
-        })
+        || path
+            .bytes()
+            .any(|byte| byte.is_ascii_control() || matches!(byte, b'?' | b'#' | b'\\' | b'%'))
     {
         return None;
     }
