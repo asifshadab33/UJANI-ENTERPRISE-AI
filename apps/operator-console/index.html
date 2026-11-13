@@ -80,6 +80,16 @@
           <details><summary>Prerequisites and evidence</summary><ul><li>Tenant policy plus per-user delegated OAuth consent.</li><li>Read-only source access, least-privilege scopes and revocation.</li><li>No message sending, calendar mutation or autonomous scheduling in the MVP.</li></ul></details>
         </article>
         <article class="feature-risk-card">
+          <div class="feature-risk-card-heading"><strong>Tenant-isolated cache</strong><span class="pill">Contract only</span></div>
+          <p>Cache isolation and authorization requirements are documented; a production tenant-scoped cache service is not established by this preview.</p>
+          <details><summary>Prerequisites and evidence</summary><ul><li>Partition by tenant, site, device, authenticated principal, scope and policy version.</li><li>Re-authorize every lookup against authoritative service state.</li><li>Prove revocation, role-change and tenant-switch invalidation with cross-tenant tests.</li></ul></details>
+        </article>
+        <article class="feature-risk-card">
+          <div class="feature-risk-card-heading"><strong>Infrastructure Shield profiles</strong><span class="pill">Design only</span></div>
+          <p>Customer-selected firewall, monitoring and legacy-network profiles are deployment designs, not an installed or reconfigured service.</p>
+          <details><summary>Prerequisites and evidence</summary><ul><li>Customer-selected tools and explicit scope; no silent installation.</li><li>Least-privilege deployment, signed configuration, rollback and operator handover.</li><li>Controlled customer-lab validation before any production network changes.</li></ul></details>
+        </article>
+        <article class="feature-risk-card">
           <div class="feature-risk-card-heading"><strong>Self-Evolution Engine</strong><span class="pill">Proposal-only development</span></div>
           <p>The first proposal contract is being developed. It does not grant the model source access, code execution, approval, signing or fleet update authority.</p>
           <details><summary>Prerequisites and evidence</summary><ul><li>Tenant-scoped trusted source checkout and isolated build workspace.</li><li>Protected control-plane policy, independent review and administrator approval.</li><li>Organization-controlled KMS/HSM signing, staged rollout and rollback.</li><li>Fleet devices receive only verified signed artifacts; generated code is never executed on worker devices.</li></ul></details>
