@@ -238,13 +238,13 @@ mod tests {
             findings: vec![SelfEvolutionFinding {
                 category: FindingCategory::Accessibility,
                 severity: FindingSeverity::Low,
-                path: "apps/desktop/src/app.js".into(),
+                path: "apps/operator-console/app.js".into(),
                 line_start: Some(10), line_end: Some(15),
                 description: "The operator status label is not explicit.".into(),
                 recommendation: "Add an accessible label.".into(),
             }],
             changes: vec![ProposedChange {
-                path: "apps/desktop/src/app.js".into(),
+                path: "apps/operator-console/app.js".into(),
                 operation: ProposedChangeKind::Modify,
                 summary: "Add an accessible label to the operator status control.".into(),
                 patch_sha256: "b".repeat(64),
@@ -269,15 +269,15 @@ mod tests {
     #[test]
     fn rejects_protected_core_changes_case_insensitively() {
         let mut proposal = valid_proposal();
-        proposal.scope = vec!["apps/desktop/src-tauri/src".into()];
-        proposal.changes[0].path = "apps/desktop/src-tauri/src/SECURITY_STORE.rs".into();
+        proposal.scope = vec!["apps/operator-console".into()];
+        proposal.changes[0].path = "crates/ujani-enterprise-policy/src/DEVICE_TRUST.rs".into();
         assert_eq!(proposal.validate(), Err(ProposalValidationError::ProtectedPath));
     }
 
     #[test]
     fn rejects_changes_outside_the_user_approved_scope_case_insensitively() {
         let mut proposal = valid_proposal();
-        proposal.scope = vec!["apps/desktop/src/app.js".into()];
+        proposal.scope = vec!["apps/operator-console/app.js".into()];
         proposal.changes[0].path = "APPS/desktop/src/styles.css".into();
         assert_eq!(proposal.validate(), Err(ProposalValidationError::OutOfScope));
     }
