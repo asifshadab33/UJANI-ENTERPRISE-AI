@@ -11,6 +11,8 @@ DECLARE
  first_sequence bigint;
  second_sequence bigint;
  first_digest bytea;
+ first_occurred_at timestamptz;
+ expected_first_digest bytea;
  second_previous bytea;
  second_digest bytea;
 BEGIN
@@ -18,10 +20,28 @@ BEGIN
   (tenant_id, event_id, actor_ref, actor_role, event_type, outcome)
  VALUES
   ('tenant-a', first_id, 'operator-a', 'administrator', 'control_plane.test', 'accepted')
- RETURNING sequence_id, event_digest INTO first_sequence, first_digest;
+ RETURNING sequence_id, event_digest, occurred_at INTO first_sequence, first_digest, first_occurred_at;
 
  IF first_sequence <= 0 OR octet_length(first_digest) <> 32 THEN
   RAISE EXCEPTION 'first audit event was not assigned a valid sequence and digest';
+ END IF;
+ expected_first_digest := sha256(
+  decode(repeat('00', 32), 'hex')
+  || convert_to(jsonb_build_object(
+   'schema_version', 1,
+   'tenant_id', 'tenant-a',
+   'sequence_id', first_sequence,
+   'event_id', first_id,
+   'actor_ref', 'operator-a',
+   'actor_role', 'administrator',
+   'event_type', 'control_plane.test',
+   'outcome', 'accepted',
+   'object_ref', NULL,
+   'occurred_at_utc', to_char(first_occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')
+  )::text, 'UTF8')
+ );
+ IF first_digest IS DISTINCT FROM expected_first_digest THEN
+  RAISE EXCEPTION 'first event digest does not match canonical database payload';
  END IF;
  IF (SELECT previous_digest FROM ujani_control.audit_events
       WHERE tenant_id = 'tenant-a' AND event_id = first_id) IS NOT NULL THEN
