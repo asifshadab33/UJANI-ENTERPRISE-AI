@@ -1,4 +1,5 @@
 -- Executed after migrations 0001 and 0005 against PostgreSQL 16.
+-- The policy verifier currently uses the schema's default logout reason.
 -- The owner creates fixture identities; runtime operations are tested under RLS.
 
 INSERT INTO ujani_control.operator_subjects
