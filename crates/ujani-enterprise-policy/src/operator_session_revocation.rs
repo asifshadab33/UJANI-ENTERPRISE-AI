@@ -200,6 +200,15 @@ mod tests {
         }
     }
 
+    fn test_nonce() -> [u8; 16] {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock must be after Unix epoch")
+            .as_nanos()
+            .to_le_bytes()
+    }
+
     fn verifier() -> TestVerifier {
         TestVerifier {
             claims: OperatorSessionClaims {
@@ -208,7 +217,7 @@ mod tests {
                 role: crate::operator_control_plane::OperatorRole::Administrator,
                 issued_at_unix_ms: 1_000,
                 expires_at_unix_ms: 900_000,
-                nonce: [7; 16],
+                nonce: test_nonce(),
             },
         }
     }
@@ -257,20 +266,23 @@ mod tests {
     #[test]
     fn revocation_is_scoped_to_tenant_subject_and_nonce() {
         let store = MemoryRevocations::default();
+        let nonce = test_nonce();
+        let mut other_nonce = nonce;
+        other_nonce[0] = other_nonce[0].wrapping_add(1);
         store
-            .revoke("tenant-1", "operator-1", &[7; 16], 900_000, 2_000)
+            .revoke("tenant-1", "operator-1", &nonce, 900_000, 2_000)
             .unwrap();
         assert!(store
-            .is_revoked("tenant-1", "operator-1", &[7; 16], 2_001)
+            .is_revoked("tenant-1", "operator-1", &nonce, 2_001)
             .unwrap());
         assert!(!store
-            .is_revoked("tenant-2", "operator-1", &[7; 16], 2_001)
+            .is_revoked("tenant-2", "operator-1", &nonce, 2_001)
             .unwrap());
         assert!(!store
-            .is_revoked("tenant-1", "operator-2", &[7; 16], 2_001)
+            .is_revoked("tenant-1", "operator-2", &nonce, 2_001)
             .unwrap());
         assert!(!store
-            .is_revoked("tenant-1", "operator-1", &[8; 16], 2_001)
+            .is_revoked("tenant-1", "operator-1", &other_nonce, 2_001)
             .unwrap());
     }
 }
