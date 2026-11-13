@@ -7,3 +7,15 @@
 .catalogue-card small{display:block;color:#68758a;font-size:11px;line-height:1.5;margin-top:8px}
 .catalogue-specialist{background:#f8fafc}
 @media(max-width:700px){.catalogue-grid{grid-template-columns:1fr}}
+
+
+.feature-risk-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:16px 0}
+.feature-risk-card{min-width:0;padding:14px;border:1px solid #e5e9f0;border-radius:10px;background:#fbfcfe}
+.feature-risk-card-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.feature-risk-card-heading strong{font-size:13px;line-height:1.4}
+.feature-risk-card p{font-size:12px;line-height:1.5;color:#566176;margin:8px 0}
+.feature-risk-card details{border-top:1px solid #e9edf2;margin-top:10px;padding-top:9px}
+.feature-risk-card summary{font-size:11px;font-weight:700;color:#42516a;cursor:pointer}
+.feature-risk-card summary:focus-visible{outline:2px solid #3567c8;outline-offset:3px;border-radius:3px}
+.feature-risk-card ul{padding-left:18px;margin:9px 0 2px;color:#566176;font-size:11px;line-height:1.6}
+@media(max-width:700px){.feature-risk-grid{grid-template-columns:1fr}.feature-risk-card-heading{flex-direction:column;align-items:flex-start}}
