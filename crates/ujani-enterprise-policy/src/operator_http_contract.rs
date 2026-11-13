@@ -72,7 +72,16 @@ fn role_rank(role: OperatorRole) -> u8 {
 /// segments are restricted to simple identifiers; encoded separators,
 /// dot-segments and empty identifiers are rejected by returning None.
 pub fn resolve_route(method: HttpMethod, path: &str) -> Option<RouteContract> {
-    if !path.starts_with('/') || path.starts_with("//") {
+    // The adapter must pass the raw origin-form path, not a URL, decoded path,
+    // or a path that another proxy/router may normalize differently. Reject
+    // ambiguous syntax here so authorization and dispatch see one spelling.
+    if path.len() > 2048
+        || !path.starts_with('/')
+        || path.starts_with("//")
+        || path
+            .bytes()
+            .any(|byte| byte.is_ascii_control() || matches!(byte, b'?' | b'#' | b'\\' | b'%'))
+    {
         return None;
     }
     if path == "/healthz" && method == HttpMethod::Get {
@@ -286,6 +295,27 @@ mod tests {
         assert!(resolve_route(HttpMethod::Post, "prefix/v1/devices/device-1/telemetry").is_none());
         assert!(resolve_route(HttpMethod::Post, "prefix/v1/leases/lease-1/renew").is_none());
         assert!(resolve_route(HttpMethod::Post, "//v1/devices/device-1/telemetry").is_none());
+    }
+
+    #[test]
+    fn rejects_non_canonical_or_ambiguous_request_targets() {
+        for path in [
+            "/v1/devices/device-1/telemetry?override=1",
+            "/v1/devices/device-1/telemetry#fragment",
+            "/v1/devices/device-1%2Fother/telemetry",
+            "/v1/devices/device-1\\telemetry",
+            "/v1/devices/device-1/telemetry\r\nX-Injected: yes",
+            "/v1/devices/device-1/telemetry\tX-Injected: yes",
+            "/v1/devices/device-1/telemetry\0X-Injected: yes",
+            "/v1/devices/device-1//telemetry",
+        ] {
+            assert!(
+                resolve_route(HttpMethod::Post, path).is_none(),
+                "ambiguous path must be rejected: {path:?}"
+            );
+        }
+        let oversized = format!("/{}", "a".repeat(2048));
+        assert!(resolve_route(HttpMethod::Post, &oversized).is_none());
     }
 
     #[test]
