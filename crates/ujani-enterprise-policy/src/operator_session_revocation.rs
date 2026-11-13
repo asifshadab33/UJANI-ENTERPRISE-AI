@@ -63,11 +63,7 @@ impl<V, R> RevocableOperatorSessionVerifier<V, R> {
 
     /// Revoke a currently valid session token. The token is verified first so
     /// callers cannot insert arbitrary tenant, subject or nonce values.
-    pub fn revoke_token(
-        &self,
-        token: &str,
-        now_unix_ms: u64,
-    ) -> Result<(), SessionRevocationError>
+    pub fn revoke_token(&self, token: &str, now_unix_ms: u64) -> Result<(), SessionRevocationError>
     where
         V: OperatorSessionVerifier,
         R: OperatorSessionRevocationStore,
@@ -249,10 +245,8 @@ mod tests {
 
     #[test]
     fn invalid_tokens_cannot_revoke_arbitrary_sessions() {
-        let wrapped = RevocableOperatorSessionVerifier::new(
-            verifier(),
-            MemoryRevocations::default(),
-        );
+        let wrapped =
+            RevocableOperatorSessionVerifier::new(verifier(), MemoryRevocations::default());
         assert_eq!(
             wrapped.revoke_token("attacker-controlled", 2_000),
             Err(SessionRevocationError::InvalidOrExpiredSession)
