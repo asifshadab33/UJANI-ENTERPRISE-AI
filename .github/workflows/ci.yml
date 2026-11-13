@@ -142,3 +142,13 @@ jobs:
           PGUSER: postgres
           PGDATABASE: ujani_test
         run: bash scripts/test_audit_event_hash_chain_concurrency.sh
+      - name: Apply operator session revocation migration
+        env:
+          PGPASSWORD: postgres
+        run: |
+          "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < migrations/0005_operator_session_revocations.sql
+      - name: Verify tenant-isolated operator session revocation
+        env:
+          PGPASSWORD: postgres
+        run: |
+          "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < scripts/test_operator_session_revocations.sql
