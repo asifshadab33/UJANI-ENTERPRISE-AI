@@ -68,7 +68,9 @@ EXPECTED_SHARED_ARTIFACTS = {
 
 
 def _git_blob_sha1(path: Path) -> str:
-    data = path.read_bytes()
+    # Windows checkouts may expand repository LF endings to CRLF.
+    # Normalize that working-tree representation before computing the Git blob ID.
+    data = path.read_bytes().replace(b"\r\n", b"\n")
     header = b"blob " + str(len(data)).encode("ascii") + bytes((0,))
     return hashlib.sha1(header + data).hexdigest()
 
