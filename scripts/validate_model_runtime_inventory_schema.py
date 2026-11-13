@@ -41,9 +41,18 @@ def validate_self_evolution_schema() -> None:
     assert list(validator.iter_errors(unknown_field))
 
     # Authority-bearing fields are supplied only by the trusted host envelope.
-    for forbidden_field in ("proposal_id", "target", "scope"):
+    forbidden_values = {
+        "proposal_id": "model-proposal-1",
+        "target": {
+            "repository": "owner/repository",
+            "base_ref": "main",
+            "source_revision": "a" * 40,
+        },
+        "scope": ["apps/operator-console"],
+    }
+    for forbidden_field, value in forbidden_values.items():
         model_claim = copy.deepcopy(fixture)
-        model_claim[forbidden_field] = "model-must-not-authorize-this"
+        model_claim[forbidden_field] = value
         assert list(validator.iter_errors(model_claim))
     print("Self-evolution proposal v1 schema and fixture checks passed.")
 
