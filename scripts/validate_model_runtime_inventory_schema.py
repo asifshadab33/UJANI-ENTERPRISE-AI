@@ -60,7 +60,7 @@ def validate_self_evolution_schema() -> None:
 
 
 EXPECTED_SHARED_ARTIFACTS = {
-    "schemas/model-runtime-inventory-v1.schema.json": "8ff1a1dbbabd58636a3ef40e55b5c44168776522",
+    "schemas/model-runtime-inventory-v1.schema.json": "8ff1a1db4700214ba687cd806c449bc1ea7dfdb4",
     "schemas/personal-enterprise-task-contract-v1.schema.json": "566a0d72babd58636a3ef40e55b5c44168776522",
     "schemas/test-vectors/consent-binding-v1.json": "dcd7021560212504810e8438e14efd591e5e657d",
     "schemas/test-vectors/model-runtime-inventory-v1.json": "543d645d0154c9263ff7784ba4e203f54e498c3c",
@@ -69,7 +69,7 @@ EXPECTED_SHARED_ARTIFACTS = {
 
 def _git_blob_sha1(path: Path) -> str:
     data = path.read_bytes()
-    header = f"blob {len(data)}\\0".encode("ascii")
+    header = b"blob " + str(len(data)).encode("ascii") + bytes((0,))
     return hashlib.sha1(header + data).hexdigest()
 
 
