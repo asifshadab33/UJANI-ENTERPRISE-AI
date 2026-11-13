@@ -178,10 +178,29 @@ fn valid_relative_path(value: &str) -> bool {
 
 fn is_protected_path(path: &str) -> bool {
     let candidate = path.to_ascii_lowercase();
-    PROTECTED_PATHS.iter().any(|protected| {
-        let protected = protected.to_ascii_lowercase();
-        candidate == protected || candidate.starts_with(&(protected + "/"))
-    })
+    let contains_secret_material = candidate.split('/').any(|segment| {
+        segment == ".env"
+            || segment.starts_with(".env.")
+            || segment == ".ssh"
+            || segment == ".npmrc"
+            || segment == ".pypirc"
+            || segment == "credentials"
+            || segment == "secret"
+            || segment == "secrets"
+            || segment == "id_rsa"
+            || segment == "id_ed25519"
+            || segment.ends_with(".pem")
+            || segment.ends_with(".key")
+            || segment.ends_with(".p12")
+            || segment.ends_with(".pfx")
+            || segment.ends_with(".jks")
+            || segment.ends_with(".keystore")
+    });
+    contains_secret_material
+        || PROTECTED_PATHS.iter().any(|protected| {
+            let protected = protected.to_ascii_lowercase();
+            candidate == protected || candidate.starts_with(&(protected + "/"))
+        })
 }
 
 fn path_is_in_scope(path: &str, scope: &str) -> bool {
@@ -380,6 +399,16 @@ mod tests {
         assert_eq!(
             proposal.validate(),
             Err(ProposalValidationError::UnsupportedVersion)
+        );
+    }
+
+    #[test]
+    fn rejects_secret_and_credential_paths() {
+        let mut proposal = valid_proposal();
+        proposal.changes[0].path = "apps/operator-console/.env.production".into();
+        assert_eq!(
+            proposal.validate(),
+            Err(ProposalValidationError::ProtectedPath)
         );
     }
 
