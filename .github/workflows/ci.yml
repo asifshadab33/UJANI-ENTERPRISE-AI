@@ -136,3 +136,9 @@ jobs:
           PGPASSWORD: postgres
         run: |
           "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < scripts/test_audit_event_hash_chain.sql
+      - name: Verify concurrent audit hash-chain serialization
+        env:
+          PGPASSWORD: postgres
+          PGUSER: postgres
+          PGDATABASE: ujani_test
+        run: bash scripts/test_audit_event_hash_chain_concurrency.sh
