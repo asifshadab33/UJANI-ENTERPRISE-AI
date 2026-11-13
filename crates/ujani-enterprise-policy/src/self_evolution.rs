@@ -25,18 +25,35 @@ const PROTECTED_PATHS: &[&str] = &[
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum FindingSeverity { Info, Low, Medium, High, Critical }
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum FindingCategory {
-    Bug, Reliability, Performance, Accessibility, Documentation,
-    Feature, Compatibility, Privacy, Security,
+pub enum FindingSeverity {
+    Info,
+    Low,
+    Medium,
+    High,
+    Critical,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum ProposedChangeKind { Add, Modify, Delete }
+pub enum FindingCategory {
+    Bug,
+    Reliability,
+    Performance,
+    Accessibility,
+    Documentation,
+    Feature,
+    Compatibility,
+    Privacy,
+    Security,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProposedChangeKind {
+    Add,
+    Modify,
+    Delete,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -82,24 +99,41 @@ pub struct SelfEvolutionProposalV1 {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProposalValidationError {
-    UnsupportedVersion, InvalidIdentifier, InvalidTarget, InvalidText, InvalidScope,
-    InvalidPath, ProtectedPath, OutOfScope, DuplicatePath, TooManyFindings,
-    TooManyChanges, InvalidLineRange, InvalidPatchDigest,
+    UnsupportedVersion,
+    InvalidIdentifier,
+    InvalidTarget,
+    InvalidText,
+    InvalidScope,
+    InvalidPath,
+    ProtectedPath,
+    OutOfScope,
+    DuplicatePath,
+    TooManyFindings,
+    TooManyChanges,
+    InvalidLineRange,
+    InvalidPatchDigest,
 }
 
 fn valid_identifier(value: &str, max_bytes: usize) -> bool {
-    !value.is_empty() && value.len() <= max_bytes && value.trim() == value
-        && value.bytes().all(|b| b.is_ascii_alphanumeric() || b"._:-".contains(&b))
+    !value.is_empty()
+        && value.len() <= max_bytes
+        && value.trim() == value
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"._:-".contains(&b))
 }
 
 fn valid_text(value: &str, max_bytes: usize) -> bool {
-    !value.trim().is_empty() && value.len() <= max_bytes
-        && !value.chars().any(char::is_control)
+    !value.trim().is_empty() && value.len() <= max_bytes && !value.chars().any(char::is_control)
 }
 
 fn valid_path_component(value: &str) -> bool {
-    !value.is_empty() && value != "." && value != ".."
-        && value.bytes().all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+    !value.is_empty()
+        && value != "."
+        && value != ".."
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
 }
 
 fn valid_repository(value: &str) -> bool {
@@ -109,10 +143,18 @@ fn valid_repository(value: &str) -> bool {
 }
 
 fn valid_git_ref(value: &str) -> bool {
-    !value.is_empty() && value.len() <= 128 && !value.starts_with('/')
-        && !value.ends_with('/') && !value.contains("//") && !value.contains("..")
-        && value.bytes().all(|b| b.is_ascii_alphanumeric() || b"._/-".contains(&b))
-        && value.split('/').all(|part| !part.is_empty() && part != "." && part != ".." && !part.ends_with(".lock"))
+    !value.is_empty()
+        && value.len() <= 128
+        && !value.starts_with('/')
+        && !value.ends_with('/')
+        && !value.contains("//")
+        && !value.contains("..")
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"._/-".contains(&b))
+        && value
+            .split('/')
+            .all(|part| !part.is_empty() && part != "." && part != ".." && !part.ends_with(".lock"))
 }
 
 fn valid_revision(value: &str) -> bool {
@@ -120,12 +162,18 @@ fn valid_revision(value: &str) -> bool {
 }
 
 fn valid_relative_path(value: &str) -> bool {
-    if value.is_empty() || value.len() > 512 || value.starts_with('/')
-        || value.contains('\\') || value.contains(':')
-        || value.bytes().any(|b| b.is_ascii_control()) {
+    if value.is_empty()
+        || value.len() > 512
+        || value.starts_with('/')
+        || value.contains('\\')
+        || value.contains(':')
+        || value.bytes().any(|b| b.is_ascii_control())
+    {
         return false;
     }
-    value.split('/').all(|part| valid_path_component(part) && !part.eq_ignore_ascii_case(".git"))
+    value
+        .split('/')
+        .all(|part| valid_path_component(part) && !part.eq_ignore_ascii_case(".git"))
 }
 
 fn is_protected_path(path: &str) -> bool {
@@ -156,8 +204,10 @@ impl SelfEvolutionProposalV1 {
         if !valid_identifier(&self.proposal_id, 128) {
             return Err(ProposalValidationError::InvalidIdentifier);
         }
-        if !valid_repository(&self.target.repository) || !valid_git_ref(&self.target.base_ref)
-            || !valid_revision(&self.target.source_revision) {
+        if !valid_repository(&self.target.repository)
+            || !valid_git_ref(&self.target.base_ref)
+            || !valid_revision(&self.target.source_revision)
+        {
             return Err(ProposalValidationError::InvalidTarget);
         }
         if !valid_text(&self.summary, 2_000) {
@@ -184,8 +234,10 @@ impl SelfEvolutionProposalV1 {
             return Err(ProposalValidationError::TooManyFindings);
         }
         for finding in &self.findings {
-            if !valid_relative_path(&finding.path) || !valid_text(&finding.description, 3_000)
-                || !valid_text(&finding.recommendation, 3_000) {
+            if !valid_relative_path(&finding.path)
+                || !valid_text(&finding.description, 3_000)
+                || !valid_text(&finding.recommendation, 3_000)
+            {
                 return Err(ProposalValidationError::InvalidPath);
             }
             match (finding.line_start, finding.line_end) {
@@ -206,7 +258,11 @@ impl SelfEvolutionProposalV1 {
             if is_protected_path(&change.path) {
                 return Err(ProposalValidationError::ProtectedPath);
             }
-            if !self.scope.iter().any(|scope| path_is_in_scope(&change.path, scope)) {
+            if !self
+                .scope
+                .iter()
+                .any(|scope| path_is_in_scope(&change.path, scope))
+            {
                 return Err(ProposalValidationError::OutOfScope);
             }
             if !changed_paths.insert(change.path.to_ascii_lowercase()) {
@@ -239,7 +295,8 @@ mod tests {
                 category: FindingCategory::Accessibility,
                 severity: FindingSeverity::Low,
                 path: "apps/operator-console/app.js".into(),
-                line_start: Some(10), line_end: Some(15),
+                line_start: Some(10),
+                line_end: Some(15),
                 description: "The operator status label is not explicit.".into(),
                 recommendation: "Add an accessible label.".into(),
             }],
@@ -261,9 +318,15 @@ mod tests {
     fn rejects_path_traversal_and_absolute_paths() {
         let mut proposal = valid_proposal();
         proposal.changes[0].path = "../security_store.rs".into();
-        assert_eq!(proposal.validate(), Err(ProposalValidationError::InvalidPath));
+        assert_eq!(
+            proposal.validate(),
+            Err(ProposalValidationError::InvalidPath)
+        );
         proposal.changes[0].path = "/tmp/generated.rs".into();
-        assert_eq!(proposal.validate(), Err(ProposalValidationError::InvalidPath));
+        assert_eq!(
+            proposal.validate(),
+            Err(ProposalValidationError::InvalidPath)
+        );
     }
 
     #[test]
@@ -271,7 +334,10 @@ mod tests {
         let mut proposal = valid_proposal();
         proposal.scope = vec!["apps/operator-console".into()];
         proposal.changes[0].path = "crates/ujani-enterprise-policy/src/DEVICE_TRUST.rs".into();
-        assert_eq!(proposal.validate(), Err(ProposalValidationError::ProtectedPath));
+        assert_eq!(
+            proposal.validate(),
+            Err(ProposalValidationError::ProtectedPath)
+        );
     }
 
     #[test]
@@ -279,41 +345,64 @@ mod tests {
         let mut proposal = valid_proposal();
         proposal.scope = vec!["apps/operator-console/app.js".into()];
         proposal.changes[0].path = "APPS/desktop/src/styles.css".into();
-        assert_eq!(proposal.validate(), Err(ProposalValidationError::OutOfScope));
+        assert_eq!(
+            proposal.validate(),
+            Err(ProposalValidationError::OutOfScope)
+        );
     }
 
     #[test]
     fn rejects_duplicate_paths_and_invalid_patch_digests() {
         let mut proposal = valid_proposal();
         proposal.changes.push(proposal.changes[0].clone());
-        assert_eq!(proposal.validate(), Err(ProposalValidationError::DuplicatePath));
+        assert_eq!(
+            proposal.validate(),
+            Err(ProposalValidationError::DuplicatePath)
+        );
         let mut proposal = valid_proposal();
         proposal.changes[0].patch_sha256 = "not-a-digest".into();
-        assert_eq!(proposal.validate(), Err(ProposalValidationError::InvalidPatchDigest));
+        assert_eq!(
+            proposal.validate(),
+            Err(ProposalValidationError::InvalidPatchDigest)
+        );
     }
 
     #[test]
     fn rejects_invalid_revision_and_unknown_schema_version() {
         let mut proposal = valid_proposal();
         proposal.target.source_revision = "not-a-commit".into();
-        assert_eq!(proposal.validate(), Err(ProposalValidationError::InvalidTarget));
+        assert_eq!(
+            proposal.validate(),
+            Err(ProposalValidationError::InvalidTarget)
+        );
         let mut proposal = valid_proposal();
         proposal.schema_version = 2;
-        assert_eq!(proposal.validate(), Err(ProposalValidationError::UnsupportedVersion));
+        assert_eq!(
+            proposal.validate(),
+            Err(ProposalValidationError::UnsupportedVersion)
+        );
     }
 
     #[test]
     fn rejects_protected_scopes_and_excessive_change_counts() {
         let mut proposal = valid_proposal();
         proposal.scope = vec![".github/workflows".into()];
-        assert_eq!(proposal.validate(), Err(ProposalValidationError::ProtectedPath));
+        assert_eq!(
+            proposal.validate(),
+            Err(ProposalValidationError::ProtectedPath)
+        );
         let mut proposal = valid_proposal();
-        proposal.changes = (0..=MAX_PROPOSAL_CHANGES).map(|index| ProposedChange {
-            path: format!("apps/desktop/src/Component{index}.tsx"),
-            operation: ProposedChangeKind::Add,
-            summary: "Add a scoped component.".into(),
-            patch_sha256: "c".repeat(64),
-        }).collect();
-        assert_eq!(proposal.validate(), Err(ProposalValidationError::TooManyChanges));
+        proposal.changes = (0..=MAX_PROPOSAL_CHANGES)
+            .map(|index| ProposedChange {
+                path: format!("apps/desktop/src/Component{index}.tsx"),
+                operation: ProposedChangeKind::Add,
+                summary: "Add a scoped component.".into(),
+                patch_sha256: "c".repeat(64),
+            })
+            .collect();
+        assert_eq!(
+            proposal.validate(),
+            Err(ProposalValidationError::TooManyChanges)
+        );
     }
 }
