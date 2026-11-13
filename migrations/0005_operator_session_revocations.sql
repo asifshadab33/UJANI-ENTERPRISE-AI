@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS ujani_control.operator_session_revocations (
  nonce bytea NOT NULL CHECK (octet_length(nonce) = 16),
  expires_at timestamptz NOT NULL,
  revoked_at timestamptz NOT NULL DEFAULT now(),
- reason text NOT NULL CHECK (reason IN ('logout','admin_revoked','security_incident')),
+ reason text NOT NULL DEFAULT 'logout' CHECK (reason IN ('logout','admin_revoked','security_incident')),
  revoked_by_subject_id text,
  PRIMARY KEY (tenant_id, subject_id, nonce),
  FOREIGN KEY (tenant_id, subject_id)
