@@ -6,18 +6,6 @@ ALTER TABLE ujani_control.audit_events
  ALTER COLUMN sequence_id DROP DEFAULT,
  ALTER COLUMN event_digest SET DEFAULT decode(repeat('00', 32), 'hex');
 
-DO $grant$
-DECLARE
- sequence_name text;
-BEGIN
- sequence_name := pg_get_serial_sequence('ujani_control.audit_events', 'sequence_id');
- IF sequence_name IS NULL THEN
-  RAISE EXCEPTION 'audit sequence is not configured';
- END IF;
- EXECUTE format('GRANT USAGE ON SEQUENCE %s TO %I', sequence_name, 'ujani_runtime');
-END;
-$grant$;
-
 CREATE OR REPLACE FUNCTION ujani_control.enforce_audit_event_chain()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -29,7 +17,6 @@ DECLARE
  v_previous_digest bytea;
  v_previous_sequence bigint;
  v_payload jsonb;
- v_sequence_name text;
 BEGIN
  v_tenant_id := current_setting('ujani.tenant_id', true);
  IF v_tenant_id IS NULL OR v_tenant_id = '' OR NEW.tenant_id <> v_tenant_id THEN
@@ -46,14 +33,11 @@ BEGIN
   ORDER BY sequence_id DESC
   LIMIT 1;
 
- v_sequence_name := pg_get_serial_sequence('ujani_control.audit_events', 'sequence_id');
- IF v_sequence_name IS NULL THEN
-  RAISE EXCEPTION 'audit sequence is not configured';
- END IF;
- NEW.sequence_id := nextval(v_sequence_name);
- IF v_previous_sequence IS NOT NULL AND NEW.sequence_id <= v_previous_sequence THEN
-  RAISE EXCEPTION 'audit sequence did not advance';
- END IF;
+ -- The tenant/sequence primary key makes a stale REPEATABLE READ snapshot
+ -- fail with a uniqueness error instead of linking a fork to an obsolete tip.
+ -- Under READ COMMITTED, the advisory lock serializes writers and this reads
+ -- the latest committed tenant tip.
+ NEW.sequence_id := coalesce(v_previous_sequence, 0) + 1;
 
  NEW.previous_digest := v_previous_digest;
  v_payload := jsonb_build_object(
