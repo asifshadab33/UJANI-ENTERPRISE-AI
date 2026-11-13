@@ -1,0 +1,191 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ujani:self-evolution-proposal:v1",
+  "title": "UJANI Self-Evolution Proposal v1",
+  "description": "Untrusted, model-authored proposal metadata. It grants no authority to write files, execute code, approve changes, sign artifacts or install updates.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "proposal_id",
+    "target",
+    "summary",
+    "scope",
+    "findings",
+    "changes"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "proposal_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "target": {
+      "$ref": "#/$defs/target"
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    },
+    "scope": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/safe_path"
+      }
+    },
+    "findings": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "$ref": "#/$defs/finding"
+      }
+    },
+    "changes": {
+      "type": "array",
+      "maxItems": 128,
+      "items": {
+        "$ref": "#/$defs/change"
+      }
+    }
+  },
+  "$defs": {
+    "safe_path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^(?!/)(?!.*\\\\)(?!.*:)(?!.*(?:^|/)\\.\\.?(/|$))(?!.*(?:^|/)\\.git(/|$))[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$"
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository",
+        "base_ref",
+        "source_revision"
+      ],
+      "properties": {
+        "repository": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 256,
+          "pattern": "^(?!\\\\.{1,2}/)(?![^/]+/\\\\.{1,2}$)[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$"
+        },
+        "base_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^(?!/)(?!.*//)(?!.*\\.\\.)(?!.*(?:^|/)(?:\\.|\\.\\.)(?:/|$))(?!.*(?:^|/)[^/]*\\.lock(?:/|$))[A-Za-z0-9._/-]+$"
+        },
+        "source_revision": {
+          "type": "string",
+          "pattern": "^(?:[A-Fa-f0-9]{40}|[A-Fa-f0-9]{64})$"
+        }
+      }
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "category",
+        "severity",
+        "path",
+        "description",
+        "recommendation"
+      ],
+      "properties": {
+        "category": {
+          "enum": [
+            "bug",
+            "reliability",
+            "performance",
+            "accessibility",
+            "documentation",
+            "feature",
+            "compatibility",
+            "privacy",
+            "security"
+          ]
+        },
+        "severity": {
+          "enum": [
+            "info",
+            "low",
+            "medium",
+            "high",
+            "critical"
+          ]
+        },
+        "path": {
+          "$ref": "#/$defs/safe_path"
+        },
+        "line_start": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000000
+        },
+        "line_end": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000000
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 3000
+        },
+        "recommendation": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 3000
+        }
+      },
+      "dependentRequired": {
+        "line_start": [
+          "line_end"
+        ],
+        "line_end": [
+          "line_start"
+        ]
+      }
+    },
+    "change": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "operation",
+        "summary",
+        "patch_sha256"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/safe_path"
+        },
+        "operation": {
+          "enum": [
+            "add",
+            "modify",
+            "delete"
+          ]
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "patch_sha256": {
+          "type": "string",
+          "pattern": "^[A-Fa-f0-9]{64}$"
+        }
+      }
+    }
+  }
+}

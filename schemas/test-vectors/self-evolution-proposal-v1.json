@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "proposal_id": "proposal-2026-001",
+  "target": {
+    "repository": "asifshadab33/UJANI-ENTERPRISE-AI",
+    "base_ref": "main",
+    "source_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "summary": "Improve an accessible label in a non-core interface module.",
+  "scope": [
+    "apps/operator-console"
+  ],
+  "findings": [
+    {
+      "category": "accessibility",
+      "severity": "low",
+      "path": "apps/operator-console/app.js",
+      "line_start": 10,
+      "line_end": 15,
+      "description": "The result label is not explicit.",
+      "recommendation": "Add an accessible label."
+    }
+  ],
+  "changes": [
+    {
+      "path": "apps/operator-console/app.js",
+      "operation": "modify",
+      "summary": "Add an accessible label to the result control.",
+      "patch_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  ]
+}

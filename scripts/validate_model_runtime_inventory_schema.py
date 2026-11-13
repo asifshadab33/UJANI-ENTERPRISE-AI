@@ -10,6 +10,42 @@ from pathlib import Path
 SCHEMA_PATH = Path(__file__).resolve().parents[1] / "schemas/model-runtime-inventory-v1.schema.json"
 
 
+def validate_self_evolution_schema() -> None:
+    schema_path = Path(__file__).resolve().parents[1] / "schemas/self-evolution-proposal-v1.schema.json"
+    fixture_path = Path(__file__).resolve().parents[1] / "schemas/test-vectors/self-evolution-proposal-v1.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    jsonschema.Draft202012Validator.check_schema(schema)
+    assert schema["$id"] == "urn:ujani:self-evolution-proposal:v1"
+    assert schema["properties"]["schema_version"]["const"] == 1
+    validator = jsonschema.Draft202012Validator(schema)
+    fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+    validator.validate(fixture)
+
+    # The schema is a structural contract, not an authorization grant.
+    # It must reject traversal, malformed refs/digests, missing paired line bounds,
+    # and unknown fields before the Rust protected-path policy is consulted.
+    invalid_path = copy.deepcopy(fixture)
+    invalid_path["changes"][0]["path"] = "../outside.rs"
+    assert list(validator.iter_errors(invalid_path))
+
+    invalid_ref = copy.deepcopy(fixture)
+    invalid_ref["target"]["base_ref"] = "feature/../main"
+    assert list(validator.iter_errors(invalid_ref))
+
+    invalid_digest = copy.deepcopy(fixture)
+    invalid_digest["changes"][0]["patch_sha256"] = "not-a-digest"
+    assert list(validator.iter_errors(invalid_digest))
+
+    incomplete_line_range = copy.deepcopy(fixture)
+    incomplete_line_range["findings"][0].pop("line_end")
+    assert list(validator.iter_errors(incomplete_line_range))
+
+    unknown_field = copy.deepcopy(fixture)
+    unknown_field["changes"][0]["unreviewed_permission"] = "shell"
+    assert list(validator.iter_errors(unknown_field))
+    print("Self-evolution proposal v1 schema and fixture checks passed.")
+
+
 def main() -> None:
     """Validate the model-runtime inventory schema and its bounded fixtures."""
     schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
@@ -52,6 +88,8 @@ def main() -> None:
     unknown_model_field["models"][0]["unrecognised_capability_claim"] = True
     assert list(validator.iter_errors(unknown_model_field))
     print("Model/runtime inventory v1 schema and shared fixture checks passed.")
+
+    validate_self_evolution_schema()
 
     from validate_personal_enterprise_task_contract import main as validate_task_contract
     validate_task_contract()
