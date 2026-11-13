@@ -1,5 +1,5 @@
 -- Durable, tenant-isolated operator-session revocation records.
--- Apply after 0001_customer_hosted_control_plane.sql.
+-- Apply after 0004_audit_event_hash_chain.sql.
 -- Store only session identifiers/metadata, never bearer tokens or signing keys.
 -- Runtime code must use SET LOCAL ujani.tenant_id from authenticated identity.
 
