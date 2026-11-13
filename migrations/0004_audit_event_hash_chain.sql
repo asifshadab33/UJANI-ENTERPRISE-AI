@@ -6,7 +6,7 @@ ALTER TABLE ujani_control.audit_events
  ALTER COLUMN sequence_id DROP DEFAULT,
  ALTER COLUMN event_digest SET DEFAULT decode(repeat('00', 32), 'hex');
 
-DO $
+DO $grant$
 DECLARE
  sequence_name text;
 BEGIN
@@ -16,7 +16,7 @@ BEGIN
  END IF;
  EXECUTE format('GRANT USAGE ON SEQUENCE %s TO %I', sequence_name, 'ujani_runtime');
 END;
-$;
+$grant$;
 
 CREATE OR REPLACE FUNCTION ujani_control.enforce_audit_event_chain()
 RETURNS trigger
