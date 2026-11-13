@@ -58,6 +58,43 @@
       <div class="notice"><strong>Security Centre orchestration — high impact · read-only foundations</strong><p>Coordinates status from customer-selected antivirus, firewall and network-security tools. Current integrations are limited; no firewall rules, files, processes or endpoint settings are changed by this preview.</p></div>
       <div class="notice"><strong>Model distribution — supply-chain and resource risk · not enabled</strong><p>Future administrator allowlists must pin the exact artifact digest, publisher, licence and size, then check each device's fresh RAM/storage/runtime fit and owner consent. This catalogue does not download or distribute models.</p></div>
       <div class="notice"><strong>Remote Worker / Partner execution — critical risk · blocked</strong><p>Would delegate approved workloads to enrolled devices. It remains disabled until production identity, authenticated transport, receiver-side authorization, OS-enforced isolation, resource limits, cancellation, revocation and independent security review are complete. No administrator override is available.</p></div>
+      <div class="feature-risk-grid" aria-label="Detailed feature readiness">
+        <article class="feature-risk-card">
+          <div class="feature-risk-card-heading"><strong>Trusted-device enrollment and approval</strong><span class="pill pill-warn">Contract / prototype</span></div>
+          <p>Device identity and signed approval primitives exist, but production identity hosting and key custody are not complete.</p>
+          <details><summary>Prerequisites and evidence</summary><ul><li>Authenticated OIDC and HTTPS service.</li><li>Protected KMS/HSM or equivalent key custody and authoritative revocation.</li><li>Tenant-isolation, key-rotation and customer deployment validation.</li></ul></details>
+        </article>
+        <article class="feature-risk-card">
+          <div class="feature-risk-card-heading"><strong>Authenticated leases and reservations</strong><span class="pill pill-warn">Local / durable foundations</span></div>
+          <p>Lease and reservation policy primitives do not constitute a distributed production scheduler or authorize dispatch.</p>
+          <details><summary>Prerequisites and evidence</summary><ul><li>Production service-side and receiver-side authorization.</li><li>Replay protection, atomic reservation, expiry and cancellation.</li><li>Multi-device concurrency, opt-out race and recovery tests.</li></ul></details>
+        </article>
+        <article class="feature-risk-card">
+          <div class="feature-risk-card-heading"><strong>Workload admission and resource utilization</strong><span class="pill pill-warn">Policy contracts only</span></div>
+          <p>Resource policies are advisory until every worker rechecks fresh device evidence and consent at admission time.</p>
+          <details><summary>Prerequisites and evidence</summary><ul><li>Fresh RAM, storage, power, thermal and interactive-use evidence.</li><li>Separate device-owner opt-in, administrator schedule and resource quotas.</li><li>OS-enforced isolation, cancellation and audit before any dispatch.</li></ul></details>
+        </article>
+        <article class="feature-risk-card">
+          <div class="feature-risk-card-heading"><strong>Enterprise Intelligence planner</strong><span class="pill">Design only</span></div>
+          <p>No production provider connectors or account integrations are established by this operator preview.</p>
+          <details><summary>Prerequisites and evidence</summary><ul><li>Tenant policy plus per-user delegated OAuth consent.</li><li>Read-only source access, least-privilege scopes and revocation.</li><li>No message sending, calendar mutation or autonomous scheduling in the MVP.</li></ul></details>
+        </article>
+        <article class="feature-risk-card">
+          <div class="feature-risk-card-heading"><strong>Tenant-isolated cache</strong><span class="pill">Contract only</span></div>
+          <p>Cache isolation and authorization requirements are documented; a production tenant-scoped cache service is not established by this preview.</p>
+          <details><summary>Prerequisites and evidence</summary><ul><li>Partition by tenant, site, device, authenticated principal, scope and policy version.</li><li>Re-authorize every lookup against authoritative service state.</li><li>Prove revocation, role-change and tenant-switch invalidation with cross-tenant tests.</li></ul></details>
+        </article>
+        <article class="feature-risk-card">
+          <div class="feature-risk-card-heading"><strong>Infrastructure Shield profiles</strong><span class="pill">Design only</span></div>
+          <p>Customer-selected firewall, monitoring and legacy-network profiles are deployment designs, not an installed or reconfigured service.</p>
+          <details><summary>Prerequisites and evidence</summary><ul><li>Customer-selected tools and explicit scope; no silent installation.</li><li>Least-privilege deployment, signed configuration, rollback and operator handover.</li><li>Controlled customer-lab validation before any production network changes.</li></ul></details>
+        </article>
+        <article class="feature-risk-card">
+          <div class="feature-risk-card-heading"><strong>Self-Evolution Engine</strong><span class="pill">Proposal-only development</span></div>
+          <p>The first proposal contract is being developed. It does not grant the model source access, code execution, approval, signing or fleet update authority.</p>
+          <details><summary>Prerequisites and evidence</summary><ul><li>Tenant-scoped trusted source checkout and isolated build workspace.</li><li>Protected control-plane policy, independent review and administrator approval.</li><li>Organization-controlled KMS/HSM signing, staged rollout and rollback.</li><li>Fleet devices receive only verified signed artifacts; generated code is never executed on worker devices.</li></ul></details>
+        </article>
+      </div>
       <p class="muted">Unknown, stale or missing policy/consent must fail closed. A tenant administrator cannot override an individual device owner's consent or a missing security gate.</p>
     </section>
     <section class="two-column">
