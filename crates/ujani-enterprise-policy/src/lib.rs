@@ -3,6 +3,8 @@
 
 #![forbid(unsafe_code)]
 
+pub mod self_evolution;
+
 pub mod capability_registry;
 pub mod collective_defence_authority;
 pub mod collective_defence_consent;
