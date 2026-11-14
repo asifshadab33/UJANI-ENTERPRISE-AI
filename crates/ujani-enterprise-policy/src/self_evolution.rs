@@ -2,8 +2,10 @@
 //!
 //! The model supplies findings and proposed changes only. Repository identity,
 //! source revision, approved write scope, proposal ID, model identity and approval
-//! are supplied and recorded by trusted host code. This module performs no file
-//! access, patch application, code execution, signing, installation or networking.
+//! are supplied and recorded by trusted host code. This module performs no file access, patch application, code execution,
+//! signing, installation or networking. Exact approved patch artifacts are
+//! checked separately by self_evolution_patch; that validator also has no
+//! filesystem or execution side effects.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
