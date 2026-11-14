@@ -138,9 +138,7 @@ pub fn evaluate_enterprise_self_evolution(
         || !policy.approved_write_scopes.iter().any(|approved| {
             normalize_scope(approved)
                 .zip(normalized_scope.as_ref())
-                .is_some_and(|(approved, requested)| {
-                    requested == &approved
-                })
+                .is_some_and(|(approved, requested)| requested == &approved)
         })
     {
         Some(SelfEvolutionBlock::ScopeNotApproved)
@@ -343,7 +341,8 @@ mod tests {
             Some(SelfEvolutionBlock::ScopeNotApproved)
         );
 
-        p.approved_write_scopes.insert(r.requested_write_scope.clone());
+        p.approved_write_scopes
+            .insert(r.requested_write_scope.clone());
         assert_eq!(
             evaluate_enterprise_self_evolution(ModuleInstallState::Installed, &p, &r).blocked_by,
             None
