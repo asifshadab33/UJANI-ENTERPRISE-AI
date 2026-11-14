@@ -8,6 +8,93 @@ ALTER TABLE ujani_control.devices
  ADD COLUMN IF NOT EXISTS consent_generation bigint NOT NULL DEFAULT 0 CHECK (consent_generation >= 0),
  ADD COLUMN IF NOT EXISTS reservation_revision bigint NOT NULL DEFAULT 0 CHECK (reservation_revision >= 0);
 
+-- Bind each enrolled device to a tenant identity. The owner subject is assigned
+-- by the authenticated administrator enrollment service; runtime lease admission
+-- can only read this binding and cannot create or change it.
+CREATE TABLE IF NOT EXISTS ujani_control.device_owner_bindings (
+ tenant_id text NOT NULL,
+ device_id text NOT NULL,
+ owner_subject_id text NOT NULL,
+ bound_by_subject_id text NOT NULL,
+ binding_revision bigint NOT NULL CHECK (binding_revision > 0),
+ active boolean NOT NULL DEFAULT true,
+ binding_digest bytea NOT NULL CHECK (octet_length(binding_digest) = 32),
+ bound_at timestamptz NOT NULL DEFAULT now(),
+ admission_lock_marker boolean NOT NULL DEFAULT false,
+ PRIMARY KEY (tenant_id, device_id),
+ FOREIGN KEY (tenant_id, device_id)
+  REFERENCES ujani_control.devices(tenant_id, device_id),
+ FOREIGN KEY (tenant_id, owner_subject_id)
+  REFERENCES ujani_control.operator_subjects(tenant_id, subject_id),
+ FOREIGN KEY (tenant_id, bound_by_subject_id)
+  REFERENCES ujani_control.operator_subjects(tenant_id, subject_id)
+);
+ALTER TABLE ujani_control.device_owner_bindings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ujani_control.device_owner_bindings FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tenant_isolation ON ujani_control.device_owner_bindings;
+CREATE POLICY tenant_isolation ON ujani_control.device_owner_bindings
+ USING (tenant_id = current_setting('ujani.tenant_id', true))
+ WITH CHECK (tenant_id = current_setting('ujani.tenant_id', true));
+
+CREATE OR REPLACE FUNCTION ujani_control.validate_device_owner_binding()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = pg_catalog, ujani_control
+AS $function$
+DECLARE
+ v_owner_enabled boolean;
+ v_admin_enabled boolean;
+ v_admin_role text;
+BEGIN
+ IF NEW.tenant_id IS DISTINCT FROM pg_catalog.current_setting('ujani.tenant_id', true) THEN
+  RAISE EXCEPTION 'authenticated tenant context mismatch' USING ERRCODE = '42501';
+ END IF;
+
+ -- Use the same device-row lock order as consent changes and lease admission.
+ PERFORM 1 FROM ujani_control.devices
+ WHERE tenant_id = NEW.tenant_id AND device_id = NEW.device_id
+ FOR UPDATE;
+ IF NOT FOUND THEN
+  RAISE EXCEPTION 'device owner binding references an unknown device' USING ERRCODE = '23503';
+ END IF;
+
+ SELECT enabled INTO v_owner_enabled
+ FROM ujani_control.operator_subjects
+ WHERE tenant_id = NEW.tenant_id AND subject_id = NEW.owner_subject_id
+ FOR SHARE;
+ IF NOT FOUND OR v_owner_enabled IS DISTINCT FROM true THEN
+  RAISE EXCEPTION 'device owner must be an enabled tenant subject' USING ERRCODE = '23514';
+ END IF;
+
+ SELECT role, enabled INTO v_admin_role, v_admin_enabled
+ FROM ujani_control.operator_subjects
+ WHERE tenant_id = NEW.tenant_id AND subject_id = NEW.bound_by_subject_id
+ FOR SHARE;
+ IF NOT FOUND OR v_admin_enabled IS DISTINCT FROM true OR v_admin_role <> 'administrator' THEN
+  RAISE EXCEPTION 'device owner binding requires an enabled administrator' USING ERRCODE = '42501';
+ END IF;
+
+ IF TG_OP = 'INSERT' THEN
+  IF NEW.binding_revision <> 1 THEN
+   RAISE EXCEPTION 'initial device owner binding revision must be one' USING ERRCODE = '23514';
+  END IF;
+ ELSE
+  IF NEW.tenant_id IS DISTINCT FROM OLD.tenant_id
+     OR NEW.device_id IS DISTINCT FROM OLD.device_id
+     OR NEW.binding_revision <> OLD.binding_revision + 1 THEN
+   RAISE EXCEPTION 'device owner binding revision must advance monotonically' USING ERRCODE = '23514';
+  END IF;
+ END IF;
+ RETURN NEW;
+END;
+$function$;
+
+DROP TRIGGER IF EXISTS device_owner_binding_validate ON ujani_control.device_owner_bindings;
+CREATE TRIGGER device_owner_binding_validate
+ BEFORE INSERT OR UPDATE ON ujani_control.device_owner_bindings
+ FOR EACH ROW EXECUTE FUNCTION ujani_control.validate_device_owner_binding();
+
 -- PostgreSQL requires UPDATE privilege on at least one column of a relation
 -- for SELECT ... FOR SHARE. Give the runtime role a column-only privilege on
 -- this inert marker, then reject every attempted value change. This permits
