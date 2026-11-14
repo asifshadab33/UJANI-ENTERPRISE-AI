@@ -4,7 +4,9 @@
 //! one policy operation, and commits an HMAC-authenticated snapshot using a same-directory
 //! temp file plus backup/rename recovery. The raw lease capability is never
 //! persisted; only its domain-separated digest is stored.
-use crate::device_trust::durable::{AnchorCallPolicy, MonotonicSnapshotAnchor, SnapshotAnchorRecord};
+use crate::device_trust::durable::{
+    AnchorCallPolicy, MonotonicSnapshotAnchor, SnapshotAnchorRecord,
+};
 #[cfg(test)]
 use crate::{Admission, ClassPolicy, Device, SchedulingContext, VerifiedAdminApproval, Workload};
 use crate::{Ledger, TelemetryChallengeError};
@@ -177,7 +179,12 @@ impl DurableLedger {
         anchor: Arc<dyn MonotonicSnapshotAnchor>,
     ) -> Result<Self, DurableLedgerError> {
         Self::open_with_anchor_and_policy(
-            path, registry_id, active_key_id, keys, anchor, AnchorCallPolicy::default(),
+            path,
+            registry_id,
+            active_key_id,
+            keys,
+            anchor,
+            AnchorCallPolicy::default(),
         )
     }
 
@@ -195,7 +202,9 @@ impl DurableLedger {
             return Err(DurableLedgerError::InvalidRecord);
         }
         Self::open_internal(
-            path, active_key_id, keys,
+            path,
+            active_key_id,
+            keys,
             Some((registry_id, anchor, anchor_call_policy)),
         )
     }
@@ -555,7 +564,11 @@ impl DurableLedger {
         let lock_file = lock_options.open(&self.lock_path)?;
         lock_file.lock()?;
 
-        let anchor_record = match (&self.anchor, &self.anchor_namespace, &self.anchor_call_policy) {
+        let anchor_record = match (
+            &self.anchor,
+            &self.anchor_namespace,
+            &self.anchor_call_policy,
+        ) {
             (Some(anchor), Some(namespace), Some(policy)) => anchor
                 .load(namespace, &policy.call_context())
                 .map_err(DurableLedgerError::AnchorUnavailable)?,
@@ -584,7 +597,11 @@ impl DurableLedger {
             return Ok(result);
         }
 
-        if let (Some(anchor), Some(namespace), Some(policy)) = (&self.anchor, &self.anchor_namespace, &self.anchor_call_policy) {
+        if let (Some(anchor), Some(namespace), Some(policy)) = (
+            &self.anchor,
+            &self.anchor_namespace,
+            &self.anchor_call_policy,
+        ) {
             persist_snapshot(
                 &self.path,
                 &ledger,
@@ -599,7 +616,12 @@ impl DurableLedger {
                 .ok_or(DurableLedgerError::AnchorGenerationExhausted)?;
             let next = SnapshotAnchorRecord::new(generation, snapshot_sha256(&bytes))
                 .ok_or(DurableLedgerError::AnchorGenerationExhausted)?;
-            match anchor.compare_and_set(namespace, expected_generation, next.clone(), &policy.call_context()) {
+            match anchor.compare_and_set(
+                namespace,
+                expected_generation,
+                next.clone(),
+                &policy.call_context(),
+            ) {
                 Ok(true) => {
                     let backup = append_suffix(&self.path, ".bak");
                     if backup.exists() {
@@ -1383,7 +1405,11 @@ mod tests {
     }
 
     impl MonotonicSnapshotAnchor for MemoryAnchor {
-        fn load(&self, registry_id: &str, context: &crate::device_trust::durable::AnchorCallContext) -> Result<Option<SnapshotAnchorRecord>, String> {
+        fn load(
+            &self,
+            registry_id: &str,
+            context: &crate::device_trust::durable::AnchorCallContext,
+        ) -> Result<Option<SnapshotAnchorRecord>, String> {
             context.check_active().map_err(|error| error.to_string())?;
             let record = self
                 .records
@@ -1458,11 +1484,9 @@ mod tests {
         let anchor = Arc::new(MemoryAnchor::default());
         let cancellation = crate::device_trust::durable::AnchorCancellationToken::new();
         cancellation.cancel();
-        let policy = AnchorCallPolicy::with_cancellation(
-            std::time::Duration::from_secs(1),
-            cancellation,
-        )
-        .unwrap();
+        let policy =
+            AnchorCallPolicy::with_cancellation(std::time::Duration::from_secs(1), cancellation)
+                .unwrap();
 
         let result = DurableLedger::open_with_anchor_and_policy(
             &path,
@@ -1543,7 +1567,11 @@ mod tests {
             &path,
             "test-v1",
             vec![integrity_key("test-v1")],
-            Some(("registry-test-a".into(), anchor.clone(), AnchorCallPolicy::default())),
+            Some((
+                "registry-test-a".into(),
+                anchor.clone(),
+                AnchorCallPolicy::default(),
+            )),
             |_parent| {
                 observed.store(true, std::sync::atomic::Ordering::SeqCst);
                 Err(DurableLedgerError::Io(
@@ -1710,7 +1738,11 @@ mod tests {
             &path,
             "test-v1",
             vec![integrity_key("test-v1")],
-            Some(("registry-test-a".into(), anchor.clone(), AnchorCallPolicy::default())),
+            Some((
+                "registry-test-a".into(),
+                anchor.clone(),
+                AnchorCallPolicy::default(),
+            )),
             |_parent| {
                 Err(DurableLedgerError::Io(
                     "simulated ancestor sync failure".into(),
