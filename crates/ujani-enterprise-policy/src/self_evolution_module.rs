@@ -291,7 +291,7 @@ mod tests {
     }
 
     #[test]
-    fn review_submission_fails_closed_until_typed_approval_pipeline_is_integrated() {
+    fn review_submission_fails_closed_until_patch_workflow_is_integrated() {
         let result = evaluate_enterprise_self_evolution(
             ModuleInstallState::Installed,
             &policy(),
