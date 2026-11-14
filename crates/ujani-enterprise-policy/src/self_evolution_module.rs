@@ -105,11 +105,15 @@ pub fn evaluate_enterprise_self_evolution(
     } else if !policy.activated_by_administrator {
         Some(SelfEvolutionBlock::AdministratorActivationRequired)
     } else if !valid_identifier(&request.selected_model_id)
-        || !policy.approved_model_ids.contains(&request.selected_model_id)
+        || !policy
+            .approved_model_ids
+            .contains(&request.selected_model_id)
     {
         Some(SelfEvolutionBlock::ModelNotApproved)
     } else if !valid_identifier(&request.requested_write_scope)
-        || !policy.approved_write_scopes.contains(&request.requested_write_scope)
+        || !policy
+            .approved_write_scopes
+            .contains(&request.requested_write_scope)
     {
         Some(SelfEvolutionBlock::ScopeNotApproved)
     } else if is_protected_scope(&request.requested_write_scope) {
@@ -172,21 +176,33 @@ mod tests {
         assert!(!result.may_analyse);
         assert!(!result.may_prepare_proposals);
         assert!(!result.may_submit_for_review);
-        assert_eq!(result.blocked_by, Some(SelfEvolutionBlock::AdministratorProhibited));
+        assert_eq!(
+            result.blocked_by,
+            Some(SelfEvolutionBlock::AdministratorProhibited)
+        );
     }
 
     #[test]
     fn installation_does_not_activate_the_module() {
-        let result =
-            evaluate_enterprise_self_evolution(ModuleInstallState::NotInstalled, &policy(), &request());
+        let result = evaluate_enterprise_self_evolution(
+            ModuleInstallState::NotInstalled,
+            &policy(),
+            &request(),
+        );
         assert!(!result.may_prepare_proposals);
-        assert_eq!(result.blocked_by, Some(SelfEvolutionBlock::ModuleNotInstalled));
+        assert_eq!(
+            result.blocked_by,
+            Some(SelfEvolutionBlock::ModuleNotInstalled)
+        );
         let mut p = policy();
         p.activated_by_administrator = false;
         let result =
             evaluate_enterprise_self_evolution(ModuleInstallState::Installed, &p, &request());
         assert!(!result.may_prepare_proposals);
-        assert_eq!(result.blocked_by, Some(SelfEvolutionBlock::AdministratorActivationRequired));
+        assert_eq!(
+            result.blocked_by,
+            Some(SelfEvolutionBlock::AdministratorActivationRequired)
+        );
     }
 
     #[test]
