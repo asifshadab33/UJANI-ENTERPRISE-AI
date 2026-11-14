@@ -338,7 +338,7 @@ mod tests {
         );
 
         r.requested_write_scope = "crates".into();
-        p.approved_write_scopes = BTreeSet::from(["crates".into()]);
+        p.approved_write_scopes = BTreeSet::from(["apps/operator-console/help".into()]);
         assert_eq!(
             evaluate_enterprise_self_evolution(ModuleInstallState::Installed, &p, &r).blocked_by,
             Some(SelfEvolutionBlock::ProtectedScope)
