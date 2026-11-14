@@ -4,10 +4,10 @@
 #![forbid(unsafe_code)]
 
 pub mod self_evolution;
-/// Signed administrator approval gate for exact self-evolution proposals.
-pub mod self_evolution_approval;
 /// Administrator-only gate for optional self-evolution; no patch application.
 pub mod self_evolution_admin;
+/// Signed administrator approval gate for exact self-evolution proposals.
+pub mod self_evolution_approval;
 
 pub mod capability_registry;
 pub mod collective_defence_authority;
