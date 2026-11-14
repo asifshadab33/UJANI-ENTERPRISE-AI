@@ -86,6 +86,17 @@ BEGIN
    RAISE EXCEPTION 'device owner binding revision must advance monotonically' USING ERRCODE = '23514';
   END IF;
  END IF;
+
+ INSERT INTO ujani_control.audit_events
+  (tenant_id,event_id,actor_ref,actor_role,event_type,outcome,object_ref)
+ VALUES
+  (NEW.tenant_id,pg_catalog.gen_random_uuid(),NEW.bound_by_subject_id,'administrator',
+   CASE WHEN TG_OP='INSERT' THEN 'device.owner_binding.created' ELSE 'device.owner_binding.updated' END,
+   CASE WHEN NEW.active THEN 'active' ELSE 'inactive' END,
+   'device=' || pg_catalog.left(NEW.device_id,64)
+   || ';owner=' || pg_catalog.left(NEW.owner_subject_id,64)
+   || ';revision=' || NEW.binding_revision::text
+   || ';binding=' || pg_catalog.left(pg_catalog.encode(NEW.binding_digest,'hex'),16));
  RETURN NEW;
 END;
 $function$;
