@@ -4,6 +4,8 @@
 #![forbid(unsafe_code)]
 
 pub mod self_evolution;
+/// Administrator-only gate for optional self-evolution; no patch application.
+pub mod self_evolution_admin;
 
 pub mod capability_registry;
 pub mod collective_defence_authority;
