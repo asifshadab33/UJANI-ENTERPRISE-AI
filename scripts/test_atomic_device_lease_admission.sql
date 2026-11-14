@@ -102,7 +102,7 @@ ON CONFLICT (tenant_id,device_id) DO UPDATE SET
  owner_subject_id=EXCLUDED.owner_subject_id,
  bound_by_subject_id=EXCLUDED.bound_by_subject_id,
  binding_revision=ujani_control.device_owner_bindings.binding_revision+1,
- active=true,binding_digest=EXCLUDED.binding_digest,bound_at=clock_timestamp();
+ active=true,binding_digest=decode(repeat('34',32),'hex'),bound_at=clock_timestamp();
 INSERT INTO ujani_control.owner_consents
  (tenant_id,device_id,consent_generation,state,actor_ref,evidence_digest)
 VALUES ('admission-test','admission-device-paused',1,'paused','admission-owner',
