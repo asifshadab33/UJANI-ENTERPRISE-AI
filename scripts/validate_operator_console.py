@@ -78,6 +78,9 @@ def main():
     assert "<th>RAM fit</th>" in html, "Model RAM fit column is missing."
     assert "renderModelInventory(data.model_inventory || [], data)" in js, "Authenticated model inventory must be rendered."
     assert "prompts, model contents and local file paths are never displayed" in html.lower(), "Model inventory privacy boundary must be visible."
+    assert "does not yet verify two distinct approvals" in html, "Self-Evolution must not overstate dual-approval enforcement."
+    assert "read-only console has no activation, staging or apply workflow" in html, "Self-Evolution must remain visibly non-executable in the console."
+    assert "signature verification alone is not replay protection" in html, "Self-Evolution approval replay limitation must be visible."
     assert "overflow" in css or "overflow-x" in css, "Responsive table overflow handling missing."
     control_plane = (ROOT / "crates" / "ujani-enterprise-policy" / "src" / "operator_control_plane.rs").read_text(encoding="utf-8")
     for required in (
