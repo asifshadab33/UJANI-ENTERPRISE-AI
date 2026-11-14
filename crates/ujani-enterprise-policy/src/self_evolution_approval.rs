@@ -6,6 +6,7 @@
 //! The hosting service must atomically consume the nonce in durable storage before
 //! authorizing any later, separately reviewed change workflow.
 
+use crate::operator_control_plane::valid_identifier;
 use crate::self_evolution::{ProposalTarget, SelfEvolutionProposalV1, MAX_PROPOSAL_SCOPE_PATHS};
 use ed25519_dalek::{Signature, VerifyingKey};
 use serde::{Deserialize, Serialize};
@@ -54,14 +55,6 @@ pub enum SelfEvolutionApprovalError {
 
 /// Trusted key enrollment tuple: key ID, tenant ID, operator subject ID, public key.
 pub type TrustedSelfEvolutionAdminKey = (String, String, String, VerifyingKey);
-
-fn valid_identifier(value: &str, max_bytes: usize) -> bool {
-    !value.is_empty()
-        && value.len() <= max_bytes
-        && value
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
-}
 
 fn valid_revision(value: &str) -> bool {
     (value.len() == 40 || value.len() == 64) && value.bytes().all(|b| b.is_ascii_hexdigit())
