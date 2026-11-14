@@ -144,6 +144,8 @@ BEGIN
     OR has_table_privilege(current_user,'ujani_control.operator_subjects','INSERT')
     OR has_table_privilege(current_user,'ujani_control.operator_subjects','UPDATE')
     OR has_table_privilege(current_user,'ujani_control.operator_subjects','DELETE')
+    OR has_table_privilege(current_user,'ujani_control.device_keys','INSERT')
+    OR has_table_privilege(current_user,'ujani_control.device_keys','UPDATE')
     OR has_table_privilege(current_user,'ujani_control.device_keys','DELETE')
     OR has_column_privilege(current_user,'ujani_control.devices','key_generation','UPDATE')
     OR has_column_privilege(current_user,'ujani_control.devices','consent_generation','UPDATE')
