@@ -219,6 +219,8 @@ DECLARE admitted boolean;
 DECLARE lease_count integer;
 DECLARE replay_count integer;
 DECLARE audit_count integer;
+DECLARE audit_previous bytea;
+DECLARE audit_digest bytea;
 DECLARE revision_value bigint;
 DECLARE table_name text;
 DECLARE column_name text;
@@ -294,7 +296,7 @@ BEGIN
     AND a.attnum > 0 AND NOT a.attisdropped
     AND NOT (
       (c.relname = 'devices' AND a.attname IN ('reservation_revision','updated_at'))
-      OR (c.relname IN ('device_keys','owner_consents','workloads','approvals','operator_subjects')
+      OR (c.relname IN ('device_keys','owner_consents','workloads','approvals','operator_subjects','device_owner_bindings')
           AND a.attname = 'admission_lock_marker')
     )
  LOOP
@@ -408,6 +410,15 @@ BEGIN
  IF lease_count <> 1 OR replay_count <> 1 OR audit_count <> 1 OR revision_value <> 1 THEN
   RAISE EXCEPTION 'admission writes were not atomic: leases %, replays %, audit %, revision %',
    lease_count,replay_count,audit_count,revision_value;
+ END IF;
+
+ SELECT previous_digest, event_digest INTO audit_previous, audit_digest
+ FROM ujani_control.audit_events
+ WHERE tenant_id='admission-test'
+   AND event_id='00000000-0000-4000-8000-000000000081';
+ IF audit_previous IS NOT NULL
+    OR audit_digest IS DISTINCT FROM decode(repeat('81',32),'hex') THEN
+  RAISE EXCEPTION 'audit event did not preserve the expected chain head and digest';
  END IF;
 
  -- A late audit failure must roll back the nonce, lease and revision as well.
