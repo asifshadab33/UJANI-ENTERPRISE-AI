@@ -1543,7 +1543,7 @@ mod tests {
             &path,
             "test-v1",
             vec![integrity_key("test-v1")],
-            Some(("registry-test-a".into(), anchor.clone())),
+            Some(("registry-test-a".into(), anchor.clone(), AnchorCallPolicy::default())),
             |_parent| {
                 observed.store(true, std::sync::atomic::Ordering::SeqCst);
                 Err(DurableLedgerError::Io(
@@ -1710,7 +1710,7 @@ mod tests {
             &path,
             "test-v1",
             vec![integrity_key("test-v1")],
-            Some(("registry-test-a".into(), anchor.clone())),
+            Some(("registry-test-a".into(), anchor.clone(), AnchorCallPolicy::default())),
             |_parent| {
                 Err(DurableLedgerError::Io(
                     "simulated ancestor sync failure".into(),
