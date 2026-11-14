@@ -286,7 +286,7 @@ BEGIN
  -- The row-lock marker is not mutable, even though PostgreSQL requires a
  -- column-level UPDATE grant for SELECT FOR SHARE.
  FOREACH table_name IN ARRAY ARRAY[
-  'device_keys','owner_consents','workloads','approvals','operator_subjects'
+  'device_keys','owner_consents','workloads','approvals','operator_subjects','device_owner_bindings'
  ] LOOP
   BEGIN
    EXECUTE format(
@@ -303,13 +303,24 @@ BEGIN
   'admission-test','admission-device','admission-workload','admission-approval',
   'admission-lease-1',decode(repeat('51',16),'hex'),decode(repeat('52',32),'hex'),
   decode(repeat('44',32),'hex'),1,1,1000,1024,decode(repeat('53',32),'hex'),
+  NULL,decode(repeat('81',32),'hex'),
   clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000081');
  IF admitted IS DISTINCT FROM true THEN RAISE EXCEPTION 'valid admission was not committed'; END IF;
+
+ -- A stale audit-chain head must fail before consuming the request nonce.
+ admitted := ujani_control.admit_device_lease(
+  'admission-test','admission-device','admission-workload','admission-approval',
+  'admission-lease-stale-audit-head',decode(repeat('91',16),'hex'),decode(repeat('92',32),'hex'),
+  decode(repeat('44',32),'hex'),1,1,100,100,decode(repeat('93',32),'hex'),
+  NULL,decode(repeat('83',32),'hex'),
+  clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000089');
+ IF admitted THEN RAISE EXCEPTION 'stale audit-chain head was accepted'; END IF;
 
  admitted := ujani_control.admit_device_lease(
   'admission-test','admission-device','admission-workload','admission-approval',
   'admission-lease-replay',decode(repeat('51',16),'hex'),decode(repeat('52',32),'hex'),
   decode(repeat('44',32),'hex'),1,1,1000,1024,decode(repeat('54',32),'hex'),
+  NULL,decode(repeat('99',32),'hex'),
   clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000082');
  IF admitted THEN RAISE EXCEPTION 'replayed request was admitted'; END IF;
 
@@ -317,6 +328,7 @@ BEGIN
   'admission-test','admission-device','admission-workload','admission-approval',
   'admission-lease-over-capacity',decode(repeat('55',16),'hex'),decode(repeat('56',32),'hex'),
   decode(repeat('44',32),'hex'),1,1,3500,1024,decode(repeat('57',32),'hex'),
+  NULL,decode(repeat('99',32),'hex'),
   clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000083');
  IF admitted THEN RAISE EXCEPTION 'over-capacity request was admitted'; END IF;
 
@@ -324,6 +336,7 @@ BEGIN
   'admission-test','admission-device','admission-workload','admission-disabled-approval',
   'admission-lease-disabled-admin',decode(repeat('65',16),'hex'),decode(repeat('66',32),'hex'),
   decode(repeat('44',32),'hex'),1,1,100,100,decode(repeat('67',32),'hex'),
+  NULL,decode(repeat('99',32),'hex'),
   clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000085');
  IF admitted THEN RAISE EXCEPTION 'approval from a disabled administrator was accepted'; END IF;
 
@@ -331,6 +344,7 @@ BEGIN
   'admission-test','admission-device','admission-workload','admission-viewer-approval',
   'admission-lease-viewer',decode(repeat('68',16),'hex'),decode(repeat('69',32),'hex'),
   decode(repeat('44',32),'hex'),1,1,100,100,decode(repeat('6a',32),'hex'),
+  NULL,decode(repeat('99',32),'hex'),
   clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000086');
  IF admitted THEN RAISE EXCEPTION 'approval from a non-administrator was accepted'; END IF;
 
@@ -338,6 +352,7 @@ BEGIN
   'admission-test','admission-device-future-key','admission-workload','admission-approval',
   'admission-lease-future-key',decode(repeat('71',16),'hex'),decode(repeat('72',32),'hex'),
   decode(repeat('44',32),'hex'),2,1,100,100,decode(repeat('73',32),'hex'),
+  NULL,decode(repeat('99',32),'hex'),
   clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000087');
  IF admitted THEN RAISE EXCEPTION 'future-dated active device key was accepted'; END IF;
 
@@ -345,6 +360,7 @@ BEGIN
   'admission-test','admission-device-revoked-key','admission-workload','admission-approval',
   'admission-lease-revoked-key',decode(repeat('74',16),'hex'),decode(repeat('75',32),'hex'),
   decode(repeat('44',32),'hex'),3,1,100,100,decode(repeat('76',32),'hex'),
+  NULL,decode(repeat('99',32),'hex'),
   clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000088');
  IF admitted THEN RAISE EXCEPTION 'revoked active device key was accepted'; END IF;
 
@@ -352,6 +368,7 @@ BEGIN
   'admission-test','admission-device-paused','admission-workload','admission-approval',
   'admission-lease-optout',decode(repeat('58',16),'hex'),decode(repeat('59',32),'hex'),
   decode(repeat('44',32),'hex'),1,1,100,100,decode(repeat('5a',32),'hex'),
+  NULL,decode(repeat('99',32),'hex'),
   clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000084');
  IF admitted THEN RAISE EXCEPTION 'paused owner consent admitted work'; END IF;
 
@@ -374,6 +391,7 @@ BEGIN
    'admission-test','admission-device','admission-workload','admission-approval',
    'admission-lease-rollback',decode(repeat('61',16),'hex'),decode(repeat('62',32),'hex'),
    decode(repeat('44',32),'hex'),1,1,100,100,decode(repeat('63',32),'hex'),
+   decode(repeat('81',32),'hex'),decode(repeat('82',32),'hex'),
    clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000081');
   RAISE EXCEPTION 'duplicate audit event id did not fail';
  EXCEPTION WHEN unique_violation THEN
