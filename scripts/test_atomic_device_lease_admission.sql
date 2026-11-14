@@ -8,7 +8,8 @@ INSERT INTO ujani_control.operator_subjects
  (tenant_id,subject_id,role,enabled,idp_issuer,idp_subject)
 VALUES
  ('admission-test','admission-admin','administrator',true,'ci','admission-admin'),
- ('admission-test','admission-owner','operator',true,'ci','admission-owner')
+ ('admission-test','admission-owner','operator',true,'ci','admission-owner'),
+ ('admission-test','admission-disabled-owner','operator',true,'ci','admission-disabled-owner')
 ON CONFLICT (tenant_id,subject_id) DO UPDATE SET enabled=true;
 INSERT INTO ujani_control.operator_subjects
  (tenant_id,subject_id,role,enabled,idp_issuer,idp_subject)
@@ -144,7 +145,9 @@ VALUES
  ('admission-test','admission-device-future-key','Future Key Device','linux','enrolled',
   'granted','approved','future-key',2,0,1,1,clock_timestamp()),
  ('admission-test','admission-device-revoked-key','Revoked Key Device','linux','enrolled',
-  'granted','approved','revoked-key',3,0,1,1,clock_timestamp())
+  'granted','approved','revoked-key',3,0,1,1,clock_timestamp()),
+ ('admission-test','admission-device-disabled-owner','Disabled Owner Device','linux','enrolled',
+  'granted','approved','disabled-owner-key',1,0,1,1,clock_timestamp())
 ON CONFLICT (tenant_id,device_id) DO UPDATE SET
  trust_state='enrolled',owner_consent_state='granted',admin_approval_state='approved',
  active_key_id=EXCLUDED.active_key_id,key_generation=EXCLUDED.key_generation,
@@ -156,24 +159,32 @@ VALUES
  ('admission-test','admission-device-future-key','future-key',decode(repeat('16',32),'hex'),
   2,'active',clock_timestamp()+interval '1 hour',NULL),
  ('admission-test','admission-device-revoked-key','revoked-key',decode(repeat('17',32),'hex'),
-  3,'active',clock_timestamp()-interval '1 hour',clock_timestamp())
+  3,'active',clock_timestamp()-interval '1 hour',clock_timestamp()),
+ ('admission-test','admission-device-disabled-owner','disabled-owner-key',decode(repeat('1a',32),'hex'),
+  1,'active',clock_timestamp()-interval '1 hour',NULL)
 ON CONFLICT (tenant_id,device_id,key_id) DO UPDATE SET
  state='active',valid_from=EXCLUDED.valid_from,revoked_at=EXCLUDED.revoked_at;
 INSERT INTO ujani_control.device_owner_bindings
  (tenant_id,device_id,owner_subject_id,bound_by_subject_id,binding_revision,active,binding_digest)
 VALUES
  ('admission-test','admission-device-future-key','admission-owner','admission-admin',1,true,decode(repeat('26',32),'hex')),
- ('admission-test','admission-device-revoked-key','admission-owner','admission-admin',1,true,decode(repeat('27',32),'hex'))
+ ('admission-test','admission-device-revoked-key','admission-owner','admission-admin',1,true,decode(repeat('27',32),'hex')),
+ ('admission-test','admission-device-disabled-owner','admission-disabled-owner','admission-admin',1,true,decode(repeat('28',32),'hex'))
 ON CONFLICT (tenant_id,device_id) DO UPDATE SET
  owner_subject_id=EXCLUDED.owner_subject_id,
  bound_by_subject_id=EXCLUDED.bound_by_subject_id,
  binding_revision=ujani_control.device_owner_bindings.binding_revision+1,
- active=true,binding_digest=CASE WHEN device_id='admission-device-future-key' THEN decode(repeat('36',32),'hex') ELSE decode(repeat('37',32),'hex') END,bound_at=clock_timestamp();
+ active=true,binding_digest=CASE
+ WHEN device_id='admission-device-future-key' THEN decode(repeat('36',32),'hex')
+ WHEN device_id='admission-device-revoked-key' THEN decode(repeat('37',32),'hex')
+ ELSE decode(repeat('38',32),'hex')
+ END,bound_at=clock_timestamp();
 INSERT INTO ujani_control.owner_consents
  (tenant_id,device_id,consent_generation,state,actor_ref,evidence_digest)
 VALUES
  ('admission-test','admission-device-future-key',1,'granted','admission-owner',decode(repeat('18',32),'hex')),
- ('admission-test','admission-device-revoked-key',1,'granted','admission-owner',decode(repeat('19',32),'hex'))
+ ('admission-test','admission-device-revoked-key',1,'granted','admission-owner',decode(repeat('19',32),'hex')),
+ ('admission-test','admission-device-disabled-owner',1,'granted','admission-disabled-owner',decode(repeat('1b',32),'hex'))
 ON CONFLICT DO NOTHING;
 INSERT INTO ujani_control.device_telemetry_samples
  (tenant_id,device_id,generation,sequence,request_id,observed_at,payload_digest,
@@ -182,8 +193,14 @@ VALUES
  ('admission-test','admission-device-future-key',1,1,decode(repeat('3a',16),'hex'),
   clock_timestamp(),decode(repeat('3b',32),'hex'),4000,8192,'cool','ac','idle'),
  ('admission-test','admission-device-revoked-key',1,1,decode(repeat('3c',16),'hex'),
-  clock_timestamp(),decode(repeat('3d',32),'hex'),4000,8192,'cool','ac','idle')
+  clock_timestamp(),decode(repeat('3d',32),'hex'),4000,8192,'cool','ac','idle'),
+ ('admission-test','admission-device-disabled-owner',1,1,decode(repeat('3e',16),'hex'),
+  clock_timestamp(),decode(repeat('3f',32),'hex'),4000,8192,'cool','ac','idle')
 ON CONFLICT DO NOTHING;
+
+UPDATE ujani_control.operator_subjects
+SET enabled=false
+WHERE tenant_id='admission-test' AND subject_id='admission-disabled-owner';
 
 -- Earlier migration tests use a broad temporary role. Remove those grants
 -- before proving the admission function works with only its required privileges.
@@ -344,6 +361,13 @@ BEGIN
   decode(repeat('44',32),'hex'),1,1,1000,1024,decode(repeat('53',32),'hex'),
   clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000081');
  IF admitted IS DISTINCT FROM true THEN RAISE EXCEPTION 'valid admission was not committed'; END IF;
+
+ admitted := ujani_control.admit_device_lease(
+  'admission-test','admission-device-disabled-owner','admission-workload','admission-approval',
+  'admission-lease-disabled-owner',decode(repeat('95',16),'hex'),decode(repeat('96',32),'hex'),
+  decode(repeat('44',32),'hex'),1,1,100,100,decode(repeat('97',32),'hex'),
+  clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000095');
+ IF admitted THEN RAISE EXCEPTION 'disabled device owner was allowed to lease resources'; END IF;
 
  admitted := ujani_control.admit_device_lease(
   'admission-test','admission-device','admission-workload','admission-approval',
