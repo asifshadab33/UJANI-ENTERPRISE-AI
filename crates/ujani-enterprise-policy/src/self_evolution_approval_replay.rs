@@ -42,7 +42,9 @@ pub struct SelfEvolutionApprovalReplayRecord {
 fn valid_identity(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 128
-        && value.bytes().all(|byte| byte.is_ascii_alphanumeric() || b"._:-".contains(&byte))
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._:-".contains(&byte))
 }
 
 fn hash_fields(domain: &[u8], fields: &[&[u8]]) -> [u8; 32] {
@@ -56,12 +58,25 @@ fn hash_fields(domain: &[u8], fields: &[&[u8]]) -> [u8; 32] {
 }
 
 /// Hash the exact trusted repository target with unambiguous length-prefixed fields.
-pub fn self_evolution_target_sha256(repository: &str, base_ref: &str, source_revision: &str) -> [u8; 32] {
-    hash_fields(TARGET_DOMAIN, &[repository.as_bytes(), base_ref.as_bytes(), source_revision.as_bytes()])
+pub fn self_evolution_target_sha256(
+    repository: &str,
+    base_ref: &str,
+    source_revision: &str,
+) -> [u8; 32] {
+    hash_fields(
+        TARGET_DOMAIN,
+        &[
+            repository.as_bytes(),
+            base_ref.as_bytes(),
+            source_revision.as_bytes(),
+        ],
+    )
 }
 
 /// Hash approved paths independent of input ordering while preserving path spelling/case.
-pub fn self_evolution_scope_sha256(scope: &[String]) -> Result<[u8; 32], ReplayRecordError> {
+pub fn self_evolution_scope_sha256(
+    scope: &[String],
+) -> Result<[u8; 32], ReplayRecordError> {
     if scope.is_empty() || scope.len() > 32 {
         return Err(ReplayRecordError::InvalidScope);
     }
@@ -82,8 +97,12 @@ impl SelfEvolutionApprovalReplayRecord {
         approver_subject_id: &str,
         approval: &VerifiedSelfEvolutionApproval,
     ) -> Result<Self, ReplayRecordError> {
-        if !valid_identity(tenant_id) { return Err(ReplayRecordError::InvalidTenantId); }
-        if !valid_identity(approver_subject_id) { return Err(ReplayRecordError::InvalidApproverSubjectId); }
+        if !valid_identity(tenant_id) {
+            return Err(ReplayRecordError::InvalidTenantId);
+        }
+        if !valid_identity(approver_subject_id) {
+            return Err(ReplayRecordError::InvalidApproverSubjectId);
+        }
         let scope = approval.approved_scope();
         Ok(Self {
             tenant_id: tenant_id.to_owned(),
@@ -95,7 +114,11 @@ impl SelfEvolutionApprovalReplayRecord {
             base_ref: approval.base_ref().to_owned(),
             source_revision: approval.source_revision().to_owned(),
             proposal_sha256: *approval.proposal_sha256(),
-            target_sha256: self_evolution_target_sha256(approval.repository(), approval.base_ref(), approval.source_revision()),
+            target_sha256: self_evolution_target_sha256(
+                approval.repository(),
+                approval.base_ref(),
+                approval.source_revision(),
+            ),
             approved_scope_sha256: self_evolution_scope_sha256(scope)?,
             approved_scope_count: scope.len() as u32,
             expires_at_unix_ms: approval.expires_at_unix_ms(),
@@ -112,9 +135,18 @@ mod tests {
         let revision_a = "a".repeat(40);
         let revision_b = "b".repeat(40);
         let baseline = self_evolution_target_sha256("owner/repo", "main", &revision_a);
-        assert_ne!(baseline, self_evolution_target_sha256("owner/other", "main", &revision_a));
-        assert_ne!(baseline, self_evolution_target_sha256("owner/repo", "release", &revision_a));
-        assert_ne!(baseline, self_evolution_target_sha256("owner/repo", "main", &revision_b));
+        assert_ne!(
+            baseline,
+            self_evolution_target_sha256("owner/other", "main", &revision_a)
+        );
+        assert_ne!(
+            baseline,
+            self_evolution_target_sha256("owner/repo", "release", &revision_a)
+        );
+        assert_ne!(
+            baseline,
+            self_evolution_target_sha256("owner/repo", "main", &revision_b)
+        );
     }
 
     #[test]
@@ -122,23 +154,46 @@ mod tests {
         let first = vec!["apps/help".to_owned(), "docs/help".to_owned()];
         let reordered = vec!["docs/help".to_owned(), "apps/help".to_owned()];
         let changed = vec!["apps/help".to_owned(), "docs/private".to_owned()];
-        assert_eq!(self_evolution_scope_sha256(&first), self_evolution_scope_sha256(&reordered));
-        assert_ne!(self_evolution_scope_sha256(&first), self_evolution_scope_sha256(&changed));
+        assert_eq!(
+            self_evolution_scope_sha256(&first),
+            self_evolution_scope_sha256(&reordered)
+        );
+        assert_ne!(
+            self_evolution_scope_sha256(&first),
+            self_evolution_scope_sha256(&changed)
+        );
     }
 
     #[test]
     fn scope_digest_rejects_empty_oversized_and_duplicate_lists() {
-        assert_eq!(self_evolution_scope_sha256(&[]), Err(ReplayRecordError::InvalidScope));
-        let oversized = (0..33).map(|index| format!("path-{index}")).collect::<Vec<_>>();
-        assert_eq!(self_evolution_scope_sha256(&oversized), Err(ReplayRecordError::InvalidScope));
+        assert_eq!(
+            self_evolution_scope_sha256(&[]),
+            Err(ReplayRecordError::InvalidScope)
+        );
+        let oversized = (0..33)
+            .map(|index| format!("path-{index}"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            self_evolution_scope_sha256(&oversized),
+            Err(ReplayRecordError::InvalidScope)
+        );
         let duplicate = vec!["apps/help".to_owned(), "apps/help".to_owned()];
-        assert_eq!(self_evolution_scope_sha256(&duplicate), Err(ReplayRecordError::InvalidScope));
+        assert_eq!(
+            self_evolution_scope_sha256(&duplicate),
+            Err(ReplayRecordError::InvalidScope)
+        );
     }
 
     #[test]
     fn replay_record_maps_only_verified_claims_and_trusted_host_identity() {
-        use crate::self_evolution::{FindingCategory, FindingSeverity, ProposedChange, ProposedChangeKind, ProposalTarget, SelfEvolutionFinding, SelfEvolutionProposalV1, SELF_EVOLUTION_PROPOSAL_SCHEMA_VERSION};
-        use crate::self_evolution_approval::{approval_signing_bytes, self_evolution_proposal_digest, verify_self_evolution_approval, SelfEvolutionApprovalClaims, SignedSelfEvolutionApproval};
+        use crate::self_evolution::{
+            FindingCategory, FindingSeverity, ProposalTarget, ProposedChange, ProposedChangeKind,
+            SelfEvolutionFinding, SelfEvolutionProposalV1, SELF_EVOLUTION_PROPOSAL_SCHEMA_VERSION,
+        };
+        use crate::self_evolution_approval::{
+            approval_signing_bytes, self_evolution_proposal_digest, verify_self_evolution_approval,
+            SelfEvolutionApprovalClaims, SignedSelfEvolutionApproval,
+        };
         use ed25519_dalek::{Signer, SigningKey};
 
         let target = ProposalTarget {
@@ -179,7 +234,9 @@ mod tests {
             expires_unix_ms: 10_000,
         };
         let signed = SignedSelfEvolutionApproval {
-            signature: signing_key.sign(&approval_signing_bytes(&claims)).to_bytes(),
+            signature: signing_key
+                .sign(&approval_signing_bytes(&claims))
+                .to_bytes(),
             claims,
         };
         let verified = verify_self_evolution_approval(
@@ -188,13 +245,15 @@ mod tests {
             &target,
             &proposal,
             2_000,
-        ).unwrap();
+        )
+        .unwrap();
 
         let record = SelfEvolutionApprovalReplayRecord::from_verified(
             "tenant-a",
             "operator-admin-1",
             &verified,
-        ).unwrap();
+        )
+        .unwrap();
 
         assert_eq!(record.tenant_id, "tenant-a");
         assert_eq!(record.approver_subject_id, "operator-admin-1");
@@ -205,8 +264,18 @@ mod tests {
         assert_eq!(record.base_ref, target.base_ref);
         assert_eq!(record.source_revision, target.source_revision);
         assert_eq!(record.proposal_sha256, signed.claims.proposal_sha256);
-        assert_eq!(record.target_sha256, self_evolution_target_sha256(&record.repository, &record.base_ref, &record.source_revision));
-        assert_eq!(record.approved_scope_sha256, self_evolution_scope_sha256(&signed.claims.approved_scope).unwrap());
+        assert_eq!(
+            record.target_sha256,
+            self_evolution_target_sha256(
+                &record.repository,
+                &record.base_ref,
+                &record.source_revision
+            )
+        );
+        assert_eq!(
+            record.approved_scope_sha256,
+            self_evolution_scope_sha256(&signed.claims.approved_scope).unwrap()
+        );
         assert_eq!(record.approved_scope_count, 1);
         assert_eq!(record.expires_at_unix_ms, 10_000);
     }
