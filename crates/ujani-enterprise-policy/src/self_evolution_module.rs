@@ -135,8 +135,7 @@ pub fn evaluate_enterprise_self_evolution(
     let approved_scopes_valid = !policy.approved_write_scopes.is_empty()
         && policy.approved_write_scopes.len() <= crate::self_evolution::MAX_PROPOSAL_SCOPE_PATHS
         && policy.approved_write_scopes.iter().all(|scope| {
-            normalize_scope(scope)
-                .is_some_and(|normalized| !is_protected_scope(&normalized))
+            normalize_scope(scope).is_some_and(|normalized| !is_protected_scope(&normalized))
         });
     let blocked_by = if installation == ModuleInstallState::NotInstalled {
         Some(SelfEvolutionBlock::ModuleNotInstalled)
@@ -594,7 +593,7 @@ mod action_gate_tests {
         let permission = evaluate_enterprise_self_evolution(
             ModuleInstallState::Installed,
             &disabled,
-            &request()
+            &request(),
         );
         assert!(permission.may_analyse);
         assert!(!permission.may_prepare_proposals);
@@ -624,11 +623,8 @@ mod action_gate_tests {
         let mut invalid = policy();
         invalid.approved_write_scopes = BTreeSet::from([".git".into()]);
         assert_eq!(
-            evaluate_enterprise_self_evolution(
-                ModuleInstallState::Installed,
-                &invalid,
-                &request()
-            ).blocked_by,
+            evaluate_enterprise_self_evolution(ModuleInstallState::Installed, &invalid, &request())
+                .blocked_by,
             Some(SelfEvolutionBlock::ApprovalPolicyInvalid)
         );
 
@@ -641,7 +637,8 @@ mod action_gate_tests {
                 ModuleInstallState::Installed,
                 &oversized,
                 &request()
-            ).blocked_by,
+            )
+            .blocked_by,
             Some(SelfEvolutionBlock::ApprovalPolicyInvalid)
         );
     }
