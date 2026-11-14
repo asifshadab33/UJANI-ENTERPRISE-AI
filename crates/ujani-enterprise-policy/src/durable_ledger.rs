@@ -567,6 +567,30 @@ impl DurableLedger {
         })
     }
 
+    fn encode_ledger_snapshot(&self, ledger: &Ledger) -> Result<Vec<u8>, DurableLedgerError> {
+        if let Some(provider) = &self.integrity_key_provider {
+            return serialize_snapshot_with_provider(ledger, provider.as_ref());
+        }
+        let key_id = self.active_key_id.as_deref().ok_or(DurableLedgerError::InvalidRecord)?;
+        let key = self.integrity_keys.get(key_id).ok_or(DurableLedgerError::InvalidRecord)?;
+        Ok(serialize_snapshot(ledger, key_id, &key.key))
+    }
+
+    fn decode_ledger_snapshot(&self, bytes: &[u8]) -> Result<Ledger, DurableLedgerError> {
+        if let Some(provider) = &self.integrity_key_provider {
+            return deserialize_snapshot_with_provider(bytes, provider.as_ref());
+        }
+        deserialize_snapshot(bytes, &self.integrity_keys)
+    }
+
+    fn load_unanchored_ledger(&self) -> Result<Ledger, DurableLedgerError> {
+        if let Some(provider) = &self.integrity_key_provider {
+            load_or_recover_with_provider(&self.path, provider.as_ref())
+        } else {
+            load_or_recover(&self.path, &self.integrity_keys)
+        }
+    }
+
     fn load_anchored_ledger(
         &self,
         anchor_record: Option<&SnapshotAnchorRecord>,
@@ -579,7 +603,7 @@ impl DurableLedger {
                 if self.path.exists() {
                     let bytes = read_snapshot(&self.path)?;
                     if snapshot_sha256(&bytes) == record.snapshot_sha256() {
-                        return deserialize_snapshot(&bytes, &self.integrity_keys);
+                        return self.decode_ledger_snapshot(&bytes);
                     }
                 }
                 if backup.exists() {
@@ -637,14 +661,10 @@ impl DurableLedger {
         let mut ledger = if self.anchor.is_some() {
             self.load_anchored_ledger(anchor_record.as_ref())?
         } else {
-            load_or_recover(&self.path, &self.integrity_keys)?
+            self.load_unanchored_ledger()?
         };
         let result = operation(&mut ledger)?;
-        let active_key = self
-            .integrity_keys
-            .get(&self.active_key_id)
-            .ok_or(DurableLedgerError::InvalidRecord)?;
-        let bytes = serialize_snapshot(&ledger, &self.active_key_id, &active_key.key);
+        let bytes = self.encode_ledger_snapshot(&ledger)?;
         if bytes.len() as u64 > MAX_LEDGER_BYTES {
             return Err(DurableLedgerError::CapacityExceeded);
         }
@@ -661,13 +681,7 @@ impl DurableLedger {
             &self.anchor_namespace,
             &self.anchor_call_policy,
         ) {
-            persist_snapshot(
-                &self.path,
-                &ledger,
-                &self.active_key_id,
-                &active_key.key,
-                true,
-            )?;
+            persist_snapshot_bytes(&self.path, &bytes, true)?;
             let expected_generation = anchor_record.as_ref().map(SnapshotAnchorRecord::generation);
             let generation = expected_generation
                 .unwrap_or(0)
@@ -716,13 +730,7 @@ impl DurableLedger {
                 }
             }
         } else {
-            persist_snapshot(
-                &self.path,
-                &ledger,
-                &self.active_key_id,
-                &active_key.key,
-                false,
-            )?;
+            persist_snapshot_bytes(&self.path, &bytes, false)?;
         }
         Ok(result)
     }
