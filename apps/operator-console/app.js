@@ -392,8 +392,28 @@ function renderOverview(data) {
   notice.hidden = true;
   setConnection("Connected · live snapshot", "online");
 }
+function clearOverview() {
+  for (const id of ["registered", "trusted", "online", "schedulable"]) {
+    byId(id).textContent = "—";
+  }
+  byId("updated").textContent = "No current live snapshot";
+  renderDevices([]);
+  byId("model-count").textContent = "No current inventory";
+  const modelBody = byId("model-inventory");
+  modelBody.replaceChildren();
+  const modelRow = document.createElement("tr");
+  const modelCell = textCell("No current authenticated model inventory available.");
+  modelCell.colSpan = 9;
+  modelCell.className = "empty";
+  modelRow.append(modelCell);
+  modelBody.append(modelRow);
+  renderList("workloads", [], "No current workload data.", []);
+  renderList("approvals", [], "No current approval data.", []);
+}
+
 async function refreshOverview() {
   refreshButton.disabled = true;
+  clearOverview();
   setConnection("Connecting…", "unknown");
   const controller = new AbortController();
   const requestTimeout = window.setTimeout(() => controller.abort(), 10_000);
@@ -412,6 +432,7 @@ async function refreshOverview() {
     const payload = await readBoundedJson(response);
     renderOverview(payload);
   } catch (error) {
+    clearOverview();
     setConnection("Not connected", "error");
     notice.hidden = false;
     const heading = notice.querySelector("strong");
