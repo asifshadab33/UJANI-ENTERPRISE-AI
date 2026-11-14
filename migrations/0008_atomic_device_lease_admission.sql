@@ -10,7 +10,9 @@ ALTER TABLE ujani_control.devices
 
 -- Bind each enrolled device to a tenant identity. The owner subject is assigned
 -- by the authenticated administrator enrollment service; runtime lease admission
--- can only read this binding and cannot create or change it.
+-- can only read this binding and cannot create or change it. There is deliberately
+-- no automatic owner backfill: existing devices remain ineligible until an
+-- administrator verifies/binds the owner and that owner records fresh consent.
 CREATE TABLE IF NOT EXISTS ujani_control.device_owner_bindings (
  tenant_id text NOT NULL,
  device_id text NOT NULL,
