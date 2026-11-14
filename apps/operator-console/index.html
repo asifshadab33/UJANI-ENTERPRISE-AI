@@ -90,9 +90,9 @@
           <details><summary>Prerequisites and evidence</summary><ul><li>Customer-selected tools and explicit scope; no silent installation.</li><li>Least-privilege deployment, signed configuration, rollback and operator handover.</li><li>Controlled customer-lab validation before any production network changes.</li></ul></details>
         </article>
         <article class="feature-risk-card">
-          <div class="feature-risk-card-heading"><strong>Self-Evolution Engine</strong><span class="pill">Proposal-only development</span></div>
-          <p>The first proposal contract is being developed. It does not grant the model source access, code execution, approval, signing or fleet update authority.</p>
-          <details><summary>Prerequisites and evidence</summary><ul><li>Tenant-scoped trusted source checkout and isolated build workspace.</li><li>Protected control-plane policy, independent review and administrator approval.</li><li>Organization-controlled KMS/HSM signing, staged rollout and rollback.</li><li>Fleet devices receive only verified signed artifacts; generated code is never executed on worker devices.</li></ul></details>
+          <div class="feature-risk-card-heading"><strong>Self-Evolution Engine</strong><span class="pill">Policy foundation · not production-wired</span></div>
+          <p>The existing policy already enforces administrator permission and activation, approved models and scopes, dual approval and a trusted build environment. The signed-approval verifier and action-level role/owner-opt-in gate are code foundations only; this read-only console has no activation, staging or apply workflow.</p>
+          <details><summary>Prerequisites and evidence</summary><ul><li>Authenticated operator sessions and durable device-owner opt-in, with revocation checked at use.</li><li>Atomic durable single-use approval-nonce consumption before any follow-on change workflow; signature verification alone is not replay protection.</li><li>Tenant-scoped trusted source checkout, isolated build workspace and independent review.</li><li>Organization-controlled KMS/HSM signing, staged rollout and rollback.</li><li>Fleet devices receive only verified signed artifacts; generated code is never executed on worker devices.</li></ul></details>
         </article>
       </div>
       <p class="muted">Unknown, stale or missing policy/consent must fail closed. A tenant administrator cannot override an individual device owner's consent or a missing security gate.</p>
