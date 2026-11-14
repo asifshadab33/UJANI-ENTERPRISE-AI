@@ -9,7 +9,9 @@ use sha2::{Digest, Sha256};
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 const HEADER_V1: &str = "UJANI-DEVICE-TRUST-V1";
 const HEADER: &str = "UJANI-DEVICE-TRUST-V2";
@@ -46,6 +48,92 @@ impl SnapshotAnchorRecord {
     }
 }
 
+/// Default per-call deadline for external monotonic-anchor operations.
+pub const DEFAULT_ANCHOR_CALL_TIMEOUT: Duration = Duration::from_secs(5);
+/// Upper bound accepted for a single external monotonic-anchor operation.
+pub const MAX_ANCHOR_CALL_TIMEOUT: Duration = Duration::from_secs(30);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnchorCallContextError {
+    Cancelled,
+    DeadlineExceeded,
+}
+impl std::fmt::Display for AnchorCallContextError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Cancelled => formatter.write_str("external anchor call cancelled"),
+            Self::DeadlineExceeded => formatter.write_str("external anchor call deadline exceeded"),
+        }
+    }
+}
+
+/// Cooperative cancellation handle shared with the host and anchor adapter.
+#[derive(Clone, Default)]
+pub struct AnchorCancellationToken(Arc<AtomicBool>);
+impl AnchorCancellationToken {
+    pub fn new() -> Self { Self::default() }
+    pub fn cancel(&self) { self.0.store(true, Ordering::SeqCst); }
+    pub fn is_cancelled(&self) -> bool { self.0.load(Ordering::SeqCst) }
+}
+
+/// Deadline and cancellation state supplied to every external anchor call.
+#[derive(Clone)]
+pub struct AnchorCallContext {
+    deadline: Instant,
+    cancellation: Option<AnchorCancellationToken>,
+}
+impl AnchorCallContext {
+    fn new(timeout: Duration, cancellation: Option<AnchorCancellationToken>) -> Self {
+        Self { deadline: Instant::now() + timeout, cancellation }
+    }
+    /// Remaining time for configuring the provider's transport-level timeout.
+    pub fn remaining(&self) -> Duration {
+        self.deadline.saturating_duration_since(Instant::now())
+    }
+    /// Returns true when the host cancelled this operation.
+    pub fn is_cancelled(&self) -> bool {
+        self.cancellation.as_ref().is_some_and(AnchorCancellationToken::is_cancelled)
+    }
+    /// Check before and after provider I/O; providers must also set their own I/O deadline.
+    pub fn check_active(&self) -> Result<(), AnchorCallContextError> {
+        if self.is_cancelled() { return Err(AnchorCallContextError::Cancelled); }
+        if self.remaining().is_zero() { return Err(AnchorCallContextError::DeadlineExceeded); }
+        Ok(())
+    }
+}
+
+/// Per-call timeout and cooperative cancellation policy for an external anchor.
+#[derive(Clone)]
+pub struct AnchorCallPolicy {
+    timeout: Duration,
+    cancellation: AnchorCancellationToken,
+}
+impl AnchorCallPolicy {
+    pub fn new(timeout: Duration) -> Result<Self, &'static str> {
+        Self::with_cancellation(timeout, AnchorCancellationToken::new())
+    }
+    pub fn with_cancellation(timeout: Duration, cancellation: AnchorCancellationToken) -> Result<Self, &'static str> {
+        if timeout.is_zero() || timeout > MAX_ANCHOR_CALL_TIMEOUT {
+            return Err("anchor timeout must be greater than zero and no more than 30 seconds");
+        }
+        Ok(Self { timeout, cancellation })
+    }
+    /// A clone of this token lets the host cancel outstanding provider calls.
+    pub fn cancellation_token(&self) -> AnchorCancellationToken { self.cancellation.clone() }
+    pub(crate) fn call_context(&self) -> AnchorCallContext {
+        AnchorCallContext::new(self.timeout, Some(self.cancellation.clone()))
+    }
+    /// Ambiguous-write reconciliation is bounded but not caller-cancelled: it must
+    /// settle the commit outcome before local rollback or a retry is permitted.
+    pub(crate) fn reconciliation_context(&self) -> AnchorCallContext {
+        AnchorCallContext::new(self.timeout, None)
+    }
+}
+impl Default for AnchorCallPolicy {
+    fn default() -> Self {
+        Self { timeout: DEFAULT_ANCHOR_CALL_TIMEOUT, cancellation: AnchorCancellationToken::new() }
+    }
+}
 /// External monotonic anchor contract.
 ///
 /// `load` must be linearizable with `compare_and_set`: a load started after a
@@ -53,10 +141,10 @@ impl SnapshotAnchorRecord {
 /// stale reads are not permitted. `compare_and_set` must atomically create
 /// generation 1 when `expected_generation` is `None`, or advance exactly one
 /// generation when it is `Some(n)`. It must never accept a stale generation.
-/// Implementations must
-/// enforce bounded timeouts for every call: the ledger invokes `load`,
-/// `compare_and_set`, and ambiguous-result read-back synchronously while holding
-/// both its in-process mutex and OS file lock, including for read-only snapshots.
+/// Every call receives a bounded deadline and cooperative cancellation context.
+/// Implementations must configure transport-level I/O deadlines from `remaining()`,
+/// check `check_active()` before and after I/O, and return promptly when cancelled.
+/// The context cannot forcibly interrupt a non-cooperative blocking provider.
 /// Before returning an error from `compare_and_set`, a provider must settle or
 /// fence every in-flight update for that request so it cannot commit later;
 /// otherwise the ledger cannot safely roll back its candidate snapshot. Each
@@ -68,7 +156,7 @@ pub trait MonotonicSnapshotAnchor: Send + Sync {
     /// must also act as a quiescence barrier: before returning, it must settle or fence
     /// every earlier in-flight compare-and-set for this namespace, including requests
     /// left pending by a crashed caller, so an old update cannot commit after recovery.
-    fn load(&self, registry_id: &str) -> Result<Option<SnapshotAnchorRecord>, String>;
+    fn load(&self, registry_id: &str, context: &AnchorCallContext) -> Result<Option<SnapshotAnchorRecord>, String>;
     /// Atomically creates or advances the namespace record if its generation matches.
     ///
     /// Before returning `Err`, the provider must settle or fence the request so an
@@ -78,6 +166,7 @@ pub trait MonotonicSnapshotAnchor: Send + Sync {
         registry_id: &str,
         expected_generation: Option<u64>,
         next: SnapshotAnchorRecord,
+        context: &AnchorCallContext,
     ) -> Result<bool, String>;
 }
 
@@ -173,6 +262,7 @@ pub struct DurableDeviceRegistry {
     integrity_key: Arc<DeviceTrustIntegrityKey>,
     anchor_namespace: Option<String>,
     anchor: Option<Arc<dyn MonotonicSnapshotAnchor>>,
+    anchor_call_policy: Option<AnchorCallPolicy>,
 }
 impl std::fmt::Debug for DurableDeviceRegistry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -205,15 +295,28 @@ impl DurableDeviceRegistry {
         integrity_key: DeviceTrustIntegrityKey,
         anchor: Arc<dyn MonotonicSnapshotAnchor>,
     ) -> Result<Self, DurableDeviceTrustError> {
+        Self::open_with_anchor_and_policy(
+            path, registry_id, trusted_admin_keys, integrity_key, anchor,
+            AnchorCallPolicy::default(),
+        )
+    }
+
+    /// Open an anchored registry with an explicit per-call timeout and cancellation handle.
+    pub fn open_with_anchor_and_policy(
+        path: impl AsRef<Path>,
+        registry_id: impl Into<String>,
+        trusted_admin_keys: Vec<(String, VerifyingKey)>,
+        integrity_key: DeviceTrustIntegrityKey,
+        anchor: Arc<dyn MonotonicSnapshotAnchor>,
+        anchor_call_policy: AnchorCallPolicy,
+    ) -> Result<Self, DurableDeviceTrustError> {
         let registry_id = registry_id.into();
         if !valid_id(&registry_id, 128) {
             return Err(DurableDeviceTrustError::CorruptState);
         }
         Self::open_internal(
-            path,
-            trusted_admin_keys,
-            integrity_key,
-            Some((registry_id, anchor)),
+            path, trusted_admin_keys, integrity_key,
+            Some((registry_id, anchor, anchor_call_policy)),
         )
     }
 
@@ -221,7 +324,7 @@ impl DurableDeviceRegistry {
         path: impl AsRef<Path>,
         trusted_admin_keys: Vec<(String, VerifyingKey)>,
         integrity_key: DeviceTrustIntegrityKey,
-        anchor: Option<(String, Arc<dyn MonotonicSnapshotAnchor>)>,
+        anchor: Option<(String, Arc<dyn MonotonicSnapshotAnchor>, AnchorCallPolicy)>,
     ) -> Result<Self, DurableDeviceTrustError> {
         if trusted_admin_keys.is_empty()
             || !valid_id(integrity_key.key_id(), 128)
@@ -245,9 +348,9 @@ impl DurableDeviceRegistry {
         fs::create_dir_all(requested_parent)?;
         let canonical_parent = fs::canonicalize(requested_parent)?;
         let path = canonical_parent.join(file_name);
-        let (anchor_namespace, anchor) = match anchor {
-            Some((namespace, provider)) => (Some(namespace), Some(provider)),
-            None => (None, None),
+        let (anchor_namespace, anchor, anchor_call_policy) = match anchor {
+            Some((namespace, provider, policy)) => (Some(namespace), Some(provider), Some(policy)),
+            None => (None, None, None),
         };
         let store = Self {
             lock_path: suffix(&path, ".lock"),
@@ -257,6 +360,7 @@ impl DurableDeviceRegistry {
             integrity_key: Arc::new(integrity_key),
             anchor_namespace,
             anchor,
+            anchor_call_policy,
         };
         store.transact(|_| Ok(()))?;
         Ok(store)
@@ -475,11 +579,11 @@ impl DurableDeviceRegistry {
         let lock = options.open(&self.lock_path)?;
         lock.lock()?;
 
-        let anchor_record = match (&self.anchor, &self.anchor_namespace) {
-            (Some(anchor), Some(namespace)) => anchor
-                .load(namespace)
+        let anchor_record = match (&self.anchor, &self.anchor_namespace, &self.anchor_call_policy) {
+            (Some(anchor), Some(namespace), Some(policy)) => anchor
+                .load(namespace, &policy.call_context())
                 .map_err(DurableDeviceTrustError::AnchorUnavailable)?,
-            (None, None) => None,
+            (None, None, None) => None,
             _ => return Err(DurableDeviceTrustError::AnchorMismatch),
         };
         let registry = self.load_registry(anchor_record.as_ref())?;
@@ -540,11 +644,11 @@ impl DurableDeviceRegistry {
         let lock = options.open(&self.lock_path)?;
         lock.lock()?;
 
-        let anchor_record = match (&self.anchor, &self.anchor_namespace) {
-            (Some(anchor), Some(namespace)) => anchor
-                .load(namespace)
+        let anchor_record = match (&self.anchor, &self.anchor_namespace, &self.anchor_call_policy) {
+            (Some(anchor), Some(namespace), Some(policy)) => anchor
+                .load(namespace, &policy.call_context())
                 .map_err(DurableDeviceTrustError::AnchorUnavailable)?,
-            (None, None) => None,
+            (None, None, None) => None,
             _ => return Err(DurableDeviceTrustError::AnchorMismatch),
         };
         let mut registry = self.load_registry(anchor_record.as_ref())?;
@@ -559,7 +663,7 @@ impl DurableDeviceRegistry {
         }
         atomic_write(&self.path, &bytes, self.anchor.is_some())?;
 
-        if let (Some(anchor), Some(namespace)) = (&self.anchor, &self.anchor_namespace) {
+        if let (Some(anchor), Some(namespace), Some(policy)) = (&self.anchor, &self.anchor_namespace, &self.anchor_call_policy) {
             let expected_generation = anchor_record.as_ref().map(SnapshotAnchorRecord::generation);
             let generation = expected_generation
                 .unwrap_or(0)
@@ -569,14 +673,14 @@ impl DurableDeviceRegistry {
                 generation,
                 snapshot_sha256: snapshot_sha256(&bytes),
             };
-            match anchor.compare_and_set(namespace, expected_generation, next.clone()) {
+            match anchor.compare_and_set(namespace, expected_generation, next.clone(), &policy.call_context()) {
                 Ok(true) => {}
                 Ok(false) => return Err(DurableDeviceTrustError::AnchorConflict),
                 Err(error) => {
                     // A transport error can arrive after the provider committed.
                     // Its load operation is a quiescence barrier, so read back the
                     // authoritative record before telling the caller to retry.
-                    match anchor.load(namespace) {
+                    match anchor.load(namespace, &policy.reconciliation_context()) {
                         Ok(Some(observed)) if observed == next => {}
                         Ok(observed) if observed == anchor_record => {
                             return Err(DurableDeviceTrustError::AnchorUnavailable(error));
@@ -940,6 +1044,30 @@ mod tests {
     use ed25519_dalek::{Signer, SigningKey};
     use sha2::Digest;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn anchor_call_policy_rejects_unbounded_timeout_values() {
+        assert!(AnchorCallPolicy::new(Duration::ZERO).is_err());
+        assert!(AnchorCallPolicy::new(MAX_ANCHOR_CALL_TIMEOUT + Duration::from_millis(1)).is_err());
+    }
+
+    #[test]
+    fn anchor_call_context_enforces_deadline_and_cancellation() {
+        let deadline_policy = AnchorCallPolicy::new(Duration::from_millis(10)).unwrap();
+        let deadline_context = deadline_policy.call_context();
+        assert!(!deadline_context.remaining().is_zero());
+        std::thread::sleep(Duration::from_millis(15));
+        assert_eq!(
+            deadline_context.check_active(),
+            Err(AnchorCallContextError::DeadlineExceeded)
+        );
+
+        let cancellation = AnchorCancellationToken::new();
+        let policy = AnchorCallPolicy::with_cancellation(Duration::from_secs(1), cancellation.clone()).unwrap();
+        let context = policy.call_context();
+        cancellation.cancel();
+        assert_eq!(context.check_active(), Err(AnchorCallContextError::Cancelled));
+    }
 
     fn path() -> PathBuf {
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -1305,9 +1433,19 @@ mod tests {
         lose_next_response_after_commit: std::sync::atomic::AtomicBool,
     }
 
+    impl MemoryAnchor {
+        fn load(&self, registry_id: &str) -> Result<Option<SnapshotAnchorRecord>, String> {
+            let context = AnchorCallPolicy::default().call_context();
+            <Self as MonotonicSnapshotAnchor>::load(self, registry_id, &context)
+        }
+    }
+
     impl MonotonicSnapshotAnchor for MemoryAnchor {
-        fn load(&self, _registry_id: &str) -> Result<Option<SnapshotAnchorRecord>, String> {
-            Ok(self.record.lock().map_err(|e| e.to_string())?.clone())
+        fn load(&self, _registry_id: &str, context: &AnchorCallContext) -> Result<Option<SnapshotAnchorRecord>, String> {
+            context.check_active().map_err(|error| error.to_string())?;
+            let record = self.record.lock().map_err(|e| e.to_string())?.clone();
+            context.check_active().map_err(|error| error.to_string())?;
+            Ok(record)
         }
 
         fn compare_and_set(
@@ -1315,7 +1453,9 @@ mod tests {
             _registry_id: &str,
             expected_generation: Option<u64>,
             next: SnapshotAnchorRecord,
+            context: &AnchorCallContext,
         ) -> Result<bool, String> {
+            context.check_active().map_err(|error| error.to_string())?;
             use std::sync::atomic::Ordering;
             if self.fail_next_cas.swap(false, Ordering::SeqCst) {
                 return Err("simulated external anchor outage".into());
@@ -1327,6 +1467,7 @@ mod tests {
                 return Ok(false);
             }
             *current = Some(next);
+            context.check_active().map_err(|error| error.to_string())?;
             if self
                 .lose_next_response_after_commit
                 .swap(false, Ordering::SeqCst)
