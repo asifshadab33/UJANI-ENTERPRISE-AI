@@ -7,6 +7,13 @@ INSERT INTO ujani_control.operator_subjects
  (tenant_id,subject_id,role,enabled,idp_issuer,idp_subject)
 VALUES ('admission-test','admission-admin','administrator',true,'ci','admission-admin')
 ON CONFLICT (tenant_id,subject_id) DO UPDATE SET enabled=true,role='administrator';
+INSERT INTO ujani_control.operator_subjects
+ (tenant_id,subject_id,role,enabled,idp_issuer,idp_subject)
+VALUES
+ ('admission-test','admission-disabled-admin','administrator',false,'ci','admission-disabled-admin'),
+ ('admission-test','admission-viewer','viewer',true,'ci','admission-viewer')
+ON CONFLICT (tenant_id,subject_id) DO UPDATE
+ SET role=EXCLUDED.role,enabled=EXCLUDED.enabled;
 INSERT INTO ujani_control.devices
  (tenant_id,device_id,display_name,platform,trust_state,owner_consent_state,
   admin_approval_state,active_key_id,key_generation,consent_generation,
@@ -43,12 +50,22 @@ VALUES ('admission-test','admission-approval','admission-workload','admission-ad
  'approved',decode(repeat('44',32),'hex'),clock_timestamp()+interval '10 minutes')
 ON CONFLICT (tenant_id,approval_id) DO UPDATE SET
  decision='approved',expires_at=clock_timestamp()+interval '10 minutes';
+INSERT INTO ujani_control.approvals
+ (tenant_id,approval_id,workload_id,approver_subject_id,decision,manifest_digest,expires_at)
+VALUES
+ ('admission-test','admission-disabled-approval','admission-workload','admission-disabled-admin',
+  'approved',decode(repeat('44',32),'hex'),clock_timestamp()+interval '10 minutes'),
+ ('admission-test','admission-viewer-approval','admission-workload','admission-viewer',
+  'approved',decode(repeat('44',32),'hex'),clock_timestamp()+interval '10 minutes')
+ON CONFLICT (tenant_id,approval_id) DO UPDATE SET
+ decision='approved',expires_at=clock_timestamp()+interval '10 minutes';
 
 GRANT SELECT,INSERT,UPDATE ON ujani_control.devices,ujani_control.device_keys,
  ujani_control.owner_consents,ujani_control.workloads,ujani_control.approvals,
  ujani_control.device_telemetry_samples,ujani_control.leases,
  ujani_control.request_replays,ujani_control.audit_events TO ujani_runtime;
 GRANT USAGE ON SCHEMA ujani_control TO ujani_runtime;
+GRANT SELECT ON ujani_control.operator_subjects TO ujani_runtime;
 GRANT EXECUTE ON FUNCTION ujani_control.admit_device_lease(
  text,text,text,text,text,bytea,bytea,bytea,bigint,bigint,integer,bigint,bytea,timestamptz,uuid
 ) TO ujani_runtime;
@@ -83,6 +100,20 @@ BEGIN
   decode(repeat('44',32),'hex'),1,1,3500,1024,decode(repeat('57',32),'hex'),
   clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000083');
  IF admitted THEN RAISE EXCEPTION 'over-capacity request was admitted'; END IF;
+
+ admitted := ujani_control.admit_device_lease(
+  'admission-test','admission-device','admission-workload','admission-disabled-approval',
+  'admission-lease-disabled-admin',decode(repeat('65',16),'hex'),decode(repeat('66',32),'hex'),
+  decode(repeat('44',32),'hex'),1,1,100,100,decode(repeat('67',32),'hex'),
+  clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000085');
+ IF admitted THEN RAISE EXCEPTION 'approval from a disabled administrator was accepted'; END IF;
+
+ admitted := ujani_control.admit_device_lease(
+  'admission-test','admission-device','admission-workload','admission-viewer-approval',
+  'admission-lease-viewer',decode(repeat('68',16),'hex'),decode(repeat('69',32),'hex'),
+  decode(repeat('44',32),'hex'),1,1,100,100,decode(repeat('6a',32),'hex'),
+  clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000086');
+ IF admitted THEN RAISE EXCEPTION 'approval from a non-administrator was accepted'; END IF;
 
  UPDATE ujani_control.devices SET owner_consent_state='paused'
  WHERE tenant_id='admission-test' AND device_id='admission-device';
