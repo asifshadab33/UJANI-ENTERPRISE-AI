@@ -195,6 +195,7 @@ def main() -> None:
         "device_key_generation",
         "owner_consents",
         "state = 'approved'",
+        "s.enabled IS TRUE AND s.role = 'administrator'",
         "received_at DESC",
         "participation_state <> 'idle'",
         "ON CONFLICT (tenant_id, device_id, request_id) DO NOTHING",
@@ -214,6 +215,8 @@ def main() -> None:
         "replayed request was admitted",
         "over-capacity request was admitted",
         "paused owner consent admitted work",
+        "approval from a disabled administrator was accepted",
+        "approval from a non-administrator was accepted",
         "admission writes were not atomic",
         "late failure left partial admission state",
     ):
@@ -221,8 +224,12 @@ def main() -> None:
             raise SystemExit(f"atomic device admission regression test missing: {required}")
     atomic_concurrency = ATOMIC_ADMISSION_CONCURRENCY_PATH.read_text(encoding="utf-8")
     for required in (
-        "pg_sleep(2)",
-        "pg_stat_activity",
+        "pg_sleep(15)",
+        "PGAPPNAME=ujani-admission-first",
+        "application_name='ujani-admission-first'",
+        "application_name='ujani-admission-second'",
+        "wait_event_type='Lock'",
+        "second admission was not observed waiting on the device row lock",
         "second admission should be rejected",
         "1:2500",
     ):
