@@ -8,6 +8,53 @@ ALTER TABLE ujani_control.devices
  ADD COLUMN IF NOT EXISTS consent_generation bigint NOT NULL DEFAULT 0 CHECK (consent_generation >= 0),
  ADD COLUMN IF NOT EXISTS reservation_revision bigint NOT NULL DEFAULT 0 CHECK (reservation_revision >= 0);
 
+-- PostgreSQL requires UPDATE privilege on at least one column of a relation
+-- for SELECT ... FOR SHARE. Give the runtime role a column-only privilege on
+-- this inert marker, then reject every attempted value change. This permits
+-- row locks without granting UPDATE on trust, consent, workload or approval data.
+ALTER TABLE ujani_control.device_keys
+ ADD COLUMN IF NOT EXISTS admission_lock_marker boolean NOT NULL DEFAULT false;
+ALTER TABLE ujani_control.owner_consents
+ ADD COLUMN IF NOT EXISTS admission_lock_marker boolean NOT NULL DEFAULT false;
+ALTER TABLE ujani_control.workloads
+ ADD COLUMN IF NOT EXISTS admission_lock_marker boolean NOT NULL DEFAULT false;
+ALTER TABLE ujani_control.approvals
+ ADD COLUMN IF NOT EXISTS admission_lock_marker boolean NOT NULL DEFAULT false;
+ALTER TABLE ujani_control.operator_subjects
+ ADD COLUMN IF NOT EXISTS admission_lock_marker boolean NOT NULL DEFAULT false;
+
+CREATE OR REPLACE FUNCTION ujani_control.reject_admission_lock_marker_mutation()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = pg_catalog, ujani_control
+AS $function$
+BEGIN
+ IF NEW.admission_lock_marker IS DISTINCT FROM OLD.admission_lock_marker THEN
+  RAISE EXCEPTION 'admission lock marker is immutable' USING ERRCODE = '42501';
+ END IF;
+ RETURN NEW;
+END;
+$function$;
+
+DO $block$
+DECLARE table_name text;
+BEGIN
+ FOREACH table_name IN ARRAY ARRAY[
+  'device_keys','owner_consents','workloads','approvals','operator_subjects'
+ ] LOOP
+  EXECUTE format(
+   'DROP TRIGGER IF EXISTS admission_lock_marker_immutable ON ujani_control.%I',
+   table_name
+  );
+  EXECUTE format(
+   'CREATE TRIGGER admission_lock_marker_immutable BEFORE UPDATE OF admission_lock_marker ON ujani_control.%I FOR EACH ROW EXECUTE FUNCTION ujani_control.reject_admission_lock_marker_mutation()',
+   table_name
+  );
+ END LOOP;
+END;
+$block$;
+
 -- Preserve monotonic consent history for devices that already have a durable
 -- owner-consent event. Devices without such evidence remain generation zero
 -- and cannot be admitted until a fresh owner-consent event is recorded.
