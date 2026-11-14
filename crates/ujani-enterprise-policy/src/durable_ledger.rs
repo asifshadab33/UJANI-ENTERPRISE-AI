@@ -1470,7 +1470,6 @@ fn persist_snapshot_bytes(
     Ok(())
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
