@@ -20,6 +20,7 @@ pub enum SelfEvolutionBlock {
     AdministratorActivationRequired,
     ModelNotApproved,
     ScopeNotApproved,
+    ProtectedScope,
     TrustedBuildEnvironmentRequired,
     PrimaryApprovalRequired,
     SecondaryApprovalRequired,
@@ -55,6 +56,37 @@ pub struct SelfEvolutionPermission {
     pub blocked_by: Option<SelfEvolutionBlock>,
 }
 
+const PROTECTED_SCOPES: &[&str] = &[
+    ".github/workflows",
+    "scripts",
+    "migrations",
+    "Cargo.toml",
+    "Cargo.lock",
+    "crates/ujani-enterprise-policy",
+    "apps/operator-console/package.json",
+    "apps/operator-console/package-lock.json",
+];
+
+fn is_protected_scope(value: &str) -> bool {
+    let candidate = value.to_ascii_lowercase();
+    PROTECTED_SCOPES.iter().any(|protected| {
+        let protected = protected.to_ascii_lowercase();
+        candidate == protected || candidate.starts_with(&(protected + "/"))
+    }) || candidate.split('/').any(|segment| {
+        segment == ".env"
+            || segment.starts_with(".env.")
+            || segment == ".ssh"
+            || segment == ".npmrc"
+            || segment == ".netrc"
+            || segment == "credentials"
+            || segment == "secrets"
+            || segment.ends_with(".pem")
+            || segment.ends_with(".key")
+            || segment.ends_with(".p12")
+            || segment.ends_with(".pfx")
+    })
+}
+
 fn valid_identifier(value: &str) -> bool {
     !value.trim().is_empty()
         && value.len() <= 128
@@ -80,6 +112,8 @@ pub fn evaluate_enterprise_self_evolution(
         || !policy.approved_write_scopes.contains(&request.requested_write_scope)
     {
         Some(SelfEvolutionBlock::ScopeNotApproved)
+    } else if is_protected_scope(&request.requested_write_scope) {
+        Some(SelfEvolutionBlock::ProtectedScope)
     } else if !request.trusted_source_and_build_environment_configured {
         Some(SelfEvolutionBlock::TrustedBuildEnvironmentRequired)
     } else {
@@ -165,6 +199,29 @@ mod tests {
         assert_eq!(
             evaluate_enterprise_self_evolution(ModuleInstallState::Installed, &policy(), &r).blocked_by,
             Some(SelfEvolutionBlock::ScopeNotApproved)
+        );
+    }
+
+    #[test]
+    fn administrator_allowlist_cannot_include_protected_core_or_secret_paths() {
+        let mut p = policy();
+        p.approved_write_scopes = BTreeSet::from([
+            "crates/ujani-enterprise-policy".into(),
+        ]);
+        let mut r = request();
+        r.requested_write_scope = "crates/ujani-enterprise-policy".into();
+        assert_eq!(
+            evaluate_enterprise_self_evolution(ModuleInstallState::Installed, &p, &r).blocked_by,
+            Some(SelfEvolutionBlock::ProtectedScope)
+        );
+
+        p.approved_write_scopes = BTreeSet::from(["apps/operator-console/help".into()]);
+        r = request();
+        r.requested_write_scope = "apps/operator-console/help/.env.production".into();
+        p.approved_write_scopes.insert(r.requested_write_scope.clone());
+        assert_eq!(
+            evaluate_enterprise_self_evolution(ModuleInstallState::Installed, &p, &r).blocked_by,
+            Some(SelfEvolutionBlock::ProtectedScope)
         );
     }
 
