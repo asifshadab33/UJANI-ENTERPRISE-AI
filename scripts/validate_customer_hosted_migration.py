@@ -5,6 +5,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SQL_PATH = ROOT / "migrations" / "0001_customer_hosted_control_plane.sql"
 TASK_REPLAY_SQL_PATH = ROOT / "migrations" / "0002_task_contract_replay_storage.sql"
+TASK_REPLAY_FUNCTIONS_SQL_PATH = ROOT / "migrations" / "0009_task_contract_replay_functions.sql"
+TASK_REPLAY_FUNCTIONS_TEST_PATH = ROOT / "scripts" / "test_task_contract_replay_functions.sql"
 SELF_EVOLUTION_REPLAY_SQL_PATH = ROOT / "migrations" / "0006_self_evolution_approval_replay.sql"
 SELF_EVOLUTION_REPLAY_TEST_PATH = ROOT / "scripts" / "test_self_evolution_approval_replay.sql"
 SELF_EVOLUTION_CONSUMPTION_SQL_PATH = ROOT / "migrations" / "0007_self_evolution_approval_consumption_function.sql"
@@ -58,6 +60,34 @@ def main() -> None:
         raise SystemExit("task-contract storage must fail closed without tenant context")
     if "SECURITY DEFINER" in replay_sql or "GRANT ALL" in replay_sql:
         raise SystemExit("task-contract migration must not add privileged functions or grants")
+    replay_functions_sql = TASK_REPLAY_FUNCTIONS_SQL_PATH.read_text(encoding="utf-8")
+    for required in (
+        "CREATE OR REPLACE FUNCTION ujani_control.claim_task_contract_replay",
+        "CREATE OR REPLACE FUNCTION ujani_control.advance_task_contract_sequence",
+        "SECURITY INVOKER",
+        "pg_catalog.current_setting('ujani.tenant_id', true)",
+        "ON CONFLICT DO NOTHING",
+        "RETURNING task_id INTO v_claimed_task_id",
+        "last_sequence < EXCLUDED.last_sequence",
+        "interval '5 minutes'",
+        "REVOKE ALL ON FUNCTION",
+    ):
+        if required not in replay_functions_sql:
+            raise SystemExit(f"task-contract replay helper is missing invariant: {required}")
+    if "SECURITY DEFINER" in replay_functions_sql or "GRANT ALL" in replay_functions_sql:
+        raise SystemExit("task-contract replay helpers must preserve caller RLS and least privilege")
+    replay_functions_test = TASK_REPLAY_FUNCTIONS_TEST_PATH.read_text(encoding="utf-8")
+    for required in (
+        "replayed sender nonce was accepted for a second task",
+        "replayed task ID was accepted with a different nonce",
+        "replayed task-status sequence unexpectedly advanced",
+        "stale task-status sequence unexpectedly advanced",
+        "cross-tenant replay claim unexpectedly succeeded",
+        "replay claim without tenant context unexpectedly succeeded",
+        "task-contract runtime privileges are not least-privilege",
+    ):
+        if required not in replay_functions_test:
+            raise SystemExit(f"task-contract replay regression test missing: {required}")
     self_evolution_replay_sql = SELF_EVOLUTION_REPLAY_SQL_PATH.read_text(encoding="utf-8")
     for required in (
         "CREATE TABLE IF NOT EXISTS ujani_control.self_evolution_approval_replays",
