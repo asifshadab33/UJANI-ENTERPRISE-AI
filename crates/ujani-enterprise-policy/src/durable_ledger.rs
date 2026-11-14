@@ -2638,10 +2638,8 @@ mod tests {
         )
         .unwrap();
         ledger
-            .transact(|state| {
-                state.telemetry_generations.insert("worker-01".into(), 1);
-                Ok(())
-            })
+            .consume_telemetry_challenge("worker-01", 1, 0, [7; 16], 10_000, 2_000)
+            .unwrap()
             .unwrap();
         drop(ledger);
 
