@@ -41,6 +41,31 @@ ON CONFLICT (tenant_id,device_id) DO UPDATE SET
  bound_by_subject_id=EXCLUDED.bound_by_subject_id,
  binding_revision=ujani_control.device_owner_bindings.binding_revision+1,
  active=true,binding_digest=EXCLUDED.binding_digest,bound_at=clock_timestamp();
+
+DO $block$
+BEGIN
+ UPDATE ujani_control.device_owner_bindings
+ SET bound_by_subject_id='admission-viewer',
+     binding_revision=binding_revision+1,
+     binding_digest=decode(repeat('2e',32),'hex')
+ WHERE tenant_id='admission-test' AND device_id='admission-device';
+ RAISE EXCEPTION 'non-administrator changed a device owner binding';
+EXCEPTION WHEN insufficient_privilege THEN
+ NULL;
+END;
+$block$;
+
+DO $block$
+BEGIN
+ INSERT INTO ujani_control.owner_consents
+  (tenant_id,device_id,consent_generation,state,actor_ref,evidence_digest)
+ VALUES ('admission-test','admission-device',1,'granted','admission-admin',decode(repeat('2f',32),'hex'));
+ RAISE EXCEPTION 'consent from a non-owner subject was accepted';
+EXCEPTION WHEN insufficient_privilege THEN
+ NULL;
+END;
+$block$;
+
 INSERT INTO ujani_control.owner_consents
  (tenant_id,device_id,consent_generation,state,actor_ref,evidence_digest)
 VALUES ('admission-test','admission-device',1,'granted','admission-owner',decode(repeat('22',32),'hex'))
