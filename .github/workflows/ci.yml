@@ -178,3 +178,13 @@ jobs:
           PGUSER: postgres
           PGDATABASE: ujani_test
         run: bash scripts/test_self_evolution_approval_consumption_concurrency.sh
+      - name: Apply shared task-contract replay helper functions
+        env:
+          PGPASSWORD: postgres
+        run: |
+          "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < migrations/0009_task_contract_replay_functions.sql
+      - name: Verify atomic task-contract replay and sequence helpers
+        env:
+          PGPASSWORD: postgres
+        run: |
+          "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < scripts/test_task_contract_replay_functions.sql
