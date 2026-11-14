@@ -146,7 +146,7 @@ mod tests {
 
     /// Deterministic in-memory provider for contract tests only. Never use in production.
     #[derive(Default)]
-    struct TestIntegrityKeyProvider(Mutex<TestState>);
+    pub(crate) struct TestIntegrityKeyProvider(Mutex<TestState>);
 
     impl IntegrityKeyProvider for TestIntegrityKeyProvider {
         fn provision_key(
