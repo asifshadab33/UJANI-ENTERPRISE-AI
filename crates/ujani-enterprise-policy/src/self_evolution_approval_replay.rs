@@ -136,6 +136,82 @@ mod tests {
     }
 
     #[test]
+    fn replay_record_maps_only_verified_claims_and_trusted_host_identity() {
+        use crate::self_evolution::{FindingCategory, FindingSeverity, ProposedChange, ProposedChangeKind, ProposalTarget, SelfEvolutionFinding, SelfEvolutionProposalV1, SELF_EVOLUTION_PROPOSAL_SCHEMA_VERSION};
+        use crate::self_evolution_approval::{approval_signing_bytes, self_evolution_proposal_digest, verify_self_evolution_approval, SelfEvolutionApprovalClaims, SignedSelfEvolutionApproval};
+        use ed25519_dalek::{Signer, SigningKey};
+
+        let target = ProposalTarget {
+            repository: "asifshadab33/UJANI-ENTERPRISE-AI".into(),
+            base_ref: "main".into(),
+            source_revision: "a".repeat(40),
+        };
+        let proposal = SelfEvolutionProposalV1 {
+            schema_version: SELF_EVOLUTION_PROPOSAL_SCHEMA_VERSION,
+            summary: "Improve an accessible label.".into(),
+            findings: vec![SelfEvolutionFinding {
+                category: FindingCategory::Accessibility,
+                severity: FindingSeverity::Low,
+                path: "apps/operator-console/app.js".into(),
+                line_start: Some(1),
+                line_end: Some(2),
+                description: "A control needs a label.".into(),
+                recommendation: "Add a descriptive accessible label.".into(),
+            }],
+            changes: vec![ProposedChange {
+                path: "apps/operator-console/app.js".into(),
+                operation: ProposedChangeKind::Modify,
+                summary: "Add the accessible label.".into(),
+                patch_sha256: "b".repeat(64),
+            }],
+        };
+        let signing_key = SigningKey::from_bytes(&[19; 32]);
+        let claims = SelfEvolutionApprovalClaims {
+            approval_id: "approval-replay-test".into(),
+            repository: target.repository.clone(),
+            base_ref: target.base_ref.clone(),
+            source_revision: target.source_revision.clone(),
+            proposal_sha256: self_evolution_proposal_digest(&proposal).unwrap(),
+            approved_scope: vec!["apps/operator-console".into()],
+            approver_key_id: "admin-key-test".into(),
+            nonce: [29; 16],
+            issued_at_unix_ms: 1_000,
+            expires_unix_ms: 10_000,
+        };
+        let signed = SignedSelfEvolutionApproval {
+            signature: signing_key.sign(&approval_signing_bytes(&claims)).to_bytes(),
+            claims,
+        };
+        let verified = verify_self_evolution_approval(
+            &signed,
+            &[("admin-key-test".into(), signing_key.verifying_key())],
+            &target,
+            &proposal,
+            2_000,
+        ).unwrap();
+
+        let record = SelfEvolutionApprovalReplayRecord::from_verified(
+            "tenant-a",
+            "operator-admin-1",
+            &verified,
+        ).unwrap();
+
+        assert_eq!(record.tenant_id, "tenant-a");
+        assert_eq!(record.approver_subject_id, "operator-admin-1");
+        assert_eq!(record.approval_id, "approval-replay-test");
+        assert_eq!(record.approver_key_id, "admin-key-test");
+        assert_eq!(record.nonce, [29; 16]);
+        assert_eq!(record.repository, target.repository);
+        assert_eq!(record.base_ref, target.base_ref);
+        assert_eq!(record.source_revision, target.source_revision);
+        assert_eq!(record.proposal_sha256, signed.claims.proposal_sha256);
+        assert_eq!(record.target_sha256, self_evolution_target_sha256(&record.repository, &record.base_ref, &record.source_revision));
+        assert_eq!(record.approved_scope_sha256, self_evolution_scope_sha256(&signed.claims.approved_scope).unwrap());
+        assert_eq!(record.approved_scope_count, 1);
+        assert_eq!(record.expires_at_unix_ms, 10_000);
+    }
+
+    #[test]
     fn identity_validation_fails_closed() {
         assert!(!valid_identity(""));
         assert!(!valid_identity("tenant with spaces"));
