@@ -147,8 +147,9 @@ pub fn consume_verified_self_evolution_approval(
             approval.source_revision(),
         ),
         approved_scope_sha256: approved_scope_digest(approval.approved_scope()),
-        approved_scope_count: i32::try_from(approval.approved_scope().len())
-            .map_err(|_| ApprovalConsumptionError::Store(ApprovalReplayStoreError::InvalidRecord))?,
+        approved_scope_count: i32::try_from(approval.approved_scope().len()).map_err(|_| {
+            ApprovalConsumptionError::Store(ApprovalReplayStoreError::InvalidRecord)
+        })?,
         expires_at_unix_ms: approval.expires_at_unix_ms(),
     };
 
@@ -184,7 +185,7 @@ fn approved_scope_digest(scopes: &[String]) -> [u8; 32] {
 mod tests {
     use super::*;
     use crate::self_evolution::{
-        FindingCategory, FindingSeverity, ProposedChange, ProposedChangeKind, ProposalTarget,
+        FindingCategory, FindingSeverity, ProposalTarget, ProposedChange, ProposedChangeKind,
         SelfEvolutionFinding, SelfEvolutionProposalV1, SELF_EVOLUTION_PROPOSAL_SCHEMA_VERSION,
     };
     use crate::self_evolution_approval::{
@@ -293,12 +294,7 @@ mod tests {
         let approval = verified_approval();
         let mut store = MemoryStore::default();
         assert_eq!(
-            consume_verified_self_evolution_approval(
-                &approval,
-                "tenant-a",
-                "admin-a",
-                &mut store,
-            ),
+            consume_verified_self_evolution_approval(&approval, "tenant-a", "admin-a", &mut store,),
             Ok(())
         );
         assert_eq!(store.approval_ids.len(), 1);
