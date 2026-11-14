@@ -11,6 +11,8 @@ SELF_EVOLUTION_CONSUMPTION_SQL_PATH = ROOT / "migrations" / "0007_self_evolution
 SELF_EVOLUTION_CONSUMPTION_TEST_PATH = ROOT / "scripts" / "test_self_evolution_approval_consumption_function.sql"
 SELF_EVOLUTION_CONCURRENCY_TEST_PATH = ROOT / "scripts" / "test_self_evolution_approval_consumption_concurrency.sh"
 TENANT_TEST_SQL_PATH = ROOT / "scripts" / "test_customer_hosted_migration.sql"
+ATOMIC_ADMISSION_SQL_PATH = ROOT / "migrations" / "0008_atomic_device_lease_admission.sql"
+ATOMIC_ADMISSION_TEST_PATH = ROOT / "scripts" / "test_atomic_device_lease_admission.sql"
 
 
 def main() -> None:
@@ -182,7 +184,41 @@ def main() -> None:
     concurrency_test = (ROOT / "scripts" / "test_monotonic_device_telemetry_concurrency.sh").read_text(encoding="utf-8")
     if 'PSQL_BIN="${PSQL_BIN:-psql}"' not in concurrency_test:
         raise SystemExit("telemetry concurrency test must use the configured PostgreSQL client adapter")
-    print("Customer-hosted, task-contract, Self-Evolution approval replay and monotonic telemetry migration static checks passed.")
+    atomic_sql = ATOMIC_ADMISSION_SQL_PATH.read_text(encoding="utf-8")
+    for required in (
+        "CREATE OR REPLACE FUNCTION ujani_control.admit_device_lease",
+        "SECURITY INVOKER",
+        "current_setting('ujani.tenant_id', true)",
+        "FOR UPDATE",
+        "consent_generation = p_consent_generation",
+        "device_key_generation",
+        "owner_consents",
+        "state = 'approved'",
+        "received_at DESC",
+        "participation_state <> 'idle'",
+        "ON CONFLICT (tenant_id, device_id, request_id) DO NOTHING",
+        "requested_cpu_millis",
+        "requested_memory_mb",
+        "reservation_revision",
+        "device.lease.admitted",
+        "REVOKE ALL ON FUNCTION",
+    ):
+        if required not in atomic_sql:
+            raise SystemExit(f"atomic device admission migration is missing invariant: {required}")
+    if "SECURITY DEFINER" in atomic_sql:
+        raise SystemExit("atomic device admission must preserve caller RLS and privileges")
+    atomic_test = ATOMIC_ADMISSION_TEST_PATH.read_text(encoding="utf-8")
+    for required in (
+        "valid admission was not committed",
+        "replayed request was admitted",
+        "over-capacity request was admitted",
+        "paused owner consent admitted work",
+        "admission writes were not atomic",
+        "late failure left partial admission state",
+    ):
+        if required not in atomic_test:
+            raise SystemExit(f"atomic device admission regression test missing: {required}")
+    print("Customer-hosted, task-contract, Self-Evolution approval replay, monotonic telemetry and atomic device admission migration static checks passed.")
 
 
 if __name__ == "__main__":
