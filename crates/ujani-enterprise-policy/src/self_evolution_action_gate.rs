@@ -1,11 +1,12 @@
 //! Action-level authorization for the optional Enterprise Self-Evolution feature.
 //!
 //! This layer deliberately wraps the existing model/scope policy instead of
-//! reimplementing it. Callers must supply OperatorRole from a verified session
-//! and owner opt-in from current trusted consent storage, never from UI input.
+//! reimplementing it. Callers must supply CurrentOperatorSession from the
+//! revocation-checking verifier and owner opt-in from current trusted consent
+//! storage, never from UI input.
 //! It authorizes proposal preparation only; review submission, staging and apply
 //! remain blocked until signed approval and durable single-use replay are wired.
-use crate::operator_control_plane::OperatorRole;
+use crate::operator_session_revocation::CurrentOperatorSession;
 use crate::self_evolution::{MAX_PROPOSAL_CHANGES, MAX_PROPOSAL_SCOPE_PATHS};
 use crate::self_evolution_module::{
     evaluate_enterprise_self_evolution, EnterpriseSelfEvolutionPolicy, ModuleInstallState,
@@ -25,6 +26,7 @@ pub enum SelfEvolutionAction {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SelfEvolutionActionError {
     AdministratorRequired,
+    InvalidAuthenticatedSession,
     ExplicitOwnerOptInRequired,
     AlreadyInstalled,
     ModuleNotInstalled,
@@ -79,10 +81,12 @@ fn validate_approved_scope_configuration(
     Ok(())
 }
 
-/// Authorize one action using authenticated operator role and trusted owner consent.
+/// Authorize one action using a revocation-checked operator session and trusted owner consent.
 ///
-/// `proposal_generation_enabled`, `max_changes_per_proposal`, and
-/// `owner_opted_in` must come from trusted administrator/consent state.
+/// `proposal_generation_enabled` and `max_changes_per_proposal` must come from
+/// trusted administrator state. `owner_opted_in` must come from a current,
+/// purpose-specific Self-Evolution consent record bound to this tenant/device/user;
+/// generic compute consent and UI-supplied booleans are not sufficient.
 /// This function has no installation, repository, filesystem, signing or
 /// execution side effects.
 #[allow(clippy::too_many_arguments)]
@@ -90,18 +94,22 @@ pub fn authorize_self_evolution_action(
     installation: ModuleInstallState,
     policy: &EnterpriseSelfEvolutionPolicy,
     request: &SelfEvolutionRequest,
-    actor_role: OperatorRole,
+    session: &CurrentOperatorSession,
+    now_unix_ms: u64,
     action: SelfEvolutionAction,
     owner_opted_in: bool,
     proposal_generation_enabled: bool,
     max_changes_per_proposal: usize,
     requested_change_count: usize,
 ) -> Result<Option<ProposalGenerationPermit>, SelfEvolutionActionError> {
+    if !session.is_current_at(now_unix_ms) {
+        return Err(SelfEvolutionActionError::InvalidAuthenticatedSession);
+    }
     if action == SelfEvolutionAction::ViewStatus {
         return Ok(None);
     }
 
-    if actor_role != OperatorRole::Administrator {
+    if session.role() != crate::operator_control_plane::OperatorRole::Administrator {
         return Err(SelfEvolutionActionError::AdministratorRequired);
     }
 
@@ -165,6 +173,8 @@ pub fn authorize_self_evolution_action(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::operator_control_plane::OperatorRole;
+    use crate::operator_session_revocation::test_current_operator_session;
     use std::collections::BTreeSet;
 
     fn policy() -> EnterpriseSelfEvolutionPolicy {
@@ -190,11 +200,13 @@ mod tests {
         action: SelfEvolutionAction,
         owner_opted_in: bool,
     ) -> Result<Option<ProposalGenerationPermit>, SelfEvolutionActionError> {
+        let session = test_current_operator_session("tenant-a", "admin-a", role, 90_000);
         authorize_self_evolution_action(
             ModuleInstallState::Installed,
             &policy(),
             &request(),
-            role,
+            &session,
+            2_000,
             action,
             owner_opted_in,
             true,
@@ -220,6 +232,31 @@ mod tests {
                 true
             ),
             Err(SelfEvolutionActionError::AdministratorRequired)
+        );
+    }
+
+    #[test]
+    fn expired_operator_session_cannot_authorize_self_evolution_actions() {
+        let expired = test_current_operator_session(
+            "tenant-a",
+            "admin-a",
+            OperatorRole::Administrator,
+            1_999,
+        );
+        assert_eq!(
+            authorize_self_evolution_action(
+                ModuleInstallState::Installed,
+                &policy(),
+                &request(),
+                &expired,
+                2_000,
+                SelfEvolutionAction::GenerateProposal,
+                true,
+                true,
+                8,
+                1,
+            ),
+            Err(SelfEvolutionActionError::InvalidAuthenticatedSession)
         );
     }
 
@@ -254,7 +291,13 @@ mod tests {
                 ModuleInstallState::Installed,
                 &unapproved,
                 &request(),
-                OperatorRole::Administrator,
+                &test_current_operator_session(
+                    "tenant-a",
+                    "admin-a",
+                    OperatorRole::Administrator,
+                    90_000
+                ),
+                2_000,
                 SelfEvolutionAction::GenerateProposal,
                 true,
                 true,
@@ -275,7 +318,13 @@ mod tests {
                 ModuleInstallState::Installed,
                 &base,
                 &request(),
-                OperatorRole::Administrator,
+                &test_current_operator_session(
+                    "tenant-a",
+                    "admin-a",
+                    OperatorRole::Administrator,
+                    90_000
+                ),
+                2_000,
                 SelfEvolutionAction::GenerateProposal,
                 true,
                 false,
@@ -289,7 +338,13 @@ mod tests {
                 ModuleInstallState::Installed,
                 &base,
                 &request(),
-                OperatorRole::Administrator,
+                &test_current_operator_session(
+                    "tenant-a",
+                    "admin-a",
+                    OperatorRole::Administrator,
+                    90_000
+                ),
+                2_000,
                 SelfEvolutionAction::GenerateProposal,
                 true,
                 true,
@@ -303,7 +358,13 @@ mod tests {
                 ModuleInstallState::Installed,
                 &base,
                 &request(),
-                OperatorRole::Administrator,
+                &test_current_operator_session(
+                    "tenant-a",
+                    "admin-a",
+                    OperatorRole::Administrator,
+                    90_000
+                ),
+                2_000,
                 SelfEvolutionAction::GenerateProposal,
                 true,
                 true,
@@ -323,7 +384,13 @@ mod tests {
                 ModuleInstallState::Installed,
                 &configured,
                 &request(),
-                OperatorRole::Administrator,
+                &test_current_operator_session(
+                    "tenant-a",
+                    "admin-a",
+                    OperatorRole::Administrator,
+                    90_000
+                ),
+                2_000,
                 SelfEvolutionAction::GenerateProposal,
                 true,
                 true,
@@ -344,7 +411,13 @@ mod tests {
                 ModuleInstallState::Installed,
                 &oversized,
                 &request(),
-                OperatorRole::Administrator,
+                &test_current_operator_session(
+                    "tenant-a",
+                    "admin-a",
+                    OperatorRole::Administrator,
+                    90_000
+                ),
+                2_000,
                 SelfEvolutionAction::GenerateProposal,
                 true,
                 true,
@@ -378,7 +451,13 @@ mod tests {
                 ModuleInstallState::NotInstalled,
                 &policy(),
                 &request(),
-                OperatorRole::Administrator,
+                &test_current_operator_session(
+                    "tenant-a",
+                    "admin-a",
+                    OperatorRole::Administrator,
+                    90_000
+                ),
+                2_000,
                 SelfEvolutionAction::InstallFeature,
                 false,
                 false,
@@ -394,7 +473,13 @@ mod tests {
                 ModuleInstallState::NotInstalled,
                 &prohibited,
                 &request(),
-                OperatorRole::Administrator,
+                &test_current_operator_session(
+                    "tenant-a",
+                    "admin-a",
+                    OperatorRole::Administrator,
+                    90_000
+                ),
+                2_000,
                 SelfEvolutionAction::InstallFeature,
                 true,
                 false,

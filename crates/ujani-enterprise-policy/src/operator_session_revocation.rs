@@ -7,7 +7,7 @@
 //! database, identity provider, HTTP endpoint or browser session handling.
 
 use crate::operator_control_plane::{
-    OperatorAuthError, OperatorSessionClaims, OperatorSessionVerifier,
+    OperatorAuthError, OperatorRole, OperatorSessionClaims, OperatorSessionVerifier,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,6 +55,71 @@ pub trait OperatorSessionRevocationStore: Send + Sync {
 pub struct RevocableOperatorSessionVerifier<V, R> {
     inner: V,
     revocations: R,
+}
+
+/// Opaque session accepted by sensitive policy gates only after signature,
+/// expiry and durable revocation checks have succeeded.
+#[derive(Debug, PartialEq, Eq)]
+pub struct CurrentOperatorSession(OperatorSessionClaims);
+
+impl CurrentOperatorSession {
+    pub fn tenant_id(&self) -> &str {
+        &self.0.tenant_id
+    }
+
+    pub fn subject_id(&self) -> &str {
+        &self.0.subject_id
+    }
+
+    pub fn role(&self) -> OperatorRole {
+        self.0.role
+    }
+
+    pub fn expires_at_unix_ms(&self) -> u64 {
+        self.0.expires_at_unix_ms
+    }
+
+    pub fn is_current_at(&self, now_unix_ms: u64) -> bool {
+        self.0.expires_at_unix_ms > now_unix_ms
+    }
+}
+
+/// Verify a session and its durable revocation state for the current request.
+/// Call this for every sensitive action; do not cache the returned session.
+pub fn authenticate_current_operator_session<V, R>(
+    verifier: &RevocableOperatorSessionVerifier<V, R>,
+    token: &str,
+    now_unix_ms: u64,
+) -> Result<CurrentOperatorSession, OperatorAuthError>
+where
+    V: OperatorSessionVerifier,
+    R: OperatorSessionRevocationStore,
+{
+    verifier
+        .verify_session(token, now_unix_ms)
+        .map(CurrentOperatorSession)
+}
+
+#[cfg(test)]
+pub(crate) fn test_current_operator_session(
+    tenant_id: &str,
+    subject_id: &str,
+    role: OperatorRole,
+    expires_at_unix_ms: u64,
+) -> CurrentOperatorSession {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock must be after Unix epoch")
+        .as_nanos()
+        .to_le_bytes();
+    CurrentOperatorSession(OperatorSessionClaims {
+        tenant_id: tenant_id.into(),
+        subject_id: subject_id.into(),
+        role,
+        issued_at_unix_ms: 1,
+        expires_at_unix_ms,
+        nonce,
+    })
 }
 
 impl<V, R> RevocableOperatorSessionVerifier<V, R> {
@@ -226,10 +291,17 @@ mod tests {
     fn session_is_accepted_until_explicitly_revoked() {
         let wrapped =
             RevocableOperatorSessionVerifier::new(verifier(), MemoryRevocations::default());
-        assert!(wrapped.verify_session("valid-test-token", 2_000).is_ok());
+        let current =
+            authenticate_current_operator_session(&wrapped, "valid-test-token", 2_000).unwrap();
+        assert_eq!(current.tenant_id(), "tenant-1");
+        assert_eq!(current.subject_id(), "operator-1");
+        assert_eq!(
+            current.role(),
+            crate::operator_control_plane::OperatorRole::Administrator
+        );
         assert_eq!(wrapped.revoke_token("valid-test-token", 2_001), Ok(()));
         assert_eq!(
-            wrapped.verify_session("valid-test-token", 2_002),
+            authenticate_current_operator_session(&wrapped, "valid-test-token", 2_002),
             Err(OperatorAuthError::InvalidClaims)
         );
     }
@@ -244,7 +316,7 @@ mod tests {
             },
         );
         assert_eq!(
-            wrapped.verify_session("valid-test-token", 2_000),
+            authenticate_current_operator_session(&wrapped, "valid-test-token", 2_000),
             Err(OperatorAuthError::InvalidClaims)
         );
         assert_eq!(

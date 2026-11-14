@@ -6,17 +6,21 @@
 //! The hosting service must atomically consume the nonce in durable storage before
 //! authorizing any later, separately reviewed change workflow.
 
+use crate::operator_control_plane::valid_identifier;
 use crate::self_evolution::{ProposalTarget, SelfEvolutionProposalV1, MAX_PROPOSAL_SCOPE_PATHS};
 use ed25519_dalek::{Signature, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 pub const SELF_EVOLUTION_APPROVAL_TTL_MAX_MS: u64 = 15 * 60 * 1000;
-const APPROVAL_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-SELF-EVOLUTION-APPROVAL-V1\0";
+const APPROVAL_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-SELF-EVOLUTION-APPROVAL-V2\0";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct SelfEvolutionApprovalClaims {
+    /// Tenant and human administrator identity are signed, not inferred from a key ID.
+    pub tenant_id: String,
+    pub approver_subject_id: String,
     pub approval_id: String,
     pub repository: String,
     pub base_ref: String,
@@ -43,17 +47,21 @@ pub struct VerifiedSelfEvolutionApproval(SelfEvolutionApprovalClaims);
 pub enum SelfEvolutionApprovalError {
     InvalidClaims,
     UnknownApproverKey,
+    AmbiguousApproverKey,
     InvalidSignature,
     ProposalDigestMismatch,
     InvalidProposal,
 }
 
-fn valid_identifier(value: &str, max_bytes: usize) -> bool {
+/// Trusted key enrollment tuple: key ID, tenant ID, operator subject ID, public key.
+pub type TrustedSelfEvolutionAdminKey = (String, String, String, VerifyingKey);
+
+fn valid_approval_identifier(value: &str, max_bytes: usize) -> bool {
     !value.is_empty()
         && value.len() <= max_bytes
         && value
             .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
 }
 
 fn valid_revision(value: &str) -> bool {
@@ -65,6 +73,8 @@ fn valid_revision(value: &str) -> bool {
 pub fn approval_signing_bytes(claims: &SelfEvolutionApprovalClaims) -> Vec<u8> {
     let mut bytes = APPROVAL_DOMAIN.to_vec();
     for value in [
+        claims.tenant_id.as_str(),
+        claims.approver_subject_id.as_str(),
         claims.approval_id.as_str(),
         claims.repository.as_str(),
         claims.base_ref.as_str(),
@@ -101,14 +111,16 @@ pub fn self_evolution_proposal_digest(
 /// This verifier alone is not replay protection and grants no patch-application authority.
 pub fn verify_self_evolution_approval(
     signed: &SignedSelfEvolutionApproval,
-    enrolled_admin_keys: &[(String, VerifyingKey)],
+    enrolled_admin_keys: &[TrustedSelfEvolutionAdminKey],
     trusted_target: &ProposalTarget,
     proposal: &SelfEvolutionProposalV1,
     now_unix_ms: u64,
 ) -> Result<VerifiedSelfEvolutionApproval, SelfEvolutionApprovalError> {
     let claims = &signed.claims;
-    if !valid_identifier(&claims.approval_id, 128)
-        || !valid_identifier(&claims.approver_key_id, 128)
+    if !valid_identifier(&claims.tenant_id, 128)
+        || !valid_identifier(&claims.approver_subject_id, 128)
+        || !valid_approval_identifier(&claims.approval_id, 128)
+        || !valid_approval_identifier(&claims.approver_key_id, 128)
         || claims.repository != trusted_target.repository
         || claims.base_ref != trusted_target.base_ref
         || claims.source_revision != trusted_target.source_revision
@@ -127,11 +139,21 @@ pub fn verify_self_evolution_approval(
         return Err(SelfEvolutionApprovalError::InvalidClaims);
     }
 
-    let key = enrolled_admin_keys
-        .iter()
-        .find(|(key_id, _)| key_id == &claims.approver_key_id)
-        .map(|(_, key)| key)
+    let mut matching_keys =
+        enrolled_admin_keys
+            .iter()
+            .filter(|(key_id, tenant_id, subject_id, _)| {
+                key_id == &claims.approver_key_id
+                    && tenant_id == &claims.tenant_id
+                    && subject_id == &claims.approver_subject_id
+            });
+    let key = matching_keys
+        .next()
+        .map(|(_, _, _, key)| key)
         .ok_or(SelfEvolutionApprovalError::UnknownApproverKey)?;
+    if matching_keys.next().is_some() {
+        return Err(SelfEvolutionApprovalError::AmbiguousApproverKey);
+    }
     let signature = Signature::from_bytes(&signed.signature);
     key.verify_strict(&approval_signing_bytes(claims), &signature)
         .map_err(|_| SelfEvolutionApprovalError::InvalidSignature)?;
@@ -148,6 +170,14 @@ pub fn verify_self_evolution_approval(
 }
 
 impl VerifiedSelfEvolutionApproval {
+    pub fn tenant_id(&self) -> &str {
+        &self.0.tenant_id
+    }
+
+    pub fn approver_subject_id(&self) -> &str {
+        &self.0.approver_subject_id
+    }
+
     pub fn approval_id(&self) -> &str {
         &self.0.approval_id
     }
@@ -224,12 +254,22 @@ mod tests {
         }
     }
 
+    fn test_nonce() -> [u8; 16] {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock must be after Unix epoch")
+            .as_nanos()
+            .to_le_bytes()
+    }
+
     fn signed_approval(
         proposal: &SelfEvolutionProposalV1,
         target: &ProposalTarget,
         signing_key: &SigningKey,
     ) -> SignedSelfEvolutionApproval {
         let claims = SelfEvolutionApprovalClaims {
+            tenant_id: "tenant-a".into(),
+            approver_subject_id: "admin-a".into(),
             approval_id: "approval-001".into(),
             repository: target.repository.clone(),
             base_ref: target.base_ref.clone(),
@@ -237,7 +277,7 @@ mod tests {
             proposal_sha256: self_evolution_proposal_digest(proposal).unwrap(),
             approved_scope: vec!["apps/operator-console".into()],
             approver_key_id: "admin-key-01".into(),
-            nonce: [7; 16],
+            nonce: test_nonce(),
             issued_at_unix_ms: 1_000,
             expires_unix_ms: 10_000,
         };
@@ -248,6 +288,97 @@ mod tests {
     }
 
     #[test]
+    fn rejects_approval_and_key_ids_outside_the_database_identifier_grammar() {
+        let key = SigningKey::from_bytes(&[9; 32]);
+        let target = target();
+        let proposal = proposal();
+        let mut signed = signed_approval(&proposal, &target, &key);
+
+        signed.claims.approval_id = "approval:001".into();
+        assert_eq!(
+            verify_self_evolution_approval(
+                &signed,
+                &[(
+                    "admin-key-01".into(),
+                    "tenant-a".into(),
+                    "admin-a".into(),
+                    key.verifying_key(),
+                )],
+                &target,
+                &proposal,
+                2_000,
+            ),
+            Err(SelfEvolutionApprovalError::InvalidClaims)
+        );
+
+        signed = signed_approval(&proposal, &target, &key);
+        signed.claims.approver_key_id = "admin:key:01".into();
+        assert_eq!(
+            verify_self_evolution_approval(
+                &signed,
+                &[(
+                    "admin:key:01".into(),
+                    "tenant-a".into(),
+                    "admin-a".into(),
+                    key.verifying_key(),
+                )],
+                &target,
+                &proposal,
+                2_000,
+            ),
+            Err(SelfEvolutionApprovalError::InvalidClaims)
+        );
+    }
+
+    #[test]
+    fn binds_approval_to_one_tenant_subject_and_unambiguous_key_enrollment() {
+        let key = SigningKey::from_bytes(&[9; 32]);
+        let target = target();
+        let proposal = proposal();
+        let signed = signed_approval(&proposal, &target, &key);
+
+        assert_eq!(
+            verify_self_evolution_approval(
+                &signed,
+                &[(
+                    "admin-key-01".into(),
+                    "tenant-a".into(),
+                    "admin-b".into(),
+                    key.verifying_key(),
+                )],
+                &target,
+                &proposal,
+                2_000,
+            ),
+            Err(SelfEvolutionApprovalError::UnknownApproverKey)
+        );
+
+        assert_eq!(
+            verify_self_evolution_approval(
+                &signed,
+                &[
+                    (
+                        "admin-key-01".into(),
+                        "tenant-a".into(),
+                        "admin-a".into(),
+                        key.verifying_key(),
+                    ),
+                    (
+                        "admin-key-01".into(),
+                        "tenant-a".into(),
+                        "admin-a".into(),
+                        SigningKey::from_bytes(&[10; 32]).verifying_key(),
+                    ),
+                ],
+                &target,
+                &proposal,
+                2_000,
+            ),
+            Err(SelfEvolutionApprovalError::AmbiguousApproverKey)
+        );
+    }
+
+    #[test]
     fn accepts_exact_proposal_target_and_enrolled_admin_signature() {
         let key = SigningKey::from_bytes(&[9; 32]);
         let proposal = proposal();
@@ -255,14 +386,19 @@ mod tests {
         let signed = signed_approval(&proposal, &target, &key);
         let verified = verify_self_evolution_approval(
             &signed,
-            &[("admin-key-01".into(), key.verifying_key())],
+            &[(
+                "admin-key-01".into(),
+                "tenant-a".into(),
+                "admin-a".into(),
+                key.verifying_key(),
+            )],
             &target,
             &proposal,
             2_000,
         )
         .unwrap();
         assert_eq!(verified.approval_id(), "approval-001");
-        assert_eq!(verified.nonce(), &[7; 16]);
+        assert_eq!(verified.nonce(), &signed.claims.nonce);
     }
 
     #[test]
@@ -275,7 +411,12 @@ mod tests {
         assert_eq!(
             verify_self_evolution_approval(
                 &signed,
-                &[("admin-key-01".into(), key.verifying_key())],
+                &[(
+                    "admin-key-01".into(),
+                    "tenant-a".into(),
+                    "admin-a".into(),
+                    key.verifying_key(),
+                )],
                 &target,
                 &changed,
                 2_000,
@@ -295,7 +436,12 @@ mod tests {
         assert_eq!(
             verify_self_evolution_approval(
                 &signed,
-                &[("admin-key-01".into(), key.verifying_key())],
+                &[(
+                    "admin-key-01".into(),
+                    "tenant-a".into(),
+                    "admin-a".into(),
+                    key.verifying_key(),
+                )],
                 &other_target,
                 &proposal,
                 2_000,
@@ -309,7 +455,12 @@ mod tests {
         assert_eq!(
             verify_self_evolution_approval(
                 &signed,
-                &[("admin-key-01".into(), key.verifying_key())],
+                &[(
+                    "admin-key-01".into(),
+                    "tenant-a".into(),
+                    "admin-a".into(),
+                    key.verifying_key(),
+                )],
                 &target,
                 &proposal,
                 10_000,
@@ -328,7 +479,12 @@ mod tests {
         assert_eq!(
             verify_self_evolution_approval(
                 &tampered,
-                &[("admin-key-01".into(), key.verifying_key())],
+                &[(
+                    "admin-key-01".into(),
+                    "tenant-a".into(),
+                    "admin-a".into(),
+                    key.verifying_key(),
+                )],
                 &target,
                 &proposal,
                 2_000,
@@ -344,7 +500,12 @@ mod tests {
         assert_eq!(
             verify_self_evolution_approval(
                 &protected,
-                &[("admin-key-01".into(), key.verifying_key())],
+                &[(
+                    "admin-key-01".into(),
+                    "tenant-a".into(),
+                    "admin-a".into(),
+                    key.verifying_key(),
+                )],
                 &target,
                 &proposal,
                 2_000,

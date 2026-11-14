@@ -7,9 +7,11 @@
 //! concurrent calls across processes, and let the database check expiry after
 //! its advisory locks have been acquired. Memory stores are tests only.
 
-use crate::operator_control_plane::valid_identifier;
+use crate::operator_control_plane::OperatorRole;
+use crate::operator_session_revocation::CurrentOperatorSession;
 use crate::self_evolution_approval::VerifiedSelfEvolutionApproval;
 use sha2::{Digest, Sha256};
+
 const TARGET_DIGEST_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-SELF-EVOLUTION-TARGET-V1\0";
 const SCOPE_DIGEST_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-SELF-EVOLUTION-SCOPE-SET-V1\0";
 
@@ -123,17 +125,21 @@ pub trait SelfEvolutionApprovalReplayStore {
 /// The store owns the final expiry check so it can sample time after locking.
 pub fn consume_verified_self_evolution_approval(
     approval: &VerifiedSelfEvolutionApproval,
-    tenant_id: &str,
-    approver_subject_id: &str,
+    session: &CurrentOperatorSession,
+    now_unix_ms: u64,
     store: &mut impl SelfEvolutionApprovalReplayStore,
 ) -> Result<(), ApprovalConsumptionError> {
-    if !valid_identifier(tenant_id, 128) || !valid_identifier(approver_subject_id, 128) {
+    if !session.is_current_at(now_unix_ms)
+        || session.role() != OperatorRole::Administrator
+        || approval.tenant_id() != session.tenant_id()
+        || approval.approver_subject_id() != session.subject_id()
+    {
         return Err(ApprovalConsumptionError::InvalidAuthenticatedContext);
     }
 
     let record = SelfEvolutionApprovalReplayRecord {
-        tenant_id: tenant_id.to_owned(),
-        approver_subject_id: approver_subject_id.to_owned(),
+        tenant_id: session.tenant_id().to_owned(),
+        approver_subject_id: session.subject_id().to_owned(),
         approval_id: approval.approval_id().to_owned(),
         approver_key_id: approval.approver_key_id().to_owned(),
         nonce: *approval.nonce(),
@@ -184,6 +190,7 @@ fn approved_scope_digest(scopes: &[String]) -> [u8; 32] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::operator_session_revocation::test_current_operator_session;
     use crate::self_evolution::{
         FindingCategory, FindingSeverity, ProposalTarget, ProposedChange, ProposedChangeKind,
         SelfEvolutionFinding, SelfEvolutionProposalV1, SELF_EVOLUTION_PROPOSAL_SCHEMA_VERSION,
@@ -225,6 +232,14 @@ mod tests {
         }
     }
 
+    fn test_approval_nonce() -> [u8; 16] {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock must be after Unix epoch")
+            .as_nanos()
+            .to_le_bytes()
+    }
+
     fn verified_approval() -> VerifiedSelfEvolutionApproval {
         let target = ProposalTarget {
             repository: "asifshadab33/UJANI-ENTERPRISE-AI".into(),
@@ -252,6 +267,8 @@ mod tests {
         };
         let key = SigningKey::from_bytes(&[11; 32]);
         let claims = SelfEvolutionApprovalClaims {
+            tenant_id: "tenant-a".into(),
+            approver_subject_id: "admin-a".into(),
             approval_id: "approval-001".into(),
             repository: target.repository.clone(),
             base_ref: target.base_ref.clone(),
@@ -259,7 +276,7 @@ mod tests {
             proposal_sha256: self_evolution_proposal_digest(&proposal).unwrap(),
             approved_scope: vec!["apps/operator-console".into()],
             approver_key_id: "admin-key-01".into(),
-            nonce: [9; 16],
+            nonce: test_approval_nonce(),
             issued_at_unix_ms: 1_000,
             expires_unix_ms: 60_000,
         };
@@ -269,7 +286,12 @@ mod tests {
         };
         verify_self_evolution_approval(
             &signed,
-            &[("admin-key-01".into(), key.verifying_key())],
+            &[(
+                "admin-key-01".into(),
+                "tenant-a".into(),
+                "admin-a".into(),
+                key.verifying_key(),
+            )],
             &target,
             &proposal,
             2_000,
@@ -292,15 +314,21 @@ mod tests {
     #[test]
     fn consumes_verified_approval_once_and_binds_authenticated_context() {
         let approval = verified_approval();
+        let session = test_current_operator_session(
+            "tenant-a",
+            "admin-a",
+            OperatorRole::Administrator,
+            90_000,
+        );
         let mut store = MemoryStore::default();
         assert_eq!(
-            consume_verified_self_evolution_approval(&approval, "tenant-a", "admin-a", &mut store,),
+            consume_verified_self_evolution_approval(&approval, &session, 2_000, &mut store),
             Ok(())
         );
         assert_eq!(store.approval_ids.len(), 1);
         assert_eq!(store.nonces.len(), 1);
         assert_eq!(
-            consume_verified_self_evolution_approval(&approval, "tenant-a", "admin-a", &mut store,),
+            consume_verified_self_evolution_approval(&approval, &session, 2_000, &mut store),
             Err(ApprovalConsumptionError::Store(
                 ApprovalReplayStoreError::AlreadyConsumedOrExpired
             ))
@@ -308,30 +336,54 @@ mod tests {
     }
 
     #[test]
-    fn rejects_invalid_authenticated_context_before_storage() {
+    fn rejects_mismatched_non_admin_or_expired_operator_sessions() {
         let approval = verified_approval();
         let mut store = MemoryStore::default();
-        assert_eq!(
-            consume_verified_self_evolution_approval(&approval, "", "admin-a", &mut store),
-            Err(ApprovalConsumptionError::InvalidAuthenticatedContext)
+        let wrong_tenant = test_current_operator_session(
+            "tenant-b",
+            "admin-a",
+            OperatorRole::Administrator,
+            90_000,
         );
+        let wrong_subject = test_current_operator_session(
+            "tenant-a",
+            "admin-b",
+            OperatorRole::Administrator,
+            90_000,
+        );
+        let non_admin =
+            test_current_operator_session("tenant-a", "viewer-a", OperatorRole::Viewer, 90_000);
+        let expired = test_current_operator_session(
+            "tenant-a",
+            "admin-a",
+            OperatorRole::Administrator,
+            1_999,
+        );
+
+        for session in [&wrong_tenant, &wrong_subject, &non_admin, &expired] {
+            assert_eq!(
+                consume_verified_self_evolution_approval(&approval, session, 2_000, &mut store),
+                Err(ApprovalConsumptionError::InvalidAuthenticatedContext)
+            );
+        }
         assert!(store.approval_ids.is_empty());
     }
 
     #[test]
     fn fails_closed_when_storage_is_unavailable_or_approval_expired() {
         let approval = verified_approval();
+        let session = test_current_operator_session(
+            "tenant-a",
+            "admin-a",
+            OperatorRole::Administrator,
+            90_000,
+        );
         let mut unavailable = MemoryStore {
             fail_closed: true,
             ..MemoryStore::default()
         };
         assert_eq!(
-            consume_verified_self_evolution_approval(
-                &approval,
-                "tenant-a",
-                "admin-a",
-                &mut unavailable,
-            ),
+            consume_verified_self_evolution_approval(&approval, &session, 2_000, &mut unavailable,),
             Err(ApprovalConsumptionError::Store(
                 ApprovalReplayStoreError::StorageUnavailable
             ))
@@ -342,12 +394,7 @@ mod tests {
             ..MemoryStore::default()
         };
         assert_eq!(
-            consume_verified_self_evolution_approval(
-                &approval,
-                "tenant-a",
-                "admin-a",
-                &mut expired,
-            ),
+            consume_verified_self_evolution_approval(&approval, &session, 2_000, &mut expired,),
             Err(ApprovalConsumptionError::Store(
                 ApprovalReplayStoreError::AlreadyConsumedOrExpired
             ))
