@@ -7,6 +7,7 @@
 use crate::device_trust::durable::{
     AnchorCallPolicy, MonotonicSnapshotAnchor, SnapshotAnchorRecord,
 };
+use crate::integrity_key_provider::{IntegrityKeyProvider, IntegrityKeyProviderError, IntegrityKeyPurpose};
 #[cfg(test)]
 use crate::{Admission, ClassPolicy, Device, SchedulingContext, VerifiedAdminApproval, Workload};
 use crate::{Ledger, TelemetryChallengeError};
@@ -32,6 +33,7 @@ pub enum DurableLedgerError {
     InvalidRecord,
     CapacityExceeded,
     LockPoisoned,
+    KeyProvider(IntegrityKeyProviderError),
     AnchorUnavailable(String),
     AnchorMismatch,
     AnchorConflict,
@@ -55,6 +57,7 @@ impl std::fmt::Display for DurableLedgerError {
                 "durable ledger snapshot would exceed the 16 MiB safety limit; committed state was not changed"
             ),
             Self::LockPoisoned => write!(formatter, "durable ledger thread lock is poisoned"),
+            Self::KeyProvider(error) => write!(formatter, "protected integrity-key provider failed: {error}"),
             Self::AnchorUnavailable(message) => write!(formatter, "external ledger monotonic anchor unavailable: {message}"),
             Self::AnchorMismatch => write!(formatter, "durable ledger snapshot does not match its external monotonic anchor"),
             Self::AnchorConflict => write!(formatter, "external ledger anchor rejected a stale generation"),
@@ -127,7 +130,8 @@ pub struct DurableLedger {
     lock_path: PathBuf,
     thread_lock: Arc<Mutex<()>>,
     integrity_keys: Arc<HashMap<String, LedgerIntegrityKey>>,
-    active_key_id: String,
+    active_key_id: Option<String>,
+    integrity_key_provider: Option<Arc<dyn IntegrityKeyProvider>>,
     anchor_namespace: Option<String>,
     anchor: Option<Arc<dyn MonotonicSnapshotAnchor>>,
     anchor_call_policy: Option<AnchorCallPolicy>,
@@ -139,6 +143,7 @@ impl std::fmt::Debug for DurableLedger {
             .debug_struct("DurableLedger")
             .field("path", &self.path)
             .field("active_key_id", &self.active_key_id)
+            .field("provider_backed", &self.integrity_key_provider.is_some())
             .field("anchor_enabled", &self.anchor.is_some())
             .finish()
     }
@@ -155,6 +160,35 @@ impl DurableLedger {
         keys: Vec<LedgerIntegrityKey>,
     ) -> Result<Self, DurableLedgerError> {
         Self::open_internal(path, active_key_id, keys, None)
+    }
+
+    /// Open a ledger using a host-owned non-exportable integrity-key provider.
+    /// Existing snapshots remain readable while their key IDs are retained by
+    /// the provider; every successful write uses the provider's active key.
+    pub fn open_with_key_provider(
+        path: impl AsRef<Path>,
+        provider: Arc<dyn IntegrityKeyProvider>,
+    ) -> Result<Self, DurableLedgerError> {
+        Self::open_internal_with_provider(path, provider, None)
+    }
+
+    /// Open an anchored ledger using a host-owned protected key provider.
+    pub fn open_with_anchor_and_key_provider(
+        path: impl AsRef<Path>,
+        registry_id: impl Into<String>,
+        provider: Arc<dyn IntegrityKeyProvider>,
+        anchor: Arc<dyn MonotonicSnapshotAnchor>,
+        anchor_call_policy: AnchorCallPolicy,
+    ) -> Result<Self, DurableLedgerError> {
+        let registry_id = registry_id.into();
+        if !valid_stored_identifier(&registry_id, 128) {
+            return Err(DurableLedgerError::InvalidRecord);
+        }
+        Self::open_internal_with_provider(
+            path,
+            provider,
+            Some((registry_id, anchor, anchor_call_policy)),
+        )
     }
 
     /// Open a V2 ledger whose snapshot digest and generation are pinned by an
@@ -243,17 +277,46 @@ impl DurableLedger {
         if !integrity_keys.contains_key(active_key_id) {
             return Err(DurableLedgerError::InvalidRecord);
         }
+        Self::open_internal_with_sources(
+            path, integrity_keys, Some(active_key_id.to_string()), None, anchor, sync_ancestors,
+        )
+    }
 
+    fn open_internal_with_provider(
+        path: impl AsRef<Path>,
+        provider: Arc<dyn IntegrityKeyProvider>,
+        anchor: Option<(String, Arc<dyn MonotonicSnapshotAnchor>, AnchorCallPolicy)>,
+    ) -> Result<Self, DurableLedgerError> {
+        #[cfg(unix)]
+        let sync_ancestors = sync_ancestor_directories;
+        #[cfg(not(unix))]
+        let sync_ancestors = |_path: &Path| Ok(());
+        Self::open_internal_with_sources(path, HashMap::new(), None, Some(provider), anchor, sync_ancestors)
+    }
+
+    fn open_internal_with_sources(
+        path: impl AsRef<Path>,
+        integrity_keys: HashMap<String, LedgerIntegrityKey>,
+        active_key_id: Option<String>,
+        integrity_key_provider: Option<Arc<dyn IntegrityKeyProvider>>,
+        anchor: Option<(String, Arc<dyn MonotonicSnapshotAnchor>, AnchorCallPolicy)>,
+        sync_ancestors: impl FnOnce(&Path) -> Result<(), DurableLedgerError>,
+    ) -> Result<Self, DurableLedgerError> {
+        if active_key_id.is_some() == integrity_key_provider.is_some() {
+            return Err(DurableLedgerError::InvalidRecord);
+        }
+        if active_key_id.as_ref().is_some_and(|id| !integrity_keys.contains_key(id))
+            || (active_key_id.is_none() && !integrity_keys.is_empty())
+        {
+            return Err(DurableLedgerError::InvalidRecord);
+        }
         let mut path = path.as_ref().to_path_buf();
         let anchored = anchor.is_some();
-        let parent = path
-            .parent()
+        let parent = path.parent()
             .filter(|parent| !parent.as_os_str().is_empty())
             .unwrap_or_else(|| Path::new("."));
         if anchored {
-            // Anchored mode requires a pre-existing ledger directory. Creating a
-            // directory tree here would require syncing every new ancestor entry
-            // before the external anchor can safely advance.
+            // Anchored mode requires a pre-existing real directory with safe permissions.
             let metadata = fs::symlink_metadata(parent)?;
             if !metadata.is_dir() || metadata.file_type().is_symlink() {
                 return Err(DurableLedgerError::Io(
@@ -269,13 +332,9 @@ impl DurableLedger {
                     ));
                 }
             }
-            let file_name = path
-                .file_name()
-                .ok_or(DurableLedgerError::InvalidRecord)?
-                .to_os_string();
+            let file_name = path.file_name().ok_or(DurableLedgerError::InvalidRecord)?.to_os_string();
             let canonical_parent = fs::canonicalize(parent)?;
             sync_ancestors(&canonical_parent)?;
-            // Use the canonical, checked directory path for all subsequent file operations.
             path = canonical_parent.join(file_name);
         } else {
             fs::create_dir_all(parent)?;
@@ -289,7 +348,8 @@ impl DurableLedger {
             path,
             thread_lock: Arc::new(Mutex::new(())),
             integrity_keys: Arc::new(integrity_keys),
-            active_key_id: active_key_id.to_string(),
+            active_key_id,
+            integrity_key_provider,
             anchor_namespace,
             anchor,
             anchor_call_policy,
@@ -297,7 +357,6 @@ impl DurableLedger {
         store.transact(|_| Ok(()))?;
         Ok(store)
     }
-
     /// Test-only raw-context reservation helper. Production callers must use
     /// the signed-evidence wrapper in scheduling_evidence.
     #[cfg(test)]
