@@ -429,8 +429,11 @@ impl DurableDeviceRegistry {
         // The canonical directory must still be owned and protected by the service
         // account; this does not replace handle-relative operations against races.
         let requested_path = path.as_ref();
-        let file_name = requested_path.file_name().ok_or(DurableDeviceTrustError::CorruptState)?;
-        let requested_parent = requested_path.parent()
+        let file_name = requested_path
+            .file_name()
+            .ok_or(DurableDeviceTrustError::CorruptState)?;
+        let requested_parent = requested_path
+            .parent()
             .filter(|parent| !parent.as_os_str().is_empty())
             .unwrap_or_else(|| Path::new("."));
         fs::create_dir_all(requested_parent)?;
@@ -441,11 +444,15 @@ impl DurableDeviceRegistry {
             None => (None, None, None),
         };
         let store = Self {
-            lock_path: suffix(&path, ".lock"), path,
+            lock_path: suffix(&path, ".lock"),
+            path,
             thread_lock: Arc::new(Mutex::new(())),
             admin_keys: Arc::new(trusted_admin_keys),
-            integrity_key, integrity_key_provider,
-            anchor_namespace, anchor, anchor_call_policy,
+            integrity_key,
+            integrity_key_provider,
+            anchor_namespace,
+            anchor,
+            anchor_call_policy,
         };
         store.transact(|_| Ok(()))?;
         Ok(store)
@@ -618,7 +625,9 @@ impl DurableDeviceRegistry {
     ) -> Result<DeviceRegistry, DurableDeviceTrustError> {
         match (&self.integrity_key, &self.integrity_key_provider) {
             (Some(key), None) => decode_snapshot(bytes, &self.admin_keys, key.key_id(), &key.bytes),
-            (None, Some(provider)) => decode_snapshot_with_provider(bytes, &self.admin_keys, provider.as_ref()),
+            (None, Some(provider)) => {
+                decode_snapshot_with_provider(bytes, &self.admin_keys, provider.as_ref())
+            }
             _ => Err(DurableDeviceTrustError::CorruptState),
         }
     }
@@ -951,7 +960,8 @@ fn decode_snapshot(
         mac.update(&(key_id.len() as u32).to_be_bytes());
         mac.update(key_id.as_bytes());
         mac.update(body);
-        mac.verify_slice(expected).map_err(|_| DurableDeviceTrustError::CorruptState)
+        mac.verify_slice(expected)
+            .map_err(|_| DurableDeviceTrustError::CorruptState)
     })
 }
 
@@ -961,9 +971,11 @@ fn decode_snapshot_with_provider(
     provider: &dyn IntegrityKeyProvider,
 ) -> Result<DeviceRegistry, DurableDeviceTrustError> {
     decode_snapshot_with_verifier(bytes, admin_keys, |key_id, body, expected| {
-        let tag: [u8; 32] = expected.try_into()
+        let tag: [u8; 32] = expected
+            .try_into()
             .map_err(|_| DurableDeviceTrustError::CorruptState)?;
-        provider.verify(IntegrityKeyPurpose::DeviceTrustRegistry, key_id, body, &tag)
+        provider
+            .verify(IntegrityKeyPurpose::DeviceTrustRegistry, key_id, body, &tag)
             .map_err(DurableDeviceTrustError::KeyProvider)
     })
 }
@@ -977,14 +989,16 @@ fn decode_snapshot_with_verifier(
         return Err(DurableDeviceTrustError::CapacityExceeded);
     }
     let text = std::str::from_utf8(bytes).map_err(|_| DurableDeviceTrustError::CorruptState)?;
-    let marker = text.rfind("H|").ok_or(DurableDeviceTrustError::CorruptState)?;
+    let marker = text
+        .rfind("H|")
+        .ok_or(DurableDeviceTrustError::CorruptState)?;
     let (body, tail) = text.split_at(marker);
     let fields = tail.trim_end_matches('\n').split('|').collect::<Vec<_>>();
     if fields.len() != 3 || fields[0] != "H" {
         return Err(DurableDeviceTrustError::CorruptState);
     }
-    let key_id = String::from_utf8(unhex(fields[1])?)
-        .map_err(|_| DurableDeviceTrustError::CorruptState)?;
+    let key_id =
+        String::from_utf8(unhex(fields[1])?).map_err(|_| DurableDeviceTrustError::CorruptState)?;
     if !valid_id(&key_id, 128) {
         return Err(DurableDeviceTrustError::CorruptState);
     }
@@ -2221,5 +2235,4 @@ mod tests {
         let _ = fs::remove_file(&path);
         let _ = fs::remove_file(suffix(&path, ".lock"));
     }
-
 }
