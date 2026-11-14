@@ -89,6 +89,46 @@ VALUES
 ON CONFLICT (tenant_id,approval_id) DO UPDATE SET
  decision='approved',expires_at=clock_timestamp()+interval '10 minutes';
 
+-- Active key rows with inconsistent validity metadata must fail closed.
+INSERT INTO ujani_control.devices
+ (tenant_id,device_id,display_name,platform,trust_state,owner_consent_state,
+  admin_approval_state,active_key_id,key_generation,consent_generation,
+  telemetry_generation,telemetry_sequence,last_seen_at)
+VALUES
+ ('admission-test','admission-device-future-key','Future Key Device','linux','enrolled',
+  'granted','approved','future-key',2,1,1,1,clock_timestamp()),
+ ('admission-test','admission-device-revoked-key','Revoked Key Device','linux','enrolled',
+  'granted','approved','revoked-key',3,1,1,1,clock_timestamp())
+ON CONFLICT (tenant_id,device_id) DO UPDATE SET
+ trust_state='enrolled',owner_consent_state='granted',admin_approval_state='approved',
+ active_key_id=EXCLUDED.active_key_id,key_generation=EXCLUDED.key_generation,
+ consent_generation=1,telemetry_generation=1,telemetry_sequence=1,
+ last_seen_at=clock_timestamp(),reservation_revision=0;
+INSERT INTO ujani_control.device_keys
+ (tenant_id,device_id,key_id,public_key,generation,state,valid_from,revoked_at)
+VALUES
+ ('admission-test','admission-device-future-key','future-key',decode(repeat('16',32),'hex'),
+  2,'active',clock_timestamp()+interval '1 hour',NULL),
+ ('admission-test','admission-device-revoked-key','revoked-key',decode(repeat('17',32),'hex'),
+  3,'active',clock_timestamp()-interval '1 hour',clock_timestamp())
+ON CONFLICT (tenant_id,device_id,key_id) DO UPDATE SET
+ state='active',valid_from=EXCLUDED.valid_from,revoked_at=EXCLUDED.revoked_at;
+INSERT INTO ujani_control.owner_consents
+ (tenant_id,device_id,consent_generation,state,actor_ref,evidence_digest)
+VALUES
+ ('admission-test','admission-device-future-key',1,'granted','device-owner',decode(repeat('18',32),'hex')),
+ ('admission-test','admission-device-revoked-key',1,'granted','device-owner',decode(repeat('19',32),'hex'))
+ON CONFLICT DO NOTHING;
+INSERT INTO ujani_control.device_telemetry_samples
+ (tenant_id,device_id,generation,sequence,request_id,observed_at,payload_digest,
+  cpu_available_millis,memory_available_mb,thermal_state,power_state,participation_state)
+VALUES
+ ('admission-test','admission-device-future-key',1,1,decode(repeat('3a',16),'hex'),
+  clock_timestamp(),decode(repeat('3b',32),'hex'),4000,8192,'cool','ac','idle'),
+ ('admission-test','admission-device-revoked-key',1,1,decode(repeat('3c',16),'hex'),
+  clock_timestamp(),decode(repeat('3d',32),'hex'),4000,8192,'cool','ac','idle')
+ON CONFLICT DO NOTHING;
+
 -- Earlier migration tests use a broad temporary role. Remove those grants
 -- before proving the admission function works with only its required privileges.
 REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA ujani_control FROM ujani_runtime;
@@ -199,6 +239,20 @@ BEGIN
   decode(repeat('44',32),'hex'),1,1,100,100,decode(repeat('6a',32),'hex'),
   clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000086');
  IF admitted THEN RAISE EXCEPTION 'approval from a non-administrator was accepted'; END IF;
+
+ admitted := ujani_control.admit_device_lease(
+  'admission-test','admission-device-future-key','admission-workload','admission-approval',
+  'admission-lease-future-key',decode(repeat('71',16),'hex'),decode(repeat('72',32),'hex'),
+  decode(repeat('44',32),'hex'),2,1,100,100,decode(repeat('73',32),'hex'),
+  clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000087');
+ IF admitted THEN RAISE EXCEPTION 'future-dated active device key was accepted'; END IF;
+
+ admitted := ujani_control.admit_device_lease(
+  'admission-test','admission-device-revoked-key','admission-workload','admission-approval',
+  'admission-lease-revoked-key',decode(repeat('74',16),'hex'),decode(repeat('75',32),'hex'),
+  decode(repeat('44',32),'hex'),3,1,100,100,decode(repeat('76',32),'hex'),
+  clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000088');
+ IF admitted THEN RAISE EXCEPTION 'revoked active device key was accepted'; END IF;
 
  admitted := ujani_control.admit_device_lease(
   'admission-test','admission-device-paused','admission-workload','admission-approval',
