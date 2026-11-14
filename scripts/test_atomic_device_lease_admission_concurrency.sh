@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+set -euo pipefail
+: "${PGPASSWORD:?PGPASSWORD must be set for PostgreSQL integration}"
+PSQL_BIN="${PSQL_BIN:-psql}"
+PSQL=("$PSQL_BIN" --host "${PGHOST:-localhost}" --username "${PGUSER:-postgres}" --dbname "${PGDATABASE:-ujani_test}" --set ON_ERROR_STOP=1 --quiet --tuples-only --no-align)
+
+"${PSQL[@]}" <<'SQL'
+INSERT INTO ujani_control.tenants (tenant_id,display_name)
+VALUES ('admission-concurrency','Admission Concurrency') ON CONFLICT DO NOTHING;
+INSERT INTO ujani_control.operator_subjects
+ (tenant_id,subject_id,role,enabled,idp_issuer,idp_subject)
+VALUES ('admission-concurrency','admin','administrator',true,'ci','admin')
+ON CONFLICT DO NOTHING;
+INSERT INTO ujani_control.devices
+ (tenant_id,device_id,display_name,platform,trust_state,owner_consent_state,
+  admin_approval_state,active_key_id,key_generation,consent_generation,
+  telemetry_generation,telemetry_sequence,last_seen_at)
+VALUES ('admission-concurrency','device','Device','linux','enrolled','granted',
+ 'approved','key',1,1,1,1,clock_timestamp())
+ON CONFLICT (tenant_id,device_id) DO UPDATE SET
+ trust_state='enrolled',owner_consent_state='granted',admin_approval_state='approved',
+ active_key_id='key',key_generation=1,consent_generation=1,
+ telemetry_generation=1,telemetry_sequence=1,last_seen_at=clock_timestamp(),
+ reservation_revision=0;
+INSERT INTO ujani_control.device_keys
+ (tenant_id,device_id,key_id,public_key,generation,state)
+VALUES ('admission-concurrency','device','key',decode(repeat('71',32),'hex'),1,'active')
+ON CONFLICT (tenant_id,device_id,key_id) DO UPDATE SET state='active';
+INSERT INTO ujani_control.owner_consents
+ (tenant_id,device_id,consent_generation,state,actor_ref,evidence_digest)
+VALUES ('admission-concurrency','device',1,'granted','owner',decode(repeat('72',32),'hex'))
+ON CONFLICT DO NOTHING;
+INSERT INTO ujani_control.device_telemetry_samples
+ (tenant_id,device_id,generation,sequence,request_id,observed_at,payload_digest,
+  cpu_available_millis,memory_available_mb,thermal_state,power_state,participation_state)
+VALUES ('admission-concurrency','device',1,1,decode(repeat('73',16),'hex'),
+ clock_timestamp(),decode(repeat('74',32),'hex'),4000,8192,'cool','ac','idle')
+ON CONFLICT DO NOTHING;
+INSERT INTO ujani_control.workloads
+ (tenant_id,workload_id,manifest_digest,class,state,created_by)
+VALUES ('admission-concurrency','workload',decode(repeat('75',32),'hex'),'inference','approved','admin')
+ON CONFLICT (tenant_id,workload_id) DO UPDATE SET state='approved';
+INSERT INTO ujani_control.approvals
+ (tenant_id,approval_id,workload_id,approver_subject_id,decision,manifest_digest,expires_at)
+VALUES ('admission-concurrency','approval','workload','admin','approved',
+ decode(repeat('75',32),'hex'),clock_timestamp()+interval '10 minutes')
+ON CONFLICT (tenant_id,approval_id) DO UPDATE SET decision='approved',
+ expires_at=clock_timestamp()+interval '10 minutes';
+SQL
+
+first_out="$(mktemp)"; second_out="$(mktemp)"
+cleanup(){ rm -f "$first_out" "$second_out"; }
+trap cleanup EXIT
+(
+ "${PSQL[@]}" >"$first_out" <<'SQL'
+SET ROLE ujani_runtime;
+BEGIN;
+SET LOCAL ujani.tenant_id='admission-concurrency';
+SELECT ujani_control.admit_device_lease(
+ 'admission-concurrency','device','workload','approval','lease-a',
+ decode(repeat('81',16),'hex'),decode(repeat('82',32),'hex'),decode(repeat('75',32),'hex'),
+ 1,1,2500,1024,decode(repeat('83',32),'hex'),
+ clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000091');
+SELECT pg_sleep(2);
+COMMIT;
+RESET ROLE;
+SQL
+) &
+first_pid=$!
+locked=0
+for _ in $(seq 1 100); do
+ active="$("${PSQL[@]}" -c "SELECT count(*) FROM pg_stat_activity WHERE state='active' AND query LIKE '%pg_sleep(2)%' AND application_name <> ''")"
+ if [[ "$active" -ge 1 ]]; then locked=1; break; fi
+ sleep 0.1
+done
+if [[ "$locked" != "1" ]]; then echo "first admission did not enter lock-holding phase" >&2; cat "$first_out" >&2; exit 1; fi
+"${PSQL[@]}" >"$second_out" <<'SQL'
+SET ROLE ujani_runtime;
+BEGIN;
+SET LOCAL ujani.tenant_id='admission-concurrency';
+SELECT ujani_control.admit_device_lease(
+ 'admission-concurrency','device','workload','approval','lease-b',
+ decode(repeat('84',16),'hex'),decode(repeat('85',32),'hex'),decode(repeat('75',32),'hex'),
+ 1,1,2500,1024,decode(repeat('86',32),'hex'),
+ clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000092');
+COMMIT;
+RESET ROLE;
+SQL
+wait "$first_pid"
+if ! grep -qx 't' "$first_out"; then echo "first admission did not succeed" >&2; cat "$first_out" >&2; exit 1; fi
+if ! grep -qx 'f' "$second_out"; then echo "second admission should be rejected after serialized capacity recheck" >&2; cat "$second_out" >&2; exit 1; fi
+state="$("${PSQL[@]}" -c "SELECT count(*) || ':' || COALESCE(sum(requested_cpu_millis),0) FROM ujani_control.leases WHERE tenant_id='admission-concurrency' AND device_id='device' AND state='reserved' AND expires_at>clock_timestamp()")"
+if [[ "$state" != "1:2500" ]]; then echo "capacity was oversubscribed or lease count wrong: $state" >&2; exit 1; fi
+echo "Concurrent admission capacity serialization passed."
