@@ -52,7 +52,7 @@ first_out="$(mktemp)"; second_out="$(mktemp)"
 cleanup(){ rm -f "$first_out" "$second_out"; }
 trap cleanup EXIT
 (
- "${PSQL[@]}" >"$first_out" <<'SQL'
+ PGAPPNAME=ujani-admission-first "${PSQL[@]}" >"$first_out" 2>&1 <<'SQL'
 SET ROLE ujani_runtime;
 BEGIN;
 SET LOCAL ujani.tenant_id='admission-concurrency';
@@ -61,20 +61,31 @@ SELECT ujani_control.admit_device_lease(
  decode(repeat('81',16),'hex'),decode(repeat('82',32),'hex'),decode(repeat('75',32),'hex'),
  1,1,2500,1024,decode(repeat('83',32),'hex'),
  clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000091');
-SELECT pg_sleep(2);
+-- Keep the transaction (and its device row lock) open long enough to observe
+-- a second admission blocked on that same lock.
+SELECT pg_sleep(15);
 COMMIT;
 RESET ROLE;
 SQL
 ) &
 first_pid=$!
-locked=0
+first_locked=0
 for _ in $(seq 1 100); do
- active="$("${PSQL[@]}" -c "SELECT count(*) FROM pg_stat_activity WHERE state='active' AND query LIKE '%pg_sleep(2)%' AND application_name <> ''")"
- if [[ "$active" -ge 1 ]]; then locked=1; break; fi
+ active="$("${PSQL[@]}" -c "SELECT count(*) FROM pg_stat_activity WHERE application_name='ujani-admission-first' AND state='active' AND query LIKE '%pg_sleep(15)%'")"
+ if [[ "$active" == "1" ]]; then first_locked=1; break; fi
  sleep 0.1
 done
-if [[ "$locked" != "1" ]]; then echo "first admission did not enter lock-holding phase" >&2; cat "$first_out" >&2; exit 1; fi
-"${PSQL[@]}" >"$second_out" <<'SQL'
+if [[ "$first_locked" != "1" ]]; then
+ echo "first admission did not enter lock-holding phase" >&2
+ cat "$first_out" >&2
+ set +e
+ wait "$first_pid"
+ set -e
+ exit 1
+fi
+
+(
+ PGAPPNAME=ujani-admission-second "${PSQL[@]}" >"$second_out" 2>&1 <<'SQL'
 SET ROLE ujani_runtime;
 BEGIN;
 SET LOCAL ujani.tenant_id='admission-concurrency';
@@ -86,7 +97,36 @@ SELECT ujani_control.admit_device_lease(
 COMMIT;
 RESET ROLE;
 SQL
+) &
+second_pid=$!
+second_waiting=0
+for _ in $(seq 1 100); do
+ waiting="$("${PSQL[@]}" -c "SELECT count(*) FROM pg_stat_activity WHERE application_name='ujani-admission-second' AND state='active' AND wait_event_type='Lock'")"
+ if [[ "$waiting" == "1" ]]; then second_waiting=1; break; fi
+ sleep 0.1
+done
+
+set +e
 wait "$first_pid"
+first_status=$?
+wait "$second_pid"
+second_status=$?
+set -e
+if [[ "$first_status" -ne 0 ]]; then
+ echo "first admission failed" >&2
+ cat "$first_out" "$second_out" >&2
+ exit 1
+fi
+if [[ "$second_waiting" != "1" ]]; then
+ echo "second admission was not observed waiting on the device row lock" >&2
+ cat "$first_out" "$second_out" >&2
+ exit 1
+fi
+if [[ "$second_status" -ne 0 ]]; then
+ echo "second admission query failed instead of returning a denial" >&2
+ cat "$first_out" "$second_out" >&2
+ exit 1
+fi
 if ! grep -qx 't' "$first_out"; then echo "first admission did not succeed" >&2; cat "$first_out" >&2; exit 1; fi
 if ! grep -qx 'f' "$second_out"; then echo "second admission should be rejected after serialized capacity recheck" >&2; cat "$second_out" >&2; exit 1; fi
 state="$("${PSQL[@]}" -c "SELECT count(*) || ':' || COALESCE(sum(requested_cpu_millis),0) FROM ujani_control.leases WHERE tenant_id='admission-concurrency' AND device_id='device' AND state='reserved' AND expires_at>clock_timestamp()")"
