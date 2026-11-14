@@ -7,7 +7,8 @@
 //! concurrent calls across processes, and let the database check expiry after
 //! its advisory locks have been acquired. Memory stores are tests only.
 
-use crate::operator_control_plane::valid_identifier;
+use crate::operator_control_plane::OperatorRole;
+use crate::operator_session_revocation::CurrentOperatorSession;
 use crate::self_evolution_approval::VerifiedSelfEvolutionApproval;
 use sha2::{Digest, Sha256};
 const TARGET_DIGEST_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-SELF-EVOLUTION-TARGET-V1\0";
@@ -123,21 +124,21 @@ pub trait SelfEvolutionApprovalReplayStore {
 /// The store owns the final expiry check so it can sample time after locking.
 pub fn consume_verified_self_evolution_approval(
     approval: &VerifiedSelfEvolutionApproval,
-    tenant_id: &str,
-    approver_subject_id: &str,
+    session: &CurrentOperatorSession,
+    now_unix_ms: u64,
     store: &mut impl SelfEvolutionApprovalReplayStore,
 ) -> Result<(), ApprovalConsumptionError> {
-    if !valid_identifier(tenant_id, 128)
-        || !valid_identifier(approver_subject_id, 128)
-        || approval.tenant_id() != tenant_id
-        || approval.approver_subject_id() != approver_subject_id
+    if !session.is_current_at(now_unix_ms)
+        || session.role() != OperatorRole::Administrator
+        || approval.tenant_id() != session.tenant_id()
+        || approval.approver_subject_id() != session.subject_id()
     {
         return Err(ApprovalConsumptionError::InvalidAuthenticatedContext);
     }
 
     let record = SelfEvolutionApprovalReplayRecord {
-        tenant_id: approval.tenant_id().to_owned(),
-        approver_subject_id: approval.approver_subject_id().to_owned(),
+        tenant_id: session.tenant_id().to_owned(),
+        approver_subject_id: session.subject_id().to_owned(),
         approval_id: approval.approval_id().to_owned(),
         approver_key_id: approval.approver_key_id().to_owned(),
         nonce: *approval.nonce(),
@@ -196,6 +197,8 @@ mod tests {
         approval_signing_bytes, self_evolution_proposal_digest, verify_self_evolution_approval,
         SelfEvolutionApprovalClaims, SignedSelfEvolutionApproval,
     };
+    use crate::operator_control_plane::OperatorRole;
+    use crate::operator_session_revocation::test_current_operator_session;
     use ed25519_dalek::{Signer, SigningKey};
     use std::collections::HashSet;
 
