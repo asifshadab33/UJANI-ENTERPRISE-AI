@@ -17,10 +17,10 @@ INSERT INTO ujani_control.devices
   admin_approval_state,active_key_id,key_generation,consent_generation,
   telemetry_generation,telemetry_sequence,last_seen_at)
 VALUES ('admission-concurrency','device','Device','linux','enrolled','granted',
- 'approved','key',1,1,1,1,clock_timestamp())
+ 'approved','key',1,0,1,1,clock_timestamp())
 ON CONFLICT (tenant_id,device_id) DO UPDATE SET
  trust_state='enrolled',owner_consent_state='granted',admin_approval_state='approved',
- active_key_id='key',key_generation=1,consent_generation=1,
+ active_key_id='key',key_generation=1,consent_generation=0,
  telemetry_generation=1,telemetry_sequence=1,last_seen_at=clock_timestamp(),
  reservation_revision=0;
 INSERT INTO ujani_control.device_keys
