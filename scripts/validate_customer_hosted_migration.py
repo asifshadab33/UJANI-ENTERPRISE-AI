@@ -213,6 +213,10 @@ def main() -> None:
     if "GRANT SELECT,INSERT,UPDATE ON" in atomic_test:
         raise SystemExit("atomic admission test must not grant broad runtime mutation privileges")
     for required in (
+        "REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA ujani_control FROM ujani_runtime",
+        "REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA ujani_control FROM ujani_runtime",
+        "REVOKE ALL ON SCHEMA ujani_control FROM ujani_runtime",
+        "REVOKE ALL ON FUNCTION ujani_control.admit_device_lease(",
         "GRANT UPDATE (reservation_revision, updated_at)",
         "GRANT INSERT ON ujani_control.leases,ujani_control.request_replays",
         "runtime role can mutate device trust or consent state",
