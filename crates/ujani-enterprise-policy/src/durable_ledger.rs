@@ -2578,7 +2578,7 @@ mod tests {
     fn protected_key_provider_wires_durable_ledger_and_rotates_without_exporting_keys() {
         use crate::integrity_key_provider::{IntegrityKeyPurpose, TestIntegrityKeyProvider};
 
-        let path = path();
+        let path = temp_path("provider-key-rotation");
         let provider = Arc::new(TestIntegrityKeyProvider::default());
         let purpose = IntegrityKeyPurpose::ReservationLedger;
 
@@ -2606,7 +2606,7 @@ mod tests {
     fn protected_key_provider_verifies_anchored_backup_recovery() {
         use crate::integrity_key_provider::{IntegrityKeyPurpose, TestIntegrityKeyProvider};
 
-        let path = path();
+        let path = temp_path("provider-anchor-recovery");
         let provider = Arc::new(TestIntegrityKeyProvider::default());
         provider
             .provision_key(IntegrityKeyPurpose::ReservationLedger, "anchored-v1")
@@ -2671,7 +2671,7 @@ mod tests {
     fn protected_key_provider_unavailable_fails_closed_for_durable_ledger() {
         use crate::integrity_key_provider::TestIntegrityKeyProvider;
 
-        let path = path();
+        let path = temp_path("provider-key-unavailable");
         let provider = Arc::new(TestIntegrityKeyProvider::default());
         let result = DurableLedger::open_with_key_provider(&path, provider);
         assert_eq!(
