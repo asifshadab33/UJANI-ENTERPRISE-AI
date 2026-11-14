@@ -13,6 +13,7 @@ SELF_EVOLUTION_CONCURRENCY_TEST_PATH = ROOT / "scripts" / "test_self_evolution_a
 TENANT_TEST_SQL_PATH = ROOT / "scripts" / "test_customer_hosted_migration.sql"
 ATOMIC_ADMISSION_SQL_PATH = ROOT / "migrations" / "0008_atomic_device_lease_admission.sql"
 ATOMIC_ADMISSION_TEST_PATH = ROOT / "scripts" / "test_atomic_device_lease_admission.sql"
+ATOMIC_ADMISSION_CONCURRENCY_PATH = ROOT / "scripts" / "test_atomic_device_lease_admission_concurrency.sh"
 
 
 def main() -> None:
@@ -218,6 +219,15 @@ def main() -> None:
     ):
         if required not in atomic_test:
             raise SystemExit(f"atomic device admission regression test missing: {required}")
+    atomic_concurrency = ATOMIC_ADMISSION_CONCURRENCY_PATH.read_text(encoding="utf-8")
+    for required in (
+        "pg_sleep(2)",
+        "pg_stat_activity",
+        "second admission should be rejected",
+        "1:2500",
+    ):
+        if required not in atomic_concurrency:
+            raise SystemExit(f"atomic admission concurrency regression missing: {required}")
     print("Customer-hosted, task-contract, Self-Evolution approval replay, monotonic telemetry and atomic device admission migration static checks passed.")
 
 
