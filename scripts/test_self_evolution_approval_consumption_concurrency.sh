@@ -7,10 +7,14 @@ PGDATABASE="${PGDATABASE:-ujani_test}"
 first_output="$(mktemp)"
 second_output="$(mktemp)"
 first_pid=""
+second_pid=""
 
 cleanup() {
   if [[ -n "$first_pid" ]]; then
     wait "$first_pid" 2>/dev/null || true
+  fi
+  if [[ -n "$second_pid" ]]; then
+    wait "$second_pid" 2>/dev/null || true
   fi
   rm -f "$first_output" "$second_output"
 }
@@ -59,7 +63,7 @@ fi
 
 "$PSQL_BIN" --username "$PGUSER" --dbname "$PGDATABASE" \
   --no-psqlrc --quiet --tuples-only --no-align --set ON_ERROR_STOP=1 \
-  >"$second_output" 2>&1 <<'SQL'
+  >"$second_output" 2>&1 <<'SQL' &
 SET ROLE ujani_runtime;
 BEGIN;
 SET LOCAL ujani.tenant_id = 'tenant-a';
@@ -72,9 +76,36 @@ SELECT ujani_control.consume_self_evolution_approval(
 COMMIT;
 RESET ROLE;
 SQL
+second_pid=$!
+
+# Prove that the second backend is actually blocked on the advisory nonce lock
+# before the first transaction releases it; otherwise this is only an expiry test.
+waiting=0
+for _ in {1..30}; do
+  waiter_count="$("$PSQL_BIN" --username "$PGUSER" --dbname "$PGDATABASE" \
+    --no-psqlrc --quiet --tuples-only --no-align --set ON_ERROR_STOP=1 \
+    --command "SELECT count(*) FROM pg_stat_activity WHERE state = 'active' AND wait_event_type = 'Lock' AND wait_event = 'advisory' AND query LIKE '%consume_self_evolution_approval%';" | tr -d '[:space:]')"
+  if [[ "$waiter_count" =~ ^[1-9][0-9]*$ ]]; then
+    waiting=1
+    break
+  fi
+  if ! kill -0 "$second_pid" 2>/dev/null; then
+    cat "$second_output" >&2
+    echo "second approval request exited instead of waiting on the nonce lock" >&2
+    exit 1
+  fi
+  sleep 0.1
+done
+if [[ "$waiting" != "1" ]]; then
+  cat "$second_output" >&2
+  echo "second approval request was not observed waiting on the advisory nonce lock" >&2
+  exit 1
+fi
 
 wait "$first_pid"
 first_pid=""
+wait "$second_pid"
+second_pid=""
 
 first_result="$(grep -E '^(t|f)$' "$first_output" | head -n 1 || true)"
 second_result="$(grep -E '^(t|f)$' "$second_output" | head -n 1 || true)"
