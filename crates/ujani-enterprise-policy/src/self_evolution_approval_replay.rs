@@ -1,7 +1,7 @@
 //! Stable, adapter-neutral mapping from a verified approval to the durable replay row.
 //!
 //! This module does not connect to a database or consume an approval. A trusted host
-//! supplies tenant and approver-subject identity from authenticated session/key
+//! supplies tenant_id and approver-subject identity from authenticated session/key
 //! enrollment, then persists this record atomically using the migration's unique
 //! tenant/approval and tenant/nonce constraints.
 
