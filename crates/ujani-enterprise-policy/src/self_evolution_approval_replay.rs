@@ -232,6 +232,14 @@ mod tests {
         }
     }
 
+    fn test_approval_nonce() -> [u8; 16] {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock must be after Unix epoch")
+            .as_nanos()
+            .to_le_bytes()
+    }
+
     fn verified_approval() -> VerifiedSelfEvolutionApproval {
         let target = ProposalTarget {
             repository: "asifshadab33/UJANI-ENTERPRISE-AI".into(),
@@ -268,7 +276,7 @@ mod tests {
             proposal_sha256: self_evolution_proposal_digest(&proposal).unwrap(),
             approved_scope: vec!["apps/operator-console".into()],
             approver_key_id: "admin-key-01".into(),
-            nonce: [9; 16],
+            nonce: test_approval_nonce(),
             issued_at_unix_ms: 1_000,
             expires_unix_ms: 60_000,
         };
