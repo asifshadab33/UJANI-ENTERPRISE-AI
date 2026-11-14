@@ -13,6 +13,7 @@ pub mod collective_defence_snapshot;
 pub mod connector_contract;
 pub mod cpu_capacity;
 pub mod device_trust;
+pub mod integrity_key_provider;
 pub mod energy;
 pub mod fleet_capacity;
 pub use fleet_capacity::{
