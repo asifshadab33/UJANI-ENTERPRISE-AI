@@ -175,8 +175,8 @@ ON CONFLICT (tenant_id,device_id) DO UPDATE SET
  bound_by_subject_id=EXCLUDED.bound_by_subject_id,
  binding_revision=ujani_control.device_owner_bindings.binding_revision+1,
  active=true,binding_digest=CASE
- WHEN device_id='admission-device-future-key' THEN decode(repeat('36',32),'hex')
- WHEN device_id='admission-device-revoked-key' THEN decode(repeat('37',32),'hex')
+ WHEN EXCLUDED.device_id='admission-device-future-key' THEN decode(repeat('36',32),'hex')
+ WHEN EXCLUDED.device_id='admission-device-revoked-key' THEN decode(repeat('37',32),'hex')
  ELSE decode(repeat('38',32),'hex')
  END,bound_at=clock_timestamp();
 INSERT INTO ujani_control.owner_consents
