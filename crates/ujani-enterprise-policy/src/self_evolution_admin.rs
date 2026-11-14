@@ -6,6 +6,7 @@
 //! staging/application fail closed until a separate signed-approval pipeline exists.
 
 use crate::operator_control_plane::OperatorRole;
+use crate::self_evolution::MAX_PROPOSAL_SCOPE_PATHS;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SelfEvolutionAction {
@@ -113,12 +114,16 @@ pub fn authorize_self_evolution_action(
         || config.max_proposal_changes == 0
         || config.max_proposal_changes > 128
         || config.allowed_scopes.is_empty()
-        || config.allowed_scopes.len() > 32
+        || config.allowed_scopes.len() > MAX_PROPOSAL_SCOPE_PATHS
     {
         return Err(SelfEvolutionGateError::InvalidPolicy);
     }
     if requested_change_count == 0 || requested_change_count > config.max_proposal_changes {
         return Err(SelfEvolutionGateError::TooManyChanges);
+    }
+
+    if requested_scope.len() > MAX_PROPOSAL_SCOPE_PATHS {
+        return Err(SelfEvolutionGateError::ScopeNotAllowed);
     }
 
     let mut normalized_scopes = Vec::with_capacity(requested_scope.len());
@@ -145,7 +150,7 @@ pub fn authorize_self_evolution_action(
     }
 
     Ok(Some(ProposalGenerationPermit {
-        approved_scope: requested_scope.to_vec(),
+        approved_scope: normalized_scopes,
         max_changes: config.max_proposal_changes,
     }))
 }
@@ -345,4 +350,22 @@ mod tests {
             );
         }
     }
+    #[test]
+    fn proposal_scope_count_matches_shared_validator_limit() {
+        let scopes: Vec<String> = (0..=MAX_PROPOSAL_SCOPE_PATHS)
+            .map(|index| format!("apps/operator-console/part-{index}"))
+            .collect();
+        assert_eq!(
+            authorize_self_evolution_action(
+                &config(),
+                OperatorRole::Administrator,
+                SelfEvolutionAction::GenerateProposal,
+                &scopes,
+                1,
+                false,
+            ),
+            Err(SelfEvolutionGateError::ScopeNotAllowed)
+        );
+    }
+
 }
