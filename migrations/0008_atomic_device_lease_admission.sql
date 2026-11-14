@@ -209,8 +209,6 @@ CREATE TRIGGER owner_consent_revision_apply
  BEFORE INSERT ON ujani_control.owner_consents
  FOR EACH ROW EXECUTE FUNCTION ujani_control.apply_owner_consent_revision();
 
-DROP FUNCTION IF EXISTS ujani_control.admit_device_lease( text,text,text,text,text,bytea,bytea,bytea,bigint,bigint,integer,bigint,bytea,timestamptz,uuid);
-
 CREATE OR REPLACE FUNCTION ujani_control.admit_device_lease(
  p_tenant_id text,
  p_device_id text,
@@ -225,8 +223,6 @@ CREATE OR REPLACE FUNCTION ujani_control.admit_device_lease(
  p_cpu_millis integer,
  p_memory_mb bigint,
  p_capability_digest bytea,
- p_previous_audit_digest bytea,
- p_audit_event_digest bytea,
  p_expires_at timestamptz,
  p_event_id uuid
 ) RETURNS boolean
@@ -243,7 +239,6 @@ DECLARE
  v_revision bigint;
  v_inserted bytea;
  v_owner_subject_id text;
- v_audit_head bytea;
 BEGIN
  IF p_tenant_id IS NULL OR p_tenant_id = ''
     OR p_tenant_id IS DISTINCT FROM pg_catalog.current_setting('ujani.tenant_id', true) THEN
@@ -258,9 +253,6 @@ BEGIN
     OR p_operation_digest IS NULL OR pg_catalog.octet_length(p_operation_digest) <> 32
     OR p_manifest_digest IS NULL OR pg_catalog.octet_length(p_manifest_digest) <> 32
     OR p_capability_digest IS NULL OR pg_catalog.octet_length(p_capability_digest) <> 32
-    OR (p_previous_audit_digest IS NOT NULL AND pg_catalog.octet_length(p_previous_audit_digest) <> 32)
-    OR p_audit_event_digest IS NULL OR pg_catalog.octet_length(p_audit_event_digest) <> 32
-    OR p_audit_event_digest = pg_catalog.decode(pg_catalog.repeat('00',32),'hex')
     OR p_device_key_generation IS NULL OR p_device_key_generation <= 0
     OR p_consent_generation IS NULL OR p_consent_generation <= 0
     OR p_cpu_millis IS NULL OR p_cpu_millis NOT BETWEEN 1 AND 65535000
@@ -363,19 +355,6 @@ BEGIN
   RETURN false;
  END IF;
 
- -- Serialize the tenant audit chain. The trusted adapter supplies the previous
- -- head and SHA-256 digest of the canonical event; stale heads are rejected
- -- before any replay or lease mutation can occur.
- PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(p_tenant_id, 0));
- SELECT event_digest INTO v_audit_head
- FROM ujani_control.audit_events
- WHERE tenant_id = p_tenant_id
- ORDER BY sequence_id DESC
- LIMIT 1;
- IF p_previous_audit_digest IS DISTINCT FROM v_audit_head THEN
-  RETURN false;
- END IF;
-
  -- Nonce, lease, revision and audit receipt are one transaction. Any later
  -- exception/rollback removes every write, including this replay claim.
  INSERT INTO ujani_control.request_replays
@@ -403,21 +382,19 @@ BEGIN
  WHERE tenant_id = p_tenant_id AND device_id = p_device_id;
 
  INSERT INTO ujani_control.audit_events
-  (tenant_id, event_id, actor_ref, actor_role, event_type, outcome, object_ref,
-   previous_digest, event_digest)
+  (tenant_id, event_id, actor_ref, actor_role, event_type, outcome, object_ref)
  VALUES
   (p_tenant_id, p_event_id, p_device_id, 'device',
-   'device.lease.admitted', 'reserved', p_lease_id,
-   p_previous_audit_digest, p_audit_event_digest);
+   'device.lease.admitted', 'reserved', p_lease_id);
 
  RETURN true;
 END;
 $function$;
 
 REVOKE ALL ON FUNCTION ujani_control.admit_device_lease(
- text,text,text,text,text,bytea,bytea,bytea,bigint,bigint,integer,bigint,bytea,bytea,bytea,timestamptz,uuid
+ text,text,text,text,text,bytea,bytea,bytea,bigint,bigint,integer,bigint,bytea,timestamptz,uuid
 ) FROM PUBLIC;
 COMMENT ON FUNCTION ujani_control.admit_device_lease(
- text,text,text,text,text,bytea,bytea,bytea,bigint,bigint,integer,bigint,bytea,bytea,bytea,timestamptz,uuid
+ text,text,text,text,text,bytea,bytea,bytea,bigint,bigint,integer,bigint,bytea,timestamptz,uuid
 ) IS
  'Atomic post-authentication admission transaction. Caller verifies device and administrator signatures first. Rechecks tenant, trust, active key generation, owner consent generation, an unexpired approval from a currently enabled administrator, approved workload, fresh telemetry and capacity under a device row lock. Commits replay claim, reservation/lease, revision and append-only audit receipt together. It does not dispatch or execute work. Consent/key/revocation writers must lock the same device row.';
