@@ -98,7 +98,9 @@ fn normalize_scope(value: &str) -> Option<String> {
         segment.is_empty()
             || *segment == "."
             || *segment == ".."
-            || !segment.bytes().all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
+            || !segment
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
     }) {
         return None;
     }
@@ -329,5 +331,4 @@ mod tests {
             Some(SelfEvolutionBlock::ProtectedScope)
         );
     }
-
 }
