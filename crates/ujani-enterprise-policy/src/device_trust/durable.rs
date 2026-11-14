@@ -2200,7 +2200,7 @@ mod tests {
         provider.activate_key(purpose, "device-v1").unwrap();
         let registry = DurableDeviceRegistry::open_with_key_provider(
             &path,
-            vec![("admin-v1".into(), admin.clone())],
+            vec![("admin-v1".into(), admin)],
             provider.clone(),
         )
         .unwrap();
@@ -2211,7 +2211,7 @@ mod tests {
         provider.activate_key(purpose, "device-v2").unwrap();
         let registry = DurableDeviceRegistry::open_with_key_provider(
             &path,
-            vec![("admin-v1".into(), admin.clone())],
+            vec![("admin-v1".into(), admin)],
             provider.clone(),
         )
         .unwrap();
