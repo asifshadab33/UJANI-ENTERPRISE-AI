@@ -60,6 +60,14 @@ VALUES
 ON CONFLICT (tenant_id,approval_id) DO UPDATE SET
  decision='approved',expires_at=clock_timestamp()+interval '10 minutes';
 
+-- Earlier migration tests use a broad temporary role. Remove those grants
+-- before proving the admission function works with only its required privileges.
+REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA ujani_control FROM ujani_runtime;
+REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA ujani_control FROM ujani_runtime;
+REVOKE ALL ON SCHEMA ujani_control FROM ujani_runtime;
+REVOKE ALL ON FUNCTION ujani_control.admit_device_lease(
+ text,text,text,text,text,bytea,bytea,bytea,bigint,bigint,integer,bigint,bytea,timestamptz,uuid
+) FROM PUBLIC,ujani_runtime;
 GRANT USAGE ON SCHEMA ujani_control TO ujani_runtime;
 GRANT SELECT ON ujani_control.devices,ujani_control.device_keys,
  ujani_control.owner_consents,ujani_control.workloads,ujani_control.approvals,
