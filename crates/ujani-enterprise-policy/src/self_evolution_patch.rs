@@ -488,7 +488,8 @@ mod tests {
                 sha256: Some("e".repeat(64)),
             },
         ];
-        assert!(validate_patch_bundle(
+        assert!(
+            validate_patch_bundle(
                 &proposal,
                 &target(),
                 &scope(),
@@ -496,7 +497,39 @@ mod tests {
                 &"a".repeat(40),
                 &bundle,
                 &workspace
-            ).is_ok());
+            )
+            .is_ok()
+        );
+
+        let mut duplicate_bundle = bundle.clone();
+        duplicate_bundle.artifacts[1].path = duplicate_bundle.artifacts[0].path.clone();
+        assert_eq!(
+            validate_patch_bundle(
+                &proposal,
+                &target(),
+                &scope(),
+                &digest,
+                &"a".repeat(40),
+                &duplicate_bundle,
+                &workspace
+            ),
+            Err(SelfEvolutionPatchValidationError::DuplicateArtifact)
+        );
+
+        let mut missing_bundle = bundle.clone();
+        missing_bundle.artifacts[1].path = "apps/operator-console/Missing.js".into();
+        assert_eq!(
+            validate_patch_bundle(
+                &proposal,
+                &target(),
+                &scope(),
+                &digest,
+                &"a".repeat(40),
+                &missing_bundle,
+                &workspace
+            ),
+            Err(SelfEvolutionPatchValidationError::MissingArtifact)
+        );
 
         let mut wrong_workspace = workspace.clone();
         wrong_workspace[0].sha256 = Some("1".repeat(64));
@@ -515,7 +548,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_duplicate_missing_and_mismatched_artifacts() {
+    fn rejects_artifact_count_mismatch_and_wrong_operation() {
         let (proposal, mut bundle, workspace, digest) = setup_modify();
         bundle.artifacts.push(bundle.artifacts[0].clone());
         assert_eq!(
@@ -598,4 +631,59 @@ mod tests {
             Err(SelfEvolutionPatchValidationError::InvalidContent)
         );
     }
+    #[test]
+    fn rejects_total_patch_size_over_limit() {
+        let mut proposal = SelfEvolutionProposalV1 {
+            schema_version: SELF_EVOLUTION_PROPOSAL_SCHEMA_VERSION,
+            summary: "Validate the aggregate patch size limit.".into(),
+            findings: vec![],
+            changes: Vec::new(),
+        };
+        let mut artifacts = Vec::new();
+        let mut workspace = Vec::new();
+        for index in 0..9 {
+            let path = format!("apps/operator-console/generated-{index}.js");
+            let content = if index == 8 {
+                "x".to_string()
+            } else {
+                "x".repeat(MAX_PATCH_FILE_BYTES)
+            };
+            let artifact = SelfEvolutionPatchArtifactV1 {
+                path: path.clone(),
+                operation: ProposedChangeKind::Modify,
+                base_sha256: Some("b".repeat(64)),
+                new_content: Some(content),
+            };
+            proposal.changes.push(ProposedChange {
+                path: path.clone(),
+                operation: ProposedChangeKind::Modify,
+                summary: format!("Update generated file {index}."),
+                patch_sha256: patch_artifact_sha256(&artifact),
+            });
+            artifacts.push(artifact);
+            workspace.push(WorkspaceFileState {
+                path,
+                sha256: Some("b".repeat(64)),
+            });
+        }
+        let digest = hex(&self_evolution_proposal_digest(&proposal).unwrap());
+        let bundle = SelfEvolutionPatchBundleV1 {
+            schema_version: SELF_EVOLUTION_PATCH_BUNDLE_SCHEMA_VERSION,
+            proposal_sha256: digest.clone(),
+            artifacts,
+        };
+        assert_eq!(
+            validate_patch_bundle(
+                &proposal,
+                &target(),
+                &scope(),
+                &digest,
+                &"a".repeat(40),
+                &bundle,
+                &workspace
+            ),
+            Err(SelfEvolutionPatchValidationError::TotalContentTooLarge)
+        );
+    }
+
 }
