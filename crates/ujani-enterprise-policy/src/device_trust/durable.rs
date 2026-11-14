@@ -4,6 +4,9 @@
 //! trusted host from protected configuration. Neither is read from this file.
 //! This is a persistence primitive, not an HTTP server or a complete RBAC layer.
 use super::*;
+use crate::integrity_key_provider::{
+    IntegrityKeyProvider, IntegrityKeyProviderError, IntegrityKeyPurpose,
+};
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::{Digest, Sha256};
 use std::fs::{self, File, OpenOptions};
@@ -206,6 +209,7 @@ pub enum DurableDeviceTrustError {
     CorruptState,
     CapacityExceeded,
     Trust(DeviceTrustError),
+    KeyProvider(IntegrityKeyProviderError),
     LockPoisoned,
     AnchorUnavailable(String),
     AnchorMismatch,
@@ -219,6 +223,7 @@ impl std::fmt::Display for DurableDeviceTrustError {
             Self::CorruptState => write!(f, "device trust snapshot is corrupt or unauthenticated"),
             Self::CapacityExceeded => write!(f, "device trust snapshot exceeds its safety limit"),
             Self::Trust(v) => write!(f, "device trust operation rejected: {v:?}"),
+            Self::KeyProvider(v) => write!(f, "protected integrity-key provider failed: {v}"),
             Self::LockPoisoned => write!(f, "device trust thread lock is poisoned"),
             Self::AnchorUnavailable(v) => write!(f, "external monotonic anchor unavailable: {v}"),
             Self::AnchorMismatch => write!(
@@ -289,7 +294,8 @@ pub struct DurableDeviceRegistry {
     lock_path: PathBuf,
     thread_lock: Arc<Mutex<()>>,
     admin_keys: Arc<Vec<(String, VerifyingKey)>>,
-    integrity_key: Arc<DeviceTrustIntegrityKey>,
+    integrity_key: Option<Arc<DeviceTrustIntegrityKey>>,
+    integrity_key_provider: Option<Arc<dyn IntegrityKeyProvider>>,
     anchor_namespace: Option<String>,
     anchor: Option<Arc<dyn MonotonicSnapshotAnchor>>,
     anchor_call_policy: Option<AnchorCallPolicy>,
@@ -299,7 +305,15 @@ impl std::fmt::Debug for DurableDeviceRegistry {
         f.debug_struct("DurableDeviceRegistry")
             .field("path", &self.path)
             .field("admin_key_count", &self.admin_keys.len())
-            .field("integrity_key_id", &self.integrity_key.key_id())
+            .field(
+                "integrity_key_id",
+                &self
+                    .integrity_key
+                    .as_ref()
+                    .map(|key| key.key_id())
+                    .unwrap_or("provider-managed"),
+            )
+            .field("provider_backed", &self.integrity_key_provider.is_some())
             .finish()
     }
 }
@@ -356,14 +370,75 @@ impl DurableDeviceRegistry {
         )
     }
 
+    /// Open a registry using a host-owned non-exportable integrity-key provider.
+    /// Existing snapshots signed by retained provider key IDs remain verifiable
+    /// during rotation; every successful write uses the provider's active key.
+    pub fn open_with_key_provider(
+        path: impl AsRef<Path>,
+        trusted_admin_keys: Vec<(String, VerifyingKey)>,
+        provider: Arc<dyn IntegrityKeyProvider>,
+    ) -> Result<Self, DurableDeviceTrustError> {
+        Self::open_internal_with_provider(path, trusted_admin_keys, provider, None)
+    }
+
+    /// Open an anchored registry using a host-owned protected key provider.
+    pub fn open_with_anchor_and_key_provider(
+        path: impl AsRef<Path>,
+        registry_id: impl Into<String>,
+        trusted_admin_keys: Vec<(String, VerifyingKey)>,
+        provider: Arc<dyn IntegrityKeyProvider>,
+        anchor: Arc<dyn MonotonicSnapshotAnchor>,
+        anchor_call_policy: AnchorCallPolicy,
+    ) -> Result<Self, DurableDeviceTrustError> {
+        let registry_id = registry_id.into();
+        if !valid_id(&registry_id, 128) {
+            return Err(DurableDeviceTrustError::CorruptState);
+        }
+        Self::open_internal_with_provider(
+            path,
+            trusted_admin_keys,
+            provider,
+            Some((registry_id, anchor, anchor_call_policy)),
+        )
+    }
+
     fn open_internal(
         path: impl AsRef<Path>,
         trusted_admin_keys: Vec<(String, VerifyingKey)>,
         integrity_key: DeviceTrustIntegrityKey,
         anchor: Option<(String, Arc<dyn MonotonicSnapshotAnchor>, AnchorCallPolicy)>,
     ) -> Result<Self, DurableDeviceTrustError> {
+        Self::open_internal_with_sources(
+            path,
+            trusted_admin_keys,
+            Some(Arc::new(integrity_key)),
+            None,
+            anchor,
+        )
+    }
+
+    fn open_internal_with_provider(
+        path: impl AsRef<Path>,
+        trusted_admin_keys: Vec<(String, VerifyingKey)>,
+        provider: Arc<dyn IntegrityKeyProvider>,
+        anchor: Option<(String, Arc<dyn MonotonicSnapshotAnchor>, AnchorCallPolicy)>,
+    ) -> Result<Self, DurableDeviceTrustError> {
+        Self::open_internal_with_sources(path, trusted_admin_keys, None, Some(provider), anchor)
+    }
+
+    fn open_internal_with_sources(
+        path: impl AsRef<Path>,
+        trusted_admin_keys: Vec<(String, VerifyingKey)>,
+        integrity_key: Option<Arc<DeviceTrustIntegrityKey>>,
+        integrity_key_provider: Option<Arc<dyn IntegrityKeyProvider>>,
+        anchor: Option<(String, Arc<dyn MonotonicSnapshotAnchor>, AnchorCallPolicy)>,
+    ) -> Result<Self, DurableDeviceTrustError> {
+        let has_one_key_source = integrity_key.is_some() ^ integrity_key_provider.is_some();
         if trusted_admin_keys.is_empty()
-            || !valid_id(integrity_key.key_id(), 128)
+            || !has_one_key_source
+            || integrity_key
+                .as_ref()
+                .is_some_and(|key| !valid_id(key.key_id(), 128))
             || trusted_admin_keys.iter().any(|(id, _)| !valid_id(id, 128))
         {
             return Err(DurableDeviceTrustError::CorruptState);
@@ -393,7 +468,8 @@ impl DurableDeviceRegistry {
             path,
             thread_lock: Arc::new(Mutex::new(())),
             admin_keys: Arc::new(trusted_admin_keys),
-            integrity_key: Arc::new(integrity_key),
+            integrity_key,
+            integrity_key_provider,
             anchor_namespace,
             anchor,
             anchor_call_policy,
@@ -401,7 +477,6 @@ impl DurableDeviceRegistry {
         store.transact(|_| Ok(()))?;
         Ok(store)
     }
-
     pub fn apply_admin_command(
         &self,
         command: &SignedDeviceAdminCommand,
@@ -553,6 +628,30 @@ impl DurableDeviceRegistry {
         self.read(|registry| Ok(registry.devices.len()))
     }
 
+    fn encode_registry_snapshot(
+        &self,
+        registry: &DeviceRegistry,
+    ) -> Result<Vec<u8>, DurableDeviceTrustError> {
+        match (&self.integrity_key, &self.integrity_key_provider) {
+            (Some(key), None) => Ok(encode_snapshot(registry, key.key_id(), &key.bytes)),
+            (None, Some(provider)) => encode_snapshot_with_provider(registry, provider.as_ref()),
+            _ => Err(DurableDeviceTrustError::CorruptState),
+        }
+    }
+
+    fn decode_registry_snapshot(
+        &self,
+        bytes: &[u8],
+    ) -> Result<DeviceRegistry, DurableDeviceTrustError> {
+        match (&self.integrity_key, &self.integrity_key_provider) {
+            (Some(key), None) => decode_snapshot(bytes, &self.admin_keys, key.key_id(), &key.bytes),
+            (None, Some(provider)) => {
+                decode_snapshot_with_provider(bytes, &self.admin_keys, provider.as_ref())
+            }
+            _ => Err(DurableDeviceTrustError::CorruptState),
+        }
+    }
+
     fn load_anchored_registry(
         &self,
         anchor_record: Option<&SnapshotAnchorRecord>,
@@ -563,24 +662,14 @@ impl DurableDeviceRegistry {
                 if self.path.exists() {
                     let bytes = fs::read(&self.path)?;
                     if snapshot_sha256(&bytes) == record.snapshot_sha256 {
-                        return decode_snapshot(
-                            &bytes,
-                            &self.admin_keys,
-                            self.integrity_key.key_id(),
-                            &self.integrity_key.bytes,
-                        );
+                        return self.decode_registry_snapshot(&bytes);
                     }
                 }
                 if backup.exists() {
                     let bytes = fs::read(&backup)?;
                     if snapshot_sha256(&bytes) == record.snapshot_sha256 {
                         restore_snapshot_from_backup(&self.path, &bytes)?;
-                        return decode_snapshot(
-                            &bytes,
-                            &self.admin_keys,
-                            self.integrity_key.key_id(),
-                            &self.integrity_key.bytes,
-                        );
+                        return self.decode_registry_snapshot(&bytes);
                     }
                 }
                 Err(DurableDeviceTrustError::AnchorMismatch)
@@ -640,22 +729,12 @@ impl DurableDeviceRegistry {
 
         let backup = suffix(&self.path, ".bak");
         if self.path.exists() {
-            decode_snapshot(
-                &fs::read(&self.path)?,
-                &self.admin_keys,
-                self.integrity_key.key_id(),
-                &self.integrity_key.bytes,
-            )
+            self.decode_registry_snapshot(&fs::read(&self.path)?)
         } else if backup.exists() {
             // Recover only the interrupted-rename case. A present but invalid
             // primary snapshot is never silently replaced by an older backup.
             let bytes = fs::read(&backup)?;
-            let recovered = decode_snapshot(
-                &bytes,
-                &self.admin_keys,
-                self.integrity_key.key_id(),
-                &self.integrity_key.bytes,
-            )?;
+            let recovered = self.decode_registry_snapshot(&bytes)?;
             atomic_write(&self.path, &bytes, false)?;
             Ok(recovered)
         } else {
@@ -697,11 +776,7 @@ impl DurableDeviceRegistry {
         };
         let mut registry = self.load_registry(anchor_record.as_ref())?;
         let result = operation(&mut registry)?;
-        let bytes = encode_snapshot(
-            &registry,
-            self.integrity_key.key_id(),
-            &self.integrity_key.bytes,
-        );
+        let bytes = self.encode_registry_snapshot(&registry)?;
         if bytes.len() as u64 > MAX_BYTES {
             return Err(DurableDeviceTrustError::CapacityExceeded);
         }
@@ -831,7 +906,7 @@ fn hmac(key: &[u8; 32], key_id: &str, body: &[u8]) -> [u8; 32] {
     mac.update(body);
     mac.finalize().into_bytes().into()
 }
-fn encode_snapshot(r: &DeviceRegistry, key_id: &str, key: &[u8; 32]) -> Vec<u8> {
+fn encode_snapshot_body(r: &DeviceRegistry) -> String {
     let mut body = format!("{HEADER}\n");
     let mut ids = r.devices.keys().collect::<Vec<_>>();
     ids.sort();
@@ -865,15 +940,70 @@ fn encode_snapshot(r: &DeviceRegistry, key_id: &str, key: &[u8; 32]) -> Vec<u8> 
     for (nonce, expiry) in requests {
         body.push_str(&format!("R|{}|{}\n", hex(nonce), expiry));
     }
+    body
+}
+
+fn encode_snapshot(r: &DeviceRegistry, key_id: &str, key: &[u8; 32]) -> Vec<u8> {
+    let mut body = encode_snapshot_body(r);
     let mac = hmac(key, key_id, body.as_bytes());
     body.push_str(&format!("H|{}|{}\n", hex(key_id.as_bytes()), hex(&mac)));
     body.into_bytes()
+}
+
+fn encode_snapshot_with_provider(
+    registry: &DeviceRegistry,
+    provider: &dyn IntegrityKeyProvider,
+) -> Result<Vec<u8>, DurableDeviceTrustError> {
+    let mut body = encode_snapshot_body(registry);
+    let (key_id, mac) = provider
+        .sign_active(IntegrityKeyPurpose::DeviceTrustRegistry, body.as_bytes())
+        .map_err(DurableDeviceTrustError::KeyProvider)?;
+    if !valid_id(&key_id, 128) {
+        return Err(DurableDeviceTrustError::CorruptState);
+    }
+    body.push_str(&format!("H|{}|{}\n", hex(key_id.as_bytes()), hex(&mac)));
+    Ok(body.into_bytes())
 }
 fn decode_snapshot(
     bytes: &[u8],
     admin_keys: &[(String, VerifyingKey)],
     expected_key_id: &str,
     key: &[u8; 32],
+) -> Result<DeviceRegistry, DurableDeviceTrustError> {
+    decode_snapshot_with_verifier(bytes, admin_keys, |key_id, body, expected| {
+        if key_id != expected_key_id {
+            return Err(DurableDeviceTrustError::CorruptState);
+        }
+        let mut mac = Hmac::<Sha256>::new_from_slice(key)
+            .map_err(|_| DurableDeviceTrustError::CorruptState)?;
+        mac.update(DOMAIN);
+        mac.update(&(key_id.len() as u32).to_be_bytes());
+        mac.update(key_id.as_bytes());
+        mac.update(body);
+        mac.verify_slice(expected)
+            .map_err(|_| DurableDeviceTrustError::CorruptState)
+    })
+}
+
+fn decode_snapshot_with_provider(
+    bytes: &[u8],
+    admin_keys: &[(String, VerifyingKey)],
+    provider: &dyn IntegrityKeyProvider,
+) -> Result<DeviceRegistry, DurableDeviceTrustError> {
+    decode_snapshot_with_verifier(bytes, admin_keys, |key_id, body, expected| {
+        let tag: [u8; 32] = expected
+            .try_into()
+            .map_err(|_| DurableDeviceTrustError::CorruptState)?;
+        provider
+            .verify(IntegrityKeyPurpose::DeviceTrustRegistry, key_id, body, &tag)
+            .map_err(DurableDeviceTrustError::KeyProvider)
+    })
+}
+
+fn decode_snapshot_with_verifier(
+    bytes: &[u8],
+    admin_keys: &[(String, VerifyingKey)],
+    verify: impl FnOnce(&str, &[u8], &[u8]) -> Result<(), DurableDeviceTrustError>,
 ) -> Result<DeviceRegistry, DurableDeviceTrustError> {
     if bytes.len() as u64 > MAX_BYTES {
         return Err(DurableDeviceTrustError::CapacityExceeded);
@@ -889,18 +1019,11 @@ fn decode_snapshot(
     }
     let key_id =
         String::from_utf8(unhex(fields[1])?).map_err(|_| DurableDeviceTrustError::CorruptState)?;
-    if !valid_id(&key_id, 128) || key_id != expected_key_id {
+    if !valid_id(&key_id, 128) {
         return Err(DurableDeviceTrustError::CorruptState);
     }
     let expected = unhex(fields[2])?;
-    let mut mac =
-        Hmac::<Sha256>::new_from_slice(key).map_err(|_| DurableDeviceTrustError::CorruptState)?;
-    mac.update(DOMAIN);
-    mac.update(&(key_id.len() as u32).to_be_bytes());
-    mac.update(key_id.as_bytes());
-    mac.update(body.as_bytes());
-    mac.verify_slice(&expected)
-        .map_err(|_| DurableDeviceTrustError::CorruptState)?;
+    verify(&key_id, body.as_bytes(), &expected)?;
     let mut registry = DeviceRegistry::new(admin_keys.to_vec())?;
     let mut records = 0usize;
     let mut lines = body.lines();
@@ -2063,5 +2186,73 @@ mod tests {
         let _ = fs::remove_file(&path);
         let _ = fs::remove_file(suffix(&path, ".lock"));
         let _ = fs::remove_file(suffix(&path, ".bak"));
+    }
+    #[test]
+    fn protected_key_provider_wires_device_registry_and_rotates_without_exporting_keys() {
+        use crate::integrity_key_provider::{IntegrityKeyPurpose, TestIntegrityKeyProvider};
+
+        let path = path();
+        let admin = test_signing_key("provider-admin").verifying_key();
+        let provider = Arc::new(TestIntegrityKeyProvider::default());
+        let purpose = IntegrityKeyPurpose::DeviceTrustRegistry;
+
+        provider.provision_key(purpose, "device-v1").unwrap();
+        provider.activate_key(purpose, "device-v1").unwrap();
+        let registry = DurableDeviceRegistry::open_with_key_provider(
+            &path,
+            vec![("admin-v1".into(), admin)],
+            provider.clone(),
+        )
+        .unwrap();
+        assert_eq!(registry.device_count().unwrap(), 0);
+        drop(registry);
+
+        provider.provision_key(purpose, "device-v2").unwrap();
+        provider.activate_key(purpose, "device-v2").unwrap();
+        let registry = DurableDeviceRegistry::open_with_key_provider(
+            &path,
+            vec![("admin-v1".into(), admin)],
+            provider.clone(),
+        )
+        .unwrap();
+        assert_eq!(registry.device_count().unwrap(), 0);
+        drop(registry);
+
+        // Opening with v2 verified and rewrote the prior snapshot before v1 retirement.
+        provider.retire_key(purpose, "device-v1").unwrap();
+        let registry = DurableDeviceRegistry::open_with_key_provider(
+            &path,
+            vec![("admin-v1".into(), admin)],
+            provider,
+        )
+        .unwrap();
+        assert_eq!(registry.device_count().unwrap(), 0);
+        drop(registry);
+
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(suffix(&path, ".lock"));
+        let _ = fs::remove_file(suffix(&path, ".bak"));
+    }
+
+    #[test]
+    fn protected_key_provider_unavailable_fails_closed_on_first_snapshot() {
+        use crate::integrity_key_provider::TestIntegrityKeyProvider;
+
+        let path = path();
+        let admin = test_signing_key("provider-admin-unavailable").verifying_key();
+        let provider = Arc::new(TestIntegrityKeyProvider::default());
+        let result = DurableDeviceRegistry::open_with_key_provider(
+            &path,
+            vec![("admin-v1".into(), admin)],
+            provider,
+        );
+        assert_eq!(
+            result.err(),
+            Some(DurableDeviceTrustError::KeyProvider(
+                IntegrityKeyProviderError::UnknownKey
+            ))
+        );
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(suffix(&path, ".lock"));
     }
 }
