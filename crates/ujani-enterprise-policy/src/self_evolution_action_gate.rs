@@ -289,7 +289,12 @@ mod tests {
                 ModuleInstallState::Installed,
                 &unapproved,
                 &request(),
-                &test_current_operator_session("tenant-a", "admin-a", OperatorRole::Administrator, 90_000),
+                &test_current_operator_session(
+                    "tenant-a",
+                    "admin-a",
+                    OperatorRole::Administrator,
+                    90_000
+                ),
                 2_000,
                 SelfEvolutionAction::GenerateProposal,
                 true,
@@ -311,7 +316,12 @@ mod tests {
                 ModuleInstallState::Installed,
                 &base,
                 &request(),
-                &test_current_operator_session("tenant-a", "admin-a", OperatorRole::Administrator, 90_000),
+                &test_current_operator_session(
+                    "tenant-a",
+                    "admin-a",
+                    OperatorRole::Administrator,
+                    90_000
+                ),
                 2_000,
                 SelfEvolutionAction::GenerateProposal,
                 true,
@@ -326,7 +336,12 @@ mod tests {
                 ModuleInstallState::Installed,
                 &base,
                 &request(),
-                &test_current_operator_session("tenant-a", "admin-a", OperatorRole::Administrator, 90_000),
+                &test_current_operator_session(
+                    "tenant-a",
+                    "admin-a",
+                    OperatorRole::Administrator,
+                    90_000
+                ),
                 2_000,
                 SelfEvolutionAction::GenerateProposal,
                 true,
@@ -341,7 +356,12 @@ mod tests {
                 ModuleInstallState::Installed,
                 &base,
                 &request(),
-                &test_current_operator_session("tenant-a", "admin-a", OperatorRole::Administrator, 90_000),
+                &test_current_operator_session(
+                    "tenant-a",
+                    "admin-a",
+                    OperatorRole::Administrator,
+                    90_000
+                ),
                 2_000,
                 SelfEvolutionAction::GenerateProposal,
                 true,
@@ -362,7 +382,12 @@ mod tests {
                 ModuleInstallState::Installed,
                 &configured,
                 &request(),
-                &test_current_operator_session("tenant-a", "admin-a", OperatorRole::Administrator, 90_000),
+                &test_current_operator_session(
+                    "tenant-a",
+                    "admin-a",
+                    OperatorRole::Administrator,
+                    90_000
+                ),
                 2_000,
                 SelfEvolutionAction::GenerateProposal,
                 true,
@@ -384,7 +409,12 @@ mod tests {
                 ModuleInstallState::Installed,
                 &oversized,
                 &request(),
-                &test_current_operator_session("tenant-a", "admin-a", OperatorRole::Administrator, 90_000),
+                &test_current_operator_session(
+                    "tenant-a",
+                    "admin-a",
+                    OperatorRole::Administrator,
+                    90_000
+                ),
                 2_000,
                 SelfEvolutionAction::GenerateProposal,
                 true,
@@ -419,7 +449,12 @@ mod tests {
                 ModuleInstallState::NotInstalled,
                 &policy(),
                 &request(),
-                &test_current_operator_session("tenant-a", "admin-a", OperatorRole::Administrator, 90_000),
+                &test_current_operator_session(
+                    "tenant-a",
+                    "admin-a",
+                    OperatorRole::Administrator,
+                    90_000
+                ),
                 2_000,
                 SelfEvolutionAction::InstallFeature,
                 false,
@@ -436,7 +471,12 @@ mod tests {
                 ModuleInstallState::NotInstalled,
                 &prohibited,
                 &request(),
-                &test_current_operator_session("tenant-a", "admin-a", OperatorRole::Administrator, 90_000),
+                &test_current_operator_session(
+                    "tenant-a",
+                    "admin-a",
+                    OperatorRole::Administrator,
+                    90_000
+                ),
                 2_000,
                 SelfEvolutionAction::InstallFeature,
                 true,
