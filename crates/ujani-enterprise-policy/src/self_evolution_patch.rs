@@ -608,7 +608,7 @@ mod tests {
 
     #[test]
     fn rejects_all_unicode_bidi_control_characters_with_valid_digests() {
-        for character in ['\\u{061c}', '\\u{200e}', '\\u{200f}'] {
+        for character in ['\u{061c}', '\u{200e}', '\u{200f}'] {
             let (mut proposal, mut bundle, workspace, _) = setup_modify();
             bundle.artifacts[0].new_content = Some(format!("label{character}"));
             proposal.changes[0].patch_sha256 = patch_artifact_sha256(&bundle.artifacts[0]);
