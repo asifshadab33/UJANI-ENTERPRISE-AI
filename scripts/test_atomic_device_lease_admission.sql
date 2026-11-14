@@ -1,4 +1,5 @@
 -- Run after migrations 0001-0008 on PostgreSQL 16.
+SELECT pg_catalog.set_config('ujani.tenant_id','admission-test',false);
 -- This exercises the post-authentication transaction only. Cryptographic
 -- verification remains the responsibility of the trusted HTTP adapter.
 SELECT pg_catalog.set_config('ujani.tenant_id','admission-test',false);
