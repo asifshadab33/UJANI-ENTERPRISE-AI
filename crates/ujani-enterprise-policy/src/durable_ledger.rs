@@ -1370,6 +1370,7 @@ fn load_or_recover_with_provider(
     }
 }
 
+#[cfg(test)]
 fn persist_snapshot(
     path: &Path,
     ledger: &Ledger,
@@ -1414,7 +1415,7 @@ fn persist_snapshot_bytes(
         temp_options.mode(0o600);
     }
     let mut file = temp_options.open(&temp)?;
-    file.write_all(&bytes)?;
+    file.write_all(bytes)?;
     file.sync_all()?;
 
     if path.exists() {
@@ -2593,4 +2594,52 @@ mod tests {
         );
         cleanup(&path);
     }
+    #[test]
+    fn protected_key_provider_wires_ledger_and_rotates_without_exporting_keys() {
+        use crate::integrity_key_provider::{IntegrityKeyPurpose, TestIntegrityKeyProvider};
+
+        let path = temp_path("provider-rotation");
+        let provider = Arc::new(TestIntegrityKeyProvider::default());
+        let purpose = IntegrityKeyPurpose::ReservationLedger;
+
+        provider.provision_key(purpose, "ledger-v1").unwrap();
+        provider.activate_key(purpose, "ledger-v1").unwrap();
+        let ledger = DurableLedger::open_with_key_provider(&path, provider.clone()).unwrap();
+        assert_eq!(ledger.snapshot().unwrap().active_jobs, 0);
+        drop(ledger);
+
+        provider.provision_key(purpose, "ledger-v2").unwrap();
+        provider.activate_key(purpose, "ledger-v2").unwrap();
+        let ledger = DurableLedger::open_with_key_provider(&path, provider.clone()).unwrap();
+        assert_eq!(ledger.snapshot().unwrap().active_jobs, 0);
+        drop(ledger);
+
+        // The v2 write replaced the prior snapshot before v1 is retired.
+        provider.retire_key(purpose, "ledger-v1").unwrap();
+        let ledger = DurableLedger::open_with_key_provider(&path, provider.clone()).unwrap();
+        assert_eq!(ledger.snapshot().unwrap().active_jobs, 0);
+        drop(ledger);
+
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(append_suffix(&path, ".lock"));
+        let _ = fs::remove_file(append_suffix(&path, ".bak"));
+    }
+
+    #[test]
+    fn protected_key_provider_unavailable_fails_closed_for_ledger() {
+        use crate::integrity_key_provider::TestIntegrityKeyProvider;
+
+        let path = temp_path("provider-unavailable");
+        let provider = Arc::new(TestIntegrityKeyProvider::default());
+        let result = DurableLedger::open_with_key_provider(&path, provider);
+        assert_eq!(
+            result.err(),
+            Some(DurableLedgerError::KeyProvider(
+                IntegrityKeyProviderError::UnknownKey
+            ))
+        );
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(append_suffix(&path, ".lock"));
+    }
+
 }
