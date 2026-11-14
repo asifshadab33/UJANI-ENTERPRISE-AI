@@ -7,7 +7,9 @@
 use crate::device_trust::durable::{
     AnchorCallPolicy, MonotonicSnapshotAnchor, SnapshotAnchorRecord,
 };
-use crate::integrity_key_provider::{IntegrityKeyProvider, IntegrityKeyProviderError, IntegrityKeyPurpose};
+use crate::integrity_key_provider::{
+    IntegrityKeyProvider, IntegrityKeyProviderError, IntegrityKeyPurpose,
+};
 #[cfg(test)]
 use crate::{Admission, ClassPolicy, Device, SchedulingContext, VerifiedAdminApproval, Workload};
 use crate::{Ledger, TelemetryChallengeError};
@@ -278,7 +280,12 @@ impl DurableLedger {
             return Err(DurableLedgerError::InvalidRecord);
         }
         Self::open_internal_with_sources(
-            path, integrity_keys, Some(active_key_id.to_string()), None, anchor, sync_ancestors,
+            path,
+            integrity_keys,
+            Some(active_key_id.to_string()),
+            None,
+            anchor,
+            sync_ancestors,
         )
     }
 
@@ -291,7 +298,14 @@ impl DurableLedger {
         let sync_ancestors = sync_ancestor_directories;
         #[cfg(not(unix))]
         let sync_ancestors = |_path: &Path| Ok(());
-        Self::open_internal_with_sources(path, HashMap::new(), None, Some(provider), anchor, sync_ancestors)
+        Self::open_internal_with_sources(
+            path,
+            HashMap::new(),
+            None,
+            Some(provider),
+            anchor,
+            sync_ancestors,
+        )
     }
 
     fn open_internal_with_sources(
@@ -305,14 +319,17 @@ impl DurableLedger {
         if active_key_id.is_some() == integrity_key_provider.is_some() {
             return Err(DurableLedgerError::InvalidRecord);
         }
-        if active_key_id.as_ref().is_some_and(|id| !integrity_keys.contains_key(id))
+        if active_key_id
+            .as_ref()
+            .is_some_and(|id| !integrity_keys.contains_key(id))
             || (active_key_id.is_none() && !integrity_keys.is_empty())
         {
             return Err(DurableLedgerError::InvalidRecord);
         }
         let mut path = path.as_ref().to_path_buf();
         let anchored = anchor.is_some();
-        let parent = path.parent()
+        let parent = path
+            .parent()
             .filter(|parent| !parent.as_os_str().is_empty())
             .unwrap_or_else(|| Path::new("."));
         if anchored {
@@ -332,7 +349,10 @@ impl DurableLedger {
                     ));
                 }
             }
-            let file_name = path.file_name().ok_or(DurableLedgerError::InvalidRecord)?.to_os_string();
+            let file_name = path
+                .file_name()
+                .ok_or(DurableLedgerError::InvalidRecord)?
+                .to_os_string();
             let canonical_parent = fs::canonicalize(parent)?;
             sync_ancestors(&canonical_parent)?;
             path = canonical_parent.join(file_name);
@@ -571,8 +591,14 @@ impl DurableLedger {
         if let Some(provider) = &self.integrity_key_provider {
             return serialize_snapshot_with_provider(ledger, provider.as_ref());
         }
-        let key_id = self.active_key_id.as_deref().ok_or(DurableLedgerError::InvalidRecord)?;
-        let key = self.integrity_keys.get(key_id).ok_or(DurableLedgerError::InvalidRecord)?;
+        let key_id = self
+            .active_key_id
+            .as_deref()
+            .ok_or(DurableLedgerError::InvalidRecord)?;
+        let key = self
+            .integrity_keys
+            .get(key_id)
+            .ok_or(DurableLedgerError::InvalidRecord)?;
         Ok(serialize_snapshot(ledger, key_id, &key.key))
     }
 
@@ -1063,7 +1089,9 @@ fn deserialize_snapshot(
     integrity_keys: &HashMap<String, LedgerIntegrityKey>,
 ) -> Result<Ledger, DurableLedgerError> {
     deserialize_snapshot_with_verifier(bytes, |key_id, body, expected| {
-        let key = integrity_keys.get(key_id).ok_or(DurableLedgerError::CorruptState)?;
+        let key = integrity_keys
+            .get(key_id)
+            .ok_or(DurableLedgerError::CorruptState)?;
         if verify_ledger_mac(&key.key, key_id, body, expected) {
             Ok(())
         } else {
@@ -1329,7 +1357,6 @@ fn load_or_recover(
         }
     }
 }
-
 
 fn load_or_recover_with_provider(
     path: &Path,
