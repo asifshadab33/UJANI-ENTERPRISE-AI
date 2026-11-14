@@ -97,11 +97,11 @@ fn valid_sha256(value: &str) -> bool {
 }
 
 fn valid_content(value: &str) -> bool {
-    !value.is_empty()
-        && !value.as_bytes().contains(&0)
-        && !value
-            .chars()
-            .any(|character| character.is_control() && !matches!(character, '\n' | '\r' | '\t'))
+    !value.as_bytes().contains(&0)
+        && !value.chars().any(|character| {
+            (character.is_control() && !matches!(character, '\n' | '\r' | '\t'))
+                || matches!(character, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+        })
 }
 
 fn operation_tag(operation: ProposedChangeKind) -> &'static [u8] {
