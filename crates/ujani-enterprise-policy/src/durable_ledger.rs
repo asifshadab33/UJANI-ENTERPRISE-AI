@@ -1397,6 +1397,18 @@ fn load_or_recover_with_provider(
     }
 }
 
+#[cfg(test)]
+fn persist_snapshot(
+    path: &Path,
+    ledger: &Ledger,
+    key_id: &str,
+    key: &[u8; 32],
+    preserve_backup: bool,
+) -> Result<(), DurableLedgerError> {
+    let bytes = serialize_snapshot(ledger, key_id, key);
+    persist_snapshot_bytes(path, &bytes, preserve_backup)
+}
+
 fn persist_snapshot_bytes(
     path: &Path,
     bytes: &[u8],
