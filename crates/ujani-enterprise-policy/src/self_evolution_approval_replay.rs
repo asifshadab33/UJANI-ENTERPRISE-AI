@@ -11,6 +11,7 @@ use crate::operator_control_plane::OperatorRole;
 use crate::operator_session_revocation::CurrentOperatorSession;
 use crate::self_evolution_approval::VerifiedSelfEvolutionApproval;
 use sha2::{Digest, Sha256};
+
 const TARGET_DIGEST_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-SELF-EVOLUTION-TARGET-V1\0";
 const SCOPE_DIGEST_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-SELF-EVOLUTION-SCOPE-SET-V1\0";
 
@@ -197,7 +198,6 @@ mod tests {
         approval_signing_bytes, self_evolution_proposal_digest, verify_self_evolution_approval,
         SelfEvolutionApprovalClaims, SignedSelfEvolutionApproval,
     };
-    use crate::operator_control_plane::OperatorRole;
     use crate::operator_session_revocation::test_current_operator_session;
     use ed25519_dalek::{Signer, SigningKey};
     use std::collections::HashSet;
