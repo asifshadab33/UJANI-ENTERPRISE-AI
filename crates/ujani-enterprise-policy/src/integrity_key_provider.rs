@@ -250,7 +250,11 @@ mod tests {
                 .0
                 .lock()
                 .map_err(|_| IntegrityKeyProviderError::LockPoisoned)?;
-            if state.active.get(&purpose).is_some_and(|active| active == key_id) {
+            if state
+                .active
+                .get(&purpose)
+                .is_some_and(|active| active == key_id)
+            {
                 return Err(IntegrityKeyProviderError::ActiveKeyCannotBeRetired);
             }
             let mut key = state
@@ -307,7 +311,9 @@ mod tests {
         let payload = b"committed snapshot v1";
         let (old_id, old_tag) = provider.sign_active(purpose, payload).unwrap();
         assert_eq!(old_id, "ledger-v1");
-        provider.verify(purpose, &old_id, payload, &old_tag).unwrap();
+        provider
+            .verify(purpose, &old_id, payload, &old_tag)
+            .unwrap();
 
         provider.provision_key(purpose, "ledger-v2").unwrap();
         provider.activate_key(purpose, "ledger-v2").unwrap();
@@ -315,7 +321,9 @@ mod tests {
         assert_eq!(new_id, "ledger-v2");
 
         // Existing snapshots remain verifiable until the host has migrated backups.
-        provider.verify(purpose, &old_id, payload, &old_tag).unwrap();
+        provider
+            .verify(purpose, &old_id, payload, &old_tag)
+            .unwrap();
         provider
             .verify(purpose, &new_id, b"snapshot v2", &new_tag)
             .unwrap();
@@ -352,12 +360,7 @@ mod tests {
             .unwrap();
         assert_eq!(id, "shared-id");
         assert_eq!(
-            provider.verify(
-                IntegrityKeyPurpose::ReservationLedger,
-                &id,
-                b"state",
-                &tag
-            ),
+            provider.verify(IntegrityKeyPurpose::ReservationLedger, &id, b"state", &tag),
             Err(IntegrityKeyProviderError::VerificationFailed)
         );
     }
