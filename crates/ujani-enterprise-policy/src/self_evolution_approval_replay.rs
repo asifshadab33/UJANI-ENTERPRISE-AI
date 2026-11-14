@@ -127,13 +127,17 @@ pub fn consume_verified_self_evolution_approval(
     approver_subject_id: &str,
     store: &mut impl SelfEvolutionApprovalReplayStore,
 ) -> Result<(), ApprovalConsumptionError> {
-    if !valid_identifier(tenant_id, 128) || !valid_identifier(approver_subject_id, 128) {
+    if !valid_identifier(tenant_id, 128)
+        || !valid_identifier(approver_subject_id, 128)
+        || approval.tenant_id() != tenant_id
+        || approval.approver_subject_id() != approver_subject_id
+    {
         return Err(ApprovalConsumptionError::InvalidAuthenticatedContext);
     }
 
     let record = SelfEvolutionApprovalReplayRecord {
-        tenant_id: tenant_id.to_owned(),
-        approver_subject_id: approver_subject_id.to_owned(),
+        tenant_id: approval.tenant_id().to_owned(),
+        approver_subject_id: approval.approver_subject_id().to_owned(),
         approval_id: approval.approval_id().to_owned(),
         approver_key_id: approval.approver_key_id().to_owned(),
         nonce: *approval.nonce(),
@@ -252,6 +256,8 @@ mod tests {
         };
         let key = SigningKey::from_bytes(&[11; 32]);
         let claims = SelfEvolutionApprovalClaims {
+            tenant_id: "tenant-a".into(),
+            approver_subject_id: "admin-a".into(),
             approval_id: "approval-001".into(),
             repository: target.repository.clone(),
             base_ref: target.base_ref.clone(),
@@ -269,7 +275,12 @@ mod tests {
         };
         verify_self_evolution_approval(
             &signed,
-            &[("admin-key-01".into(), key.verifying_key())],
+            &[(
+                "admin-key-01".into(),
+                "tenant-a".into(),
+                "admin-a".into(),
+                key.verifying_key(),
+            )],
             &target,
             &proposal,
             2_000,
@@ -313,6 +324,21 @@ mod tests {
         let mut store = MemoryStore::default();
         assert_eq!(
             consume_verified_self_evolution_approval(&approval, "", "admin-a", &mut store),
+            Err(ApprovalConsumptionError::InvalidAuthenticatedContext)
+        );
+        assert!(store.approval_ids.is_empty());
+    }
+
+    #[test]
+    fn signed_tenant_and_subject_must_match_current_authenticated_context() {
+        let approval = verified_approval();
+        let mut store = MemoryStore::default();
+        assert_eq!(
+            consume_verified_self_evolution_approval(&approval, "tenant-b", "admin-a", &mut store),
+            Err(ApprovalConsumptionError::InvalidAuthenticatedContext)
+        );
+        assert_eq!(
+            consume_verified_self_evolution_approval(&approval, "tenant-a", "admin-b", &mut store),
             Err(ApprovalConsumptionError::InvalidAuthenticatedContext)
         );
         assert!(store.approval_ids.is_empty());
