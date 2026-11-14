@@ -131,13 +131,14 @@ pub fn verify_self_evolution_approval(
         return Err(SelfEvolutionApprovalError::InvalidClaims);
     }
 
-    let mut matching_keys = enrolled_admin_keys.iter().filter(
-        |(key_id, tenant_id, subject_id, _)| {
-            key_id == &claims.approver_key_id
-                && tenant_id == &claims.tenant_id
-                && subject_id == &claims.approver_subject_id
-        },
-    );
+    let mut matching_keys =
+        enrolled_admin_keys
+            .iter()
+            .filter(|(key_id, tenant_id, subject_id, _)| {
+                key_id == &claims.approver_key_id
+                    && tenant_id == &claims.tenant_id
+                    && subject_id == &claims.approver_subject_id
+            });
     let key = matching_keys
         .next()
         .map(|(_, _, _, key)| key)
@@ -326,7 +327,12 @@ mod tests {
         let signed = signed_approval(&proposal, &target, &key);
         let verified = verify_self_evolution_approval(
             &signed,
-            &[("admin-key-01".into(), "tenant-a".into(), "admin-a".into(), key.verifying_key())],
+            &[(
+                "admin-key-01".into(),
+                "tenant-a".into(),
+                "admin-a".into(),
+                key.verifying_key(),
+            )],
             &target,
             &proposal,
             2_000,
@@ -346,7 +352,12 @@ mod tests {
         assert_eq!(
             verify_self_evolution_approval(
                 &signed,
-                &[("admin-key-01".into(), "tenant-a".into(), "admin-a".into(), key.verifying_key())],
+                &[(
+                "admin-key-01".into(),
+                "tenant-a".into(),
+                "admin-a".into(),
+                key.verifying_key(),
+            )],
                 &target,
                 &changed,
                 2_000,
@@ -366,7 +377,12 @@ mod tests {
         assert_eq!(
             verify_self_evolution_approval(
                 &signed,
-                &[("admin-key-01".into(), "tenant-a".into(), "admin-a".into(), key.verifying_key())],
+                &[(
+                "admin-key-01".into(),
+                "tenant-a".into(),
+                "admin-a".into(),
+                key.verifying_key(),
+            )],
                 &other_target,
                 &proposal,
                 2_000,
@@ -380,7 +396,12 @@ mod tests {
         assert_eq!(
             verify_self_evolution_approval(
                 &signed,
-                &[("admin-key-01".into(), "tenant-a".into(), "admin-a".into(), key.verifying_key())],
+                &[(
+                "admin-key-01".into(),
+                "tenant-a".into(),
+                "admin-a".into(),
+                key.verifying_key(),
+            )],
                 &target,
                 &proposal,
                 10_000,
@@ -399,7 +420,12 @@ mod tests {
         assert_eq!(
             verify_self_evolution_approval(
                 &tampered,
-                &[("admin-key-01".into(), "tenant-a".into(), "admin-a".into(), key.verifying_key())],
+                &[(
+                "admin-key-01".into(),
+                "tenant-a".into(),
+                "admin-a".into(),
+                key.verifying_key(),
+            )],
                 &target,
                 &proposal,
                 2_000,
@@ -415,7 +441,12 @@ mod tests {
         assert_eq!(
             verify_self_evolution_approval(
                 &protected,
-                &[("admin-key-01".into(), "tenant-a".into(), "admin-a".into(), key.verifying_key())],
+                &[(
+                "admin-key-01".into(),
+                "tenant-a".into(),
+                "admin-a".into(),
+                key.verifying_key(),
+            )],
                 &target,
                 &proposal,
                 2_000,
