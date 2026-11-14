@@ -51,12 +51,13 @@ pub enum SelfEvolutionApprovalError {
 fn valid_identifier(value: &str, max_bytes: usize) -> bool {
     !value.is_empty()
         && value.len() <= max_bytes
-        && value.bytes().all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
 }
 
 fn valid_revision(value: &str) -> bool {
-    (value.len() == 40 || value.len() == 64)
-        && value.bytes().all(|b| b.is_ascii_hexdigit())
+    (value.len() == 40 || value.len() == 64) && value.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 fn approval_signing_bytes(claims: &SelfEvolutionApprovalClaims) -> Vec<u8> {
@@ -116,7 +117,9 @@ pub fn verify_self_evolution_approval(
         || claims.issued_at_unix_ms > now_unix_ms.saturating_add(30_000)
         || claims.expires_unix_ms <= now_unix_ms
         || claims.expires_unix_ms <= claims.issued_at_unix_ms
-        || claims.expires_unix_ms.saturating_sub(claims.issued_at_unix_ms)
+        || claims
+            .expires_unix_ms
+            .saturating_sub(claims.issued_at_unix_ms)
             > SELF_EVOLUTION_APPROVAL_TTL_MAX_MS
     {
         return Err(SelfEvolutionApprovalError::InvalidClaims);
@@ -168,8 +171,8 @@ impl VerifiedSelfEvolutionApproval {
 mod tests {
     use super::*;
     use crate::self_evolution::{
-        FindingCategory, FindingSeverity, ProposedChange, ProposedChangeKind,
-        SelfEvolutionFinding, SELF_EVOLUTION_PROPOSAL_SCHEMA_VERSION,
+        FindingCategory, FindingSeverity, ProposedChange, ProposedChangeKind, SelfEvolutionFinding,
+        SELF_EVOLUTION_PROPOSAL_SCHEMA_VERSION,
     };
     use ed25519_dalek::{Signer, SigningKey};
 
@@ -220,7 +223,9 @@ mod tests {
             issued_at_unix_ms: 1_000,
             expires_unix_ms: 10_000,
         };
-        let signature = signing_key.sign(&approval_signing_bytes(&claims)).to_bytes();
+        let signature = signing_key
+            .sign(&approval_signing_bytes(&claims))
+            .to_bytes();
         SignedSelfEvolutionApproval { claims, signature }
     }
 
@@ -315,7 +320,9 @@ mod tests {
 
         let mut protected = signed_approval(&proposal, &target, &key);
         protected.claims.approved_scope = vec!["crates/ujani-enterprise-policy".into()];
-        protected.signature = key.sign(&approval_signing_bytes(&protected.claims)).to_bytes();
+        protected.signature = key
+            .sign(&approval_signing_bytes(&protected.claims))
+            .to_bytes();
         assert_eq!(
             verify_self_evolution_approval(
                 &protected,
