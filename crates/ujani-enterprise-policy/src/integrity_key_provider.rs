@@ -383,3 +383,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+pub(crate) use tests::TestIntegrityKeyProvider;
+
