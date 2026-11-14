@@ -45,8 +45,20 @@ def _validate_strict_json_decoder() -> None:
     """Keep the contract tooling fail-closed for ambiguous JSON encodings."""
     sample = {"outer": {"name": "ujani", "version": 1}}
     assert _strict_json_loads(json.dumps(sample)) == sample
+    for ambiguous in (
+        '{"message_type":"task_status","message_type":"task_envelope"}',
+        '{"outer":{"sequence":1,"sequence":2}}',
+        '{"value":NaN}',
+        '{"value":Infinity}',
+    ):
+        try:
+            _strict_json_loads(ambiguous)
+        except ValueError:
+            continue
+        raise AssertionError(f"ambiguous/non-JSON input unexpectedly accepted: {ambiguous}")
 
-    # Exercise duplicate-key rejection independently for every shared message type.
+    # Exercise duplicate top-level message keys for every shared v1 message type.
+    # This prevents a parser from accepting one message kind less strictly than another.
     for message_type, message in _sample_messages().items():
         encoded = json.dumps(message, separators=(",", ":"))
         marker = '"message_type":' + json.dumps(message_type)
@@ -64,17 +76,6 @@ def _validate_strict_json_decoder() -> None:
             raise AssertionError(
                 f"duplicate message_type key unexpectedly accepted for {message_type}"
             )
-
-    for ambiguous in (
-        '{"outer":{"sequence":1,"sequence":2}}',
-        '{"value":NaN}',
-        '{"value":Infinity}',
-    ):
-        try:
-            _strict_json_loads(ambiguous)
-        except ValueError:
-            continue
-        raise AssertionError(f"ambiguous/non-JSON input unexpectedly accepted: {ambiguous}")
 
 
 def _canonical_consent_binding_bytes(envelope: dict[str, Any]) -> bytes:
