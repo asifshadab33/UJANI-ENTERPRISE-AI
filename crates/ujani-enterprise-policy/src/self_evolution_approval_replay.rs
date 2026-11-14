@@ -7,6 +7,7 @@
 //! concurrent calls across processes, and let the database check expiry after
 //! its advisory locks have been acquired. Memory stores are tests only.
 
+use crate::operator_control_plane::valid_identifier;
 use crate::self_evolution_approval::VerifiedSelfEvolutionApproval;
 use sha2::{Digest, Sha256};
 const TARGET_DIGEST_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-SELF-EVOLUTION-TARGET-V1\0";
@@ -126,7 +127,7 @@ pub fn consume_verified_self_evolution_approval(
     approver_subject_id: &str,
     store: &mut impl SelfEvolutionApprovalReplayStore,
 ) -> Result<(), ApprovalConsumptionError> {
-    if !valid_context_identifier(tenant_id) || !valid_context_identifier(approver_subject_id) {
+    if !valid_identifier(tenant_id, 128) || !valid_identifier(approver_subject_id, 128) {
         return Err(ApprovalConsumptionError::InvalidAuthenticatedContext);
     }
 
@@ -154,14 +155,6 @@ pub fn consume_verified_self_evolution_approval(
     store
         .consume_once(&record)
         .map_err(ApprovalConsumptionError::Store)
-}
-
-fn valid_context_identifier(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= 128
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
 }
 
 fn append_length_prefixed(bytes: &mut Vec<u8>, value: &str) {
