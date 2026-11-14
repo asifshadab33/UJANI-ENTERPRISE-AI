@@ -82,10 +82,12 @@ BEGIN
  ELSE
   IF NEW.tenant_id IS DISTINCT FROM OLD.tenant_id
      OR NEW.device_id IS DISTINCT FROM OLD.device_id
-     OR NEW.binding_revision <> OLD.binding_revision + 1 THEN
-   RAISE EXCEPTION 'device owner binding revision must advance monotonically' USING ERRCODE = '23514';
+     OR NEW.binding_revision <> OLD.binding_revision + 1
+     OR NEW.binding_digest IS NOT DISTINCT FROM OLD.binding_digest THEN
+   RAISE EXCEPTION 'device owner binding revision and signed-command digest must advance' USING ERRCODE = '23514';
   END IF;
  END IF;
+ NEW.bound_at := pg_catalog.clock_timestamp();
 
  INSERT INTO ujani_control.audit_events
   (tenant_id,event_id,actor_ref,actor_role,event_type,outcome,object_ref)
