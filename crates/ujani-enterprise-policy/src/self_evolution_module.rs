@@ -2,8 +2,8 @@
 //!
 //! This is a side-effect-free authorization contract. It does not install a
 //! module, access source repositories, apply patches, execute code, sign builds
-//! or deploy artifacts. The authenticated control plane must supply the policy
-//! and approval evidence; worker devices must never evaluate model authority.
+//! or deploy artifacts. The authenticated control plane supplies policy; typed
+//! approval and durable replay integration are deliberately not available yet.
 
 use std::collections::BTreeSet;
 
@@ -49,8 +49,8 @@ pub struct SelfEvolutionRequest {
 pub struct SelfEvolutionPermission {
     pub may_analyse: bool,
     pub may_prepare_proposals: bool,
-    /// Only authorizes moving a proposal into the trusted review pipeline.
-    /// It does not authorize applying, executing, signing or deploying changes.
+    /// Reserved for a future trusted review pipeline; currently always false.
+    /// It never authorizes applying, executing, signing or deploying changes.
     pub may_submit_for_review: bool,
     pub blocked_by: Option<SelfEvolutionBlock>,
     /// Submission remains fail-closed until typed approval and durable replay are integrated.
@@ -161,7 +161,9 @@ pub fn evaluate_enterprise_self_evolution(
         may_prepare_proposals: may_prepare,
         may_submit_for_review: false,
         blocked_by,
-        submission_blocked_by: Some(SelfEvolutionBlock::ApprovalPipelineUnavailable),
+        submission_blocked_by: Some(
+            blocked_by.unwrap_or(SelfEvolutionBlock::ApprovalPipelineUnavailable),
+        ),
     }
 }
 
@@ -291,6 +293,7 @@ mod tests {
             Some(SelfEvolutionBlock::ApprovalPipelineUnavailable)
         );
     }
+
     #[test]
     fn scope_aliases_and_parent_directories_cannot_bypass_protected_paths() {
         let mut p = policy();
