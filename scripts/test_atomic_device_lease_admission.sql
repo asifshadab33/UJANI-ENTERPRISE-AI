@@ -6,8 +6,10 @@ INSERT INTO ujani_control.tenants (tenant_id, display_name)
 VALUES ('admission-test','Admission Test') ON CONFLICT (tenant_id) DO NOTHING;
 INSERT INTO ujani_control.operator_subjects
  (tenant_id,subject_id,role,enabled,idp_issuer,idp_subject)
-VALUES ('admission-test','admission-admin','administrator',true,'ci','admission-admin')
-ON CONFLICT (tenant_id,subject_id) DO UPDATE SET enabled=true,role='administrator';
+VALUES
+ ('admission-test','admission-admin','administrator',true,'ci','admission-admin'),
+ ('admission-test','admission-owner','operator',true,'ci','admission-owner')
+ON CONFLICT (tenant_id,subject_id) DO UPDATE SET enabled=true;
 INSERT INTO ujani_control.operator_subjects
  (tenant_id,subject_id,role,enabled,idp_issuer,idp_subject)
 VALUES
@@ -30,9 +32,18 @@ INSERT INTO ujani_control.device_keys
  (tenant_id,device_id,key_id,public_key,generation,state)
 VALUES ('admission-test','admission-device','device-key-1',decode(repeat('11',32),'hex'),1,'active')
 ON CONFLICT (tenant_id,device_id,key_id) DO UPDATE SET state='active';
+INSERT INTO ujani_control.device_owner_bindings
+ (tenant_id,device_id,owner_subject_id,bound_by_subject_id,binding_revision,active,binding_digest)
+VALUES ('admission-test','admission-device','admission-owner','admission-admin',1,true,
+ decode(repeat('21',32),'hex'))
+ON CONFLICT (tenant_id,device_id) DO UPDATE SET
+ owner_subject_id=EXCLUDED.owner_subject_id,
+ bound_by_subject_id=EXCLUDED.bound_by_subject_id,
+ binding_revision=ujani_control.device_owner_bindings.binding_revision+1,
+ active=true,binding_digest=EXCLUDED.binding_digest,bound_at=clock_timestamp();
 INSERT INTO ujani_control.owner_consents
  (tenant_id,device_id,consent_generation,state,actor_ref,evidence_digest)
-VALUES ('admission-test','admission-device',1,'granted','device-owner',decode(repeat('22',32),'hex'))
+VALUES ('admission-test','admission-device',1,'granted','admission-owner',decode(repeat('22',32),'hex'))
 ON CONFLICT DO NOTHING;
 INSERT INTO ujani_control.device_telemetry_samples
  (tenant_id,device_id,generation,sequence,request_id,observed_at,payload_digest,
@@ -58,9 +69,18 @@ INSERT INTO ujani_control.device_keys
 VALUES ('admission-test','admission-device-paused','device-key-paused',
  decode(repeat('14',32),'hex'),1,'active')
 ON CONFLICT (tenant_id,device_id,key_id) DO UPDATE SET state='active';
+INSERT INTO ujani_control.device_owner_bindings
+ (tenant_id,device_id,owner_subject_id,bound_by_subject_id,binding_revision,active,binding_digest)
+VALUES ('admission-test','admission-device-paused','admission-owner','admission-admin',1,true,
+ decode(repeat('24',32),'hex'))
+ON CONFLICT (tenant_id,device_id) DO UPDATE SET
+ owner_subject_id=EXCLUDED.owner_subject_id,
+ bound_by_subject_id=EXCLUDED.bound_by_subject_id,
+ binding_revision=ujani_control.device_owner_bindings.binding_revision+1,
+ active=true,binding_digest=EXCLUDED.binding_digest,bound_at=clock_timestamp();
 INSERT INTO ujani_control.owner_consents
  (tenant_id,device_id,consent_generation,state,actor_ref,evidence_digest)
-VALUES ('admission-test','admission-device-paused',1,'paused','device-owner',
+VALUES ('admission-test','admission-device-paused',1,'paused','admission-owner',
  decode(repeat('15',32),'hex'))
 ON CONFLICT DO NOTHING;
 INSERT INTO ujani_control.device_telemetry_samples
@@ -114,11 +134,21 @@ VALUES
   3,'active',clock_timestamp()-interval '1 hour',clock_timestamp())
 ON CONFLICT (tenant_id,device_id,key_id) DO UPDATE SET
  state='active',valid_from=EXCLUDED.valid_from,revoked_at=EXCLUDED.revoked_at;
+INSERT INTO ujani_control.device_owner_bindings
+ (tenant_id,device_id,owner_subject_id,bound_by_subject_id,binding_revision,active,binding_digest)
+VALUES
+ ('admission-test','admission-device-future-key','admission-owner','admission-admin',1,true,decode(repeat('26',32),'hex')),
+ ('admission-test','admission-device-revoked-key','admission-owner','admission-admin',1,true,decode(repeat('27',32),'hex'))
+ON CONFLICT (tenant_id,device_id) DO UPDATE SET
+ owner_subject_id=EXCLUDED.owner_subject_id,
+ bound_by_subject_id=EXCLUDED.bound_by_subject_id,
+ binding_revision=ujani_control.device_owner_bindings.binding_revision+1,
+ active=true,binding_digest=EXCLUDED.binding_digest,bound_at=clock_timestamp();
 INSERT INTO ujani_control.owner_consents
  (tenant_id,device_id,consent_generation,state,actor_ref,evidence_digest)
 VALUES
- ('admission-test','admission-device-future-key',1,'granted','device-owner',decode(repeat('18',32),'hex')),
- ('admission-test','admission-device-revoked-key',1,'granted','device-owner',decode(repeat('19',32),'hex'))
+ ('admission-test','admission-device-future-key',1,'granted','admission-owner',decode(repeat('18',32),'hex')),
+ ('admission-test','admission-device-revoked-key',1,'granted','admission-owner',decode(repeat('19',32),'hex'))
 ON CONFLICT DO NOTHING;
 INSERT INTO ujani_control.device_telemetry_samples
  (tenant_id,device_id,generation,sequence,request_id,observed_at,payload_digest,
