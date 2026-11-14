@@ -2603,6 +2603,73 @@ mod tests {
     }
 
     #[test]
+    fn protected_key_provider_verifies_anchored_backup_recovery() {
+        use crate::integrity_key_provider::{IntegrityKeyPurpose, TestIntegrityKeyProvider};
+
+        let path = path();
+        let provider = Arc::new(TestIntegrityKeyProvider::default());
+        provider
+            .provision_key(IntegrityKeyPurpose::ReservationLedger, "anchored-v1")
+            .unwrap();
+        provider
+            .activate_key(IntegrityKeyPurpose::ReservationLedger, "anchored-v1")
+            .unwrap();
+        let anchor = Arc::new(MemoryAnchor::default());
+
+        let ledger = DurableLedger::open_with_anchor_and_key_provider(
+            &path,
+            "provider-ledger",
+            provider.clone(),
+            anchor.clone(),
+            AnchorCallPolicy::default(),
+        )
+        .unwrap();
+        drop(ledger);
+
+        let anchored_snapshot = fs::read(&path).unwrap();
+        let original_anchor = anchor.load("provider-ledger").unwrap().unwrap();
+
+        let ledger = DurableLedger::open_with_anchor_and_key_provider(
+            &path,
+            "provider-ledger",
+            provider.clone(),
+            anchor.clone(),
+            AnchorCallPolicy::default(),
+        )
+        .unwrap();
+        ledger
+            .transact(|state| {
+                state.telemetry_generations.insert("worker-01".into(), 1);
+                Ok(())
+            })
+            .unwrap();
+        drop(ledger);
+
+        // Simulate a crash after the prior snapshot was retained but before the
+        // monotonic anchor advanced to the newer candidate.
+        fs::write(append_suffix(&path, ".bak"), &anchored_snapshot).unwrap();
+        anchor
+            .records
+            .lock()
+            .unwrap()
+            .insert("provider-ledger".into(), original_anchor);
+        fs::write(&path, b"damaged-primary").unwrap();
+
+        let recovered = DurableLedger::open_with_anchor_and_key_provider(
+            &path,
+            "provider-ledger",
+            provider,
+            anchor,
+            AnchorCallPolicy::default(),
+        )
+        .unwrap();
+        assert_eq!(recovered.snapshot().unwrap().active_jobs, 0);
+        assert_eq!(fs::read(&path).unwrap(), anchored_snapshot);
+        drop(recovered);
+        cleanup(&path);
+    }
+
+    #[test]
     fn protected_key_provider_unavailable_fails_closed_for_durable_ledger() {
         use crate::integrity_key_provider::TestIntegrityKeyProvider;
 
