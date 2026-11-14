@@ -178,3 +178,14 @@ jobs:
           PGUSER: postgres
           PGDATABASE: ujani_test
         run: bash scripts/test_self_evolution_approval_consumption_concurrency.sh
+
+      - name: Apply atomic device lease admission migration
+        env:
+          PGPASSWORD: postgres
+        run: |
+          "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < migrations/0008_atomic_device_lease_admission.sql
+      - name: Verify atomic device lease admission and rollback
+        env:
+          PGPASSWORD: postgres
+        run: |
+          "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < scripts/test_atomic_device_lease_admission.sql
