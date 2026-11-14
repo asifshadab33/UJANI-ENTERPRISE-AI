@@ -148,25 +148,15 @@ pub fn verify_self_evolution_approval(
 }
 
 impl VerifiedSelfEvolutionApproval {
-    pub fn approval_id(&self) -> &str {
-        &self.0.approval_id
-    }
-
-    pub fn approver_key_id(&self) -> &str {
-        &self.0.approver_key_id
-    }
-
-    pub fn nonce(&self) -> &[u8; 16] {
-        &self.0.nonce
-    }
-
-    pub fn expires_at_unix_ms(&self) -> u64 {
-        self.0.expires_unix_ms
-    }
-
-    pub fn approved_scope(&self) -> &[String] {
-        &self.0.approved_scope
-    }
+    pub fn approval_id(&self) -> &str { &self.0.approval_id }
+    pub fn approver_key_id(&self) -> &str { &self.0.approver_key_id }
+    pub fn nonce(&self) -> &[u8; 16] { &self.0.nonce }
+    pub fn expires_at_unix_ms(&self) -> u64 { self.0.expires_unix_ms }
+    pub fn approved_scope(&self) -> &[String] { &self.0.approved_scope }
+    pub fn repository(&self) -> &str { &self.0.repository }
+    pub fn base_ref(&self) -> &str { &self.0.base_ref }
+    pub fn source_revision(&self) -> &str { &self.0.source_revision }
+    pub fn proposal_sha256(&self) -> &[u8; 32] { &self.0.proposal_sha256 }
 }
 
 #[cfg(test)]
