@@ -276,11 +276,18 @@ mod tests {
 
     #[test]
     fn stage_and_apply_remain_unavailable_until_signed_approval_is_integrated() {
-        for action in [SelfEvolutionAction::StageChanges, SelfEvolutionAction::ApplyChanges] {
+        for action in [
+            SelfEvolutionAction::StageChanges,
+            SelfEvolutionAction::ApplyChanges,
+        ] {
             assert_eq!(
                 authorize_self_evolution_action(
-                    &config(), OperatorRole::Administrator, action,
-                    &["apps/operator-console".into()], 1, true
+                    &config(),
+                    OperatorRole::Administrator,
+                    action,
+                    &["apps/operator-console".into()],
+                    1,
+                    true
                 ),
                 Err(SelfEvolutionGateError::ApprovalPipelineUnavailable)
             );
