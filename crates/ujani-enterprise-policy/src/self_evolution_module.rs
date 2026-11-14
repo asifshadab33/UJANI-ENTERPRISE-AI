@@ -39,6 +39,8 @@ pub struct EnterpriseSelfEvolutionPolicy {
     pub approved_model_ids: BTreeSet<String>,
     pub approved_write_scopes: BTreeSet<String>,
     pub require_dual_approval: bool,
+    /// Administrator-configured upper bound for one generated proposal.
+    pub max_proposal_changes: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -148,7 +150,10 @@ pub fn evaluate_enterprise_self_evolution(
         Some(SelfEvolutionBlock::ScopeNotApproved)
     } else if is_protected_scope(normalized_scope.as_deref().unwrap_or_default()) {
         Some(SelfEvolutionBlock::ProtectedScope)
-    } else if !policy.require_dual_approval {
+    } else if !policy.require_dual_approval
+        || policy.max_proposal_changes == 0
+        || policy.max_proposal_changes > crate::self_evolution::MAX_PROPOSAL_CHANGES
+    {
         Some(SelfEvolutionBlock::ApprovalPolicyInvalid)
     } else if !request.trusted_source_and_build_environment_configured {
         Some(SelfEvolutionBlock::TrustedBuildEnvironmentRequired)
@@ -180,6 +185,7 @@ mod tests {
             approved_model_ids: BTreeSet::from(["local-coder-v1".into()]),
             approved_write_scopes: BTreeSet::from(["apps/operator-console/help".into()]),
             require_dual_approval: true,
+            max_proposal_changes: 8,
         }
     }
 
@@ -430,8 +436,7 @@ pub fn authorize_enterprise_self_evolution_action(
     ) {
         return Err(SelfEvolutionBlock::ApprovalPipelineUnavailable);
     }
-    if requested_change_count == 0
-        || requested_change_count > crate::self_evolution::MAX_PROPOSAL_CHANGES
+    if requested_change_count == 0 || requested_change_count > policy.max_proposal_changes
     {
         return Err(SelfEvolutionBlock::TooManyChanges);
     }
@@ -443,7 +448,7 @@ pub fn authorize_enterprise_self_evolution_action(
         .ok_or(SelfEvolutionBlock::ScopeNotApproved)?;
     Ok(Some(ProposalGenerationPermit {
         approved_scope: vec![approved_scope],
-        max_changes: crate::self_evolution::MAX_PROPOSAL_CHANGES,
+        max_changes: policy.max_proposal_changes,
     }))
 }
 
@@ -553,7 +558,7 @@ mod action_gate_tests {
         assert_eq!(permit.approved_scope()[0], "apps/operator-console/help");
         assert_eq!(
             permit.max_changes(),
-            crate::self_evolution::MAX_PROPOSAL_CHANGES
+            8
         );
         let mut denied = policy();
         denied.approved_model_ids.clear();
@@ -597,7 +602,7 @@ mod action_gate_tests {
                 OperatorRole::Administrator,
                 SelfEvolutionAction::GenerateProposal,
                 true,
-                crate::self_evolution::MAX_PROPOSAL_CHANGES + 1
+                policy().max_proposal_changes + 1
             ),
             Err(SelfEvolutionBlock::TooManyChanges)
         );
