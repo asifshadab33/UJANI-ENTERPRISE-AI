@@ -85,8 +85,7 @@ snapshot matches the provider, the registry fails closed.
 The in-memory provider tests cover cancellation/deadline context handling and a
 cancelled ledger read that fails closed without committing a snapshot, as well as
 a rollback to an older snapshot that still has a valid HMAC. They validate the
-interface and local recovery logic only; it
-does not test a real distributed provider, network partitions, provider
+interface and local recovery logic only. They do not test a real distributed provider, network partitions, provider
 consistency, administrator authorization, disaster recovery or hardware-backed
 key custody.
 
