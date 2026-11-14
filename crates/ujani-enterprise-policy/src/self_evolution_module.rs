@@ -172,10 +172,11 @@ pub fn evaluate_enterprise_self_evolution(
         None
     };
 
-    let may_prepare = blocked_by.is_none();
+    let may_analyse = blocked_by.is_none();
+    let may_prepare = may_analyse && policy.proposal_generation_enabled;
 
     SelfEvolutionPermission {
-        may_analyse: may_prepare,
+        may_analyse,
         may_prepare_proposals: may_prepare,
         may_submit_for_review: false,
         blocked_by,
@@ -586,6 +587,20 @@ mod action_gate_tests {
             Err(SelfEvolutionBlock::ModelNotApproved)
         );
     }
+    #[test]
+    fn disabling_proposal_generation_preserves_analysis_but_blocks_proposals() {
+        let mut disabled = policy();
+        disabled.proposal_generation_enabled = false;
+        let permission = evaluate_enterprise_self_evolution(
+            ModuleInstallState::Installed,
+            &disabled,
+            &request()
+        );
+        assert!(permission.may_analyse);
+        assert!(!permission.may_prepare_proposals);
+        assert!(!permission.may_submit_for_review);
+    }
+
     #[test]
     fn proposal_generation_has_a_separate_administrator_switch() {
         let mut disabled = policy();
