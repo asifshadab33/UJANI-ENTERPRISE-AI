@@ -221,6 +221,9 @@ DECLARE replay_count integer;
 DECLARE audit_count integer;
 DECLARE audit_previous bytea;
 DECLARE audit_digest bytea;
+DECLARE audit_expected_previous bytea;
+DECLARE binding_audit_count integer;
+DECLARE consent_audit_count integer;
 DECLARE revision_value bigint;
 DECLARE table_name text;
 DECLARE column_name text;
@@ -326,6 +329,15 @@ BEGIN
   END;
  END LOOP;
 
+ SELECT event_digest INTO audit_expected_previous
+ FROM ujani_control.audit_events
+ WHERE tenant_id='admission-test'
+ ORDER BY sequence_id DESC
+ LIMIT 1;
+ IF audit_expected_previous IS NULL THEN
+  RAISE EXCEPTION 'owner binding and consent events did not establish an audit-chain head';
+ END IF;
+
  admitted := ujani_control.admit_device_lease(
   'admission-test','admission-device','admission-workload','admission-approval',
   'admission-lease-1',decode(repeat('51',16),'hex'),decode(repeat('52',32),'hex'),
@@ -399,11 +411,23 @@ BEGIN
  FROM ujani_control.audit_events
  WHERE tenant_id='admission-test'
    AND event_id='00000000-0000-4000-8000-000000000081';
- IF audit_previous IS NOT NULL
+ IF audit_previous IS DISTINCT FROM audit_expected_previous
     OR audit_digest IS NULL
     OR pg_catalog.octet_length(audit_digest) <> 32
     OR audit_digest = decode(repeat('00',32),'hex') THEN
-  RAISE EXCEPTION 'database audit hash-chain trigger did not produce a nonzero SHA-256 event digest';
+  RAISE EXCEPTION 'database audit hash-chain trigger did not link the lease event to the prior head';
+ END IF;
+ SELECT count(*) INTO binding_audit_count
+ FROM ujani_control.audit_events
+ WHERE tenant_id='admission-test'
+   AND event_type IN ('device.owner_binding.created','device.owner_binding.updated');
+ SELECT count(*) INTO consent_audit_count
+ FROM ujani_control.audit_events
+ WHERE tenant_id='admission-test'
+   AND event_type='device.owner_consent.recorded';
+ IF binding_audit_count < 4 OR consent_audit_count < 4 THEN
+  RAISE EXCEPTION 'owner binding/consent changes are missing from audit chain: bindings %, consents %',
+   binding_audit_count,consent_audit_count;
  END IF;
 
  -- A late audit failure must roll back the nonce, lease and revision as well.
