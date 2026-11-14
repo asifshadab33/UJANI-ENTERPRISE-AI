@@ -43,6 +43,8 @@ A row count of zero means the sequence was repeated or stale and must be rejecte
 
 Both tables enable and force row-level security using the transaction-local `ujani.tenant_id` setting. The runtime role must be non-owner, non-superuser and must not have `BYPASSRLS`. Missing tenant context returns no rows and prevents writes. The migration grants no role privileges; deployment grants must be reviewed separately.
 
+**Security boundary:** `ujani.tenant_id` is a transaction context value, not an authenticated identity or an unforgeable database principal. These policies protect against missing/mismatched tenant context when the trusted service sets the value correctly; they do not protect one tenant from a caller that can execute arbitrary SQL using the shared runtime database role and freely change that setting. Do not expose the runtime database credentials or direct SQL access to tenant clients. If tenant principals are allowed to connect to PostgreSQL directly, use separately authenticated database roles or another database-enforced tenant identity mechanism rather than relying on this custom setting alone. A compromised service/runtime role remains inside the database trust boundary.
+
 Expired rows are not automatically deleted by this migration. A future retention/cleanup policy must retain replay tombstones for the full task expiry and clock-skew window and must never delete an active task or a sequence watermark still needed for receipt verification.
 
 ## Not implemented by this migration
