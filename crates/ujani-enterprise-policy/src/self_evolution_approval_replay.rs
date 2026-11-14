@@ -306,15 +306,21 @@ mod tests {
     #[test]
     fn consumes_verified_approval_once_and_binds_authenticated_context() {
         let approval = verified_approval();
+        let session = test_current_operator_session(
+            "tenant-a",
+            "admin-a",
+            OperatorRole::Administrator,
+            90_000,
+        );
         let mut store = MemoryStore::default();
         assert_eq!(
-            consume_verified_self_evolution_approval(&approval, "tenant-a", "admin-a", &mut store,),
+            consume_verified_self_evolution_approval(&approval, &session, 2_000, &mut store),
             Ok(())
         );
         assert_eq!(store.approval_ids.len(), 1);
         assert_eq!(store.nonces.len(), 1);
         assert_eq!(
-            consume_verified_self_evolution_approval(&approval, "tenant-a", "admin-a", &mut store,),
+            consume_verified_self_evolution_approval(&approval, &session, 2_000, &mut store),
             Err(ApprovalConsumptionError::Store(
                 ApprovalReplayStoreError::AlreadyConsumedOrExpired
             ))
@@ -322,34 +328,52 @@ mod tests {
     }
 
     #[test]
-    fn rejects_invalid_authenticated_context_before_storage() {
+    fn rejects_mismatched_non_admin_or_expired_operator_sessions() {
         let approval = verified_approval();
         let mut store = MemoryStore::default();
-        assert_eq!(
-            consume_verified_self_evolution_approval(&approval, "", "admin-a", &mut store),
-            Err(ApprovalConsumptionError::InvalidAuthenticatedContext)
+        let wrong_tenant = test_current_operator_session(
+            "tenant-b",
+            "admin-a",
+            OperatorRole::Administrator,
+            90_000,
         );
-        assert!(store.approval_ids.is_empty());
-    }
+        let wrong_subject = test_current_operator_session(
+            "tenant-a",
+            "admin-b",
+            OperatorRole::Administrator,
+            90_000,
+        );
+        let non_admin = test_current_operator_session(
+            "tenant-a",
+            "viewer-a",
+            OperatorRole::Viewer,
+            90_000,
+        );
+        let expired = test_current_operator_session(
+            "tenant-a",
+            "admin-a",
+            OperatorRole::Administrator,
+            1_999,
+        );
 
-    #[test]
-    fn signed_tenant_and_subject_must_match_current_authenticated_context() {
-        let approval = verified_approval();
-        let mut store = MemoryStore::default();
-        assert_eq!(
-            consume_verified_self_evolution_approval(&approval, "tenant-b", "admin-a", &mut store),
-            Err(ApprovalConsumptionError::InvalidAuthenticatedContext)
-        );
-        assert_eq!(
-            consume_verified_self_evolution_approval(&approval, "tenant-a", "admin-b", &mut store),
-            Err(ApprovalConsumptionError::InvalidAuthenticatedContext)
-        );
+        for session in [&wrong_tenant, &wrong_subject, &non_admin, &expired] {
+            assert_eq!(
+                consume_verified_self_evolution_approval(&approval, session, 2_000, &mut store),
+                Err(ApprovalConsumptionError::InvalidAuthenticatedContext)
+            );
+        }
         assert!(store.approval_ids.is_empty());
     }
 
     #[test]
     fn fails_closed_when_storage_is_unavailable_or_approval_expired() {
         let approval = verified_approval();
+        let session = test_current_operator_session(
+            "tenant-a",
+            "admin-a",
+            OperatorRole::Administrator,
+            90_000,
+        );
         let mut unavailable = MemoryStore {
             fail_closed: true,
             ..MemoryStore::default()
@@ -357,8 +381,8 @@ mod tests {
         assert_eq!(
             consume_verified_self_evolution_approval(
                 &approval,
-                "tenant-a",
-                "admin-a",
+                &session,
+                2_000,
                 &mut unavailable,
             ),
             Err(ApprovalConsumptionError::Store(
@@ -373,8 +397,8 @@ mod tests {
         assert_eq!(
             consume_verified_self_evolution_approval(
                 &approval,
-                "tenant-a",
-                "admin-a",
+                &session,
+                2_000,
                 &mut expired,
             ),
             Err(ApprovalConsumptionError::Store(
