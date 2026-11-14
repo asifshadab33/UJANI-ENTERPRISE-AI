@@ -3,15 +3,17 @@
 ## Status
 
 The Enterprise policy crate defines a host-owned `IntegrityKeyProvider`
-interface in `integrity_key_provider.rs`. The durable device-trust registry now
-has provider-backed constructors that sign new snapshots with the provider's
-active key and verify snapshots using the named active or retained previous key.
-A test-only in-memory provider exercises rotation and fail-closed startup.
+interface in `integrity_key_provider.rs`. Both the durable device-trust registry
+and durable reservation ledger now expose provider-backed constructors. New
+snapshots are signed with the provider's active key, and snapshots signed by a
+retained previous key can be verified during rotation. Store tests cover
+sequential rotation and fail-closed provider absence; the ledger also tests
+provider-backed anchored backup recovery.
 
-`DurableLedger` is **not yet wired** to the provider. Both stores still retain
-caller-injected raw-key constructors for prototype compatibility and tests;
-those constructors are not a completed production custody design. There is no
-production OS-keyring, TPM, KMS or HSM adapter in this repository.
+Both stores retain caller-injected raw-key constructors for prototype
+compatibility and existing tests. Those constructors are not a completed
+production custody design. There is no production OS-keyring, TPM, KMS or HSM
+adapter in this repository.
 
 ## Provider boundary
 
@@ -69,14 +71,14 @@ material. It must never be exposed in a production build.
 
 Before this can be considered a production key-custody implementation:
 
-- wire `DurableLedger` to this provider without exporting raw key bytes;
-- define an explicit, audited migration procedure for snapshots created by the
-  legacy raw-key constructors. A provider must already retain the old key ID to
-  verify those snapshots; the current interface deliberately has no key-export
+- define an explicit, audited migration procedure for snapshots created by
+  the legacy raw-key constructors. A provider must already retain the old key ID
+  to verify those snapshots; the interface deliberately has no key-export
   operation and does not silently import caller-supplied bytes;
-- extend store-level tests to cover retained backups, concurrent rotation,
-  stale writers, key retirement and crash recovery; the device-trust store
-  currently covers sequential rotation and fail-closed provider absence;
+- extend store-level tests to cover concurrent rotation, stale writers,
+  retained-backup verification, key retirement and crash recovery. Current
+  tests cover sequential rotation and fail-closed startup; the ledger additionally
+  exercises provider-backed anchored backup recovery;
 - implement at least one reviewed OS-protected local adapter and document
   platform-specific custody and access-control limits;
 - add an optional customer KMS/HSM adapter boundary and integration tests;
