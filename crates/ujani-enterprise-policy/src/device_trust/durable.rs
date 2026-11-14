@@ -917,7 +917,7 @@ fn encode_snapshot_body(r: &DeviceRegistry) -> String {
 fn encode_snapshot(r: &DeviceRegistry, key_id: &str, key: &[u8; 32]) -> Vec<u8> {
     let mut body = encode_snapshot_body(r);
     let mac = hmac(key, key_id, body.as_bytes());
-    body.push_str(&format!("H|{}|{}\\n", hex(key_id.as_bytes()), hex(&mac)));
+    body.push_str(&format!("H|{}|{}\n", hex(key_id.as_bytes()), hex(&mac)));
     body.into_bytes()
 }
 
@@ -932,7 +932,7 @@ fn encode_snapshot_with_provider(
     if !valid_id(&key_id, 128) {
         return Err(DurableDeviceTrustError::CorruptState);
     }
-    body.push_str(&format!("H|{}|{}\\n", hex(key_id.as_bytes()), hex(&mac)));
+    body.push_str(&format!("H|{}|{}\n", hex(key_id.as_bytes()), hex(&mac)));
     Ok(body.into_bytes())
 }
 fn decode_snapshot(
@@ -979,7 +979,7 @@ fn decode_snapshot_with_verifier(
     let text = std::str::from_utf8(bytes).map_err(|_| DurableDeviceTrustError::CorruptState)?;
     let marker = text.rfind("H|").ok_or(DurableDeviceTrustError::CorruptState)?;
     let (body, tail) = text.split_at(marker);
-    let fields = tail.trim_end_matches('\\n').split('|').collect::<Vec<_>>();
+    let fields = tail.trim_end_matches('\n').split('|').collect::<Vec<_>>();
     if fields.len() != 3 || fields[0] != "H" {
         return Err(DurableDeviceTrustError::CorruptState);
     }
