@@ -109,10 +109,15 @@ BEGIN
  WHERE tenant_id = p_tenant_id AND workload_id = p_workload_id
    AND state = 'approved' AND manifest_digest = p_manifest_digest;
  IF NOT FOUND THEN RETURN false; END IF;
- PERFORM 1 FROM ujani_control.approvals
- WHERE tenant_id = p_tenant_id AND workload_id = p_workload_id
-   AND approval_id = p_approval_id AND decision = 'approved'
-   AND manifest_digest = p_manifest_digest AND expires_at > v_now;
+ PERFORM 1
+ FROM ujani_control.approvals a
+ JOIN ujani_control.operator_subjects s
+   ON s.tenant_id = a.tenant_id
+  AND s.subject_id = a.approver_subject_id
+ WHERE a.tenant_id = p_tenant_id AND a.workload_id = p_workload_id
+   AND a.approval_id = p_approval_id AND a.decision = 'approved'
+   AND a.manifest_digest = p_manifest_digest AND a.expires_at > v_now
+   AND s.enabled IS TRUE AND s.role = 'administrator';
  IF NOT FOUND THEN RETURN false; END IF;
 
  -- Fresh capacity evidence only; never admit from missing, stale, hot,
@@ -189,4 +194,4 @@ REVOKE ALL ON FUNCTION ujani_control.admit_device_lease(
 COMMENT ON FUNCTION ujani_control.admit_device_lease(
  text,text,text,text,text,bytea,bytea,bytea,bigint,bigint,integer,bigint,bytea,timestamptz,uuid
 ) IS
- 'Atomic post-authentication admission transaction. Caller verifies device and administrator signatures first. Rechecks tenant, trust, active key generation, owner consent generation, approved workload, fresh telemetry and capacity under a device row lock. Commits replay claim, reservation/lease, revision and append-only audit receipt together. It does not dispatch or execute work. Consent/key/revocation writers must lock the same device row.';
+ 'Atomic post-authentication admission transaction. Caller verifies device and administrator signatures first. Rechecks tenant, trust, active key generation, owner consent generation, an unexpired approval from a currently enabled administrator, approved workload, fresh telemetry and capacity under a device row lock. Commits replay claim, reservation/lease, revision and append-only audit receipt together. It does not dispatch or execute work. Consent/key/revocation writers must lock the same device row.';
