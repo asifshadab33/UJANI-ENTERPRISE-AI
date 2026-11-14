@@ -71,9 +71,15 @@ impl std::fmt::Display for AnchorCallContextError {
 #[derive(Clone, Default)]
 pub struct AnchorCancellationToken(Arc<AtomicBool>);
 impl AnchorCancellationToken {
-    pub fn new() -> Self { Self::default() }
-    pub fn cancel(&self) { self.0.store(true, Ordering::SeqCst); }
-    pub fn is_cancelled(&self) -> bool { self.0.load(Ordering::SeqCst) }
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub fn cancel(&self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::SeqCst)
+    }
 }
 
 /// Deadline and cancellation state supplied to every external anchor call.
@@ -84,7 +90,10 @@ pub struct AnchorCallContext {
 }
 impl AnchorCallContext {
     fn new(timeout: Duration, cancellation: Option<AnchorCancellationToken>) -> Self {
-        Self { deadline: Instant::now() + timeout, cancellation }
+        Self {
+            deadline: Instant::now() + timeout,
+            cancellation,
+        }
     }
     /// Remaining time for configuring the provider's transport-level timeout.
     pub fn remaining(&self) -> Duration {
@@ -92,12 +101,18 @@ impl AnchorCallContext {
     }
     /// Returns true when the host cancelled this operation.
     pub fn is_cancelled(&self) -> bool {
-        self.cancellation.as_ref().is_some_and(AnchorCancellationToken::is_cancelled)
+        self.cancellation
+            .as_ref()
+            .is_some_and(AnchorCancellationToken::is_cancelled)
     }
     /// Check before and after provider I/O; providers must also set their own I/O deadline.
     pub fn check_active(&self) -> Result<(), AnchorCallContextError> {
-        if self.is_cancelled() { return Err(AnchorCallContextError::Cancelled); }
-        if self.remaining().is_zero() { return Err(AnchorCallContextError::DeadlineExceeded); }
+        if self.is_cancelled() {
+            return Err(AnchorCallContextError::Cancelled);
+        }
+        if self.remaining().is_zero() {
+            return Err(AnchorCallContextError::DeadlineExceeded);
+        }
         Ok(())
     }
 }
@@ -112,14 +127,22 @@ impl AnchorCallPolicy {
     pub fn new(timeout: Duration) -> Result<Self, &'static str> {
         Self::with_cancellation(timeout, AnchorCancellationToken::new())
     }
-    pub fn with_cancellation(timeout: Duration, cancellation: AnchorCancellationToken) -> Result<Self, &'static str> {
+    pub fn with_cancellation(
+        timeout: Duration,
+        cancellation: AnchorCancellationToken,
+    ) -> Result<Self, &'static str> {
         if timeout.is_zero() || timeout > MAX_ANCHOR_CALL_TIMEOUT {
             return Err("anchor timeout must be greater than zero and no more than 30 seconds");
         }
-        Ok(Self { timeout, cancellation })
+        Ok(Self {
+            timeout,
+            cancellation,
+        })
     }
     /// A clone of this token lets the host cancel outstanding provider calls.
-    pub fn cancellation_token(&self) -> AnchorCancellationToken { self.cancellation.clone() }
+    pub fn cancellation_token(&self) -> AnchorCancellationToken {
+        self.cancellation.clone()
+    }
     pub(crate) fn call_context(&self) -> AnchorCallContext {
         AnchorCallContext::new(self.timeout, Some(self.cancellation.clone()))
     }
@@ -131,7 +154,10 @@ impl AnchorCallPolicy {
 }
 impl Default for AnchorCallPolicy {
     fn default() -> Self {
-        Self { timeout: DEFAULT_ANCHOR_CALL_TIMEOUT, cancellation: AnchorCancellationToken::new() }
+        Self {
+            timeout: DEFAULT_ANCHOR_CALL_TIMEOUT,
+            cancellation: AnchorCancellationToken::new(),
+        }
     }
 }
 /// External monotonic anchor contract.
@@ -156,7 +182,11 @@ pub trait MonotonicSnapshotAnchor: Send + Sync {
     /// must also act as a quiescence barrier: before returning, it must settle or fence
     /// every earlier in-flight compare-and-set for this namespace, including requests
     /// left pending by a crashed caller, so an old update cannot commit after recovery.
-    fn load(&self, registry_id: &str, context: &AnchorCallContext) -> Result<Option<SnapshotAnchorRecord>, String>;
+    fn load(
+        &self,
+        registry_id: &str,
+        context: &AnchorCallContext,
+    ) -> Result<Option<SnapshotAnchorRecord>, String>;
     /// Atomically creates or advances the namespace record if its generation matches.
     ///
     /// Before returning `Err`, the provider must settle or fence the request so an
@@ -296,7 +326,11 @@ impl DurableDeviceRegistry {
         anchor: Arc<dyn MonotonicSnapshotAnchor>,
     ) -> Result<Self, DurableDeviceTrustError> {
         Self::open_with_anchor_and_policy(
-            path, registry_id, trusted_admin_keys, integrity_key, anchor,
+            path,
+            registry_id,
+            trusted_admin_keys,
+            integrity_key,
+            anchor,
             AnchorCallPolicy::default(),
         )
     }
@@ -315,7 +349,9 @@ impl DurableDeviceRegistry {
             return Err(DurableDeviceTrustError::CorruptState);
         }
         Self::open_internal(
-            path, trusted_admin_keys, integrity_key,
+            path,
+            trusted_admin_keys,
+            integrity_key,
             Some((registry_id, anchor, anchor_call_policy)),
         )
     }
@@ -579,7 +615,11 @@ impl DurableDeviceRegistry {
         let lock = options.open(&self.lock_path)?;
         lock.lock()?;
 
-        let anchor_record = match (&self.anchor, &self.anchor_namespace, &self.anchor_call_policy) {
+        let anchor_record = match (
+            &self.anchor,
+            &self.anchor_namespace,
+            &self.anchor_call_policy,
+        ) {
             (Some(anchor), Some(namespace), Some(policy)) => anchor
                 .load(namespace, &policy.call_context())
                 .map_err(DurableDeviceTrustError::AnchorUnavailable)?,
@@ -644,7 +684,11 @@ impl DurableDeviceRegistry {
         let lock = options.open(&self.lock_path)?;
         lock.lock()?;
 
-        let anchor_record = match (&self.anchor, &self.anchor_namespace, &self.anchor_call_policy) {
+        let anchor_record = match (
+            &self.anchor,
+            &self.anchor_namespace,
+            &self.anchor_call_policy,
+        ) {
             (Some(anchor), Some(namespace), Some(policy)) => anchor
                 .load(namespace, &policy.call_context())
                 .map_err(DurableDeviceTrustError::AnchorUnavailable)?,
@@ -663,7 +707,11 @@ impl DurableDeviceRegistry {
         }
         atomic_write(&self.path, &bytes, self.anchor.is_some())?;
 
-        if let (Some(anchor), Some(namespace), Some(policy)) = (&self.anchor, &self.anchor_namespace, &self.anchor_call_policy) {
+        if let (Some(anchor), Some(namespace), Some(policy)) = (
+            &self.anchor,
+            &self.anchor_namespace,
+            &self.anchor_call_policy,
+        ) {
             let expected_generation = anchor_record.as_ref().map(SnapshotAnchorRecord::generation);
             let generation = expected_generation
                 .unwrap_or(0)
@@ -673,7 +721,12 @@ impl DurableDeviceRegistry {
                 generation,
                 snapshot_sha256: snapshot_sha256(&bytes),
             };
-            match anchor.compare_and_set(namespace, expected_generation, next.clone(), &policy.call_context()) {
+            match anchor.compare_and_set(
+                namespace,
+                expected_generation,
+                next.clone(),
+                &policy.call_context(),
+            ) {
                 Ok(true) => {}
                 Ok(false) => return Err(DurableDeviceTrustError::AnchorConflict),
                 Err(error) => {
@@ -1063,10 +1116,15 @@ mod tests {
         );
 
         let cancellation = AnchorCancellationToken::new();
-        let policy = AnchorCallPolicy::with_cancellation(Duration::from_secs(1), cancellation.clone()).unwrap();
+        let policy =
+            AnchorCallPolicy::with_cancellation(Duration::from_secs(1), cancellation.clone())
+                .unwrap();
         let context = policy.call_context();
         cancellation.cancel();
-        assert_eq!(context.check_active(), Err(AnchorCallContextError::Cancelled));
+        assert_eq!(
+            context.check_active(),
+            Err(AnchorCallContextError::Cancelled)
+        );
     }
 
     fn path() -> PathBuf {
@@ -1441,7 +1499,11 @@ mod tests {
     }
 
     impl MonotonicSnapshotAnchor for MemoryAnchor {
-        fn load(&self, _registry_id: &str, context: &AnchorCallContext) -> Result<Option<SnapshotAnchorRecord>, String> {
+        fn load(
+            &self,
+            _registry_id: &str,
+            context: &AnchorCallContext,
+        ) -> Result<Option<SnapshotAnchorRecord>, String> {
             context.check_active().map_err(|error| error.to_string())?;
             let record = self.record.lock().map_err(|e| e.to_string())?.clone();
             context.check_active().map_err(|error| error.to_string())?;
