@@ -58,6 +58,7 @@ pub struct SelfEvolutionPermission {
 }
 
 const PROTECTED_SCOPES: &[&str] = &[
+    ".git",
     ".github/workflows",
     "scripts",
     "migrations",
