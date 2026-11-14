@@ -19,6 +19,7 @@ pub enum SelfEvolutionBlock {
     ExplicitUserOptInRequired,
     AlreadyInstalled,
     TooManyChanges,
+    ProposalGenerationDisabled,
     ModuleNotInstalled,
     AdministratorProhibited,
     AdministratorActivationRequired,
@@ -39,6 +40,8 @@ pub struct EnterpriseSelfEvolutionPolicy {
     pub approved_model_ids: BTreeSet<String>,
     pub approved_write_scopes: BTreeSet<String>,
     pub require_dual_approval: bool,
+    /// Separate administrator switch for proposal generation after module activation.
+    pub proposal_generation_enabled: bool,
     /// Administrator-configured upper bound for one generated proposal.
     pub max_proposal_changes: usize,
 }
@@ -185,6 +188,7 @@ mod tests {
             approved_model_ids: BTreeSet::from(["local-coder-v1".into()]),
             approved_write_scopes: BTreeSet::from(["apps/operator-console/help".into()]),
             require_dual_approval: true,
+            proposal_generation_enabled: true,
             max_proposal_changes: 8,
         }
     }
@@ -430,6 +434,9 @@ pub fn authorize_enterprise_self_evolution_action(
     if !explicit_user_opt_in {
         return Err(SelfEvolutionBlock::ExplicitUserOptInRequired);
     }
+    if action == SelfEvolutionAction::GenerateProposal && !policy.proposal_generation_enabled {
+        return Err(SelfEvolutionBlock::ProposalGenerationDisabled);
+    }
     if matches!(
         action,
         SelfEvolutionAction::StageChanges | SelfEvolutionAction::ApplyChanges
@@ -572,6 +579,24 @@ mod action_gate_tests {
             Err(SelfEvolutionBlock::ModelNotApproved)
         );
     }
+    #[test]
+    fn proposal_generation_has_a_separate_administrator_switch() {
+        let mut disabled = policy();
+        disabled.proposal_generation_enabled = false;
+        assert_eq!(
+            authorize_enterprise_self_evolution_action(
+                ModuleInstallState::Installed,
+                &disabled,
+                &request(),
+                OperatorRole::Administrator,
+                SelfEvolutionAction::GenerateProposal,
+                true,
+                1
+            ),
+            Err(SelfEvolutionBlock::ProposalGenerationDisabled)
+        );
+    }
+
     #[test]
     fn stage_and_apply_remain_blocked_and_change_count_is_bounded() {
         for action in [
