@@ -144,6 +144,12 @@ pub fn evaluate_enterprise_self_evolution(
         Some(SelfEvolutionBlock::AdministratorProhibited)
     } else if !policy.activated_by_administrator {
         Some(SelfEvolutionBlock::AdministratorActivationRequired)
+    } else if !approved_scopes_valid
+        || !policy.require_dual_approval
+        || policy.max_proposal_changes == 0
+        || policy.max_proposal_changes > crate::self_evolution::MAX_PROPOSAL_CHANGES
+    {
+        Some(SelfEvolutionBlock::ApprovalPolicyInvalid)
     } else if !valid_identifier(&request.selected_model_id)
         || !policy
             .approved_model_ids
@@ -160,12 +166,6 @@ pub fn evaluate_enterprise_self_evolution(
         Some(SelfEvolutionBlock::ScopeNotApproved)
     } else if is_protected_scope(normalized_scope.as_deref().unwrap_or_default()) {
         Some(SelfEvolutionBlock::ProtectedScope)
-    } else if !approved_scopes_valid
-        || !policy.require_dual_approval
-        || policy.max_proposal_changes == 0
-        || policy.max_proposal_changes > crate::self_evolution::MAX_PROPOSAL_CHANGES
-    {
-        Some(SelfEvolutionBlock::ApprovalPolicyInvalid)
     } else if !request.trusted_source_and_build_environment_configured {
         Some(SelfEvolutionBlock::TrustedBuildEnvironmentRequired)
     } else {
