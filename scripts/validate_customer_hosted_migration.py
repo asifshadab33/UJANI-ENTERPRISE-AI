@@ -117,6 +117,10 @@ def main() -> None:
     for required in (
         "pg_sleep(2)",
         "clock_timestamp() + interval '1 second'",
+        "pg_stat_activity",
+        "wait_event_type = 'Lock'",
+        "wait_event = 'advisory'",
+        "approval request was not observed waiting on the advisory nonce lock",
         "approval that expired while waiting on the nonce lock was consumed",
     ):
         if required not in self_evolution_concurrency_test:
