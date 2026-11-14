@@ -220,6 +220,8 @@ def main() -> None:
         "GRANT UPDATE (reservation_revision, updated_at)",
         "GRANT INSERT ON ujani_control.leases,ujani_control.request_replays",
         "runtime role can mutate device trust or consent state",
+        "ujani_control.device_keys','INSERT",
+        "ujani_control.device_keys','UPDATE",
         "runtime role can rewrite lease, replay or audit history",
         "runtime role does not have only the required reservation update columns",
         "valid admission was not committed",
