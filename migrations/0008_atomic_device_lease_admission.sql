@@ -64,8 +64,8 @@ BEGIN
     OR p_capability_digest IS NULL OR pg_catalog.octet_length(p_capability_digest) <> 32
     OR p_device_key_generation IS NULL OR p_device_key_generation <= 0
     OR p_consent_generation IS NULL OR p_consent_generation <= 0
-    OR p_cpu_millis IS NULL OR p_cpu_millis <= 0
-    OR p_memory_mb IS NULL OR p_memory_mb <= 0
+    OR p_cpu_millis IS NULL OR p_cpu_millis NOT BETWEEN 1 AND 65535000
+    OR p_memory_mb IS NULL OR p_memory_mb NOT BETWEEN 1 AND 16777216
     OR p_expires_at IS NULL OR p_event_id IS NULL THEN
   RAISE EXCEPTION 'invalid device admission parameters' USING ERRCODE = '22023';
  END IF;
