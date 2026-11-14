@@ -10,7 +10,9 @@ INSERT INTO ujani_control.tenants (tenant_id,display_name)
 VALUES ('admission-concurrency','Admission Concurrency') ON CONFLICT DO NOTHING;
 INSERT INTO ujani_control.operator_subjects
  (tenant_id,subject_id,role,enabled,idp_issuer,idp_subject)
-VALUES ('admission-concurrency','admin','administrator',true,'ci','admin')
+VALUES
+ ('admission-concurrency','admin','administrator',true,'ci','admin'),
+ ('admission-concurrency','owner','operator',true,'ci','owner')
 ON CONFLICT DO NOTHING;
 INSERT INTO ujani_control.devices
  (tenant_id,device_id,display_name,platform,trust_state,owner_consent_state,
@@ -27,6 +29,14 @@ INSERT INTO ujani_control.device_keys
  (tenant_id,device_id,key_id,public_key,generation,state)
 VALUES ('admission-concurrency','device','key',decode(repeat('71',32),'hex'),1,'active')
 ON CONFLICT (tenant_id,device_id,key_id) DO UPDATE SET state='active';
+INSERT INTO ujani_control.device_owner_bindings
+ (tenant_id,device_id,owner_subject_id,bound_by_subject_id,binding_revision,active,binding_digest)
+VALUES ('admission-concurrency','device','owner','admin',1,true,decode(repeat('70',32),'hex'))
+ON CONFLICT (tenant_id,device_id) DO UPDATE SET
+ owner_subject_id=EXCLUDED.owner_subject_id,
+ bound_by_subject_id=EXCLUDED.bound_by_subject_id,
+ binding_revision=ujani_control.device_owner_bindings.binding_revision+1,
+ active=true,binding_digest=EXCLUDED.binding_digest,bound_at=clock_timestamp();
 INSERT INTO ujani_control.owner_consents
  (tenant_id,device_id,consent_generation,state,actor_ref,evidence_digest)
 VALUES ('admission-concurrency','device',1,'granted','owner',decode(repeat('72',32),'hex'))
@@ -61,6 +71,7 @@ SELECT ujani_control.admit_device_lease(
  'admission-concurrency','device','workload','approval','lease-a',
  decode(repeat('81',16),'hex'),decode(repeat('82',32),'hex'),decode(repeat('75',32),'hex'),
  1,1,2500,1024,decode(repeat('83',32),'hex'),
+ NULL,decode(repeat('81',32),'hex'),
  clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000091');
 -- Keep the transaction (and its device row lock) open long enough to observe
 -- a second admission blocked on that same lock.
@@ -94,6 +105,7 @@ SELECT ujani_control.admit_device_lease(
  'admission-concurrency','device','workload','approval','lease-b',
  decode(repeat('84',16),'hex'),decode(repeat('85',32),'hex'),decode(repeat('75',32),'hex'),
  1,1,2500,1024,decode(repeat('86',32),'hex'),
+ NULL,decode(repeat('82',32),'hex'),
  clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000092');
 COMMIT;
 RESET ROLE;
