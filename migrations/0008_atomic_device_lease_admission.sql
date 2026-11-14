@@ -326,6 +326,10 @@ BEGIN
  WHERE tenant_id = p_tenant_id AND device_id = p_device_id AND active IS TRUE
  FOR SHARE;
  IF NOT FOUND THEN RETURN false; END IF;
+ PERFORM 1 FROM ujani_control.operator_subjects
+ WHERE tenant_id = p_tenant_id AND subject_id = v_owner_subject_id AND enabled IS TRUE
+ FOR SHARE;
+ IF NOT FOUND THEN RETURN false; END IF;
 
  -- The latest consent event must be from that exact bound owner and agree with
  -- the device's monotonic consent revision.
