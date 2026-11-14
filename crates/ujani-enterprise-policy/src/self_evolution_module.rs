@@ -479,6 +479,7 @@ mod action_gate_tests {
             approved_model_ids: BTreeSet::from(["local-coder-v1".into()]),
             approved_write_scopes: BTreeSet::from(["apps/operator-console/help".into()]),
             require_dual_approval: true,
+            proposal_generation_enabled: true,
             max_proposal_changes: 8,
         }
     }
