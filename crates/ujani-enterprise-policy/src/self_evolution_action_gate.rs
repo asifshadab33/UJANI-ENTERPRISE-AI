@@ -432,7 +432,7 @@ mod tests {
     }
 
     #[test]
-    fn submit_stage_and_apply_are_blocked_until_durable_approval_pipeline_exists() {
+    fn submit_stage_and_apply_are_blocked_until_patch_workflow_exists() {
         for action in [
             SelfEvolutionAction::SubmitForReview,
             SelfEvolutionAction::StageChanges,
