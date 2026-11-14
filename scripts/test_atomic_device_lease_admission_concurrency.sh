@@ -71,7 +71,6 @@ SELECT ujani_control.admit_device_lease(
  'admission-concurrency','device','workload','approval','lease-a',
  decode(repeat('81',16),'hex'),decode(repeat('82',32),'hex'),decode(repeat('75',32),'hex'),
  1,1,2500,1024,decode(repeat('83',32),'hex'),
- NULL,decode(repeat('81',32),'hex'),
  clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000091');
 -- Keep the transaction (and its device row lock) open long enough to observe
 -- a second admission blocked on that same lock.
@@ -105,7 +104,6 @@ SELECT ujani_control.admit_device_lease(
  'admission-concurrency','device','workload','approval','lease-b',
  decode(repeat('84',16),'hex'),decode(repeat('85',32),'hex'),decode(repeat('75',32),'hex'),
  1,1,2500,1024,decode(repeat('86',32),'hex'),
- NULL,decode(repeat('82',32),'hex'),
  clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000092');
 COMMIT;
 RESET ROLE;
