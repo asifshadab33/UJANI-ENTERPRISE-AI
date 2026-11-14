@@ -134,6 +134,7 @@ mod tests {
     struct TestState {
         keys: HashMap<(IntegrityKeyPurpose, String), [u8; 32]>,
         active: HashMap<IntegrityKeyPurpose, String>,
+        retired: std::collections::HashSet<(IntegrityKeyPurpose, String)>,
     }
 
     impl Drop for TestState {
@@ -162,6 +163,9 @@ mod tests {
                 .lock()
                 .map_err(|_| IntegrityKeyProviderError::LockPoisoned)?;
             let map_key = (purpose, key_id.to_string());
+            if state.retired.contains(&map_key) {
+                return Err(IntegrityKeyProviderError::KeyAlreadyExists);
+            }
             let seed = format!("test-only:{}:{key_id}", purpose.as_str());
             let key: [u8; 32] = Sha256::digest(seed.as_bytes()).into();
             match state.keys.entry(map_key) {
@@ -257,11 +261,13 @@ mod tests {
             {
                 return Err(IntegrityKeyProviderError::ActiveKeyCannotBeRetired);
             }
+            let retired_id = (purpose, key_id.to_string());
             let mut key = state
                 .keys
-                .remove(&(purpose, key_id.to_string()))
+                .remove(&retired_id)
                 .ok_or(IntegrityKeyProviderError::UnknownKey)?;
             key.zeroize();
+            state.retired.insert(retired_id);
             Ok(())
         }
     }
@@ -336,6 +342,10 @@ mod tests {
         assert_eq!(
             provider.verify(purpose, &old_id, payload, &old_tag),
             Err(IntegrityKeyProviderError::UnknownKey)
+        );
+        assert_eq!(
+            provider.provision_key(purpose, "ledger-v1"),
+            Err(IntegrityKeyProviderError::KeyAlreadyExists)
         );
     }
 
