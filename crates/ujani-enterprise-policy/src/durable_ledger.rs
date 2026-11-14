@@ -610,7 +610,7 @@ impl DurableLedger {
                     let bytes = read_snapshot(&backup)?;
                     if snapshot_sha256(&bytes) == record.snapshot_sha256() {
                         restore_anchored_backup(&self.path, &backup)?;
-                        return deserialize_snapshot(&bytes, &self.integrity_keys);
+                        return self.decode_ledger_snapshot(&bytes);
                     }
                 }
                 Err(DurableLedgerError::AnchorMismatch)
@@ -2571,6 +2571,50 @@ mod tests {
             .unwrap();
             assert_eq!(only_new_key.snapshot().unwrap().active_jobs, 0);
         }
+        cleanup(&path);
+    }
+
+    #[test]
+    fn protected_key_provider_wires_durable_ledger_and_rotates_without_exporting_keys() {
+        use crate::integrity_key_provider::{IntegrityKeyPurpose, TestIntegrityKeyProvider};
+
+        let path = path();
+        let provider = Arc::new(TestIntegrityKeyProvider::default());
+        let purpose = IntegrityKeyPurpose::ReservationLedger;
+
+        provider.provision_key(purpose, "ledger-v1").unwrap();
+        provider.activate_key(purpose, "ledger-v1").unwrap();
+        let ledger = DurableLedger::open_with_key_provider(&path, provider.clone()).unwrap();
+        assert_eq!(ledger.snapshot().unwrap().active_jobs, 0);
+        drop(ledger);
+
+        provider.provision_key(purpose, "ledger-v2").unwrap();
+        provider.activate_key(purpose, "ledger-v2").unwrap();
+        let ledger = DurableLedger::open_with_key_provider(&path, provider.clone()).unwrap();
+        assert_eq!(ledger.snapshot().unwrap().active_jobs, 0);
+        drop(ledger);
+
+        // Opening with v2 verified and rewrote the v1 snapshot before retirement.
+        provider.retire_key(purpose, "ledger-v1").unwrap();
+        let ledger = DurableLedger::open_with_key_provider(&path, provider).unwrap();
+        assert_eq!(ledger.snapshot().unwrap().active_jobs, 0);
+        drop(ledger);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn protected_key_provider_unavailable_fails_closed_for_durable_ledger() {
+        use crate::integrity_key_provider::TestIntegrityKeyProvider;
+
+        let path = path();
+        let provider = Arc::new(TestIntegrityKeyProvider::default());
+        let result = DurableLedger::open_with_key_provider(&path, provider);
+        assert_eq!(
+            result.err(),
+            Some(DurableLedgerError::KeyProvider(
+                IntegrityKeyProviderError::UnknownKey
+            ))
+        );
         cleanup(&path);
     }
 
