@@ -1,5 +1,4 @@
 -- Run after migrations 0001-0008 on PostgreSQL 16.
-SELECT pg_catalog.set_config('ujani.tenant_id','admission-test',false);
 -- This exercises the post-authentication transaction only. Cryptographic
 -- verification remains the responsibility of the trusted HTTP adapter.
 SELECT pg_catalog.set_config('ujani.tenant_id','admission-test',false);
@@ -21,10 +20,10 @@ INSERT INTO ujani_control.devices
   admin_approval_state,active_key_id,key_generation,consent_generation,
   telemetry_generation,telemetry_sequence,last_seen_at)
 VALUES ('admission-test','admission-device','Admission Device','linux','enrolled',
- 'granted','approved','device-key-1',1,1,1,1,clock_timestamp())
+ 'granted','approved','device-key-1',1,0,1,1,clock_timestamp())
 ON CONFLICT (tenant_id,device_id) DO UPDATE SET
  trust_state='enrolled',owner_consent_state='granted',admin_approval_state='approved',
- active_key_id='device-key-1',key_generation=1,consent_generation=1,
+ active_key_id='device-key-1',key_generation=1,consent_generation=0,
  telemetry_generation=1,telemetry_sequence=1,last_seen_at=clock_timestamp(),
  reservation_revision=0;
 INSERT INTO ujani_control.device_keys
@@ -48,10 +47,10 @@ INSERT INTO ujani_control.devices
   admin_approval_state,active_key_id,key_generation,consent_generation,
   telemetry_generation,telemetry_sequence,last_seen_at)
 VALUES ('admission-test','admission-device-paused','Paused Device','linux','enrolled',
- 'paused','approved','device-key-paused',1,1,1,1,clock_timestamp())
+ 'paused','approved','device-key-paused',1,0,1,1,clock_timestamp())
 ON CONFLICT (tenant_id,device_id) DO UPDATE SET
  trust_state='enrolled',owner_consent_state='paused',admin_approval_state='approved',
- active_key_id='device-key-paused',key_generation=1,consent_generation=1,
+ active_key_id='device-key-paused',key_generation=1,consent_generation=0,
  telemetry_generation=1,telemetry_sequence=1,last_seen_at=clock_timestamp(),
  reservation_revision=0;
 INSERT INTO ujani_control.device_keys
@@ -104,7 +103,7 @@ VALUES
 ON CONFLICT (tenant_id,device_id) DO UPDATE SET
  trust_state='enrolled',owner_consent_state='granted',admin_approval_state='approved',
  active_key_id=EXCLUDED.active_key_id,key_generation=EXCLUDED.key_generation,
- consent_generation=1,telemetry_generation=1,telemetry_sequence=1,
+ consent_generation=0,telemetry_generation=1,telemetry_sequence=1,
  last_seen_at=clock_timestamp(),reservation_revision=0;
 INSERT INTO ujani_control.device_keys
  (tenant_id,device_id,key_id,public_key,generation,state,valid_from,revoked_at)
