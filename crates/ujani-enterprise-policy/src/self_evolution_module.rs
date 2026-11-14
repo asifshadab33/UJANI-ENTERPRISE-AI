@@ -139,7 +139,7 @@ pub fn evaluate_enterprise_self_evolution(
             normalize_scope(approved)
                 .zip(normalized_scope.as_ref())
                 .is_some_and(|(approved, requested)| {
-                    requested == &approved || requested.starts_with(&(approved + "/"))
+                    requested == &approved
                 })
         })
     {
@@ -330,6 +330,23 @@ mod tests {
         assert_ne!(
             evaluate_enterprise_self_evolution(ModuleInstallState::Installed, &p, &r).blocked_by,
             Some(SelfEvolutionBlock::ProtectedScope)
+        );
+    }
+
+    #[test]
+    fn a_child_scope_requires_its_own_explicit_approval() {
+        let mut p = policy();
+        let mut r = request();
+        r.requested_write_scope = "apps/operator-console/help/extra".into();
+        assert_eq!(
+            evaluate_enterprise_self_evolution(ModuleInstallState::Installed, &p, &r).blocked_by,
+            Some(SelfEvolutionBlock::ScopeNotApproved)
+        );
+
+        p.approved_write_scopes.insert(r.requested_write_scope.clone());
+        assert_eq!(
+            evaluate_enterprise_self_evolution(ModuleInstallState::Installed, &p, &r).blocked_by,
+            None
         );
     }
 }
