@@ -60,7 +60,9 @@ fn valid_revision(value: &str) -> bool {
     (value.len() == 40 || value.len() == 64) && value.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
-fn approval_signing_bytes(claims: &SelfEvolutionApprovalClaims) -> Vec<u8> {
+/// Canonical bytes that an enrolled administrator must sign for these exact claims.
+/// External signers must use this function rather than reimplementing the encoding.
+pub fn approval_signing_bytes(claims: &SelfEvolutionApprovalClaims) -> Vec<u8> {
     let mut bytes = APPROVAL_DOMAIN.to_vec();
     for value in [
         claims.approval_id.as_str(),
