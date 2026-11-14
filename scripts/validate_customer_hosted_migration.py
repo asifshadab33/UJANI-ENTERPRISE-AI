@@ -193,6 +193,7 @@ def main() -> None:
         "FOR UPDATE",
         "consent_generation = p_consent_generation",
         "device_key_generation",
+        "valid_from <= v_now AND revoked_at IS NULL",
         "owner_consents",
         "state = 'approved'",
         "s.enabled IS TRUE AND s.role = 'administrator'",
@@ -231,6 +232,8 @@ def main() -> None:
         "paused owner consent admitted work",
         "approval from a disabled administrator was accepted",
         "approval from a non-administrator was accepted",
+        "future-dated active device key was accepted",
+        "revoked active device key was accepted",
         "admission writes were not atomic",
         "late failure left partial admission state",
     ):
