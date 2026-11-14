@@ -9,8 +9,6 @@
 
 use crate::self_evolution_approval::VerifiedSelfEvolutionApproval;
 use sha2::{Digest, Sha256};
-use std::collections::HashSet;
-
 const TARGET_DIGEST_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-SELF-EVOLUTION-TARGET-V1\0";
 const SCOPE_DIGEST_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-SELF-EVOLUTION-SCOPE-SET-V1\0";
 
