@@ -166,24 +166,24 @@ REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA ujani_control FROM ujani_runtime;
 REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA ujani_control FROM ujani_runtime;
 REVOKE ALL ON SCHEMA ujani_control FROM ujani_runtime;
 REVOKE ALL ON FUNCTION ujani_control.admit_device_lease(
- text,text,text,text,text,bytea,bytea,bytea,bigint,bigint,integer,bigint,bytea,timestamptz,uuid
+ text,text,text,text,text,bytea,bytea,bytea,bigint,bigint,integer,bigint,bytea,bytea,bytea,timestamptz,uuid
 ) FROM PUBLIC,ujani_runtime;
 GRANT USAGE ON SCHEMA ujani_control TO ujani_runtime;
 GRANT SELECT ON ujani_control.devices,ujani_control.device_keys,
  ujani_control.owner_consents,ujani_control.workloads,ujani_control.approvals,
- ujani_control.operator_subjects,ujani_control.device_telemetry_samples,
- ujani_control.leases,ujani_control.request_replays,ujani_control.audit_events
+ ujani_control.operator_subjects,ujani_control.device_owner_bindings,
+ ujani_control.device_telemetry_samples,ujani_control.leases,ujani_control.request_replays,ujani_control.audit_events
  TO ujani_runtime;
 -- Column-only UPDATE grants permit SELECT FOR SHARE but cannot change the marker.
 GRANT UPDATE (admission_lock_marker) ON ujani_control.device_keys,
  ujani_control.owner_consents,ujani_control.workloads,ujani_control.approvals,
- ujani_control.operator_subjects TO ujani_runtime;
+ ujani_control.operator_subjects,ujani_control.device_owner_bindings TO ujani_runtime;
 GRANT UPDATE (reservation_revision, updated_at)
  ON ujani_control.devices TO ujani_runtime;
 GRANT INSERT ON ujani_control.leases,ujani_control.request_replays,
  ujani_control.audit_events TO ujani_runtime;
 GRANT EXECUTE ON FUNCTION ujani_control.admit_device_lease(
- text,text,text,text,text,bytea,bytea,bytea,bigint,bigint,integer,bigint,bytea,timestamptz,uuid
+ text,text,text,text,text,bytea,bytea,bytea,bigint,bigint,integer,bigint,bytea,bytea,bytea,timestamptz,uuid
 ) TO ujani_runtime;
 
 SET ROLE ujani_runtime;
@@ -221,6 +221,13 @@ BEGIN
     OR has_table_privilege(current_user,'ujani_control.operator_subjects','INSERT')
     OR has_table_privilege(current_user,'ujani_control.operator_subjects','UPDATE')
     OR has_table_privilege(current_user,'ujani_control.operator_subjects','DELETE')
+    OR has_table_privilege(current_user,'ujani_control.device_owner_bindings','INSERT')
+    OR has_table_privilege(current_user,'ujani_control.device_owner_bindings','UPDATE')
+    OR has_table_privilege(current_user,'ujani_control.device_owner_bindings','DELETE')
+    OR has_column_privilege(current_user,'ujani_control.device_owner_bindings','owner_subject_id','UPDATE')
+    OR has_column_privilege(current_user,'ujani_control.device_owner_bindings','bound_by_subject_id','UPDATE')
+    OR has_column_privilege(current_user,'ujani_control.device_owner_bindings','binding_revision','UPDATE')
+    OR has_column_privilege(current_user,'ujani_control.device_owner_bindings','active','UPDATE')
     OR has_table_privilege(current_user,'ujani_control.device_keys','INSERT')
     OR has_table_privilege(current_user,'ujani_control.device_keys','UPDATE')
     OR has_table_privilege(current_user,'ujani_control.device_keys','DELETE')
@@ -246,11 +253,12 @@ BEGIN
     OR NOT has_column_privilege(current_user,'ujani_control.workloads','admission_lock_marker','UPDATE')
     OR NOT has_column_privilege(current_user,'ujani_control.approvals','admission_lock_marker','UPDATE')
     OR NOT has_column_privilege(current_user,'ujani_control.operator_subjects','admission_lock_marker','UPDATE')
+    OR NOT has_column_privilege(current_user,'ujani_control.device_owner_bindings','admission_lock_marker','UPDATE')
  THEN RAISE EXCEPTION 'runtime role is missing the narrow row-lock-only column privileges'; END IF;
 
  -- Assert that no column-level UPDATE grant slipped onto any protected field.
  -- The only permitted UPDATE columns are devices.reservation_revision,
- -- devices.updated_at, and admission_lock_marker on the five row-lock tables.
+ -- devices.updated_at, and admission_lock_marker on the six row-lock tables.
  FOR table_name, column_name IN
   SELECT c.relname, a.attname
   FROM pg_catalog.pg_class c
