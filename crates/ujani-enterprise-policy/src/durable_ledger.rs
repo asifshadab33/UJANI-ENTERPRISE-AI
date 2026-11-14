@@ -4,7 +4,7 @@
 //! one policy operation, and commits an HMAC-authenticated snapshot using a same-directory
 //! temp file plus backup/rename recovery. The raw lease capability is never
 //! persisted; only its domain-separated digest is stored.
-use crate::device_trust::durable::{MonotonicSnapshotAnchor, SnapshotAnchorRecord};
+use crate::device_trust::durable::{AnchorCallPolicy, MonotonicSnapshotAnchor, SnapshotAnchorRecord};
 #[cfg(test)]
 use crate::{Admission, ClassPolicy, Device, SchedulingContext, VerifiedAdminApproval, Workload};
 use crate::{Ledger, TelemetryChallengeError};
@@ -128,6 +128,7 @@ pub struct DurableLedger {
     active_key_id: String,
     anchor_namespace: Option<String>,
     anchor: Option<Arc<dyn MonotonicSnapshotAnchor>>,
+    anchor_call_policy: Option<AnchorCallPolicy>,
 }
 
 impl std::fmt::Debug for DurableLedger {
@@ -175,18 +176,35 @@ impl DurableLedger {
         keys: Vec<LedgerIntegrityKey>,
         anchor: Arc<dyn MonotonicSnapshotAnchor>,
     ) -> Result<Self, DurableLedgerError> {
+        Self::open_with_anchor_and_policy(
+            path, registry_id, active_key_id, keys, anchor, AnchorCallPolicy::default(),
+        )
+    }
+
+    /// Open an anchored ledger with an explicit per-call timeout and cancellation handle.
+    pub fn open_with_anchor_and_policy(
+        path: impl AsRef<Path>,
+        registry_id: impl Into<String>,
+        active_key_id: &str,
+        keys: Vec<LedgerIntegrityKey>,
+        anchor: Arc<dyn MonotonicSnapshotAnchor>,
+        anchor_call_policy: AnchorCallPolicy,
+    ) -> Result<Self, DurableLedgerError> {
         let registry_id = registry_id.into();
         if !valid_stored_identifier(&registry_id, 128) {
             return Err(DurableLedgerError::InvalidRecord);
         }
-        Self::open_internal(path, active_key_id, keys, Some((registry_id, anchor)))
+        Self::open_internal(
+            path, active_key_id, keys,
+            Some((registry_id, anchor, anchor_call_policy)),
+        )
     }
 
     fn open_internal(
         path: impl AsRef<Path>,
         active_key_id: &str,
         keys: Vec<LedgerIntegrityKey>,
-        anchor: Option<(String, Arc<dyn MonotonicSnapshotAnchor>)>,
+        anchor: Option<(String, Arc<dyn MonotonicSnapshotAnchor>, AnchorCallPolicy)>,
     ) -> Result<Self, DurableLedgerError> {
         #[cfg(unix)]
         let sync_ancestors = sync_ancestor_directories;
@@ -199,7 +217,7 @@ impl DurableLedger {
         path: impl AsRef<Path>,
         active_key_id: &str,
         keys: Vec<LedgerIntegrityKey>,
-        anchor: Option<(String, Arc<dyn MonotonicSnapshotAnchor>)>,
+        anchor: Option<(String, Arc<dyn MonotonicSnapshotAnchor>, AnchorCallPolicy)>,
         sync_ancestors: impl FnOnce(&Path) -> Result<(), DurableLedgerError>,
     ) -> Result<Self, DurableLedgerError> {
         if !valid_stored_identifier(active_key_id, 128) || keys.is_empty() {
@@ -253,9 +271,9 @@ impl DurableLedger {
         } else {
             fs::create_dir_all(parent)?;
         }
-        let (anchor_namespace, anchor) = match anchor {
-            Some((namespace, provider)) => (Some(namespace), Some(provider)),
-            None => (None, None),
+        let (anchor_namespace, anchor, anchor_call_policy) = match anchor {
+            Some((namespace, provider, policy)) => (Some(namespace), Some(provider), Some(policy)),
+            None => (None, None, None),
         };
         let store = Self {
             lock_path: append_suffix(&path, ".lock"),
@@ -265,6 +283,7 @@ impl DurableLedger {
             active_key_id: active_key_id.to_string(),
             anchor_namespace,
             anchor,
+            anchor_call_policy,
         };
         store.transact(|_| Ok(()))?;
         Ok(store)
@@ -536,11 +555,11 @@ impl DurableLedger {
         let lock_file = lock_options.open(&self.lock_path)?;
         lock_file.lock()?;
 
-        let anchor_record = match (&self.anchor, &self.anchor_namespace) {
-            (Some(anchor), Some(namespace)) => anchor
-                .load(namespace)
+        let anchor_record = match (&self.anchor, &self.anchor_namespace, &self.anchor_call_policy) {
+            (Some(anchor), Some(namespace), Some(policy)) => anchor
+                .load(namespace, &policy.call_context())
                 .map_err(DurableLedgerError::AnchorUnavailable)?,
-            (None, None) => None,
+            (None, None, None) => None,
             _ => return Err(DurableLedgerError::AnchorMismatch),
         };
         let mut ledger = if self.anchor.is_some() {
@@ -565,7 +584,7 @@ impl DurableLedger {
             return Ok(result);
         }
 
-        if let (Some(anchor), Some(namespace)) = (&self.anchor, &self.anchor_namespace) {
+        if let (Some(anchor), Some(namespace), Some(policy)) = (&self.anchor, &self.anchor_namespace, &self.anchor_call_policy) {
             persist_snapshot(
                 &self.path,
                 &ledger,
@@ -580,7 +599,7 @@ impl DurableLedger {
                 .ok_or(DurableLedgerError::AnchorGenerationExhausted)?;
             let next = SnapshotAnchorRecord::new(generation, snapshot_sha256(&bytes))
                 .ok_or(DurableLedgerError::AnchorGenerationExhausted)?;
-            match anchor.compare_and_set(namespace, expected_generation, next.clone()) {
+            match anchor.compare_and_set(namespace, expected_generation, next.clone(), &policy.call_context()) {
                 Ok(true) => {
                     let backup = append_suffix(&self.path, ".bak");
                     if backup.exists() {
@@ -595,7 +614,7 @@ impl DurableLedger {
                 Err(error) => {
                     // Resolve an ambiguous transport result before rolling back: the
                     // anchor may have committed even if its response was lost.
-                    match anchor.load(namespace) {
+                    match anchor.load(namespace, &policy.reconciliation_context()) {
                         Ok(Some(observed)) if observed == next => {
                             let backup = append_suffix(&self.path, ".bak");
                             if backup.exists() {
@@ -1356,14 +1375,24 @@ mod tests {
         lose_next_response_after_commit: std::sync::atomic::AtomicBool,
     }
 
-    impl MonotonicSnapshotAnchor for MemoryAnchor {
+    impl MemoryAnchor {
         fn load(&self, registry_id: &str) -> Result<Option<SnapshotAnchorRecord>, String> {
-            Ok(self
+            let context = AnchorCallPolicy::default().call_context();
+            <Self as MonotonicSnapshotAnchor>::load(self, registry_id, &context)
+        }
+    }
+
+    impl MonotonicSnapshotAnchor for MemoryAnchor {
+        fn load(&self, registry_id: &str, context: &crate::device_trust::durable::AnchorCallContext) -> Result<Option<SnapshotAnchorRecord>, String> {
+            context.check_active().map_err(|error| error.to_string())?;
+            let record = self
                 .records
                 .lock()
                 .map_err(|_| "anchor lock poisoned".to_string())?
                 .get(registry_id)
-                .cloned())
+                .cloned();
+            context.check_active().map_err(|error| error.to_string())?;
+            Ok(record)
         }
 
         fn compare_and_set(
@@ -1371,7 +1400,9 @@ mod tests {
             registry_id: &str,
             expected_generation: Option<u64>,
             next: SnapshotAnchorRecord,
+            context: &crate::device_trust::durable::AnchorCallContext,
         ) -> Result<bool, String> {
+            context.check_active().map_err(|error| error.to_string())?;
             if self
                 .reject_next
                 .swap(false, std::sync::atomic::Ordering::SeqCst)
@@ -1397,6 +1428,7 @@ mod tests {
                 return Ok(false);
             }
             records.insert(registry_id.to_string(), next);
+            context.check_active().map_err(|error| error.to_string())?;
             if self
                 .lose_next_response_after_commit
                 .swap(false, std::sync::atomic::Ordering::SeqCst)
@@ -1418,6 +1450,36 @@ mod tests {
             vec![integrity_key("test-v1")],
             anchor,
         )
+    }
+
+    #[test]
+    fn cancelled_anchor_read_fails_closed_without_committing_snapshot() {
+        let path = temp_path("anchor-cancelled-read");
+        let anchor = Arc::new(MemoryAnchor::default());
+        let cancellation = crate::device_trust::durable::AnchorCancellationToken::new();
+        cancellation.cancel();
+        let policy = AnchorCallPolicy::with_cancellation(
+            std::time::Duration::from_secs(1),
+            cancellation,
+        )
+        .unwrap();
+
+        let result = DurableLedger::open_with_anchor_and_policy(
+            &path,
+            "registry-test-a",
+            "test-v1",
+            vec![integrity_key("test-v1")],
+            anchor.clone(),
+            policy,
+        );
+        assert!(matches!(
+            result,
+            Err(DurableLedgerError::AnchorUnavailable(message))
+                if message.contains("cancelled")
+        ));
+        assert!(!path.exists());
+        assert!(anchor.load("registry-test-a").unwrap().is_none());
+        cleanup(&path);
     }
 
     fn temp_path(label: &str) -> PathBuf {
