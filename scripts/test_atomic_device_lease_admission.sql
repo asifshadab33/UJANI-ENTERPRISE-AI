@@ -39,6 +39,35 @@ INSERT INTO ujani_control.device_telemetry_samples
 VALUES ('admission-test','admission-device',1,1,decode(repeat('31',16),'hex'),
  clock_timestamp(),decode(repeat('33',32),'hex'),4000,8192,'cool','ac','idle')
 ON CONFLICT DO NOTHING;
+-- A separate pre-paused device lets the runtime role remain unable to mutate
+-- owner consent or trust state while still exercising the denial path.
+INSERT INTO ujani_control.devices
+ (tenant_id,device_id,display_name,platform,trust_state,owner_consent_state,
+  admin_approval_state,active_key_id,key_generation,consent_generation,
+  telemetry_generation,telemetry_sequence,last_seen_at)
+VALUES ('admission-test','admission-device-paused','Paused Device','linux','enrolled',
+ 'paused','approved','device-key-paused',1,1,1,1,clock_timestamp())
+ON CONFLICT (tenant_id,device_id) DO UPDATE SET
+ trust_state='enrolled',owner_consent_state='paused',admin_approval_state='approved',
+ active_key_id='device-key-paused',key_generation=1,consent_generation=1,
+ telemetry_generation=1,telemetry_sequence=1,last_seen_at=clock_timestamp(),
+ reservation_revision=0;
+INSERT INTO ujani_control.device_keys
+ (tenant_id,device_id,key_id,public_key,generation,state)
+VALUES ('admission-test','admission-device-paused','device-key-paused',
+ decode(repeat('14',32),'hex'),1,'active')
+ON CONFLICT (tenant_id,device_id,key_id) DO UPDATE SET state='active';
+INSERT INTO ujani_control.owner_consents
+ (tenant_id,device_id,consent_generation,state,actor_ref,evidence_digest)
+VALUES ('admission-test','admission-device-paused',1,'paused','device-owner',
+ decode(repeat('15',32),'hex'))
+ON CONFLICT DO NOTHING;
+INSERT INTO ujani_control.device_telemetry_samples
+ (tenant_id,device_id,generation,sequence,request_id,observed_at,payload_digest,
+  cpu_available_millis,memory_available_mb,thermal_state,power_state,participation_state)
+VALUES ('admission-test','admission-device-paused',1,1,decode(repeat('34',16),'hex'),
+ clock_timestamp(),decode(repeat('35',32),'hex'),4000,8192,'cool','ac','idle')
+ON CONFLICT DO NOTHING;
 INSERT INTO ujani_control.workloads
  (tenant_id,workload_id,manifest_digest,class,state,created_by)
 VALUES ('admission-test','admission-workload',decode(repeat('44',32),'hex'),'inference','approved','admission-admin')
@@ -169,16 +198,12 @@ BEGIN
   clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000086');
  IF admitted THEN RAISE EXCEPTION 'approval from a non-administrator was accepted'; END IF;
 
- UPDATE ujani_control.devices SET owner_consent_state='paused'
- WHERE tenant_id='admission-test' AND device_id='admission-device';
  admitted := ujani_control.admit_device_lease(
-  'admission-test','admission-device','admission-workload','admission-approval',
+  'admission-test','admission-device-paused','admission-workload','admission-approval',
   'admission-lease-optout',decode(repeat('58',16),'hex'),decode(repeat('59',32),'hex'),
   decode(repeat('44',32),'hex'),1,1,100,100,decode(repeat('5a',32),'hex'),
   clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000084');
  IF admitted THEN RAISE EXCEPTION 'paused owner consent admitted work'; END IF;
- UPDATE ujani_control.devices SET owner_consent_state='granted'
- WHERE tenant_id='admission-test' AND device_id='admission-device';
 
  SELECT count(*) INTO lease_count FROM ujani_control.leases
  WHERE tenant_id='admission-test' AND device_id='admission-device';
