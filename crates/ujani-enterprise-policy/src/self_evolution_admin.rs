@@ -367,5 +367,4 @@ mod tests {
             Err(SelfEvolutionGateError::ScopeNotAllowed)
         );
     }
-
 }
