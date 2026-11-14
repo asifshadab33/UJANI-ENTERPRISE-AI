@@ -959,7 +959,7 @@ fn verify_ledger_mac(key: &[u8; 32], key_id: &str, body: &[u8], expected: &[u8])
     mac.verify_slice(expected).is_ok()
 }
 
-fn serialize_snapshot(ledger: &Ledger, key_id: &str, key: &[u8; 32]) -> Vec<u8> {
+fn serialize_snapshot_body(ledger: &Ledger) -> String {
     let mut body = format!("{LEDGER_HEADER}\n");
     let mut workload_ids = ledger.jobs.keys().collect::<Vec<_>>();
     workload_ids.sort();
@@ -1034,26 +1034,73 @@ fn serialize_snapshot(ledger: &Ledger, key_id: &str, key: &[u8; 32]) -> Vec<u8> 
             revision,
         ));
     }
+    body
+}
+
+fn serialize_snapshot(ledger: &Ledger, key_id: &str, key: &[u8; 32]) -> Vec<u8> {
+    let mut body = serialize_snapshot_body(ledger);
     let mac = ledger_mac(key, key_id, body.as_bytes());
-    body.push_str(&format!("M\t{}\t{}\n", key_id, hex_encode(&mac)));
+    body.push_str(&format!("M\\t{}\\t{}\\n", key_id, hex_encode(&mac)));
     body.into_bytes()
 }
 
+fn serialize_snapshot_with_provider(
+    ledger: &Ledger,
+    provider: &dyn IntegrityKeyProvider,
+) -> Result<Vec<u8>, DurableLedgerError> {
+    let mut body = serialize_snapshot_body(ledger);
+    let (key_id, mac) = provider
+        .sign_active(IntegrityKeyPurpose::ReservationLedger, body.as_bytes())
+        .map_err(DurableLedgerError::KeyProvider)?;
+    if !valid_stored_identifier(&key_id, 128) {
+        return Err(DurableLedgerError::InvalidRecord);
+    }
+    body.push_str(&format!("M\\t{}\\t{}\\n", key_id, hex_encode(&mac)));
+    Ok(body.into_bytes())
+}
 fn deserialize_snapshot(
     bytes: &[u8],
     integrity_keys: &HashMap<String, LedgerIntegrityKey>,
 ) -> Result<Ledger, DurableLedgerError> {
+    deserialize_snapshot_with_verifier(bytes, |key_id, body, expected| {
+        let key = integrity_keys.get(key_id).ok_or(DurableLedgerError::CorruptState)?;
+        if verify_ledger_mac(&key.key, key_id, body, expected) {
+            Ok(())
+        } else {
+            Err(DurableLedgerError::CorruptState)
+        }
+    })
+}
+
+fn deserialize_snapshot_with_provider(
+    bytes: &[u8],
+    provider: &dyn IntegrityKeyProvider,
+) -> Result<Ledger, DurableLedgerError> {
+    deserialize_snapshot_with_verifier(bytes, |key_id, body, expected| {
+        let tag: [u8; 32] = expected
+            .try_into()
+            .map_err(|_| DurableLedgerError::CorruptState)?;
+        provider
+            .verify(IntegrityKeyPurpose::ReservationLedger, key_id, body, &tag)
+            .map_err(DurableLedgerError::KeyProvider)
+    })
+}
+
+fn deserialize_snapshot_with_verifier(
+    bytes: &[u8],
+    verify: impl FnOnce(&str, &[u8], &[u8]) -> Result<(), DurableLedgerError>,
+) -> Result<Ledger, DurableLedgerError> {
     let text = std::str::from_utf8(bytes).map_err(|_| DurableLedgerError::CorruptState)?;
-    if bytes.len() as u64 > MAX_LEDGER_BYTES || !text.ends_with('\n') {
+    if bytes.len() as u64 > MAX_LEDGER_BYTES || !text.ends_with('\\n') {
         return Err(DurableLedgerError::CorruptState);
     }
-    let mac_start = text.rfind("M\t").ok_or(DurableLedgerError::CorruptState)?;
+    let mac_start = text.rfind("M\\t").ok_or(DurableLedgerError::CorruptState)?;
     let body = &text[..mac_start];
     let mac_line = &text[mac_start..];
     let mut mac_fields = mac_line
-        .strip_suffix('\n')
+        .strip_suffix('\\n')
         .ok_or(DurableLedgerError::CorruptState)?
-        .split('\t');
+        .split('\\t');
     if mac_fields.next() != Some("M") {
         return Err(DurableLedgerError::CorruptState);
     }
@@ -1062,14 +1109,8 @@ fn deserialize_snapshot(
     if mac_fields.next().is_some() || !valid_stored_identifier(key_id, 128) {
         return Err(DurableLedgerError::CorruptState);
     }
-    let key = integrity_keys
-        .get(key_id)
-        .ok_or(DurableLedgerError::CorruptState)?;
     let expected_mac = hex_decode(encoded_mac)?;
-    if !verify_ledger_mac(&key.key, key_id, body.as_bytes(), &expected_mac) {
-        return Err(DurableLedgerError::CorruptState);
-    }
-
+    verify(key_id, body.as_bytes(), &expected_mac)?;
     let mut lines = body.lines();
     let snapshot_header = lines.next();
     let (is_v4, is_v3) = match snapshot_header {
