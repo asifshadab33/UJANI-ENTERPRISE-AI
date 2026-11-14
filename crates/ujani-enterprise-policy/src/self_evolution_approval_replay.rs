@@ -325,6 +325,21 @@ mod tests {
     }
 
     #[test]
+    fn signed_tenant_and_subject_must_match_current_authenticated_context() {
+        let approval = verified_approval();
+        let mut store = MemoryStore::default();
+        assert_eq!(
+            consume_verified_self_evolution_approval(&approval, "tenant-b", "admin-a", &mut store),
+            Err(ApprovalConsumptionError::InvalidAuthenticatedContext)
+        );
+        assert_eq!(
+            consume_verified_self_evolution_approval(&approval, "tenant-a", "admin-b", &mut store),
+            Err(ApprovalConsumptionError::InvalidAuthenticatedContext)
+        );
+        assert!(store.approval_ids.is_empty());
+    }
+
+    #[test]
     fn fails_closed_when_storage_is_unavailable_or_approval_expired() {
         let approval = verified_approval();
         let mut unavailable = MemoryStore {
