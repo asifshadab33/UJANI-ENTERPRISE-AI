@@ -4,6 +4,7 @@
 //! trusted host from protected configuration. Neither is read from this file.
 //! This is a persistence primitive, not an HTTP server or a complete RBAC layer.
 use super::*;
+use crate::integrity_key_provider::{IntegrityKeyProvider, IntegrityKeyProviderError, IntegrityKeyPurpose};
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::{Digest, Sha256};
 use std::fs::{self, File, OpenOptions};
@@ -206,6 +207,7 @@ pub enum DurableDeviceTrustError {
     CorruptState,
     CapacityExceeded,
     Trust(DeviceTrustError),
+    KeyProvider(IntegrityKeyProviderError),
     LockPoisoned,
     AnchorUnavailable(String),
     AnchorMismatch,
@@ -219,6 +221,7 @@ impl std::fmt::Display for DurableDeviceTrustError {
             Self::CorruptState => write!(f, "device trust snapshot is corrupt or unauthenticated"),
             Self::CapacityExceeded => write!(f, "device trust snapshot exceeds its safety limit"),
             Self::Trust(v) => write!(f, "device trust operation rejected: {v:?}"),
+            Self::KeyProvider(v) => write!(f, "protected integrity-key provider failed: {v}"),
             Self::LockPoisoned => write!(f, "device trust thread lock is poisoned"),
             Self::AnchorUnavailable(v) => write!(f, "external monotonic anchor unavailable: {v}"),
             Self::AnchorMismatch => write!(
@@ -289,7 +292,8 @@ pub struct DurableDeviceRegistry {
     lock_path: PathBuf,
     thread_lock: Arc<Mutex<()>>,
     admin_keys: Arc<Vec<(String, VerifyingKey)>>,
-    integrity_key: Arc<DeviceTrustIntegrityKey>,
+    integrity_key: Option<Arc<DeviceTrustIntegrityKey>>,
+    integrity_key_provider: Option<Arc<dyn IntegrityKeyProvider>>,
     anchor_namespace: Option<String>,
     anchor: Option<Arc<dyn MonotonicSnapshotAnchor>>,
     anchor_call_policy: Option<AnchorCallPolicy>,
@@ -299,7 +303,8 @@ impl std::fmt::Debug for DurableDeviceRegistry {
         f.debug_struct("DurableDeviceRegistry")
             .field("path", &self.path)
             .field("admin_key_count", &self.admin_keys.len())
-            .field("integrity_key_id", &self.integrity_key.key_id())
+            .field("integrity_key_id", &self.integrity_key.as_ref().map(|key| key.key_id()).unwrap_or("provider-managed"))
+            .field("provider_backed", &self.integrity_key_provider.is_some())
             .finish()
     }
 }
@@ -356,14 +361,64 @@ impl DurableDeviceRegistry {
         )
     }
 
+    /// Open a registry using a host-owned non-exportable integrity-key provider.
+    /// Existing snapshots signed by retained provider key IDs remain verifiable
+    /// during rotation; every successful write uses the provider's active key.
+    pub fn open_with_key_provider(
+        path: impl AsRef<Path>,
+        trusted_admin_keys: Vec<(String, VerifyingKey)>,
+        provider: Arc<dyn IntegrityKeyProvider>,
+    ) -> Result<Self, DurableDeviceTrustError> {
+        Self::open_internal_with_provider(path, trusted_admin_keys, provider, None)
+    }
+
+    /// Open an anchored registry using a host-owned protected key provider.
+    pub fn open_with_anchor_and_key_provider(
+        path: impl AsRef<Path>,
+        registry_id: impl Into<String>,
+        trusted_admin_keys: Vec<(String, VerifyingKey)>,
+        provider: Arc<dyn IntegrityKeyProvider>,
+        anchor: Arc<dyn MonotonicSnapshotAnchor>,
+        anchor_call_policy: AnchorCallPolicy,
+    ) -> Result<Self, DurableDeviceTrustError> {
+        let registry_id = registry_id.into();
+        if !valid_id(&registry_id, 128) {
+            return Err(DurableDeviceTrustError::CorruptState);
+        }
+        Self::open_internal_with_provider(
+            path, trusted_admin_keys, provider,
+            Some((registry_id, anchor, anchor_call_policy)),
+        )
+    }
+
     fn open_internal(
         path: impl AsRef<Path>,
         trusted_admin_keys: Vec<(String, VerifyingKey)>,
         integrity_key: DeviceTrustIntegrityKey,
         anchor: Option<(String, Arc<dyn MonotonicSnapshotAnchor>, AnchorCallPolicy)>,
     ) -> Result<Self, DurableDeviceTrustError> {
-        if trusted_admin_keys.is_empty()
-            || !valid_id(integrity_key.key_id(), 128)
+        Self::open_internal_with_sources(path, trusted_admin_keys, Some(Arc::new(integrity_key)), None, anchor)
+    }
+
+    fn open_internal_with_provider(
+        path: impl AsRef<Path>,
+        trusted_admin_keys: Vec<(String, VerifyingKey)>,
+        provider: Arc<dyn IntegrityKeyProvider>,
+        anchor: Option<(String, Arc<dyn MonotonicSnapshotAnchor>, AnchorCallPolicy)>,
+    ) -> Result<Self, DurableDeviceTrustError> {
+        Self::open_internal_with_sources(path, trusted_admin_keys, None, Some(provider), anchor)
+    }
+
+    fn open_internal_with_sources(
+        path: impl AsRef<Path>,
+        trusted_admin_keys: Vec<(String, VerifyingKey)>,
+        integrity_key: Option<Arc<DeviceTrustIntegrityKey>>,
+        integrity_key_provider: Option<Arc<dyn IntegrityKeyProvider>>,
+        anchor: Option<(String, Arc<dyn MonotonicSnapshotAnchor>, AnchorCallPolicy)>,
+    ) -> Result<Self, DurableDeviceTrustError> {
+        let has_one_key_source = integrity_key.is_some() ^ integrity_key_provider.is_some();
+        if trusted_admin_keys.is_empty() || !has_one_key_source
+            || integrity_key.as_ref().is_some_and(|key| !valid_id(key.key_id(), 128))
             || trusted_admin_keys.iter().any(|(id, _)| !valid_id(id, 128))
         {
             return Err(DurableDeviceTrustError::CorruptState);
@@ -374,11 +429,8 @@ impl DurableDeviceRegistry {
         // The canonical directory must still be owned and protected by the service
         // account; this does not replace handle-relative operations against races.
         let requested_path = path.as_ref();
-        let file_name = requested_path
-            .file_name()
-            .ok_or(DurableDeviceTrustError::CorruptState)?;
-        let requested_parent = requested_path
-            .parent()
+        let file_name = requested_path.file_name().ok_or(DurableDeviceTrustError::CorruptState)?;
+        let requested_parent = requested_path.parent()
             .filter(|parent| !parent.as_os_str().is_empty())
             .unwrap_or_else(|| Path::new("."));
         fs::create_dir_all(requested_parent)?;
@@ -389,19 +441,15 @@ impl DurableDeviceRegistry {
             None => (None, None, None),
         };
         let store = Self {
-            lock_path: suffix(&path, ".lock"),
-            path,
+            lock_path: suffix(&path, ".lock"), path,
             thread_lock: Arc::new(Mutex::new(())),
             admin_keys: Arc::new(trusted_admin_keys),
-            integrity_key: Arc::new(integrity_key),
-            anchor_namespace,
-            anchor,
-            anchor_call_policy,
+            integrity_key, integrity_key_provider,
+            anchor_namespace, anchor, anchor_call_policy,
         };
         store.transact(|_| Ok(()))?;
         Ok(store)
     }
-
     pub fn apply_admin_command(
         &self,
         command: &SignedDeviceAdminCommand,
