@@ -162,13 +162,17 @@ mod tests {
                 .lock()
                 .map_err(|_| IntegrityKeyProviderError::LockPoisoned)?;
             let map_key = (purpose, key_id.to_string());
-            if state.keys.contains_key(&map_key) {
-                return Err(IntegrityKeyProviderError::KeyAlreadyExists);
-            }
             let seed = format!("test-only:{}:{key_id}", purpose.as_str());
             let key: [u8; 32] = Sha256::digest(seed.as_bytes()).into();
-            state.keys.insert(map_key, key);
-            Ok(())
+            match state.keys.entry(map_key) {
+                std::collections::hash_map::Entry::Occupied(_) => {
+                    Err(IntegrityKeyProviderError::KeyAlreadyExists)
+                }
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    entry.insert(key);
+                    Ok(())
+                }
+            }
         }
 
         fn activate_key(
