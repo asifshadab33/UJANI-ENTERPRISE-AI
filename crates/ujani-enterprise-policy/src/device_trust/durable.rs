@@ -4,7 +4,9 @@
 //! trusted host from protected configuration. Neither is read from this file.
 //! This is a persistence primitive, not an HTTP server or a complete RBAC layer.
 use super::*;
-use crate::integrity_key_provider::{IntegrityKeyProvider, IntegrityKeyProviderError, IntegrityKeyPurpose};
+use crate::integrity_key_provider::{
+    IntegrityKeyProvider, IntegrityKeyProviderError, IntegrityKeyPurpose,
+};
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::{Digest, Sha256};
 use std::fs::{self, File, OpenOptions};
@@ -303,7 +305,14 @@ impl std::fmt::Debug for DurableDeviceRegistry {
         f.debug_struct("DurableDeviceRegistry")
             .field("path", &self.path)
             .field("admin_key_count", &self.admin_keys.len())
-            .field("integrity_key_id", &self.integrity_key.as_ref().map(|key| key.key_id()).unwrap_or("provider-managed"))
+            .field(
+                "integrity_key_id",
+                &self
+                    .integrity_key
+                    .as_ref()
+                    .map(|key| key.key_id())
+                    .unwrap_or("provider-managed"),
+            )
             .field("provider_backed", &self.integrity_key_provider.is_some())
             .finish()
     }
@@ -386,7 +395,9 @@ impl DurableDeviceRegistry {
             return Err(DurableDeviceTrustError::CorruptState);
         }
         Self::open_internal_with_provider(
-            path, trusted_admin_keys, provider,
+            path,
+            trusted_admin_keys,
+            provider,
             Some((registry_id, anchor, anchor_call_policy)),
         )
     }
@@ -397,7 +408,13 @@ impl DurableDeviceRegistry {
         integrity_key: DeviceTrustIntegrityKey,
         anchor: Option<(String, Arc<dyn MonotonicSnapshotAnchor>, AnchorCallPolicy)>,
     ) -> Result<Self, DurableDeviceTrustError> {
-        Self::open_internal_with_sources(path, trusted_admin_keys, Some(Arc::new(integrity_key)), None, anchor)
+        Self::open_internal_with_sources(
+            path,
+            trusted_admin_keys,
+            Some(Arc::new(integrity_key)),
+            None,
+            anchor,
+        )
     }
 
     fn open_internal_with_provider(
@@ -417,8 +434,11 @@ impl DurableDeviceRegistry {
         anchor: Option<(String, Arc<dyn MonotonicSnapshotAnchor>, AnchorCallPolicy)>,
     ) -> Result<Self, DurableDeviceTrustError> {
         let has_one_key_source = integrity_key.is_some() ^ integrity_key_provider.is_some();
-        if trusted_admin_keys.is_empty() || !has_one_key_source
-            || integrity_key.as_ref().is_some_and(|key| !valid_id(key.key_id(), 128))
+        if trusted_admin_keys.is_empty()
+            || !has_one_key_source
+            || integrity_key
+                .as_ref()
+                .is_some_and(|key| !valid_id(key.key_id(), 128))
             || trusted_admin_keys.iter().any(|(id, _)| !valid_id(id, 128))
         {
             return Err(DurableDeviceTrustError::CorruptState);
