@@ -286,10 +286,17 @@ mod tests {
     fn session_is_accepted_until_explicitly_revoked() {
         let wrapped =
             RevocableOperatorSessionVerifier::new(verifier(), MemoryRevocations::default());
-        assert!(wrapped.verify_session("valid-test-token", 2_000).is_ok());
+        let current =
+            authenticate_current_operator_session(&wrapped, "valid-test-token", 2_000).unwrap();
+        assert_eq!(current.tenant_id(), "tenant-1");
+        assert_eq!(current.subject_id(), "operator-1");
+        assert_eq!(
+            current.role(),
+            crate::operator_control_plane::OperatorRole::Administrator
+        );
         assert_eq!(wrapped.revoke_token("valid-test-token", 2_001), Ok(()));
         assert_eq!(
-            wrapped.verify_session("valid-test-token", 2_002),
+            authenticate_current_operator_session(&wrapped, "valid-test-token", 2_002),
             Err(OperatorAuthError::InvalidClaims)
         );
     }
