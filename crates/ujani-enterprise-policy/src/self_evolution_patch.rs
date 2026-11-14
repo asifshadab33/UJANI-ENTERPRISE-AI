@@ -357,8 +357,15 @@ mod tests {
     fn accepts_exact_approved_patch_and_workspace_revision() {
         let (proposal, bundle, workspace, digest) = setup_modify();
         let validated = validate_patch_bundle(
-            &proposal, &target(), &scope(), &digest, &"a".repeat(40), &bundle, &workspace,
-        ).unwrap();
+            &proposal,
+            &target(),
+            &scope(),
+            &digest,
+            &"a".repeat(40),
+            &bundle,
+            &workspace,
+        )
+        .unwrap();
         assert_eq!(validated.proposal_sha256(), digest);
         assert_eq!(validated.artifacts().len(), 1);
         assert!(validated.total_content_bytes() > 0);
@@ -369,12 +376,28 @@ mod tests {
         let (proposal, mut bundle, workspace, digest) = setup_modify();
         bundle.artifacts[0].new_content = Some("different content".into());
         assert_eq!(
-            validate_patch_bundle(&proposal, &target(), &scope(), &digest, &"a".repeat(40), &bundle, &workspace),
+            validate_patch_bundle(
+                &proposal,
+                &target(),
+                &scope(),
+                &digest,
+                &"a".repeat(40),
+                &bundle,
+                &workspace
+            ),
             Err(SelfEvolutionPatchValidationError::PatchDigestMismatch)
         );
         let (proposal, bundle, workspace, digest) = setup_modify();
         assert_eq!(
-            validate_patch_bundle(&proposal, &target(), &scope(), &"f".repeat(64), &"a".repeat(40), &bundle, &workspace),
+            validate_patch_bundle(
+                &proposal,
+                &target(),
+                &scope(),
+                &"f".repeat(64),
+                &"a".repeat(40),
+                &bundle,
+                &workspace
+            ),
             Err(SelfEvolutionPatchValidationError::InvalidProposalDigest)
         );
         assert_eq!(digest.len(), 64);
@@ -385,12 +408,28 @@ mod tests {
         let (proposal, bundle, mut workspace, digest) = setup_modify();
         workspace[0].sha256 = Some("c".repeat(64));
         assert_eq!(
-            validate_patch_bundle(&proposal, &target(), &scope(), &digest, &"a".repeat(40), &bundle, &workspace),
+            validate_patch_bundle(
+                &proposal,
+                &target(),
+                &scope(),
+                &digest,
+                &"a".repeat(40),
+                &bundle,
+                &workspace
+            ),
             Err(SelfEvolutionPatchValidationError::WorkspaceSnapshotMismatch)
         );
         let (proposal, bundle, workspace, digest) = setup_modify();
         assert_eq!(
-            validate_patch_bundle(&proposal, &target(), &scope(), &digest, &"d".repeat(40), &bundle, &workspace),
+            validate_patch_bundle(
+                &proposal,
+                &target(),
+                &scope(),
+                &digest,
+                &"d".repeat(40),
+                &bundle,
+                &workspace
+            ),
             Err(SelfEvolutionPatchValidationError::WorkspaceRevisionMismatch)
         );
     }
@@ -402,29 +441,75 @@ mod tests {
             summary: "Add and remove non-core files.".into(),
             findings: vec![],
             changes: vec![
-                ProposedChange { path: "apps/operator-console/NewPanel.js".into(), operation: ProposedChangeKind::Add, summary: "Add panel.".into(), patch_sha256: "0".repeat(64) },
-                ProposedChange { path: "apps/operator-console/OldPanel.js".into(), operation: ProposedChangeKind::Delete, summary: "Remove obsolete panel.".into(), patch_sha256: "0".repeat(64) },
+                ProposedChange {
+                    path: "apps/operator-console/NewPanel.js".into(),
+                    operation: ProposedChangeKind::Add,
+                    summary: "Add panel.".into(),
+                    patch_sha256: "0".repeat(64),
+                },
+                ProposedChange {
+                    path: "apps/operator-console/OldPanel.js".into(),
+                    operation: ProposedChangeKind::Delete,
+                    summary: "Remove obsolete panel.".into(),
+                    patch_sha256: "0".repeat(64),
+                },
             ],
         };
         let artifacts = vec![
-            SelfEvolutionPatchArtifactV1 { path: proposal.changes[0].path.clone(), operation: ProposedChangeKind::Add, base_sha256: None, new_content: Some("export {}\n".into()) },
-            SelfEvolutionPatchArtifactV1 { path: proposal.changes[1].path.clone(), operation: ProposedChangeKind::Delete, base_sha256: Some("e".repeat(64)), new_content: None },
+            SelfEvolutionPatchArtifactV1 {
+                path: proposal.changes[0].path.clone(),
+                operation: ProposedChangeKind::Add,
+                base_sha256: None,
+                new_content: Some("export {}\n".into()),
+            },
+            SelfEvolutionPatchArtifactV1 {
+                path: proposal.changes[1].path.clone(),
+                operation: ProposedChangeKind::Delete,
+                base_sha256: Some("e".repeat(64)),
+                new_content: None,
+            },
         ];
         for (change, artifact) in proposal.changes.iter_mut().zip(artifacts.iter()) {
             change.patch_sha256 = patch_artifact_sha256(artifact);
         }
         let digest = hex(&self_evolution_proposal_digest(&proposal).unwrap());
-        let bundle = SelfEvolutionPatchBundleV1 { schema_version: 1, proposal_sha256: digest.clone(), artifacts };
+        let bundle = SelfEvolutionPatchBundleV1 {
+            schema_version: 1,
+            proposal_sha256: digest.clone(),
+            artifacts,
+        };
         let workspace = vec![
-            WorkspaceFileState { path: proposal.changes[0].path.clone(), sha256: None },
-            WorkspaceFileState { path: proposal.changes[1].path.clone(), sha256: Some("e".repeat(64)) },
+            WorkspaceFileState {
+                path: proposal.changes[0].path.clone(),
+                sha256: None,
+            },
+            WorkspaceFileState {
+                path: proposal.changes[1].path.clone(),
+                sha256: Some("e".repeat(64)),
+            },
         ];
-        assert!(validate_patch_bundle(&proposal, &target(), &scope(), &digest, &"a".repeat(40), &bundle, &workspace).is_ok());
+        assert!(validate_patch_bundle(
+                &proposal,
+                &target(),
+                &scope(),
+                &digest,
+                &"a".repeat(40),
+                &bundle,
+                &workspace
+            ).is_ok());
 
         let mut wrong_workspace = workspace.clone();
         wrong_workspace[0].sha256 = Some("1".repeat(64));
         assert_eq!(
-            validate_patch_bundle(&proposal, &target(), &scope(), &digest, &"a".repeat(40), &bundle, &wrong_workspace),
+            validate_patch_bundle(
+                &proposal,
+                &target(),
+                &scope(),
+                &digest,
+                &"a".repeat(40),
+                &bundle,
+                &wrong_workspace
+            ),
             Err(SelfEvolutionPatchValidationError::WorkspaceSnapshotMismatch)
         );
     }
@@ -434,19 +519,43 @@ mod tests {
         let (proposal, mut bundle, workspace, digest) = setup_modify();
         bundle.artifacts.push(bundle.artifacts[0].clone());
         assert_eq!(
-            validate_patch_bundle(&proposal, &target(), &scope(), &digest, &"a".repeat(40), &bundle, &workspace),
+            validate_patch_bundle(
+                &proposal,
+                &target(),
+                &scope(),
+                &digest,
+                &"a".repeat(40),
+                &bundle,
+                &workspace
+            ),
             Err(SelfEvolutionPatchValidationError::ArtifactCountMismatch)
         );
         let (proposal, mut bundle, workspace, digest) = setup_modify();
         bundle.artifacts.clear();
         assert_eq!(
-            validate_patch_bundle(&proposal, &target(), &scope(), &digest, &"a".repeat(40), &bundle, &workspace),
+            validate_patch_bundle(
+                &proposal,
+                &target(),
+                &scope(),
+                &digest,
+                &"a".repeat(40),
+                &bundle,
+                &workspace
+            ),
             Err(SelfEvolutionPatchValidationError::EmptyPatchBundle)
         );
         let (proposal, mut bundle, workspace, digest) = setup_modify();
         bundle.artifacts[0].operation = ProposedChangeKind::Delete;
         assert_eq!(
-            validate_patch_bundle(&proposal, &target(), &scope(), &digest, &"a".repeat(40), &bundle, &workspace),
+            validate_patch_bundle(
+                &proposal,
+                &target(),
+                &scope(),
+                &digest,
+                &"a".repeat(40),
+                &bundle,
+                &workspace
+            ),
             Err(SelfEvolutionPatchValidationError::ArtifactOperationMismatch)
         );
     }
@@ -459,7 +568,15 @@ mod tests {
         let digest = hex(&self_evolution_proposal_digest(&proposal).unwrap());
         bundle.proposal_sha256 = digest.clone();
         assert_eq!(
-            validate_patch_bundle(&proposal, &target(), &scope(), &digest, &"a".repeat(40), &bundle, &workspace),
+            validate_patch_bundle(
+                &proposal,
+                &target(),
+                &scope(),
+                &digest,
+                &"a".repeat(40),
+                &bundle,
+                &workspace
+            ),
             Err(SelfEvolutionPatchValidationError::ContentTooLarge)
         );
 
@@ -469,7 +586,15 @@ mod tests {
         let digest = hex(&self_evolution_proposal_digest(&proposal).unwrap());
         bundle.proposal_sha256 = digest.clone();
         assert_eq!(
-            validate_patch_bundle(&proposal, &target(), &scope(), &digest, &"a".repeat(40), &bundle, &workspace),
+            validate_patch_bundle(
+                &proposal,
+                &target(),
+                &scope(),
+                &digest,
+                &"a".repeat(40),
+                &bundle,
+                &workspace
+            ),
             Err(SelfEvolutionPatchValidationError::InvalidContent)
         );
     }
