@@ -100,7 +100,7 @@ fn valid_content(value: &str) -> bool {
     !value.as_bytes().contains(&0)
         && !value.chars().any(|character| {
             (character.is_control() && !matches!(character, '\n' | '\r' | '\t'))
-                || matches!(character, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+                || matches!(character, '\u{061c}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
         })
 }
 
@@ -214,6 +214,21 @@ pub fn validate_patch_bundle(
         if workspace_by_path.insert(key, state).is_some() {
             return Err(SelfEvolutionPatchValidationError::InvalidWorkspaceSnapshot);
         }
+    }
+
+    // Enforce attacker-controlled replacement-size limits before hashing or scanning
+    // any artifact content. This bounds work even for malformed oversized bundles.
+    let mut declared_content_bytes = 0usize;
+    for artifact in &bundle.artifacts {
+        if let Some(content) = &artifact.new_content {
+            if content.len() > MAX_PATCH_FILE_BYTES {
+                return Err(SelfEvolutionPatchValidationError::ContentTooLarge);
+            }
+            declared_content_bytes = declared_content_bytes.saturating_add(content.len());
+        }
+    }
+    if declared_content_bytes > MAX_PATCH_TOTAL_BYTES {
+        return Err(SelfEvolutionPatchValidationError::TotalContentTooLarge);
     }
 
     let mut total_content_bytes = 0usize;
