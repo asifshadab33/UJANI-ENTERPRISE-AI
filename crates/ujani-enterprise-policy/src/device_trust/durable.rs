@@ -2153,4 +2153,73 @@ mod tests {
         let _ = fs::remove_file(suffix(&path, ".lock"));
         let _ = fs::remove_file(suffix(&path, ".bak"));
     }
+    #[test]
+    fn protected_key_provider_wires_device_registry_and_rotates_without_exporting_keys() {
+        use crate::integrity_key_provider::{IntegrityKeyPurpose, TestIntegrityKeyProvider};
+
+        let path = path();
+        let admin = test_signing_key("provider-admin").verifying_key();
+        let provider = Arc::new(TestIntegrityKeyProvider::default());
+        let purpose = IntegrityKeyPurpose::DeviceTrustRegistry;
+
+        provider.provision_key(purpose, "device-v1").unwrap();
+        provider.activate_key(purpose, "device-v1").unwrap();
+        let registry = DurableDeviceRegistry::open_with_key_provider(
+            &path,
+            vec![("admin-v1".into(), admin.clone())],
+            provider.clone(),
+        )
+        .unwrap();
+        assert_eq!(registry.device_count().unwrap(), 0);
+        drop(registry);
+
+        provider.provision_key(purpose, "device-v2").unwrap();
+        provider.activate_key(purpose, "device-v2").unwrap();
+        let registry = DurableDeviceRegistry::open_with_key_provider(
+            &path,
+            vec![("admin-v1".into(), admin.clone())],
+            provider.clone(),
+        )
+        .unwrap();
+        assert_eq!(registry.device_count().unwrap(), 0);
+        drop(registry);
+
+        // Opening with v2 verified and rewrote the prior snapshot before v1 retirement.
+        provider.retire_key(purpose, "device-v1").unwrap();
+        let registry = DurableDeviceRegistry::open_with_key_provider(
+            &path,
+            vec![("admin-v1".into(), admin)],
+            provider,
+        )
+        .unwrap();
+        assert_eq!(registry.device_count().unwrap(), 0);
+        drop(registry);
+
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(suffix(&path, ".lock"));
+        let _ = fs::remove_file(suffix(&path, ".bak"));
+    }
+
+    #[test]
+    fn protected_key_provider_unavailable_fails_closed_on_first_snapshot() {
+        use crate::integrity_key_provider::TestIntegrityKeyProvider;
+
+        let path = path();
+        let admin = test_signing_key("provider-admin-unavailable").verifying_key();
+        let provider = Arc::new(TestIntegrityKeyProvider::default());
+        let result = DurableDeviceRegistry::open_with_key_provider(
+            &path,
+            vec![("admin-v1".into(), admin)],
+            provider,
+        );
+        assert_eq!(
+            result.err(),
+            Some(DurableDeviceTrustError::KeyProvider(
+                IntegrityKeyProviderError::UnknownKey
+            ))
+        );
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(suffix(&path, ".lock"));
+    }
+
 }
