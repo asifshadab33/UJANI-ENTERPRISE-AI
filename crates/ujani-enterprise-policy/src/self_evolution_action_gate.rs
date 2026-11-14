@@ -1,8 +1,9 @@
 //! Action-level authorization for the optional Enterprise Self-Evolution feature.
 //!
 //! This layer deliberately wraps the existing model/scope policy instead of
-//! reimplementing it. Callers must supply OperatorRole from a verified session
-//! and owner opt-in from current trusted consent storage, never from UI input.
+//! reimplementing it. Callers must supply CurrentOperatorSession from the
+//! revocation-checking verifier and owner opt-in from current trusted consent
+//! storage, never from UI input.
 //! It authorizes proposal preparation only; review submission, staging and apply
 //! remain blocked until signed approval and durable single-use replay are wired.
 use crate::operator_session_revocation::CurrentOperatorSession;
