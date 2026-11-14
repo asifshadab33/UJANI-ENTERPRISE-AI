@@ -95,7 +95,8 @@ BEGIN
  PERFORM 1 FROM ujani_control.device_keys
  WHERE tenant_id = p_tenant_id AND device_id = p_device_id
    AND key_id = v_device.active_key_id
-   AND generation = p_device_key_generation AND state = 'active';
+   AND generation = p_device_key_generation AND state = 'active'
+   AND valid_from <= v_now AND revoked_at IS NULL;
  IF NOT FOUND THEN RETURN false; END IF;
 
  -- The latest consent event must agree with the device's monotonic consent revision.
