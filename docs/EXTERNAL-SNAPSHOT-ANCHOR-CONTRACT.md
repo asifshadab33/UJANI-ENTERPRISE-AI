@@ -2,9 +2,10 @@
 
 ## Status
 
-The policy crate now exposes `MonotonicSnapshotAnchor` and
-`DurableDeviceRegistry::open_with_anchor`. The interface is implemented and
-has a deterministic in-memory test provider. **No production KMS, HSM, TPM or
+The policy crate exposes `MonotonicSnapshotAnchor`, bounded per-call contexts,
+cooperative cancellation, and anchored open constructors for the durable device
+registry and reservation ledger. The interface is implemented and has deterministic
+in-memory test providers. **No production KMS, HSM, TPM or
 remote control-plane provider is included.** The default `open` constructor
 continues to provide HMAC integrity only and does not detect rollback.
 
@@ -32,6 +33,25 @@ A production provider must:
 
 A local file, SQLite table beside the registry, or a second writable sidecar on
 the same host is not an external monotonic anchor.
+
+## Bounded calls and cancellation
+
+`AnchorCallPolicy` defaults to a five-second deadline for each provider call and
+rejects configured timeouts above 30 seconds. Hosts can supply a shared
+`AnchorCancellationToken` when opening either anchored store and cancel ordinary
+provider calls when a service request or shutdown is cancelled. Each provider
+method receives an `AnchorCallContext`; adapters must use `remaining()` to set
+their transport-level timeout and check `check_active()` before and after I/O.
+The context is cooperative: it does not forcibly interrupt an adapter that ignores
+it, so a production adapter must use a cancellable HTTP/database/KMS client rather
+than an unbounded blocking call.
+
+An ambiguous compare-and-set result is followed by a separate bounded read-back
+context that is not caller-cancelled. That reconciliation is safety-critical: the
+provider must settle or fence the original write before returning an error, and
+the caller must determine whether the proposed record committed before retrying.
+A provider adapter that cannot guarantee both bounded I/O and quiescence is not
+suitable for this interface.
 
 ## Snapshot commit and recovery order
 
@@ -62,8 +82,10 @@ snapshot matches the provider, the registry fails closed.
 
 ## Tests and limits
 
-The in-memory provider test covers a rollback to an older snapshot that still
-has a valid HMAC. It validates the interface and local recovery logic only; it
+The in-memory provider tests cover cancellation/deadline context handling and a
+cancelled ledger read that fails closed without committing a snapshot, as well as
+a rollback to an older snapshot that still has a valid HMAC. They validate the
+interface and local recovery logic only; it
 does not test a real distributed provider, network partitions, provider
 consistency, administrator authorization, disaster recovery or hardware-backed
 key custody.
