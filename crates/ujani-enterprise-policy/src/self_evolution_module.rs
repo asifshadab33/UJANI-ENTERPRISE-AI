@@ -167,7 +167,8 @@ mod tests {
     fn administrator_prohibition_overrides_endpoint_installation_and_user_choice() {
         let mut p = policy();
         p.permitted_by_administrator = false;
-        let result = evaluate_enterprise_self_evolution(ModuleInstallState::Installed, &p, &request());
+        let result =
+            evaluate_enterprise_self_evolution(ModuleInstallState::Installed, &p, &request());
         assert!(!result.may_analyse);
         assert!(!result.may_prepare_proposals);
         assert!(!result.may_submit_for_review);
@@ -176,12 +177,14 @@ mod tests {
 
     #[test]
     fn installation_does_not_activate_the_module() {
-        let result = evaluate_enterprise_self_evolution(ModuleInstallState::NotInstalled, &policy(), &request());
+        let result =
+            evaluate_enterprise_self_evolution(ModuleInstallState::NotInstalled, &policy(), &request());
         assert!(!result.may_prepare_proposals);
         assert_eq!(result.blocked_by, Some(SelfEvolutionBlock::ModuleNotInstalled));
         let mut p = policy();
         p.activated_by_administrator = false;
-        let result = evaluate_enterprise_self_evolution(ModuleInstallState::Installed, &p, &request());
+        let result =
+            evaluate_enterprise_self_evolution(ModuleInstallState::Installed, &p, &request());
         assert!(!result.may_prepare_proposals);
         assert_eq!(result.blocked_by, Some(SelfEvolutionBlock::AdministratorActivationRequired));
     }
@@ -191,13 +194,15 @@ mod tests {
         let mut r = request();
         r.selected_model_id = "unapproved-model".into();
         assert_eq!(
-            evaluate_enterprise_self_evolution(ModuleInstallState::Installed, &policy(), &r).blocked_by,
+            evaluate_enterprise_self_evolution(ModuleInstallState::Installed, &policy(), &r)
+                .blocked_by,
             Some(SelfEvolutionBlock::ModelNotApproved)
         );
         r = request();
         r.requested_write_scope = "crates/ujani-enterprise-policy".into();
         assert_eq!(
-            evaluate_enterprise_self_evolution(ModuleInstallState::Installed, &policy(), &r).blocked_by,
+            evaluate_enterprise_self_evolution(ModuleInstallState::Installed, &policy(), &r)
+                .blocked_by,
             Some(SelfEvolutionBlock::ScopeNotApproved)
         );
     }
@@ -205,9 +210,7 @@ mod tests {
     #[test]
     fn administrator_allowlist_cannot_include_protected_core_or_secret_paths() {
         let mut p = policy();
-        p.approved_write_scopes = BTreeSet::from([
-            "crates/ujani-enterprise-policy".into(),
-        ]);
+        p.approved_write_scopes = BTreeSet::from(["crates/ujani-enterprise-policy".into()]);
         let mut r = request();
         r.requested_write_scope = "crates/ujani-enterprise-policy".into();
         assert_eq!(
@@ -218,7 +221,8 @@ mod tests {
         p.approved_write_scopes = BTreeSet::from(["apps/operator-console/help".into()]);
         r = request();
         r.requested_write_scope = "apps/operator-console/help/.env.production".into();
-        p.approved_write_scopes.insert(r.requested_write_scope.clone());
+        p.approved_write_scopes
+            .insert(r.requested_write_scope.clone());
         assert_eq!(
             evaluate_enterprise_self_evolution(ModuleInstallState::Installed, &p, &r).blocked_by,
             Some(SelfEvolutionBlock::ProtectedScope)
@@ -230,7 +234,8 @@ mod tests {
         let mut r = request();
         r.trusted_source_and_build_environment_configured = false;
         assert_eq!(
-            evaluate_enterprise_self_evolution(ModuleInstallState::Installed, &policy(), &r).blocked_by,
+            evaluate_enterprise_self_evolution(ModuleInstallState::Installed, &policy(), &r)
+                .blocked_by,
             Some(SelfEvolutionBlock::TrustedBuildEnvironmentRequired)
         );
     }
@@ -239,10 +244,14 @@ mod tests {
     fn dual_approval_is_enforced_when_configured() {
         let mut r = request();
         r.secondary_approval_present = false;
-        let result = evaluate_enterprise_self_evolution(ModuleInstallState::Installed, &policy(), &r);
+        let result =
+            evaluate_enterprise_self_evolution(ModuleInstallState::Installed, &policy(), &r);
         assert!(result.may_prepare_proposals);
         assert!(!result.may_submit_for_review);
-        assert_eq!(result.blocked_by, Some(SelfEvolutionBlock::SecondaryApprovalRequired));
+        assert_eq!(
+            result.blocked_by,
+            Some(SelfEvolutionBlock::SecondaryApprovalRequired)
+        );
     }
 
     #[test]
