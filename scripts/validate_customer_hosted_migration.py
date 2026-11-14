@@ -210,8 +210,8 @@ def main() -> None:
     if "SECURITY DEFINER" in atomic_sql:
         raise SystemExit("atomic device admission must preserve caller RLS and privileges")
     atomic_test = ATOMIC_ADMISSION_TEST_PATH.read_text(encoding="utf-8")
-    if "GRANT SELECT,INSERT,UPDATE ON" in atomic_test:
-        raise SystemExit("atomic admission test must not grant broad runtime mutation privileges")
+    if "GRANT SELECT,INSERT,UPDATE ON" in atomic_test or "UPDATE ujani_control.devices SET owner_consent_state" in atomic_test:
+        raise SystemExit("atomic admission test must not grant broad runtime mutation privileges or let runtime change owner consent")
     for required in (
         "REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA ujani_control FROM ujani_runtime",
         "REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA ujani_control FROM ujani_runtime",
@@ -225,6 +225,7 @@ def main() -> None:
         "valid admission was not committed",
         "replayed request was admitted",
         "over-capacity request was admitted",
+        "admission-device-paused",
         "paused owner consent admitted work",
         "approval from a disabled administrator was accepted",
         "approval from a non-administrator was accepted",
