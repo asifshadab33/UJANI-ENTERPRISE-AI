@@ -191,7 +191,7 @@ REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA ujani_control FROM ujani_runtime;
 REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA ujani_control FROM ujani_runtime;
 REVOKE ALL ON SCHEMA ujani_control FROM ujani_runtime;
 REVOKE ALL ON FUNCTION ujani_control.admit_device_lease(
- text,text,text,text,text,bytea,bytea,bytea,bigint,bigint,integer,bigint,bytea,bytea,bytea,timestamptz,uuid
+ text,text,text,text,text,bytea,bytea,bytea,bigint,bigint,integer,bigint,bytea,timestamptz,uuid
 ) FROM PUBLIC,ujani_runtime;
 GRANT USAGE ON SCHEMA ujani_control TO ujani_runtime;
 GRANT SELECT ON ujani_control.devices,ujani_control.device_keys,
@@ -208,7 +208,7 @@ GRANT UPDATE (reservation_revision, updated_at)
 GRANT INSERT ON ujani_control.leases,ujani_control.request_replays,
  ujani_control.audit_events TO ujani_runtime;
 GRANT EXECUTE ON FUNCTION ujani_control.admit_device_lease(
- text,text,text,text,text,bytea,bytea,bytea,bigint,bigint,integer,bigint,bytea,bytea,bytea,timestamptz,uuid
+ text,text,text,text,text,bytea,bytea,bytea,bigint,bigint,integer,bigint,bytea,timestamptz,uuid
 ) TO ujani_runtime;
 
 SET ROLE ujani_runtime;
@@ -330,24 +330,13 @@ BEGIN
   'admission-test','admission-device','admission-workload','admission-approval',
   'admission-lease-1',decode(repeat('51',16),'hex'),decode(repeat('52',32),'hex'),
   decode(repeat('44',32),'hex'),1,1,1000,1024,decode(repeat('53',32),'hex'),
-  NULL,decode(repeat('81',32),'hex'),
   clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000081');
  IF admitted IS DISTINCT FROM true THEN RAISE EXCEPTION 'valid admission was not committed'; END IF;
-
- -- A stale audit-chain head must fail before consuming the request nonce.
- admitted := ujani_control.admit_device_lease(
-  'admission-test','admission-device','admission-workload','admission-approval',
-  'admission-lease-stale-audit-head',decode(repeat('91',16),'hex'),decode(repeat('92',32),'hex'),
-  decode(repeat('44',32),'hex'),1,1,100,100,decode(repeat('93',32),'hex'),
-  NULL,decode(repeat('83',32),'hex'),
-  clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000089');
- IF admitted THEN RAISE EXCEPTION 'stale audit-chain head was accepted'; END IF;
 
  admitted := ujani_control.admit_device_lease(
   'admission-test','admission-device','admission-workload','admission-approval',
   'admission-lease-replay',decode(repeat('51',16),'hex'),decode(repeat('52',32),'hex'),
   decode(repeat('44',32),'hex'),1,1,1000,1024,decode(repeat('54',32),'hex'),
-  NULL,decode(repeat('99',32),'hex'),
   clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000082');
  IF admitted THEN RAISE EXCEPTION 'replayed request was admitted'; END IF;
 
@@ -355,7 +344,6 @@ BEGIN
   'admission-test','admission-device','admission-workload','admission-approval',
   'admission-lease-over-capacity',decode(repeat('55',16),'hex'),decode(repeat('56',32),'hex'),
   decode(repeat('44',32),'hex'),1,1,3500,1024,decode(repeat('57',32),'hex'),
-  NULL,decode(repeat('99',32),'hex'),
   clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000083');
  IF admitted THEN RAISE EXCEPTION 'over-capacity request was admitted'; END IF;
 
@@ -363,7 +351,6 @@ BEGIN
   'admission-test','admission-device','admission-workload','admission-disabled-approval',
   'admission-lease-disabled-admin',decode(repeat('65',16),'hex'),decode(repeat('66',32),'hex'),
   decode(repeat('44',32),'hex'),1,1,100,100,decode(repeat('67',32),'hex'),
-  NULL,decode(repeat('99',32),'hex'),
   clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000085');
  IF admitted THEN RAISE EXCEPTION 'approval from a disabled administrator was accepted'; END IF;
 
@@ -371,7 +358,6 @@ BEGIN
   'admission-test','admission-device','admission-workload','admission-viewer-approval',
   'admission-lease-viewer',decode(repeat('68',16),'hex'),decode(repeat('69',32),'hex'),
   decode(repeat('44',32),'hex'),1,1,100,100,decode(repeat('6a',32),'hex'),
-  NULL,decode(repeat('99',32),'hex'),
   clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000086');
  IF admitted THEN RAISE EXCEPTION 'approval from a non-administrator was accepted'; END IF;
 
@@ -379,7 +365,6 @@ BEGIN
   'admission-test','admission-device-future-key','admission-workload','admission-approval',
   'admission-lease-future-key',decode(repeat('71',16),'hex'),decode(repeat('72',32),'hex'),
   decode(repeat('44',32),'hex'),2,1,100,100,decode(repeat('73',32),'hex'),
-  NULL,decode(repeat('99',32),'hex'),
   clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000087');
  IF admitted THEN RAISE EXCEPTION 'future-dated active device key was accepted'; END IF;
 
@@ -387,7 +372,6 @@ BEGIN
   'admission-test','admission-device-revoked-key','admission-workload','admission-approval',
   'admission-lease-revoked-key',decode(repeat('74',16),'hex'),decode(repeat('75',32),'hex'),
   decode(repeat('44',32),'hex'),3,1,100,100,decode(repeat('76',32),'hex'),
-  NULL,decode(repeat('99',32),'hex'),
   clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000088');
  IF admitted THEN RAISE EXCEPTION 'revoked active device key was accepted'; END IF;
 
@@ -395,7 +379,6 @@ BEGIN
   'admission-test','admission-device-paused','admission-workload','admission-approval',
   'admission-lease-optout',decode(repeat('58',16),'hex'),decode(repeat('59',32),'hex'),
   decode(repeat('44',32),'hex'),1,1,100,100,decode(repeat('5a',32),'hex'),
-  NULL,decode(repeat('99',32),'hex'),
   clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000084');
  IF admitted THEN RAISE EXCEPTION 'paused owner consent admitted work'; END IF;
 
@@ -417,8 +400,10 @@ BEGIN
  WHERE tenant_id='admission-test'
    AND event_id='00000000-0000-4000-8000-000000000081';
  IF audit_previous IS NOT NULL
-    OR audit_digest IS DISTINCT FROM decode(repeat('81',32),'hex') THEN
-  RAISE EXCEPTION 'audit event did not preserve the expected chain head and digest';
+    OR audit_digest IS NULL
+    OR pg_catalog.octet_length(audit_digest) <> 32
+    OR audit_digest = decode(repeat('00',32),'hex') THEN
+  RAISE EXCEPTION 'database audit hash-chain trigger did not produce a nonzero SHA-256 event digest';
  END IF;
 
  -- A late audit failure must roll back the nonce, lease and revision as well.
@@ -427,7 +412,6 @@ BEGIN
    'admission-test','admission-device','admission-workload','admission-approval',
    'admission-lease-rollback',decode(repeat('61',16),'hex'),decode(repeat('62',32),'hex'),
    decode(repeat('44',32),'hex'),1,1,100,100,decode(repeat('63',32),'hex'),
-   decode(repeat('81',32),'hex'),decode(repeat('82',32),'hex'),
    clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000081');
   RAISE EXCEPTION 'duplicate audit event id did not fail';
  EXCEPTION WHEN unique_violation THEN
