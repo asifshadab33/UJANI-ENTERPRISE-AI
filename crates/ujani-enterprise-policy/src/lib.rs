@@ -4,6 +4,7 @@
 #![forbid(unsafe_code)]
 
 pub mod self_evolution;
+pub mod self_evolution_action_gate;
 pub mod self_evolution_approval;
 pub mod self_evolution_module;
 
