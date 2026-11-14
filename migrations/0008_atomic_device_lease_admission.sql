@@ -8,6 +8,20 @@ ALTER TABLE ujani_control.devices
  ADD COLUMN IF NOT EXISTS consent_generation bigint NOT NULL DEFAULT 0 CHECK (consent_generation >= 0),
  ADD COLUMN IF NOT EXISTS reservation_revision bigint NOT NULL DEFAULT 0 CHECK (reservation_revision >= 0);
 
+-- Preserve monotonic consent history for devices that already have a durable
+-- owner-consent event. Devices without such evidence remain generation zero
+-- and cannot be admitted until a fresh owner-consent event is recorded.
+UPDATE ujani_control.devices d
+SET consent_generation = consent.latest_generation
+FROM (
+ SELECT tenant_id, device_id, max(consent_generation) AS latest_generation
+ FROM ujani_control.owner_consents
+ GROUP BY tenant_id, device_id
+) consent
+WHERE d.tenant_id = consent.tenant_id
+  AND d.device_id = consent.device_id
+  AND d.consent_generation < consent.latest_generation;
+
 ALTER TABLE ujani_control.leases
  ADD COLUMN IF NOT EXISTS requested_cpu_millis integer NOT NULL DEFAULT 0 CHECK (requested_cpu_millis >= 0),
  ADD COLUMN IF NOT EXISTS requested_memory_mb bigint NOT NULL DEFAULT 0 CHECK (requested_memory_mb >= 0),
