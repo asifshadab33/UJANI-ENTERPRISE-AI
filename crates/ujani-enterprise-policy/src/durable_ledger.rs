@@ -1040,7 +1040,7 @@ fn serialize_snapshot_body(ledger: &Ledger) -> String {
 fn serialize_snapshot(ledger: &Ledger, key_id: &str, key: &[u8; 32]) -> Vec<u8> {
     let mut body = serialize_snapshot_body(ledger);
     let mac = ledger_mac(key, key_id, body.as_bytes());
-    body.push_str(&format!("M\\t{}\\t{}\\n", key_id, hex_encode(&mac)));
+    body.push_str(&format!("M\t{}\t{}\n", key_id, hex_encode(&mac)));
     body.into_bytes()
 }
 
@@ -1055,7 +1055,7 @@ fn serialize_snapshot_with_provider(
     if !valid_stored_identifier(&key_id, 128) {
         return Err(DurableLedgerError::InvalidRecord);
     }
-    body.push_str(&format!("M\\t{}\\t{}\\n", key_id, hex_encode(&mac)));
+    body.push_str(&format!("M\t{}\t{}\n", key_id, hex_encode(&mac)));
     Ok(body.into_bytes())
 }
 fn deserialize_snapshot(
@@ -1091,16 +1091,16 @@ fn deserialize_snapshot_with_verifier(
     verify: impl FnOnce(&str, &[u8], &[u8]) -> Result<(), DurableLedgerError>,
 ) -> Result<Ledger, DurableLedgerError> {
     let text = std::str::from_utf8(bytes).map_err(|_| DurableLedgerError::CorruptState)?;
-    if bytes.len() as u64 > MAX_LEDGER_BYTES || !text.ends_with('\\n') {
+    if bytes.len() as u64 > MAX_LEDGER_BYTES || !text.ends_with('\n') {
         return Err(DurableLedgerError::CorruptState);
     }
-    let mac_start = text.rfind("M\\t").ok_or(DurableLedgerError::CorruptState)?;
+    let mac_start = text.rfind("M\t").ok_or(DurableLedgerError::CorruptState)?;
     let body = &text[..mac_start];
     let mac_line = &text[mac_start..];
     let mut mac_fields = mac_line
-        .strip_suffix('\\n')
+        .strip_suffix('\n')
         .ok_or(DurableLedgerError::CorruptState)?
-        .split('\\t');
+        .split('\t');
     if mac_fields.next() != Some("M") {
         return Err(DurableLedgerError::CorruptState);
     }
@@ -1330,11 +1330,60 @@ fn load_or_recover(
     }
 }
 
+
+fn load_or_recover_with_provider(
+    path: &Path,
+    provider: &dyn IntegrityKeyProvider,
+) -> Result<Ledger, DurableLedgerError> {
+    let backup = append_suffix(path, ".bak");
+    if !path.exists() {
+        if backup.exists() {
+            fs::rename(&backup, path)?;
+        } else {
+            return Ok(Ledger::default());
+        }
+    }
+    let current = read_snapshot(path);
+    match current.and_then(|bytes| deserialize_snapshot_with_provider(&bytes, provider)) {
+        Ok(ledger) => {
+            if backup.exists() {
+                let _ = fs::remove_file(backup);
+            }
+            Ok(ledger)
+        }
+        Err(current_error) => {
+            if !backup.exists() {
+                return Err(current_error);
+            }
+            let backup_bytes = read_snapshot(&backup)?;
+            let recovered = deserialize_snapshot_with_provider(&backup_bytes, provider)?;
+            let corrupt = append_suffix(path, ".corrupt");
+            if corrupt.exists() {
+                fs::remove_file(&corrupt)?;
+            }
+            if path.exists() {
+                fs::rename(path, &corrupt)?;
+            }
+            fs::rename(&backup, path)?;
+            Ok(recovered)
+        }
+    }
+}
+
 fn persist_snapshot(
     path: &Path,
     ledger: &Ledger,
     key_id: &str,
     key: &[u8; 32],
+    preserve_backup: bool,
+) -> Result<(), DurableLedgerError> {
+    let bytes = serialize_snapshot(ledger, key_id, key);
+    persist_snapshot_bytes(path, &bytes, preserve_backup)
+}
+
+fn persist_snapshot_bytes(
+    path: &Path,
+    bytes: &[u8],
     preserve_backup: bool,
 ) -> Result<(), DurableLedgerError> {
     // This crate forbids unsafe code. Until a reviewed safe Windows durability
@@ -1354,7 +1403,6 @@ fn persist_snapshot(
     if temp.exists() {
         fs::remove_file(&temp)?;
     }
-    let bytes = serialize_snapshot(ledger, key_id, key);
     if bytes.len() as u64 > MAX_LEDGER_BYTES {
         return Err(DurableLedgerError::CapacityExceeded);
     }
@@ -2538,7 +2586,7 @@ mod tests {
     #[test]
     fn legacy_checksum_only_v1_snapshot_is_rejected() {
         let path = temp_path("legacy-v1");
-        fs::write(&path, b"UJANI-ENTERPRISE-LEDGER-V1\\nH\\tdeadbeef\\n").unwrap();
+        fs::write(&path, b"UJANI-ENTERPRISE-LEDGER-V1\nH\tdeadbeef\n").unwrap();
         assert_eq!(
             open_ledger(&path).err(),
             Some(DurableLedgerError::CorruptState)
