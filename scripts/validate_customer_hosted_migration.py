@@ -84,6 +84,30 @@ def main() -> None:
     ):
         if required not in self_evolution_replay_test:
             raise SystemExit(f"Self-Evolution approval replay regression test missing: {required}")
+    replay_record_module = (ROOT / "crates" / "ujani-enterprise-policy" / "src" / "self_evolution_approval_replay.rs").read_text(encoding="utf-8")
+    for required in (
+        "SelfEvolutionApprovalReplayRecord",
+        "from_verified(",
+        "approver_subject_id: &str",
+        "self_evolution_target_sha256",
+        "self_evolution_scope_sha256",
+        "UJANI-ENTERPRISE-SELF-EVOLUTION-TARGET-V1",
+        "UJANI-ENTERPRISE-SELF-EVOLUTION-SCOPE-V1",
+        "tenant_id and approver-subject identity",
+        "tenant_id: tenant_id.to_owned()",
+        "approval_id: approval.approval_id().to_owned()",
+        "proposal_sha256: *approval.proposal_sha256()",
+        "target_sha256: self_evolution_target_sha256",
+        "approved_scope_sha256: self_evolution_scope_sha256",
+    ):
+        if required not in replay_record_module:
+            raise SystemExit(f"Self-Evolution replay record adapter contract missing: {required}")
+    if "DATABASE_URL" in replay_record_module or "sqlx::" in replay_record_module or "tokio_postgres" in replay_record_module:
+        raise SystemExit("Policy crate replay record contract must remain database-adapter neutral")
+    approval_module = (ROOT / "crates" / "ujani-enterprise-policy" / "src" / "self_evolution_approval.rs").read_text(encoding="utf-8")
+    for required in ("pub fn repository(", "pub fn base_ref(", "pub fn source_revision(", "pub fn proposal_sha256("):
+        if required not in approval_module:
+            raise SystemExit(f"Verified approval is missing replay binding accessor: {required}")
     telemetry_sql = (ROOT / "migrations" / "0003_monotonic_device_telemetry.sql").read_text(encoding="utf-8")
     telemetry_test = (ROOT / "scripts" / "test_monotonic_device_telemetry.sql").read_text(encoding="utf-8")
     for required in (
