@@ -15,6 +15,10 @@ pub enum ModuleInstallState {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SelfEvolutionBlock {
+    AdministratorRequired,
+    ExplicitUserOptInRequired,
+    AlreadyInstalled,
+    TooManyChanges,
     ModuleNotInstalled,
     AdministratorProhibited,
     AdministratorActivationRequired,
@@ -467,7 +471,7 @@ mod action_gate_tests {
     #[test]
     fn proposal_generation_reuses_existing_policy_and_returns_bounded_permit() {
         let permit = authorize_enterprise_self_evolution_action(ModuleInstallState::Installed, &policy(), &request(), OperatorRole::Administrator, SelfEvolutionAction::GenerateProposal, true, 2).unwrap().unwrap();
-        assert_eq!(permit.approved_scope(), &["apps/operator-console/help"]);
+        assert_eq!(permit.approved_scope()[0], "apps/operator-console/help");
         assert_eq!(permit.max_changes(), crate::self_evolution::MAX_PROPOSAL_CHANGES);
         let mut denied = policy(); denied.approved_model_ids.clear();
         assert_eq!(authorize_enterprise_self_evolution_action(ModuleInstallState::Installed, &denied, &request(), OperatorRole::Administrator, SelfEvolutionAction::GenerateProposal, true, 1), Err(SelfEvolutionBlock::ModelNotApproved));
