@@ -944,6 +944,51 @@ mod tests {
     }
 
     #[test]
+    fn signed_scheduling_policy_rejects_same_id_manifest_bait_and_switch() {
+        let challenge = fresh_test_challenge();
+        let now = 80_000;
+        let (telemetry, policy, device_key, admin_key) = signed_evidence(challenge, now);
+
+        // The administrator policy was signed for the original Internal/no-network manifest.
+        let mut safe_manifest = crate::WorkloadManifest {
+            schema_version: 1,
+            workload_id: "job-01".into(),
+            class: "inference".into(),
+            model: "llama3.2".into(),
+            requested_cpu_millis: 1000,
+            requested_memory_mb: 1024,
+            max_runtime_ms: 60_000,
+            data_classification: DataClassification::Internal,
+            network_access: false,
+        };
+        let safe_workload = workload_from_manifest(&safe_manifest).unwrap();
+
+        // Keep the workload ID but alter both the classification and egress privilege.
+        safe_manifest.data_classification = DataClassification::Restricted;
+        safe_manifest.network_access = true;
+        let substituted_workload = workload_from_manifest(&safe_manifest).unwrap();
+        assert_eq!(safe_workload.workload_id, substituted_workload.workload_id);
+        assert_ne!(safe_workload.manifest_sha256, substituted_workload.manifest_sha256);
+
+        // Reuse the original signed policy against the substituted workload.
+        // The exact manifest binding must fail before admission or reservation.
+        assert_eq!(
+            verify_scheduling_context(
+                &device(),
+                &substituted_workload,
+                &telemetry,
+                &policy,
+                &[("worker-01".into(), device_key.verifying_key())],
+                &[("admin-key-01".into(), admin_key.verifying_key())],
+                &challenge,
+                now + 1,
+            )
+            .unwrap_err(),
+            SchedulingEvidenceError::ManifestMismatch
+        );
+    }
+
+    #[test]
     fn durable_ledger_rejects_replayed_or_regressed_worker_telemetry_generations() {
         let path = std::env::temp_dir().join(format!(
             "ujani-telemetry-generation-{}.ledger",
