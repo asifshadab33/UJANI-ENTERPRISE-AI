@@ -7,6 +7,9 @@ SQL_PATH = ROOT / "migrations" / "0001_customer_hosted_control_plane.sql"
 TASK_REPLAY_SQL_PATH = ROOT / "migrations" / "0002_task_contract_replay_storage.sql"
 SELF_EVOLUTION_REPLAY_SQL_PATH = ROOT / "migrations" / "0006_self_evolution_approval_replay.sql"
 SELF_EVOLUTION_REPLAY_TEST_PATH = ROOT / "scripts" / "test_self_evolution_approval_replay.sql"
+SELF_EVOLUTION_CONSUMPTION_SQL_PATH = ROOT / "migrations" / "0007_self_evolution_approval_consumption_function.sql"
+SELF_EVOLUTION_CONSUMPTION_TEST_PATH = ROOT / "scripts" / "test_self_evolution_approval_consumption_function.sql"
+SELF_EVOLUTION_CONCURRENCY_TEST_PATH = ROOT / "scripts" / "test_self_evolution_approval_consumption_concurrency.sh"
 TENANT_TEST_SQL_PATH = ROOT / "scripts" / "test_customer_hosted_migration.sql"
 
 
@@ -84,6 +87,44 @@ def main() -> None:
     ):
         if required not in self_evolution_replay_test:
             raise SystemExit(f"Self-Evolution approval replay regression test missing: {required}")
+    self_evolution_consumption_sql = SELF_EVOLUTION_CONSUMPTION_SQL_PATH.read_text(encoding="utf-8")
+    for required in (
+        "CREATE OR REPLACE FUNCTION ujani_control.consume_self_evolution_approval",
+        "SECURITY INVOKER",
+        "current_setting('ujani.tenant_id', true)",
+        "pg_advisory_xact_lock",
+        "hashtextextended",
+        "clock_timestamp()",
+        "ON CONFLICT DO NOTHING",
+        "RETURNING approval_id INTO inserted_approval_id",
+        "REVOKE ALL ON FUNCTION",
+    ):
+        if required not in self_evolution_consumption_sql:
+            raise SystemExit(f"Self-Evolution consumption function is missing invariant: {required}")
+    if "SECURITY DEFINER" in self_evolution_consumption_sql:
+        raise SystemExit("Self-Evolution consumption must preserve caller RLS and privileges")
+    self_evolution_consumption_test = SELF_EVOLUTION_CONSUMPTION_TEST_PATH.read_text(encoding="utf-8")
+    for required in (
+        "duplicate approval ID was consumed twice",
+        "duplicate approval nonce was consumed twice",
+        "expired approval was consumed",
+        "cross-tenant approval consumption unexpectedly succeeded",
+        "approval consumption without tenant context unexpectedly succeeded",
+    ):
+        if required not in self_evolution_consumption_test:
+            raise SystemExit(f"Self-Evolution consumption regression test missing: {required}")
+    self_evolution_concurrency_test = SELF_EVOLUTION_CONCURRENCY_TEST_PATH.read_text(encoding="utf-8")
+    for required in (
+        "pg_sleep(2)",
+        "clock_timestamp() + interval '1 second'",
+        "pg_stat_activity",
+        "wait_event_type = 'Lock'",
+        "wait_event = 'advisory'",
+        "approval request was not observed waiting on the advisory nonce lock",
+        "approval that expired while waiting on the nonce lock was consumed",
+    ):
+        if required not in self_evolution_concurrency_test:
+            raise SystemExit(f"Self-Evolution approval concurrency regression missing: {required}")
     telemetry_sql = (ROOT / "migrations" / "0003_monotonic_device_telemetry.sql").read_text(encoding="utf-8")
     telemetry_test = (ROOT / "scripts" / "test_monotonic_device_telemetry.sql").read_text(encoding="utf-8")
     for required in (
