@@ -271,6 +271,54 @@ mod tests {
     }
 
     #[test]
+    fn binds_approval_to_one_tenant_subject_and_unambiguous_key_enrollment() {
+        let key = SigningKey::from_bytes(&[9; 32]);
+        let target = target();
+        let proposal = proposal();
+        let signed = signed_approval(&proposal, &target, &key);
+
+        assert_eq!(
+            verify_self_evolution_approval(
+                &signed,
+                &[(
+                    "admin-key-01".into(),
+                    "tenant-a".into(),
+                    "admin-b".into(),
+                    key.verifying_key(),
+                )],
+                &target,
+                &proposal,
+                2_000,
+            ),
+            Err(SelfEvolutionApprovalError::UnknownApproverKey)
+        );
+
+        assert_eq!(
+            verify_self_evolution_approval(
+                &signed,
+                &[
+                    (
+                        "admin-key-01".into(),
+                        "tenant-a".into(),
+                        "admin-a".into(),
+                        key.verifying_key(),
+                    ),
+                    (
+                        "admin-key-01".into(),
+                        "tenant-a".into(),
+                        "admin-a".into(),
+                        SigningKey::from_bytes(&[10; 32]).verifying_key(),
+                    ),
+                ],
+                &target,
+                &proposal,
+                2_000,
+            ),
+            Err(SelfEvolutionApprovalError::AmbiguousApproverKey)
+        );
+    }
+
+    #[test]
     fn accepts_exact_proposal_target_and_enrolled_admin_signature() {
         let key = SigningKey::from_bytes(&[9; 32]);
         let proposal = proposal();
