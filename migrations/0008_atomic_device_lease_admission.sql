@@ -174,7 +174,9 @@ LANGUAGE plpgsql
 SECURITY INVOKER
 SET search_path = pg_catalog, ujani_control
 AS $function$
-DECLARE v_current bigint;
+DECLARE
+ v_current bigint;
+ v_owner_subject_id text;
 BEGIN
  IF NEW.tenant_id IS DISTINCT FROM pg_catalog.current_setting('ujani.tenant_id', true) THEN
   RAISE EXCEPTION 'authenticated tenant context mismatch' USING ERRCODE = '42501';
@@ -185,6 +187,13 @@ BEGIN
  FOR UPDATE;
  IF NOT FOUND OR NEW.consent_generation <> v_current + 1 THEN
   RAISE EXCEPTION 'owner consent revision is not the next generation' USING ERRCODE = '23514';
+ END IF;
+ SELECT owner_subject_id INTO v_owner_subject_id
+ FROM ujani_control.device_owner_bindings
+ WHERE tenant_id = NEW.tenant_id AND device_id = NEW.device_id AND active IS TRUE
+ FOR SHARE;
+ IF NOT FOUND OR NEW.actor_ref IS DISTINCT FROM v_owner_subject_id THEN
+  RAISE EXCEPTION 'owner consent actor does not match the active device owner' USING ERRCODE = '42501';
  END IF;
  UPDATE ujani_control.devices
  SET consent_generation = NEW.consent_generation,
