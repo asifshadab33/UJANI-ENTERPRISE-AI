@@ -1090,6 +1090,50 @@ mod tests {
     }
 
     #[test]
+    fn admin_approval_does_not_cover_same_id_manifest_substitution() {
+        let signing = SigningKey::from_bytes(&[17u8; 32]);
+        let mut safe_manifest = manifest();
+        safe_manifest.data_classification = DataClassification::Public;
+        safe_manifest.network_access = false;
+        let safe_workload = workload_from_manifest(&safe_manifest).unwrap();
+        let now = 10_000;
+        let claims = AdminApprovalClaims {
+            approval_id: "approval-manifest-binding".into(),
+            workload_id: safe_manifest.workload_id.clone(),
+            device_id: "lab-gpu-01".into(),
+            class: safe_manifest.class.clone(),
+            max_cpu_millis: 2000,
+            max_memory_mb: 4096,
+            approver_key_id: "admin-key-manifest".into(),
+            manifest_sha256: workload_manifest_sha256(&safe_manifest).unwrap(),
+            issued_at_unix_ms: now,
+            expires_unix_ms: now + 5_000,
+        };
+        let signed = SignedAdminApproval {
+            signature: signing.sign(&admin_approval_bytes(&claims)).to_bytes(),
+            claims,
+        };
+        let verified = verify_admin_approval(
+            &signed,
+            &[("admin-key-manifest".into(), signing.verifying_key())],
+            now + 1,
+        )
+        .unwrap();
+
+        // Keep the workload ID and resource request but elevate data/network privileges.
+        safe_manifest.data_classification = DataClassification::Restricted;
+        safe_manifest.network_access = true;
+        let substituted_workload = workload_from_manifest(&safe_manifest).unwrap();
+        assert_eq!(safe_workload.workload_id, substituted_workload.workload_id);
+        assert!(!approval_covers(
+            &verified,
+            &device(),
+            &substituted_workload,
+            now + 1,
+        ));
+    }
+
+    #[test]
     fn workload_manifest_rejects_unknown_versions_and_invalid_limits() {
         let mut value = manifest();
         value.schema_version = 2;
