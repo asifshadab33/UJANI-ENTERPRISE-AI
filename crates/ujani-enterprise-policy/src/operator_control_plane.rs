@@ -182,7 +182,7 @@ fn validate_claims(claims: &OperatorSessionClaims, now: u64) -> Result<(), Opera
     }
     Ok(())
 }
-fn valid_identifier(value: &str, max: usize) -> bool {
+pub(crate) fn valid_identifier(value: &str, max: usize) -> bool {
     !value.is_empty()
         && value.len() <= max
         && value
