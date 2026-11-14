@@ -128,7 +128,7 @@ DO $block$
 DECLARE table_name text;
 BEGIN
  FOREACH table_name IN ARRAY ARRAY[
-  'device_keys','owner_consents','workloads','approvals','operator_subjects'
+  'device_keys','owner_consents','workloads','approvals','operator_subjects','device_owner_bindings'
  ] LOOP
   EXECUTE format(
    'DROP TRIGGER IF EXISTS admission_lock_marker_immutable ON ujani_control.%I',
