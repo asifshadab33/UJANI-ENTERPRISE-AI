@@ -373,8 +373,12 @@ pub struct ProposalGenerationPermit {
 }
 
 impl ProposalGenerationPermit {
-    pub fn approved_scope(&self) -> &[String] { &self.approved_scope }
-    pub fn max_changes(&self) -> usize { self.max_changes }
+    pub fn approved_scope(&self) -> &[String] {
+        &self.approved_scope
+    }
+    pub fn max_changes(&self) -> usize {
+        self.max_changes
+    }
 }
 
 /// Apply authenticated role and explicit owner opt-in checks around the existing
@@ -396,7 +400,9 @@ pub fn authorize_enterprise_self_evolution_action(
 ) -> Result<Option<ProposalGenerationPermit>, SelfEvolutionBlock> {
     use crate::operator_control_plane::OperatorRole;
 
-    if action == SelfEvolutionAction::ViewStatus { return Ok(None); }
+    if action == SelfEvolutionAction::ViewStatus {
+        return Ok(None);
+    }
     if actor_role != OperatorRole::Administrator {
         return Err(SelfEvolutionBlock::AdministratorRequired);
     }
@@ -418,14 +424,21 @@ pub fn authorize_enterprise_self_evolution_action(
     if !explicit_user_opt_in {
         return Err(SelfEvolutionBlock::ExplicitUserOptInRequired);
     }
-    if matches!(action, SelfEvolutionAction::StageChanges | SelfEvolutionAction::ApplyChanges) {
+    if matches!(
+        action,
+        SelfEvolutionAction::StageChanges | SelfEvolutionAction::ApplyChanges
+    ) {
         return Err(SelfEvolutionBlock::ApprovalPipelineUnavailable);
     }
-    if requested_change_count == 0 || requested_change_count > crate::self_evolution::MAX_PROPOSAL_CHANGES {
+    if requested_change_count == 0
+        || requested_change_count > crate::self_evolution::MAX_PROPOSAL_CHANGES
+    {
         return Err(SelfEvolutionBlock::TooManyChanges);
     }
     let permission = evaluate_enterprise_self_evolution(installation, policy, request);
-    if let Some(blocked_by) = permission.blocked_by { return Err(blocked_by); }
+    if let Some(blocked_by) = permission.blocked_by {
+        return Err(blocked_by);
+    }
     let approved_scope = normalize_scope(&request.requested_write_scope)
         .ok_or(SelfEvolutionBlock::ScopeNotApproved)?;
     Ok(Some(ProposalGenerationPermit {
@@ -458,29 +471,135 @@ mod action_gate_tests {
     }
     #[test]
     fn non_admin_cannot_install_or_generate_proposals() {
-        assert_eq!(authorize_enterprise_self_evolution_action(ModuleInstallState::NotInstalled, &policy(), &request(), OperatorRole::Operator, SelfEvolutionAction::InstallFeature, true, 1), Err(SelfEvolutionBlock::AdministratorRequired));
-        assert_eq!(authorize_enterprise_self_evolution_action(ModuleInstallState::Installed, &policy(), &request(), OperatorRole::Viewer, SelfEvolutionAction::GenerateProposal, true, 1), Err(SelfEvolutionBlock::AdministratorRequired));
+        assert_eq!(
+            authorize_enterprise_self_evolution_action(
+                ModuleInstallState::NotInstalled,
+                &policy(),
+                &request(),
+                OperatorRole::Operator,
+                SelfEvolutionAction::InstallFeature,
+                true,
+                1
+            ),
+            Err(SelfEvolutionBlock::AdministratorRequired)
+        );
+        assert_eq!(
+            authorize_enterprise_self_evolution_action(
+                ModuleInstallState::Installed,
+                &policy(),
+                &request(),
+                OperatorRole::Viewer,
+                SelfEvolutionAction::GenerateProposal,
+                true,
+                1
+            ),
+            Err(SelfEvolutionBlock::AdministratorRequired)
+        );
     }
     #[test]
     fn installation_requires_admin_permission_and_explicit_owner_opt_in() {
-        assert_eq!(authorize_enterprise_self_evolution_action(ModuleInstallState::NotInstalled, &policy(), &request(), OperatorRole::Administrator, SelfEvolutionAction::InstallFeature, false, 0), Err(SelfEvolutionBlock::ExplicitUserOptInRequired));
-        let mut denied = policy(); denied.permitted_by_administrator = false;
-        assert_eq!(authorize_enterprise_self_evolution_action(ModuleInstallState::NotInstalled, &denied, &request(), OperatorRole::Administrator, SelfEvolutionAction::InstallFeature, true, 0), Err(SelfEvolutionBlock::AdministratorProhibited));
-        assert_eq!(authorize_enterprise_self_evolution_action(ModuleInstallState::NotInstalled, &policy(), &request(), OperatorRole::Administrator, SelfEvolutionAction::InstallFeature, true, 0), Ok(None));
+        assert_eq!(
+            authorize_enterprise_self_evolution_action(
+                ModuleInstallState::NotInstalled,
+                &policy(),
+                &request(),
+                OperatorRole::Administrator,
+                SelfEvolutionAction::InstallFeature,
+                false,
+                0
+            ),
+            Err(SelfEvolutionBlock::ExplicitUserOptInRequired)
+        );
+        let mut denied = policy();
+        denied.permitted_by_administrator = false;
+        assert_eq!(
+            authorize_enterprise_self_evolution_action(
+                ModuleInstallState::NotInstalled,
+                &denied,
+                &request(),
+                OperatorRole::Administrator,
+                SelfEvolutionAction::InstallFeature,
+                true,
+                0
+            ),
+            Err(SelfEvolutionBlock::AdministratorProhibited)
+        );
+        assert_eq!(
+            authorize_enterprise_self_evolution_action(
+                ModuleInstallState::NotInstalled,
+                &policy(),
+                &request(),
+                OperatorRole::Administrator,
+                SelfEvolutionAction::InstallFeature,
+                true,
+                0
+            ),
+            Ok(None)
+        );
     }
     #[test]
     fn proposal_generation_reuses_existing_policy_and_returns_bounded_permit() {
-        let permit = authorize_enterprise_self_evolution_action(ModuleInstallState::Installed, &policy(), &request(), OperatorRole::Administrator, SelfEvolutionAction::GenerateProposal, true, 2).unwrap().unwrap();
+        let permit = authorize_enterprise_self_evolution_action(
+            ModuleInstallState::Installed,
+            &policy(),
+            &request(),
+            OperatorRole::Administrator,
+            SelfEvolutionAction::GenerateProposal,
+            true,
+            2,
+        )
+        .unwrap()
+        .unwrap();
         assert_eq!(permit.approved_scope()[0], "apps/operator-console/help");
-        assert_eq!(permit.max_changes(), crate::self_evolution::MAX_PROPOSAL_CHANGES);
-        let mut denied = policy(); denied.approved_model_ids.clear();
-        assert_eq!(authorize_enterprise_self_evolution_action(ModuleInstallState::Installed, &denied, &request(), OperatorRole::Administrator, SelfEvolutionAction::GenerateProposal, true, 1), Err(SelfEvolutionBlock::ModelNotApproved));
+        assert_eq!(
+            permit.max_changes(),
+            crate::self_evolution::MAX_PROPOSAL_CHANGES
+        );
+        let mut denied = policy();
+        denied.approved_model_ids.clear();
+        assert_eq!(
+            authorize_enterprise_self_evolution_action(
+                ModuleInstallState::Installed,
+                &denied,
+                &request(),
+                OperatorRole::Administrator,
+                SelfEvolutionAction::GenerateProposal,
+                true,
+                1
+            ),
+            Err(SelfEvolutionBlock::ModelNotApproved)
+        );
     }
     #[test]
     fn stage_and_apply_remain_blocked_and_change_count_is_bounded() {
-        for action in [SelfEvolutionAction::StageChanges, SelfEvolutionAction::ApplyChanges] {
-            assert_eq!(authorize_enterprise_self_evolution_action(ModuleInstallState::Installed, &policy(), &request(), OperatorRole::Administrator, action, true, 1), Err(SelfEvolutionBlock::ApprovalPipelineUnavailable));
+        for action in [
+            SelfEvolutionAction::StageChanges,
+            SelfEvolutionAction::ApplyChanges,
+        ] {
+            assert_eq!(
+                authorize_enterprise_self_evolution_action(
+                    ModuleInstallState::Installed,
+                    &policy(),
+                    &request(),
+                    OperatorRole::Administrator,
+                    action,
+                    true,
+                    1
+                ),
+                Err(SelfEvolutionBlock::ApprovalPipelineUnavailable)
+            );
         }
-        assert_eq!(authorize_enterprise_self_evolution_action(ModuleInstallState::Installed, &policy(), &request(), OperatorRole::Administrator, SelfEvolutionAction::GenerateProposal, true, crate::self_evolution::MAX_PROPOSAL_CHANGES + 1), Err(SelfEvolutionBlock::TooManyChanges));
+        assert_eq!(
+            authorize_enterprise_self_evolution_action(
+                ModuleInstallState::Installed,
+                &policy(),
+                &request(),
+                OperatorRole::Administrator,
+                SelfEvolutionAction::GenerateProposal,
+                true,
+                crate::self_evolution::MAX_PROPOSAL_CHANGES + 1
+            ),
+            Err(SelfEvolutionBlock::TooManyChanges)
+        );
     }
 }
