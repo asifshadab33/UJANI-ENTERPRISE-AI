@@ -275,7 +275,12 @@ mod tests {
         };
         verify_self_evolution_approval(
             &signed,
-            &[("admin-key-01".into(), "tenant-a".into(), "admin-a".into(), key.verifying_key())],
+            &[(
+                "admin-key-01".into(),
+                "tenant-a".into(),
+                "admin-a".into(),
+                key.verifying_key(),
+            )],
             &target,
             &proposal,
             2_000,
