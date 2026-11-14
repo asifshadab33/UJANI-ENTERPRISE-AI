@@ -268,6 +268,19 @@ mod tests {
     }
 
     #[test]
+    fn administrator_policy_must_require_dual_approval() {
+        let mut p = policy();
+        p.require_dual_approval = false;
+        let result =
+            evaluate_enterprise_self_evolution(ModuleInstallState::Installed, &p, &request());
+        assert!(!result.may_prepare_proposals);
+        assert_eq!(
+            result.blocked_by,
+            Some(SelfEvolutionBlock::ApprovalPolicyInvalid)
+        );
+    }
+
+    #[test]
     fn trusted_build_environment_is_mandatory() {
         let mut r = request();
         r.trusted_source_and_build_environment_configured = false;
