@@ -107,13 +107,18 @@ pub(crate) fn test_current_operator_session(
     role: OperatorRole,
     expires_at_unix_ms: u64,
 ) -> CurrentOperatorSession {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock must be after Unix epoch")
+        .as_nanos()
+        .to_le_bytes();
     CurrentOperatorSession(OperatorSessionClaims {
         tenant_id: tenant_id.into(),
         subject_id: subject_id.into(),
         role,
         issued_at_unix_ms: 1,
         expires_at_unix_ms,
-        nonce: [1; 16],
+        nonce,
     })
 }
 
