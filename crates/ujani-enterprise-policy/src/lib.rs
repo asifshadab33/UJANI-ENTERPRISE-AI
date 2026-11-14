@@ -16,6 +16,7 @@ pub mod cpu_capacity;
 pub mod device_trust;
 pub mod energy;
 pub mod fleet_capacity;
+pub mod integrity_key_provider;
 pub use fleet_capacity::{
     summarize_fleet_capacity, DeviceCapacity, FleetCapacityError, FleetCapacitySummary,
 };
