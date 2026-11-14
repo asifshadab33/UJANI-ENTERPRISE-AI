@@ -90,7 +90,7 @@ fn is_protected_scope(value: &str) -> bool {
 }
 
 fn normalize_scope(value: &str) -> Option<String> {
-    if value.is_empty() || value.len() > 512 || value.starts_with('/') || value.contains('\\\\') {
+    if value.is_empty() || value.len() > 512 || value.starts_with('/') || value.contains('\\') {
         return None;
     }
     let segments: Vec<&str> = value.split('/').collect();
