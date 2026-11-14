@@ -226,10 +226,6 @@ $function$;
 REVOKE ALL ON FUNCTION ujani_control.admit_device_lease(
  text,text,text,text,text,bytea,bytea,bytea,bigint,bigint,integer,bigint,bytea,timestamptz,uuid
 ) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION ujani_control.admit_device_lease(
- text,text,text,text,text,bytea,bytea,bytea,bigint,bigint,integer,bigint,bytea,timestamptz,uuid
-) TO ujani_runtime;
-
 COMMENT ON FUNCTION ujani_control.admit_device_lease(
  text,text,text,text,text,bytea,bytea,bytea,bigint,bigint,integer,bigint,bytea,timestamptz,uuid
 ) IS
