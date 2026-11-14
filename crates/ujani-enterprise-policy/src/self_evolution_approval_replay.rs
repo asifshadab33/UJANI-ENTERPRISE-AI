@@ -74,9 +74,7 @@ pub fn self_evolution_target_sha256(
 }
 
 /// Hash approved paths independent of input ordering while preserving path spelling/case.
-pub fn self_evolution_scope_sha256(
-    scope: &[String],
-) -> Result<[u8; 32], ReplayRecordError> {
+pub fn self_evolution_scope_sha256(scope: &[String]) -> Result<[u8; 32], ReplayRecordError> {
     if scope.is_empty() || scope.len() > 32 {
         return Err(ReplayRecordError::InvalidScope);
     }
