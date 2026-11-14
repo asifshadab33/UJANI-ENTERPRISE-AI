@@ -83,8 +83,10 @@ fn validate_approved_scope_configuration(
 
 /// Authorize one action using a revocation-checked operator session and trusted owner consent.
 ///
-/// `proposal_generation_enabled`, `max_changes_per_proposal`, and
-/// `owner_opted_in` must come from trusted administrator/consent state.
+/// `proposal_generation_enabled` and `max_changes_per_proposal` must come from
+/// trusted administrator state. `owner_opted_in` must come from a current,
+/// purpose-specific Self-Evolution consent record bound to this tenant/device/user;
+/// generic compute consent and UI-supplied booleans are not sufficient.
 /// This function has no installation, repository, filesystem, signing or
 /// execution side effects.
 #[allow(clippy::too_many_arguments)]
