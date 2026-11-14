@@ -877,7 +877,7 @@ fn hmac(key: &[u8; 32], key_id: &str, body: &[u8]) -> [u8; 32] {
     mac.update(body);
     mac.finalize().into_bytes().into()
 }
-fn encode_snapshot(r: &DeviceRegistry, key_id: &str, key: &[u8; 32]) -> Vec<u8> {
+fn encode_snapshot_body(r: &DeviceRegistry) -> String {
     let mut body = format!("{HEADER}\n");
     let mut ids = r.devices.keys().collect::<Vec<_>>();
     ids.sort();
@@ -911,9 +911,29 @@ fn encode_snapshot(r: &DeviceRegistry, key_id: &str, key: &[u8; 32]) -> Vec<u8> 
     for (nonce, expiry) in requests {
         body.push_str(&format!("R|{}|{}\n", hex(nonce), expiry));
     }
+    body
+}
+
+fn encode_snapshot(r: &DeviceRegistry, key_id: &str, key: &[u8; 32]) -> Vec<u8> {
+    let mut body = encode_snapshot_body(r);
     let mac = hmac(key, key_id, body.as_bytes());
-    body.push_str(&format!("H|{}|{}\n", hex(key_id.as_bytes()), hex(&mac)));
+    body.push_str(&format!("H|{}|{}\\n", hex(key_id.as_bytes()), hex(&mac)));
     body.into_bytes()
+}
+
+fn encode_snapshot_with_provider(
+    registry: &DeviceRegistry,
+    provider: &dyn IntegrityKeyProvider,
+) -> Result<Vec<u8>, DurableDeviceTrustError> {
+    let mut body = encode_snapshot_body(registry);
+    let (key_id, mac) = provider
+        .sign_active(IntegrityKeyPurpose::DeviceTrustRegistry, body.as_bytes())
+        .map_err(DurableDeviceTrustError::KeyProvider)?;
+    if !valid_id(&key_id, 128) {
+        return Err(DurableDeviceTrustError::CorruptState);
+    }
+    body.push_str(&format!("H|{}|{}\\n", hex(key_id.as_bytes()), hex(&mac)));
+    Ok(body.into_bytes())
 }
 fn decode_snapshot(
     bytes: &[u8],
@@ -921,32 +941,55 @@ fn decode_snapshot(
     expected_key_id: &str,
     key: &[u8; 32],
 ) -> Result<DeviceRegistry, DurableDeviceTrustError> {
+    decode_snapshot_with_verifier(bytes, admin_keys, |key_id, body, expected| {
+        if key_id != expected_key_id {
+            return Err(DurableDeviceTrustError::CorruptState);
+        }
+        let mut mac = Hmac::<Sha256>::new_from_slice(key)
+            .map_err(|_| DurableDeviceTrustError::CorruptState)?;
+        mac.update(DOMAIN);
+        mac.update(&(key_id.len() as u32).to_be_bytes());
+        mac.update(key_id.as_bytes());
+        mac.update(body);
+        mac.verify_slice(expected).map_err(|_| DurableDeviceTrustError::CorruptState)
+    })
+}
+
+fn decode_snapshot_with_provider(
+    bytes: &[u8],
+    admin_keys: &[(String, VerifyingKey)],
+    provider: &dyn IntegrityKeyProvider,
+) -> Result<DeviceRegistry, DurableDeviceTrustError> {
+    decode_snapshot_with_verifier(bytes, admin_keys, |key_id, body, expected| {
+        let tag: [u8; 32] = expected.try_into()
+            .map_err(|_| DurableDeviceTrustError::CorruptState)?;
+        provider.verify(IntegrityKeyPurpose::DeviceTrustRegistry, key_id, body, &tag)
+            .map_err(DurableDeviceTrustError::KeyProvider)
+    })
+}
+
+fn decode_snapshot_with_verifier(
+    bytes: &[u8],
+    admin_keys: &[(String, VerifyingKey)],
+    verify: impl FnOnce(&str, &[u8], &[u8]) -> Result<(), DurableDeviceTrustError>,
+) -> Result<DeviceRegistry, DurableDeviceTrustError> {
     if bytes.len() as u64 > MAX_BYTES {
         return Err(DurableDeviceTrustError::CapacityExceeded);
     }
     let text = std::str::from_utf8(bytes).map_err(|_| DurableDeviceTrustError::CorruptState)?;
-    let marker = text
-        .rfind("H|")
-        .ok_or(DurableDeviceTrustError::CorruptState)?;
+    let marker = text.rfind("H|").ok_or(DurableDeviceTrustError::CorruptState)?;
     let (body, tail) = text.split_at(marker);
-    let fields = tail.trim_end_matches('\n').split('|').collect::<Vec<_>>();
+    let fields = tail.trim_end_matches('\\n').split('|').collect::<Vec<_>>();
     if fields.len() != 3 || fields[0] != "H" {
         return Err(DurableDeviceTrustError::CorruptState);
     }
-    let key_id =
-        String::from_utf8(unhex(fields[1])?).map_err(|_| DurableDeviceTrustError::CorruptState)?;
-    if !valid_id(&key_id, 128) || key_id != expected_key_id {
+    let key_id = String::from_utf8(unhex(fields[1])?)
+        .map_err(|_| DurableDeviceTrustError::CorruptState)?;
+    if !valid_id(&key_id, 128) {
         return Err(DurableDeviceTrustError::CorruptState);
     }
     let expected = unhex(fields[2])?;
-    let mut mac =
-        Hmac::<Sha256>::new_from_slice(key).map_err(|_| DurableDeviceTrustError::CorruptState)?;
-    mac.update(DOMAIN);
-    mac.update(&(key_id.len() as u32).to_be_bytes());
-    mac.update(key_id.as_bytes());
-    mac.update(body.as_bytes());
-    mac.verify_slice(&expected)
-        .map_err(|_| DurableDeviceTrustError::CorruptState)?;
+    verify(&key_id, body.as_bytes(), &expected)?;
     let mut registry = DeviceRegistry::new(admin_keys.to_vec())?;
     let mut records = 0usize;
     let mut lines = body.lines();
