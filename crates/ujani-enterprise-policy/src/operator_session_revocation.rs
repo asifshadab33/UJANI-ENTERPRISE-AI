@@ -311,7 +311,7 @@ mod tests {
             },
         );
         assert_eq!(
-            wrapped.verify_session("valid-test-token", 2_000),
+            authenticate_current_operator_session(&wrapped, "valid-test-token", 2_000),
             Err(OperatorAuthError::InvalidClaims)
         );
         assert_eq!(
