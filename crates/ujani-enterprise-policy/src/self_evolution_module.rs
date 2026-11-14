@@ -557,10 +557,7 @@ mod action_gate_tests {
         .unwrap()
         .unwrap();
         assert_eq!(permit.approved_scope()[0], "apps/operator-console/help");
-        assert_eq!(
-            permit.max_changes(),
-            8
-        );
+        assert_eq!(permit.max_changes(), 8);
         let mut denied = policy();
         denied.approved_model_ids.clear();
         assert_eq!(
