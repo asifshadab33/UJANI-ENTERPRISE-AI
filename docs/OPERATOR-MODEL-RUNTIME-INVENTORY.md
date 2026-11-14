@@ -36,8 +36,15 @@ enable remote execution.
 
 ## Current implementation boundary
 
-This PR adds the typed operator API DTO, validation, serialization and console
-rendering contract. The production repository/telemetry adapter that populates
-these values from authenticated device samples is not yet implemented. Until
-that adapter exists, the normal repository may return an empty array. Do not
-populate it from UI-supplied or unauthenticated client data.
+Enterprise main now contains the typed operator API DTO, tenant/device scoping,
+validation, bounded overview serialization and read-only console rendering for
+runtime/model availability, capabilities, estimated RAM fit and evidence
+freshness. The RAM comparison is an estimate, not verified task compatibility.
+The task-capability matcher is not yet surfaced as a task-specific operator result
+or wired to admission, reservations or leases.
+
+The production repository/telemetry adapter that populates these values from
+authenticated device samples is not yet implemented; neither is device-side
+runtime/model discovery or durable inventory persistence. Until that adapter
+exists, the normal repository may return an empty array. Do not populate it from
+UI-supplied or unauthenticated client data.
