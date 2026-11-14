@@ -300,12 +300,7 @@ mod tests {
         assert_eq!(store.approval_ids.len(), 1);
         assert_eq!(store.nonces.len(), 1);
         assert_eq!(
-            consume_verified_self_evolution_approval(
-                &approval,
-                "tenant-a",
-                "admin-a",
-                &mut store,
-            ),
+            consume_verified_self_evolution_approval(&approval, "tenant-a", "admin-a", &mut store,),
             Err(ApprovalConsumptionError::Store(
                 ApprovalReplayStoreError::AlreadyConsumedOrExpired
             ))
