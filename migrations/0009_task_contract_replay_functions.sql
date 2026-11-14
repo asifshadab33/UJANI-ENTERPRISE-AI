@@ -30,7 +30,6 @@ BEGIN
  IF p_task_id IS NULL OR p_task_id !~ '^[A-Za-z0-9._:-]{1,128}$'
     OR p_sender_device_id IS NULL OR p_sender_device_id !~ '^[A-Za-z0-9._:-]{1,128}$'
     OR p_nonce IS NULL OR pg_catalog.octet_length(p_nonce) <> 32
-    OR p_nonce = pg_catalog.decode(pg_catalog.repeat('00', 32), 'hex')
     OR p_envelope_digest IS NULL OR pg_catalog.octet_length(p_envelope_digest) <> 32
     OR p_payload_digest IS NULL OR pg_catalog.octet_length(p_payload_digest) <> 32
     OR p_expires_at IS NULL
@@ -76,7 +75,7 @@ BEGIN
  END IF;
 
  IF p_task_id IS NULL OR p_task_id !~ '^[A-Za-z0-9._:-]{1,128}$'
-    OR p_message_type NOT IN ('task_status','execution_receipt')
+    OR p_message_type IS NULL OR p_message_type NOT IN ('task_status','execution_receipt')
     OR p_sequence IS NULL OR p_sequence NOT BETWEEN 1 AND 9007199254740991
     OR p_message_digest IS NULL OR pg_catalog.octet_length(p_message_digest) <> 32 THEN
   RAISE EXCEPTION 'invalid task-contract sequence update' USING ERRCODE = '22023';
