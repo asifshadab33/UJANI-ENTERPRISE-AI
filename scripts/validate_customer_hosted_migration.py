@@ -224,6 +224,8 @@ def main() -> None:
         "GRANT UPDATE (reservation_revision, updated_at)",
         "GRANT UPDATE (admission_lock_marker)",
         "runtime role is missing the narrow row-lock-only column privileges",
+        "runtime role can update protected column",
+        "pg_catalog.pg_attribute",
         "runtime role changed immutable admission lock marker",
         "GRANT INSERT ON ujani_control.leases,ujani_control.request_replays",
         "runtime role can mutate device trust or consent state",
