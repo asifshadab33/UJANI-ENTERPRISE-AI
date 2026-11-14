@@ -204,6 +204,9 @@ def main() -> None:
         "requested_memory_mb",
         "reservation_revision",
         "device.lease.admitted",
+        "admission_lock_marker",
+        "reject_admission_lock_marker_mutation",
+        "FOR SHARE OF a, s",
         "REVOKE ALL ON FUNCTION",
     ):
         if required not in atomic_sql:
@@ -219,6 +222,9 @@ def main() -> None:
         "REVOKE ALL ON SCHEMA ujani_control FROM ujani_runtime",
         "REVOKE ALL ON FUNCTION ujani_control.admit_device_lease(",
         "GRANT UPDATE (reservation_revision, updated_at)",
+        "GRANT UPDATE (admission_lock_marker)",
+        "runtime role is missing the narrow row-lock-only column privileges",
+        "runtime role changed immutable admission lock marker",
         "GRANT INSERT ON ujani_control.leases,ujani_control.request_replays",
         "runtime role can mutate device trust or consent state",
         "ujani_control.device_keys','INSERT",
