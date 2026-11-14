@@ -157,15 +157,15 @@ pub fn evaluate_enterprise_self_evolution(
     {
         Some(SelfEvolutionBlock::ModelNotApproved)
     } else if normalized_scope.is_none()
-        || !policy.approved_write_scopes.iter().any(|approved| {
-            normalize_scope(approved)
-                .zip(normalized_scope.as_ref())
-                .is_some_and(|(approved, requested)| requested == &approved)
-        })
+        || is_protected_scope(normalized_scope.as_deref().unwrap_or_default())
     {
-        Some(SelfEvolutionBlock::ScopeNotApproved)
-    } else if is_protected_scope(normalized_scope.as_deref().unwrap_or_default()) {
         Some(SelfEvolutionBlock::ProtectedScope)
+    } else if !policy.approved_write_scopes.iter().any(|approved| {
+        normalize_scope(approved)
+            .zip(normalized_scope.as_ref())
+            .is_some_and(|(approved, requested)| requested == &approved)
+    }) {
+        Some(SelfEvolutionBlock::ScopeNotApproved)
     } else if !request.trusted_source_and_build_environment_configured {
         Some(SelfEvolutionBlock::TrustedBuildEnvironmentRequired)
     } else {
@@ -273,14 +273,12 @@ mod tests {
         r.requested_write_scope = "crates/ujani-enterprise-policy".into();
         assert_eq!(
             evaluate_enterprise_self_evolution(ModuleInstallState::Installed, &p, &r).blocked_by,
-            Some(SelfEvolutionBlock::ProtectedScope)
+            Some(SelfEvolutionBlock::ApprovalPolicyInvalid)
         );
 
         p.approved_write_scopes = BTreeSet::from(["apps/operator-console/help".into()]);
         r = request();
         r.requested_write_scope = "apps/operator-console/help/.env.production".into();
-        p.approved_write_scopes
-            .insert(r.requested_write_scope.clone());
         assert_eq!(
             evaluate_enterprise_self_evolution(ModuleInstallState::Installed, &p, &r).blocked_by,
             Some(SelfEvolutionBlock::ProtectedScope)
