@@ -488,18 +488,16 @@ mod tests {
                 sha256: Some("e".repeat(64)),
             },
         ];
-        assert!(
-            validate_patch_bundle(
-                &proposal,
-                &target(),
-                &scope(),
-                &digest,
-                &"a".repeat(40),
-                &bundle,
-                &workspace
-            )
-            .is_ok()
-        );
+        assert!(validate_patch_bundle(
+            &proposal,
+            &target(),
+            &scope(),
+            &digest,
+            &"a".repeat(40),
+            &bundle,
+            &workspace
+        )
+        .is_ok());
 
         let mut duplicate_bundle = bundle.clone();
         duplicate_bundle.artifacts[1].path = duplicate_bundle.artifacts[0].path.clone();
@@ -685,5 +683,4 @@ mod tests {
             Err(SelfEvolutionPatchValidationError::TotalContentTooLarge)
         );
     }
-
 }
