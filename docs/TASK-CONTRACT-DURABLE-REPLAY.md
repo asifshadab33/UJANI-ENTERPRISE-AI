@@ -6,6 +6,8 @@ Migration `0002_task_contract_replay_storage.sql` adds tenant-scoped PostgreSQL 
 
 The migration stores only identifiers, decoded nonces, SHA-256 digests, expiry/state metadata and sequence watermarks. It never stores prompts, user files, model outputs or payload bytes.
 
+Migration `0009_task_contract_replay_functions.sql` adds two `SECURITY INVOKER` helpers: `claim_task_contract_replay` atomically claims a tenant/task/sender/nonce tuple (returning false on a task-ID or sender-nonce conflict), and `advance_task_contract_sequence` atomically advances a `task_status` or `execution_receipt` watermark (returning false on repeated or stale sequences). They preserve caller RLS and require explicit, least-privilege runtime grants. The caller must still authenticate and verify the signed message before calling them, and must use the same surrounding transaction for the replay claim, approval/consent checks, resource admission and lease write.
+
 ## Atomic task admission boundary
 
 After authenticating the sender and validating the envelope/signature/consent context, a future intake adapter must claim the task in the same database transaction as the authoritative admission record:
@@ -22,7 +24,7 @@ The sender device must already be authenticated and enrolled in the tenant devic
 
 `task_contract_sequences` stores separate watermarks for `task_status` and `execution_receipt`, keyed by tenant, task and message type. Each stream may start at sequence 1.
 
-A future adapter must advance a watermark with a conditional upsert in the same transaction as the verified message/task update:
+The database helper `ujani_control.advance_task_contract_sequence` now performs the conditional upsert and returns a boolean. A future adapter must call it in the same transaction as the verified message/task update; a false result is a replay/stale-sequence rejection and must abort the associated state transition. The equivalent SQL is:
 
 ```sql
 INSERT INTO ujani_control.task_contract_sequences
@@ -48,7 +50,7 @@ Expired rows are not automatically deleted by this migration. A future retention
 - Authenticated HTTP/gRPC transport or identity-provider integration.
 - Sender/worker key enrollment, rotation, revocation or KMS custody.
 - Verification of Ed25519 signatures or payload bytes (the native Rust verifier is a separate module).
-- Atomic coupling to administrator approval, device-owner consent, resource reservation or leases.
+- An authenticated intake adapter that atomically couples these replay helpers to administrator approval, device-owner consent, resource reservation or leases.
 - Task dispatch, worker execution, OS sandboxing, cancellation or egress enforcement.
 
 Remote worker execution remains disabled.
