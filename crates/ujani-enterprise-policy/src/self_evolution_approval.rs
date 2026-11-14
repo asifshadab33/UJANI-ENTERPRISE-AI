@@ -167,6 +167,22 @@ impl VerifiedSelfEvolutionApproval {
     pub fn approved_scope(&self) -> &[String] {
         &self.0.approved_scope
     }
+
+    pub fn repository(&self) -> &str {
+        &self.0.repository
+    }
+
+    pub fn base_ref(&self) -> &str {
+        &self.0.base_ref
+    }
+
+    pub fn source_revision(&self) -> &str {
+        &self.0.source_revision
+    }
+
+    pub fn proposal_sha256(&self) -> &[u8; 32] {
+        &self.0.proposal_sha256
+    }
 }
 
 #[cfg(test)]
