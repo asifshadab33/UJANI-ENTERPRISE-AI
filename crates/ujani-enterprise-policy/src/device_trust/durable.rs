@@ -601,6 +601,28 @@ impl DurableDeviceRegistry {
         self.read(|registry| Ok(registry.devices.len()))
     }
 
+    fn encode_registry_snapshot(
+        &self,
+        registry: &DeviceRegistry,
+    ) -> Result<Vec<u8>, DurableDeviceTrustError> {
+        match (&self.integrity_key, &self.integrity_key_provider) {
+            (Some(key), None) => Ok(encode_snapshot(registry, key.key_id(), &key.bytes)),
+            (None, Some(provider)) => encode_snapshot_with_provider(registry, provider.as_ref()),
+            _ => Err(DurableDeviceTrustError::CorruptState),
+        }
+    }
+
+    fn decode_registry_snapshot(
+        &self,
+        bytes: &[u8],
+    ) -> Result<DeviceRegistry, DurableDeviceTrustError> {
+        match (&self.integrity_key, &self.integrity_key_provider) {
+            (Some(key), None) => decode_snapshot(bytes, &self.admin_keys, key.key_id(), &key.bytes),
+            (None, Some(provider)) => decode_snapshot_with_provider(bytes, &self.admin_keys, provider.as_ref()),
+            _ => Err(DurableDeviceTrustError::CorruptState),
+        }
+    }
+
     fn load_anchored_registry(
         &self,
         anchor_record: Option<&SnapshotAnchorRecord>,
@@ -611,24 +633,14 @@ impl DurableDeviceRegistry {
                 if self.path.exists() {
                     let bytes = fs::read(&self.path)?;
                     if snapshot_sha256(&bytes) == record.snapshot_sha256 {
-                        return decode_snapshot(
-                            &bytes,
-                            &self.admin_keys,
-                            self.integrity_key.key_id(),
-                            &self.integrity_key.bytes,
-                        );
+                        return self.decode_registry_snapshot(&bytes);
                     }
                 }
                 if backup.exists() {
                     let bytes = fs::read(&backup)?;
                     if snapshot_sha256(&bytes) == record.snapshot_sha256 {
                         restore_snapshot_from_backup(&self.path, &bytes)?;
-                        return decode_snapshot(
-                            &bytes,
-                            &self.admin_keys,
-                            self.integrity_key.key_id(),
-                            &self.integrity_key.bytes,
-                        );
+                        return self.decode_registry_snapshot(&bytes);
                     }
                 }
                 Err(DurableDeviceTrustError::AnchorMismatch)
@@ -688,22 +700,12 @@ impl DurableDeviceRegistry {
 
         let backup = suffix(&self.path, ".bak");
         if self.path.exists() {
-            decode_snapshot(
-                &fs::read(&self.path)?,
-                &self.admin_keys,
-                self.integrity_key.key_id(),
-                &self.integrity_key.bytes,
-            )
+            self.decode_registry_snapshot(&fs::read(&self.path)?)
         } else if backup.exists() {
             // Recover only the interrupted-rename case. A present but invalid
             // primary snapshot is never silently replaced by an older backup.
             let bytes = fs::read(&backup)?;
-            let recovered = decode_snapshot(
-                &bytes,
-                &self.admin_keys,
-                self.integrity_key.key_id(),
-                &self.integrity_key.bytes,
-            )?;
+            let recovered = self.decode_registry_snapshot(&bytes)?;
             atomic_write(&self.path, &bytes, false)?;
             Ok(recovered)
         } else {
@@ -745,11 +747,7 @@ impl DurableDeviceRegistry {
         };
         let mut registry = self.load_registry(anchor_record.as_ref())?;
         let result = operation(&mut registry)?;
-        let bytes = encode_snapshot(
-            &registry,
-            self.integrity_key.key_id(),
-            &self.integrity_key.bytes,
-        );
+        let bytes = self.encode_registry_snapshot(&registry)?;
         if bytes.len() as u64 > MAX_BYTES {
             return Err(DurableDeviceTrustError::CapacityExceeded);
         }
