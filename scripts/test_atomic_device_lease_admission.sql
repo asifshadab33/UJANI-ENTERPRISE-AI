@@ -97,9 +97,9 @@ INSERT INTO ujani_control.devices
   telemetry_generation,telemetry_sequence,last_seen_at)
 VALUES
  ('admission-test','admission-device-future-key','Future Key Device','linux','enrolled',
-  'granted','approved','future-key',2,1,1,1,clock_timestamp()),
+  'granted','approved','future-key',2,0,1,1,clock_timestamp()),
  ('admission-test','admission-device-revoked-key','Revoked Key Device','linux','enrolled',
-  'granted','approved','revoked-key',3,1,1,1,clock_timestamp())
+  'granted','approved','revoked-key',3,0,1,1,clock_timestamp())
 ON CONFLICT (tenant_id,device_id) DO UPDATE SET
  trust_state='enrolled',owner_consent_state='granted',admin_approval_state='approved',
  active_key_id=EXCLUDED.active_key_id,key_generation=EXCLUDED.key_generation,
