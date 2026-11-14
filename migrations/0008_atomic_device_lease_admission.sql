@@ -19,6 +19,39 @@ CREATE INDEX IF NOT EXISTS leases_active_device_capacity_idx
  ON ujani_control.leases (tenant_id, device_id, expires_at)
  WHERE state IN ('reserved','active');
 
+-- Owner consent revisions are monotonic and serialize with admission on the device row.
+CREATE OR REPLACE FUNCTION ujani_control.apply_owner_consent_revision()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = pg_catalog, ujani_control
+AS $function$
+DECLARE v_current bigint;
+BEGIN
+ IF NEW.tenant_id IS DISTINCT FROM pg_catalog.current_setting('ujani.tenant_id', true) THEN
+  RAISE EXCEPTION 'authenticated tenant context mismatch' USING ERRCODE = '42501';
+ END IF;
+ SELECT consent_generation INTO v_current
+ FROM ujani_control.devices
+ WHERE tenant_id = NEW.tenant_id AND device_id = NEW.device_id
+ FOR UPDATE;
+ IF NOT FOUND OR NEW.consent_generation <> v_current + 1 THEN
+  RAISE EXCEPTION 'owner consent revision is not the next generation' USING ERRCODE = '23514';
+ END IF;
+ UPDATE ujani_control.devices
+ SET consent_generation = NEW.consent_generation,
+     owner_consent_state = NEW.state,
+     updated_at = pg_catalog.clock_timestamp()
+ WHERE tenant_id = NEW.tenant_id AND device_id = NEW.device_id;
+ RETURN NEW;
+END;
+$function$;
+
+DROP TRIGGER IF EXISTS owner_consent_revision_apply ON ujani_control.owner_consents;
+CREATE TRIGGER owner_consent_revision_apply
+ BEFORE INSERT ON ujani_control.owner_consents
+ FOR EACH ROW EXECUTE FUNCTION ujani_control.apply_owner_consent_revision();
+
 CREATE OR REPLACE FUNCTION ujani_control.admit_device_lease(
  p_tenant_id text,
  p_device_id text,
@@ -102,13 +135,15 @@ BEGIN
  -- The latest consent event must agree with the device's monotonic consent revision.
  PERFORM 1 FROM ujani_control.owner_consents
  WHERE tenant_id = p_tenant_id AND device_id = p_device_id
-   AND consent_generation = p_consent_generation AND state = 'granted';
+   AND consent_generation = p_consent_generation AND state = 'granted'
+ FOR SHARE;
  IF NOT FOUND THEN RETURN false; END IF;
 
  -- Workload and signed administrator approval are checked against trusted rows.
  PERFORM 1 FROM ujani_control.workloads
  WHERE tenant_id = p_tenant_id AND workload_id = p_workload_id
-   AND state = 'approved' AND manifest_digest = p_manifest_digest;
+   AND state = 'approved' AND manifest_digest = p_manifest_digest
+ FOR SHARE;
  IF NOT FOUND THEN RETURN false; END IF;
  PERFORM 1
  FROM ujani_control.approvals a
@@ -191,6 +226,9 @@ $function$;
 REVOKE ALL ON FUNCTION ujani_control.admit_device_lease(
  text,text,text,text,text,bytea,bytea,bytea,bigint,bigint,integer,bigint,bytea,timestamptz,uuid
 ) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION ujani_control.admit_device_lease(
+ text,text,text,text,text,bytea,bytea,bytea,bigint,bigint,integer,bigint,bytea,timestamptz,uuid
+) TO ujani_runtime;
 
 COMMENT ON FUNCTION ujani_control.admit_device_lease(
  text,text,text,text,text,bytea,bytea,bytea,bigint,bigint,integer,bigint,bytea,timestamptz,uuid
