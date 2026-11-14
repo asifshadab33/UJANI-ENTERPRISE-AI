@@ -56,6 +56,14 @@ pub enum SelfEvolutionApprovalError {
 /// Trusted key enrollment tuple: key ID, tenant ID, operator subject ID, public key.
 pub type TrustedSelfEvolutionAdminKey = (String, String, String, VerifyingKey);
 
+fn valid_approval_identifier(value: &str, max_bytes: usize) -> bool {
+    !value.is_empty()
+        && value.len() <= max_bytes
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
+}
+
 fn valid_revision(value: &str) -> bool {
     (value.len() == 40 || value.len() == 64) && value.bytes().all(|b| b.is_ascii_hexdigit())
 }
@@ -111,8 +119,8 @@ pub fn verify_self_evolution_approval(
     let claims = &signed.claims;
     if !valid_identifier(&claims.tenant_id, 128)
         || !valid_identifier(&claims.approver_subject_id, 128)
-        || !valid_identifier(&claims.approval_id, 128)
-        || !valid_identifier(&claims.approver_key_id, 128)
+        || !valid_approval_identifier(&claims.approval_id, 128)
+        || !valid_approval_identifier(&claims.approver_key_id, 128)
         || claims.repository != trusted_target.repository
         || claims.base_ref != trusted_target.base_ref
         || claims.source_revision != trusted_target.source_revision
@@ -269,6 +277,49 @@ mod tests {
             .sign(&approval_signing_bytes(&claims))
             .to_bytes();
         SignedSelfEvolutionApproval { claims, signature }
+    }
+
+    #[test]
+    fn rejects_approval_and_key_ids_outside_the_database_identifier_grammar() {
+        let key = SigningKey::from_bytes(&[9; 32]);
+        let target = target();
+        let proposal = proposal();
+        let mut signed = signed_approval(&proposal, &target, &key);
+
+        signed.claims.approval_id = "approval:001".into();
+        assert_eq!(
+            verify_self_evolution_approval(
+                &signed,
+                &[(
+                    "admin-key-01".into(),
+                    "tenant-a".into(),
+                    "admin-a".into(),
+                    key.verifying_key(),
+                )],
+                &target,
+                &proposal,
+                2_000,
+            ),
+            Err(SelfEvolutionApprovalError::InvalidClaims)
+        );
+
+        signed = signed_approval(&proposal, &target, &key);
+        signed.claims.approver_key_id = "admin:key:01".into();
+        assert_eq!(
+            verify_self_evolution_approval(
+                &signed,
+                &[(
+                    "admin:key:01".into(),
+                    "tenant-a".into(),
+                    "admin-a".into(),
+                    key.verifying_key(),
+                )],
+                &target,
+                &proposal,
+                2_000,
+            ),
+            Err(SelfEvolutionApprovalError::InvalidClaims)
+        );
     }
 
     #[test]
