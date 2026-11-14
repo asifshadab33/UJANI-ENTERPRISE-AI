@@ -6,7 +6,7 @@
 //! It authorizes proposal preparation only; review submission, staging and apply
 //! remain blocked until signed approval and durable single-use replay are wired.
 use crate::operator_control_plane::OperatorRole;
-use crate::self_evolution::MAX_PROPOSAL_CHANGES;
+use crate::self_evolution::{MAX_PROPOSAL_CHANGES, MAX_PROPOSAL_SCOPE_PATHS};
 use crate::self_evolution_module::{
     evaluate_enterprise_self_evolution, EnterpriseSelfEvolutionPolicy, ModuleInstallState,
     SelfEvolutionBlock, SelfEvolutionRequest,
@@ -49,6 +49,34 @@ impl ProposalGenerationPermit {
     pub fn max_changes(&self) -> usize {
         self.max_changes
     }
+}
+
+/// Validate the administrator's entire configured scope set by reusing the existing
+/// policy evaluator. This prevents a dangerous or malformed unused scope from
+/// remaining dormant until a later request selects it.
+fn validate_approved_scope_configuration(
+    installation: ModuleInstallState,
+    policy: &EnterpriseSelfEvolutionPolicy,
+    request: &SelfEvolutionRequest,
+) -> Result<(), SelfEvolutionActionError> {
+    if policy.approved_write_scopes.is_empty()
+        || policy.approved_write_scopes.len() > MAX_PROPOSAL_SCOPE_PATHS
+    {
+        return Err(SelfEvolutionActionError::PolicyBlocked(
+            SelfEvolutionBlock::ApprovalPolicyInvalid,
+        ));
+    }
+
+    for scope in &policy.approved_write_scopes {
+        let mut scoped_request = request.clone();
+        scoped_request.requested_write_scope = scope.clone();
+        if let Some(blocked_by) =
+            evaluate_enterprise_self_evolution(installation, policy, &scoped_request).blocked_by
+        {
+            return Err(SelfEvolutionActionError::PolicyBlocked(blocked_by));
+        }
+    }
+    Ok(())
 }
 
 /// Authorize one action using authenticated operator role and trusted owner consent.
@@ -120,6 +148,8 @@ pub fn authorize_self_evolution_action(
     if requested_change_count == 0 || requested_change_count > max_changes_per_proposal {
         return Err(SelfEvolutionActionError::TooManyChanges);
     }
+
+    validate_approved_scope_configuration(installation, policy, request)?;
 
     let permission = evaluate_enterprise_self_evolution(installation, policy, request);
     if let Some(blocked_by) = permission.blocked_by {
@@ -281,6 +311,49 @@ mod tests {
                 1,
             ),
             Err(SelfEvolutionActionError::InvalidChangeLimit)
+        );
+    }
+
+    #[test]
+    fn all_configured_scopes_are_validated_not_only_the_requested_scope() {
+        let mut configured = policy();
+        configured.approved_write_scopes.insert(".git".into());
+        assert_eq!(
+            authorize_self_evolution_action(
+                ModuleInstallState::Installed,
+                &configured,
+                &request(),
+                OperatorRole::Administrator,
+                SelfEvolutionAction::GenerateProposal,
+                true,
+                true,
+                8,
+                1,
+            ),
+            Err(SelfEvolutionActionError::PolicyBlocked(
+                SelfEvolutionBlock::ProtectedScope
+            ))
+        );
+
+        let mut oversized = policy();
+        oversized.approved_write_scopes = (0..=MAX_PROPOSAL_SCOPE_PATHS)
+            .map(|index| format!("apps/operator-console/scope-{index}"))
+            .collect();
+        assert_eq!(
+            authorize_self_evolution_action(
+                ModuleInstallState::Installed,
+                &oversized,
+                &request(),
+                OperatorRole::Administrator,
+                SelfEvolutionAction::GenerateProposal,
+                true,
+                true,
+                8,
+                1,
+            ),
+            Err(SelfEvolutionActionError::PolicyBlocked(
+                SelfEvolutionBlock::ApprovalPolicyInvalid
+            ))
         );
     }
 
