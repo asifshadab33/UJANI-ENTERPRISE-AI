@@ -190,6 +190,7 @@ fn approved_scope_digest(scopes: &[String]) -> [u8; 32] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::operator_session_revocation::test_current_operator_session;
     use crate::self_evolution::{
         FindingCategory, FindingSeverity, ProposalTarget, ProposedChange, ProposedChangeKind,
         SelfEvolutionFinding, SelfEvolutionProposalV1, SELF_EVOLUTION_PROPOSAL_SCHEMA_VERSION,
@@ -198,7 +199,6 @@ mod tests {
         approval_signing_bytes, self_evolution_proposal_digest, verify_self_evolution_approval,
         SelfEvolutionApprovalClaims, SignedSelfEvolutionApproval,
     };
-    use crate::operator_session_revocation::test_current_operator_session;
     use ed25519_dalek::{Signer, SigningKey};
     use std::collections::HashSet;
 
@@ -343,12 +343,8 @@ mod tests {
             OperatorRole::Administrator,
             90_000,
         );
-        let non_admin = test_current_operator_session(
-            "tenant-a",
-            "viewer-a",
-            OperatorRole::Viewer,
-            90_000,
-        );
+        let non_admin =
+            test_current_operator_session("tenant-a", "viewer-a", OperatorRole::Viewer, 90_000);
         let expired = test_current_operator_session(
             "tenant-a",
             "admin-a",
@@ -379,12 +375,7 @@ mod tests {
             ..MemoryStore::default()
         };
         assert_eq!(
-            consume_verified_self_evolution_approval(
-                &approval,
-                &session,
-                2_000,
-                &mut unavailable,
-            ),
+            consume_verified_self_evolution_approval(&approval, &session, 2_000, &mut unavailable,),
             Err(ApprovalConsumptionError::Store(
                 ApprovalReplayStoreError::StorageUnavailable
             ))
@@ -395,12 +386,7 @@ mod tests {
             ..MemoryStore::default()
         };
         assert_eq!(
-            consume_verified_self_evolution_approval(
-                &approval,
-                &session,
-                2_000,
-                &mut expired,
-            ),
+            consume_verified_self_evolution_approval(&approval, &session, 2_000, &mut expired,),
             Err(ApprovalConsumptionError::Store(
                 ApprovalReplayStoreError::AlreadyConsumedOrExpired
             ))
