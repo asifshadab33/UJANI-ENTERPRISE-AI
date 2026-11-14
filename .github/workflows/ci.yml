@@ -162,3 +162,19 @@ jobs:
           PGPASSWORD: postgres
         run: |
           "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < scripts/test_self_evolution_approval_replay.sql
+      - name: Apply atomic Self-Evolution approval consumption function
+        env:
+          PGPASSWORD: postgres
+        run: |
+          "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < migrations/0007_self_evolution_approval_consumption_function.sql
+      - name: Verify atomic Self-Evolution approval consumption
+        env:
+          PGPASSWORD: postgres
+        run: |
+          "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < scripts/test_self_evolution_approval_consumption_function.sql
+      - name: Verify approval expiry after concurrent nonce-lock wait
+        env:
+          PGPASSWORD: postgres
+          PGUSER: postgres
+          PGDATABASE: ujani_test
+        run: bash scripts/test_self_evolution_approval_consumption_concurrency.sh
