@@ -5,6 +5,7 @@
 
 pub mod self_evolution;
 pub mod self_evolution_module;
+pub mod self_evolution_action_gate;
 
 pub mod capability_registry;
 pub mod collective_defence_authority;
