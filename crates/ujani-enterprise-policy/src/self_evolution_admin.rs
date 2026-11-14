@@ -99,7 +99,10 @@ pub fn authorize_self_evolution_action(
 
     // Until the signed approval and durable replay ledger are wired into the
     // Enterprise host, there is intentionally no staging or apply capability.
-    if matches!(action, SelfEvolutionAction::StageChanges | SelfEvolutionAction::ApplyChanges) {
+    if matches!(
+        action,
+        SelfEvolutionAction::StageChanges | SelfEvolutionAction::ApplyChanges
+    ) {
         return Err(SelfEvolutionGateError::ApprovalPipelineUnavailable);
     }
 
@@ -158,9 +161,9 @@ fn valid_scope(scope: &str) -> bool {
                 && part != "."
                 && part != ".."
                 && !part.eq_ignore_ascii_case(".git")
-                && part.bytes().all(|byte| {
-                    byte.is_ascii_alphanumeric() || b"._-".contains(&byte)
-                })
+                && part
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
         })
 }
 
@@ -185,22 +188,34 @@ mod tests {
         config.installed = false;
         assert_eq!(
             authorize_self_evolution_action(
-                &config, OperatorRole::Operator, SelfEvolutionAction::InstallFeature,
-                &[], 0, true
+                &config,
+                OperatorRole::Operator,
+                SelfEvolutionAction::InstallFeature,
+                &[],
+                0,
+                true
             ),
             Err(SelfEvolutionGateError::AdministratorRequired)
         );
         assert_eq!(
             authorize_self_evolution_action(
-                &config, OperatorRole::Administrator, SelfEvolutionAction::InstallFeature,
-                &[], 0, false
+                &config,
+                OperatorRole::Administrator,
+                SelfEvolutionAction::InstallFeature,
+                &[],
+                0,
+                false
             ),
             Err(SelfEvolutionGateError::ExplicitUserOptInRequired)
         );
         assert_eq!(
             authorize_self_evolution_action(
-                &config, OperatorRole::Administrator, SelfEvolutionAction::InstallFeature,
-                &[], 0, true
+                &config,
+                OperatorRole::Administrator,
+                SelfEvolutionAction::InstallFeature,
+                &[],
+                0,
+                true
             ),
             Ok(None)
         );
@@ -210,17 +225,30 @@ mod tests {
     fn only_admin_can_generate_bounded_proposals_in_configured_scope() {
         assert_eq!(
             authorize_self_evolution_action(
-                &config(), OperatorRole::Viewer, SelfEvolutionAction::GenerateProposal,
-                &["apps/operator-console".into()], 1, false
+                &config(),
+                OperatorRole::Viewer,
+                SelfEvolutionAction::GenerateProposal,
+                &["apps/operator-console".into()],
+                1,
+                false
             ),
             Err(SelfEvolutionGateError::AdministratorRequired)
         );
         let permit = authorize_self_evolution_action(
-            &config(), OperatorRole::Administrator, SelfEvolutionAction::GenerateProposal,
-            &["apps/operator-console/components".into()], 2, false
-        ).unwrap().unwrap();
+            &config(),
+            OperatorRole::Administrator,
+            SelfEvolutionAction::GenerateProposal,
+            &["apps/operator-console/components".into()],
+            2,
+            false,
+        )
+        .unwrap()
+        .unwrap();
         assert_eq!(permit.max_changes(), 8);
-        assert_eq!(permit.approved_scope(), &["apps/operator-console/components"]);
+        assert_eq!(
+            permit.approved_scope(),
+            &["apps/operator-console/components"]
+        );
     }
 
     #[test]
@@ -229,8 +257,12 @@ mod tests {
         disabled.enabled = false;
         assert_eq!(
             authorize_self_evolution_action(
-                &disabled, OperatorRole::Administrator, SelfEvolutionAction::GenerateProposal,
-                &["apps/operator-console".into()], 1, false
+                &disabled,
+                OperatorRole::Administrator,
+                SelfEvolutionAction::GenerateProposal,
+                &["apps/operator-console".into()],
+                1,
+                false
             ),
             Err(SelfEvolutionGateError::FeatureDisabled)
         );
@@ -238,8 +270,12 @@ mod tests {
         not_installed.installed = false;
         assert_eq!(
             authorize_self_evolution_action(
-                &not_installed, OperatorRole::Administrator, SelfEvolutionAction::GenerateProposal,
-                &["apps/operator-console".into()], 1, false
+                &not_installed,
+                OperatorRole::Administrator,
+                SelfEvolutionAction::GenerateProposal,
+                &["apps/operator-console".into()],
+                1,
+                false
             ),
             Err(SelfEvolutionGateError::FeatureNotInstalled)
         );
@@ -247,8 +283,12 @@ mod tests {
         fail_open.require_admin_approval = false;
         assert_eq!(
             authorize_self_evolution_action(
-                &fail_open, OperatorRole::Administrator, SelfEvolutionAction::GenerateProposal,
-                &["apps/operator-console".into()], 1, false
+                &fail_open,
+                OperatorRole::Administrator,
+                SelfEvolutionAction::GenerateProposal,
+                &["apps/operator-console".into()],
+                1,
+                false
             ),
             Err(SelfEvolutionGateError::InvalidPolicy)
         );
@@ -256,19 +296,31 @@ mod tests {
 
     #[test]
     fn rejects_scope_escape_duplicates_and_unbounded_change_counts() {
-        for scope in ["../crates", "apps/operator-console/../../crates", ".git/config"] {
+        for scope in [
+            "../crates",
+            "apps/operator-console/../../crates",
+            ".git/config",
+        ] {
             assert_eq!(
                 authorize_self_evolution_action(
-                    &config(), OperatorRole::Administrator, SelfEvolutionAction::GenerateProposal,
-                    &[scope.into()], 1, false
+                    &config(),
+                    OperatorRole::Administrator,
+                    SelfEvolutionAction::GenerateProposal,
+                    &[scope.into()],
+                    1,
+                    false
                 ),
                 Err(SelfEvolutionGateError::ScopeNotAllowed)
             );
         }
         assert_eq!(
             authorize_self_evolution_action(
-                &config(), OperatorRole::Administrator, SelfEvolutionAction::GenerateProposal,
-                &["apps/operator-console".into()], 9, false
+                &config(),
+                OperatorRole::Administrator,
+                SelfEvolutionAction::GenerateProposal,
+                &["apps/operator-console".into()],
+                9,
+                false
             ),
             Err(SelfEvolutionGateError::TooManyChanges)
         );
