@@ -2358,7 +2358,8 @@ mod tests {
                 self.entered.wait();
                 self.release.wait();
             }
-            let record = self.record
+            let record = self
+                .record
                 .lock()
                 .map(|record| record.clone())
                 .map_err(|_| "test anchor mutex poisoned".to_owned())?;
