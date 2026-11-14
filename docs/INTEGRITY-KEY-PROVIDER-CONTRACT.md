@@ -3,14 +3,14 @@
 ## Status
 
 The Enterprise policy crate defines a host-owned `IntegrityKeyProvider`
-interface in `integrity_key_provider.rs`. The durable device-trust registry now
-has provider-backed constructors that sign new snapshots with the provider's
-active key and verify snapshots using the named active or retained previous key.
-A test-only in-memory provider exercises rotation and fail-closed startup.
+interface in `integrity_key_provider.rs`. Both `DurableDeviceRegistry` and `DurableLedger` now have provider-backed
+constructors. They sign new snapshots with the provider's active key and verify
+snapshots using the named active or retained previous key. A test-only in-memory
+provider exercises sequential rotation and fail-closed startup for both stores.
 
-`DurableLedger` is **not yet wired** to the provider. Both stores still retain
-caller-injected raw-key constructors for prototype compatibility and tests;
-those constructors are not a completed production custody design. There is no
+Both stores still retain caller-injected raw-key constructors for prototype
+compatibility and tests; those constructors are not a completed production
+custody design. There is no
 production OS-keyring, TPM, KMS or HSM adapter in this repository.
 
 ## Provider boundary
@@ -69,14 +69,14 @@ material. It must never be exposed in a production build.
 
 Before this can be considered a production key-custody implementation:
 
-- wire `DurableLedger` to this provider without exporting raw key bytes;
 - define an explicit, audited migration procedure for snapshots created by the
-  legacy raw-key constructors. A provider must already retain the old key ID to
-  verify those snapshots; the current interface deliberately has no key-export
-  operation and does not silently import caller-supplied bytes;
+  legacy raw-key constructors. A provider must already retain the old key ID and
+  corresponding protected material to verify those snapshots; the current
+  interface deliberately has no key-export/import operation and does not silently
+  import caller-supplied bytes;
 - extend store-level tests to cover retained backups, concurrent rotation,
-  stale writers, key retirement and crash recovery; the device-trust store
-  currently covers sequential rotation and fail-closed provider absence;
+  stale writers, key retirement and crash recovery; both stores currently cover
+  sequential rotation and fail-closed provider absence;
 - implement at least one reviewed OS-protected local adapter and document
   platform-specific custody and access-control limits;
 - add an optional customer KMS/HSM adapter boundary and integration tests;
