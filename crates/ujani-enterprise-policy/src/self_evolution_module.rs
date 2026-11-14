@@ -349,3 +349,134 @@ mod tests {
         );
     }
 }
+
+/// Explicit action requested from the optional Self-Evolution feature.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelfEvolutionAction {
+    ViewStatus,
+    InstallFeature,
+    GenerateProposal,
+    StageChanges,
+    ApplyChanges,
+}
+
+/// A narrow capability returned only after the existing Enterprise policy checks pass.
+/// It carries no filesystem handle and cannot stage or apply changes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProposalGenerationPermit {
+    approved_scope: Vec<String>,
+    max_changes: usize,
+}
+
+impl ProposalGenerationPermit {
+    pub fn approved_scope(&self) -> &[String] { &self.approved_scope }
+    pub fn max_changes(&self) -> usize { self.max_changes }
+}
+
+/// Apply authenticated role and explicit owner opt-in checks around the existing
+/// Enterprise Self-Evolution policy. actor_role must come from a verified
+/// operator session; explicit_user_opt_in must come from trusted, current
+/// device-owner consent state, never from a browser-supplied boolean.
+///
+/// This extends evaluate_enterprise_self_evolution rather than maintaining a
+/// second model/scope/protected-path validator. Installation is only authorized
+/// here; this function does not install anything. Staging and applying remain blocked.
+pub fn authorize_enterprise_self_evolution_action(
+    installation: ModuleInstallState,
+    policy: &EnterpriseSelfEvolutionPolicy,
+    request: &SelfEvolutionRequest,
+    actor_role: crate::operator_control_plane::OperatorRole,
+    action: SelfEvolutionAction,
+    explicit_user_opt_in: bool,
+    requested_change_count: usize,
+) -> Result<Option<ProposalGenerationPermit>, SelfEvolutionBlock> {
+    use crate::operator_control_plane::OperatorRole;
+
+    if action == SelfEvolutionAction::ViewStatus { return Ok(None); }
+    if actor_role != OperatorRole::Administrator {
+        return Err(SelfEvolutionBlock::AdministratorRequired);
+    }
+    if action == SelfEvolutionAction::InstallFeature {
+        if installation == ModuleInstallState::Installed {
+            return Err(SelfEvolutionBlock::AlreadyInstalled);
+        }
+        if !policy.permitted_by_administrator {
+            return Err(SelfEvolutionBlock::AdministratorProhibited);
+        }
+        if !explicit_user_opt_in {
+            return Err(SelfEvolutionBlock::ExplicitUserOptInRequired);
+        }
+        return Ok(None);
+    }
+    if installation == ModuleInstallState::NotInstalled {
+        return Err(SelfEvolutionBlock::ModuleNotInstalled);
+    }
+    if !explicit_user_opt_in {
+        return Err(SelfEvolutionBlock::ExplicitUserOptInRequired);
+    }
+    if matches!(action, SelfEvolutionAction::StageChanges | SelfEvolutionAction::ApplyChanges) {
+        return Err(SelfEvolutionBlock::ApprovalPipelineUnavailable);
+    }
+    if requested_change_count == 0 || requested_change_count > crate::self_evolution::MAX_PROPOSAL_CHANGES {
+        return Err(SelfEvolutionBlock::TooManyChanges);
+    }
+    let permission = evaluate_enterprise_self_evolution(installation, policy, request);
+    if let Some(blocked_by) = permission.blocked_by { return Err(blocked_by); }
+    let approved_scope = normalize_scope(&request.requested_write_scope)
+        .ok_or(SelfEvolutionBlock::ScopeNotApproved)?;
+    Ok(Some(ProposalGenerationPermit {
+        approved_scope: vec![approved_scope],
+        max_changes: crate::self_evolution::MAX_PROPOSAL_CHANGES,
+    }))
+}
+
+#[cfg(test)]
+mod action_gate_tests {
+    use super::*;
+    use crate::operator_control_plane::OperatorRole;
+    use std::collections::BTreeSet;
+
+    fn policy() -> EnterpriseSelfEvolutionPolicy {
+        EnterpriseSelfEvolutionPolicy {
+            permitted_by_administrator: true,
+            activated_by_administrator: true,
+            approved_model_ids: BTreeSet::from(["local-coder-v1".into()]),
+            approved_write_scopes: BTreeSet::from(["apps/operator-console/help".into()]),
+            require_dual_approval: true,
+        }
+    }
+    fn request() -> SelfEvolutionRequest {
+        SelfEvolutionRequest {
+            selected_model_id: "local-coder-v1".into(),
+            requested_write_scope: "apps/operator-console/help".into(),
+            trusted_source_and_build_environment_configured: true,
+        }
+    }
+    #[test]
+    fn non_admin_cannot_install_or_generate_proposals() {
+        assert_eq!(authorize_enterprise_self_evolution_action(ModuleInstallState::NotInstalled, &policy(), &request(), OperatorRole::Operator, SelfEvolutionAction::InstallFeature, true, 1), Err(SelfEvolutionBlock::AdministratorRequired));
+        assert_eq!(authorize_enterprise_self_evolution_action(ModuleInstallState::Installed, &policy(), &request(), OperatorRole::Viewer, SelfEvolutionAction::GenerateProposal, true, 1), Err(SelfEvolutionBlock::AdministratorRequired));
+    }
+    #[test]
+    fn installation_requires_admin_permission_and_explicit_owner_opt_in() {
+        assert_eq!(authorize_enterprise_self_evolution_action(ModuleInstallState::NotInstalled, &policy(), &request(), OperatorRole::Administrator, SelfEvolutionAction::InstallFeature, false, 0), Err(SelfEvolutionBlock::ExplicitUserOptInRequired));
+        let mut denied = policy(); denied.permitted_by_administrator = false;
+        assert_eq!(authorize_enterprise_self_evolution_action(ModuleInstallState::NotInstalled, &denied, &request(), OperatorRole::Administrator, SelfEvolutionAction::InstallFeature, true, 0), Err(SelfEvolutionBlock::AdministratorProhibited));
+        assert_eq!(authorize_enterprise_self_evolution_action(ModuleInstallState::NotInstalled, &policy(), &request(), OperatorRole::Administrator, SelfEvolutionAction::InstallFeature, true, 0), Ok(None));
+    }
+    #[test]
+    fn proposal_generation_reuses_existing_policy_and_returns_bounded_permit() {
+        let permit = authorize_enterprise_self_evolution_action(ModuleInstallState::Installed, &policy(), &request(), OperatorRole::Administrator, SelfEvolutionAction::GenerateProposal, true, 2).unwrap().unwrap();
+        assert_eq!(permit.approved_scope(), &["apps/operator-console/help"]);
+        assert_eq!(permit.max_changes(), crate::self_evolution::MAX_PROPOSAL_CHANGES);
+        let mut denied = policy(); denied.approved_model_ids.clear();
+        assert_eq!(authorize_enterprise_self_evolution_action(ModuleInstallState::Installed, &denied, &request(), OperatorRole::Administrator, SelfEvolutionAction::GenerateProposal, true, 1), Err(SelfEvolutionBlock::ModelNotApproved));
+    }
+    #[test]
+    fn stage_and_apply_remain_blocked_and_change_count_is_bounded() {
+        for action in [SelfEvolutionAction::StageChanges, SelfEvolutionAction::ApplyChanges] {
+            assert_eq!(authorize_enterprise_self_evolution_action(ModuleInstallState::Installed, &policy(), &request(), OperatorRole::Administrator, action, true, 1), Err(SelfEvolutionBlock::ApprovalPipelineUnavailable));
+        }
+        assert_eq!(authorize_enterprise_self_evolution_action(ModuleInstallState::Installed, &policy(), &request(), OperatorRole::Administrator, SelfEvolutionAction::GenerateProposal, true, crate::self_evolution::MAX_PROPOSAL_CHANGES + 1), Err(SelfEvolutionBlock::TooManyChanges));
+    }
+}
