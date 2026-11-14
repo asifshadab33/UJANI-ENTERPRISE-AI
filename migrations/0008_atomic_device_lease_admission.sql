@@ -129,7 +129,8 @@ BEGIN
  WHERE tenant_id = p_tenant_id AND device_id = p_device_id
    AND key_id = v_device.active_key_id
    AND generation = p_device_key_generation AND state = 'active'
-   AND valid_from <= v_now AND revoked_at IS NULL;
+   AND valid_from <= v_now AND revoked_at IS NULL
+ FOR SHARE;
  IF NOT FOUND THEN RETURN false; END IF;
 
  -- The latest consent event must agree with the device's monotonic consent revision.
@@ -153,7 +154,8 @@ BEGIN
  WHERE a.tenant_id = p_tenant_id AND a.workload_id = p_workload_id
    AND a.approval_id = p_approval_id AND a.decision = 'approved'
    AND a.manifest_digest = p_manifest_digest AND a.expires_at > v_now
-   AND s.enabled IS TRUE AND s.role = 'administrator';
+   AND s.enabled IS TRUE AND s.role = 'administrator'
+ FOR SHARE OF a, s;
  IF NOT FOUND THEN RETURN false; END IF;
 
  -- Fresh capacity evidence only; never admit from missing, stale, hot,
