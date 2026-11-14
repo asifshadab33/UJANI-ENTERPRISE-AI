@@ -1217,16 +1217,16 @@ mod tests {
     }
 
     #[test]
-    fn security_never_wakes_sleeping_devices_regardless_of_priority() {
-        // Simulate an otherwise eligible device that is not already running.
-        let mut high_priority_context = safe_context();
-        high_priority_context.device_already_running = false;
+    fn security_never_wakes_sleeping_devices_even_when_other_conditions_are_safe() {
+        // All other admission conditions are safe, but the device is not running.
+        let mut sleeping_device_context = safe_context();
+        sleeping_device_context.device_already_running = false;
 
-        // Priority is deliberately not an admission override. UJANI never wakes devices.
+        // Power state alone must reject admission. UJANI never wakes devices.
         let result = admit_with_context(
             &device(),
             &workload(),
-            &high_priority_context,
+            &sleeping_device_context,
             &policies(),
             &[],
             1_000,
