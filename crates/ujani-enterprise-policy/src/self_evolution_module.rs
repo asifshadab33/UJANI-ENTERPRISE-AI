@@ -261,7 +261,7 @@ mod tests {
         assert_eq!(
             evaluate_enterprise_self_evolution(ModuleInstallState::Installed, &policy(), &r)
                 .blocked_by,
-            Some(SelfEvolutionBlock::ScopeNotApproved)
+            Some(SelfEvolutionBlock::ProtectedScope)
         );
     }
 
@@ -333,7 +333,7 @@ mod tests {
         p.approved_write_scopes = BTreeSet::from([r.requested_write_scope.clone()]);
         assert_eq!(
             evaluate_enterprise_self_evolution(ModuleInstallState::Installed, &p, &r).blocked_by,
-            Some(SelfEvolutionBlock::ScopeNotApproved)
+            Some(SelfEvolutionBlock::ApprovalPolicyInvalid)
         );
 
         r.requested_write_scope = "crates".into();
