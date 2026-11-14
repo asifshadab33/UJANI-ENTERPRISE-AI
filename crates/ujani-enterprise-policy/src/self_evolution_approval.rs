@@ -48,7 +48,7 @@ pub enum SelfEvolutionApprovalError {
     InvalidProposal,
 }
 
-fn valid_identifier(value: &str, max_bytes: usize) -> bool {
+/// Trusted key enrollment tuple: key ID, tenant ID, operator subject ID, public key.\npub type TrustedSelfEvolutionAdminKey = (String, String, String, VerifyingKey);\n\nfn valid_identifier(value: &str, max_bytes: usize) -> bool {
     !value.is_empty()
         && value.len() <= max_bytes
         && value
@@ -101,7 +101,7 @@ pub fn self_evolution_proposal_digest(
 /// This verifier alone is not replay protection and grants no patch-application authority.
 pub fn verify_self_evolution_approval(
     signed: &SignedSelfEvolutionApproval,
-    enrolled_admin_keys: &[(String, VerifyingKey)],
+    enrolled_admin_keys: &[TrustedSelfEvolutionAdminKey],
     trusted_target: &ProposalTarget,
     proposal: &SelfEvolutionProposalV1,
     now_unix_ms: u64,
@@ -127,11 +127,20 @@ pub fn verify_self_evolution_approval(
         return Err(SelfEvolutionApprovalError::InvalidClaims);
     }
 
-    let key = enrolled_admin_keys
-        .iter()
-        .find(|(key_id, _)| key_id == &claims.approver_key_id)
-        .map(|(_, key)| key)
+    let mut matching_keys = enrolled_admin_keys.iter().filter(
+        |(key_id, tenant_id, subject_id, _)| {
+            key_id == &claims.approver_key_id
+                && tenant_id == &claims.tenant_id
+                && subject_id == &claims.approver_subject_id
+        },
+    );
+    let key = matching_keys
+        .next()
+        .map(|(_, _, _, key)| key)
         .ok_or(SelfEvolutionApprovalError::UnknownApproverKey)?;
+    if matching_keys.next().is_some() {
+        return Err(SelfEvolutionApprovalError::AmbiguousApproverKey);
+    }
     let signature = Signature::from_bytes(&signed.signature);
     key.verify_strict(&approval_signing_bytes(claims), &signature)
         .map_err(|_| SelfEvolutionApprovalError::InvalidSignature)?;
@@ -148,6 +157,14 @@ pub fn verify_self_evolution_approval(
 }
 
 impl VerifiedSelfEvolutionApproval {
+    pub fn tenant_id(&self) -> &str {
+        &self.0.tenant_id
+    }
+
+    pub fn approver_subject_id(&self) -> &str {
+        &self.0.approver_subject_id
+    }
+
     pub fn approval_id(&self) -> &str {
         &self.0.approval_id
     }
@@ -255,7 +272,7 @@ mod tests {
         let signed = signed_approval(&proposal, &target, &key);
         let verified = verify_self_evolution_approval(
             &signed,
-            &[("admin-key-01".into(), key.verifying_key())],
+            &[("admin-key-01".into(), "tenant-a".into(), "admin-a".into(), key.verifying_key())],
             &target,
             &proposal,
             2_000,
@@ -275,7 +292,7 @@ mod tests {
         assert_eq!(
             verify_self_evolution_approval(
                 &signed,
-                &[("admin-key-01".into(), key.verifying_key())],
+                &[("admin-key-01".into(), "tenant-a".into(), "admin-a".into(), key.verifying_key())],
                 &target,
                 &changed,
                 2_000,
@@ -295,7 +312,7 @@ mod tests {
         assert_eq!(
             verify_self_evolution_approval(
                 &signed,
-                &[("admin-key-01".into(), key.verifying_key())],
+                &[("admin-key-01".into(), "tenant-a".into(), "admin-a".into(), key.verifying_key())],
                 &other_target,
                 &proposal,
                 2_000,
@@ -309,7 +326,7 @@ mod tests {
         assert_eq!(
             verify_self_evolution_approval(
                 &signed,
-                &[("admin-key-01".into(), key.verifying_key())],
+                &[("admin-key-01".into(), "tenant-a".into(), "admin-a".into(), key.verifying_key())],
                 &target,
                 &proposal,
                 10_000,
@@ -328,7 +345,7 @@ mod tests {
         assert_eq!(
             verify_self_evolution_approval(
                 &tampered,
-                &[("admin-key-01".into(), key.verifying_key())],
+                &[("admin-key-01".into(), "tenant-a".into(), "admin-a".into(), key.verifying_key())],
                 &target,
                 &proposal,
                 2_000,
@@ -344,7 +361,7 @@ mod tests {
         assert_eq!(
             verify_self_evolution_approval(
                 &protected,
-                &[("admin-key-01".into(), key.verifying_key())],
+                &[("admin-key-01".into(), "tenant-a".into(), "admin-a".into(), key.verifying_key())],
                 &target,
                 &proposal,
                 2_000,
