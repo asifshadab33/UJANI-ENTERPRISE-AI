@@ -50,6 +50,14 @@ BEGIN
  ON CONFLICT DO NOTHING
  RETURNING task_id INTO v_claimed_task_id;
 
+ -- The INSERT can wait on a conflicting unique-key transaction. Recheck
+ -- expiry after that wait; raising aborts the caller's transaction so an
+ -- already-inserted claim cannot commit after its task envelope has expired.
+ IF p_expires_at <= pg_catalog.clock_timestamp() THEN
+  RAISE EXCEPTION 'task-contract replay claim expired during admission'
+   USING ERRCODE = '22023';
+ END IF;
+
  RETURN v_claimed_task_id IS NOT NULL;
 END;
 $function$;
