@@ -1038,6 +1038,30 @@ mod tests {
     }
 
     #[test]
+    fn security_manifest_hash_prevents_bait_and_switch_attacks() {
+        // 1. Create a legitimate, approved manifest (Public data, no network).
+        let mut safe_manifest = manifest();
+        safe_manifest.data_classification = DataClassification::Public;
+        safe_manifest.network_access = false;
+        let safe_hash = workload_manifest_sha256(&safe_manifest).unwrap();
+
+        // 2. Keep the workload ID but increase both the data classification
+        // and network privilege: the approved digest must no longer match.
+        let mut malicious_manifest = safe_manifest.clone();
+        malicious_manifest.data_classification = DataClassification::Restricted;
+        malicious_manifest.network_access = true;
+        assert_eq!(safe_manifest.workload_id, malicious_manifest.workload_id);
+
+        let malicious_hash = workload_manifest_sha256(&malicious_manifest).unwrap();
+
+        // 3. Any security-sensitive manifest substitution changes the digest.
+        assert_ne!(
+            safe_hash, malicious_hash,
+            "SECURITY FAILURE: Manifest hash did not change when classification and network access changed!"
+        );
+    }
+
+    #[test]
     fn manifest_rejects_urls_paths_and_untrusted_registry_endpoints_as_models() {
         for model in [
             "https://example.com/model",
@@ -1193,13 +1217,26 @@ mod tests {
     }
 
     #[test]
-    fn strict_gate_never_wakes_sleeping_or_powered_off_devices() {
-        let mut context = safe_context();
-        context.device_already_running = false;
-        assert!(matches!(
-            admit_with_context(&device(), &workload(), &context, &policies(), &[], 1_000),
-            Admission::Reject(_)
-        ));
+    fn security_never_wakes_sleeping_devices_even_when_other_conditions_are_safe() {
+        // All other admission conditions are safe, but the device is not running.
+        let mut sleeping_device_context = safe_context();
+        sleeping_device_context.device_already_running = false;
+
+        // Power state alone must reject admission. UJANI never wakes devices.
+        let result = admit_with_context(
+            &device(),
+            &workload(),
+            &sleeping_device_context,
+            &policies(),
+            &[],
+            1_000,
+        );
+
+        assert_eq!(
+            result,
+            Admission::Reject(RejectReason::DeviceNotRunning),
+            "SECURITY FAILURE: System attempted to wake a sleeping device!"
+        );
     }
 
     #[test]
