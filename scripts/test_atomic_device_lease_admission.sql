@@ -166,6 +166,7 @@ DECLARE replay_count integer;
 DECLARE audit_count integer;
 DECLARE revision_value bigint;
 DECLARE table_name text;
+DECLARE column_name text;
 BEGIN
  IF has_table_privilege(current_user,'ujani_control.devices','INSERT')
     OR has_table_privilege(current_user,'ujani_control.devices','DELETE')
@@ -216,6 +217,33 @@ BEGIN
     OR NOT has_column_privilege(current_user,'ujani_control.approvals','admission_lock_marker','UPDATE')
     OR NOT has_column_privilege(current_user,'ujani_control.operator_subjects','admission_lock_marker','UPDATE')
  THEN RAISE EXCEPTION 'runtime role is missing the narrow row-lock-only column privileges'; END IF;
+
+ -- Assert that no column-level UPDATE grant slipped onto any protected field.
+ -- The only permitted UPDATE columns are devices.reservation_revision,
+ -- devices.updated_at, and admission_lock_marker on the five row-lock tables.
+ FOR table_name, column_name IN
+  SELECT c.relname, a.attname
+  FROM pg_catalog.pg_class c
+  JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+  JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid
+  WHERE n.nspname = 'ujani_control'
+    AND c.relkind IN ('r','p')
+    AND a.attnum > 0 AND NOT a.attisdropped
+    AND NOT (
+      (c.relname = 'devices' AND a.attname IN ('reservation_revision','updated_at'))
+      OR (c.relname IN ('device_keys','owner_consents','workloads','approvals','operator_subjects')
+          AND a.attname = 'admission_lock_marker')
+    )
+ LOOP
+  IF has_column_privilege(
+       current_user,
+       pg_catalog.format('%I.%I','ujani_control',table_name),
+       column_name,
+       'UPDATE'
+     ) THEN
+   RAISE EXCEPTION 'runtime role can update protected column %.%', table_name, column_name;
+  END IF;
+ END LOOP;
 
  -- The row-lock marker is not mutable, even though PostgreSQL requires a
  -- column-level UPDATE grant for SELECT FOR SHARE.
