@@ -67,6 +67,7 @@ pub struct SelfEvolutionPermission {
 }
 
 const PROTECTED_SCOPES: &[&str] = &[
+    ".git",
     ".github/workflows",
     "scripts",
     "migrations",
@@ -131,6 +132,12 @@ pub fn evaluate_enterprise_self_evolution(
     request: &SelfEvolutionRequest,
 ) -> SelfEvolutionPermission {
     let normalized_scope = normalize_scope(&request.requested_write_scope);
+    let approved_scopes_valid = !policy.approved_write_scopes.is_empty()
+        && policy.approved_write_scopes.len() <= crate::self_evolution::MAX_PROPOSAL_SCOPE_PATHS
+        && policy.approved_write_scopes.iter().all(|scope| {
+            normalize_scope(scope)
+                .is_some_and(|normalized| !is_protected_scope(&normalized))
+        });
     let blocked_by = if installation == ModuleInstallState::NotInstalled {
         Some(SelfEvolutionBlock::ModuleNotInstalled)
     } else if !policy.permitted_by_administrator {
@@ -153,7 +160,8 @@ pub fn evaluate_enterprise_self_evolution(
         Some(SelfEvolutionBlock::ScopeNotApproved)
     } else if is_protected_scope(normalized_scope.as_deref().unwrap_or_default()) {
         Some(SelfEvolutionBlock::ProtectedScope)
-    } else if !policy.require_dual_approval
+    } else if !approved_scopes_valid
+        || !policy.require_dual_approval
         || policy.max_proposal_changes == 0
         || policy.max_proposal_changes > crate::self_evolution::MAX_PROPOSAL_CHANGES
     {
@@ -594,6 +602,33 @@ mod action_gate_tests {
                 1
             ),
             Err(SelfEvolutionBlock::ProposalGenerationDisabled)
+        );
+    }
+
+    #[test]
+    fn administrator_scope_policy_is_bounded_and_cannot_include_git_metadata() {
+        let mut invalid = policy();
+        invalid.approved_write_scopes = BTreeSet::from([".git".into()]);
+        assert_eq!(
+            evaluate_enterprise_self_evolution(
+                ModuleInstallState::Installed,
+                &invalid,
+                &request()
+            ).blocked_by,
+            Some(SelfEvolutionBlock::ApprovalPolicyInvalid)
+        );
+
+        let mut oversized = policy();
+        oversized.approved_write_scopes = (0..=crate::self_evolution::MAX_PROPOSAL_SCOPE_PATHS)
+            .map(|index| format!("apps/operator-console/scope-{index}"))
+            .collect();
+        assert_eq!(
+            evaluate_enterprise_self_evolution(
+                ModuleInstallState::Installed,
+                &oversized,
+                &request()
+            ).blocked_by,
+            Some(SelfEvolutionBlock::ApprovalPolicyInvalid)
         );
     }
 
