@@ -60,12 +60,16 @@ VALUES
 ON CONFLICT (tenant_id,approval_id) DO UPDATE SET
  decision='approved',expires_at=clock_timestamp()+interval '10 minutes';
 
-GRANT SELECT,INSERT,UPDATE ON ujani_control.devices,ujani_control.device_keys,
- ujani_control.owner_consents,ujani_control.workloads,ujani_control.approvals,
- ujani_control.device_telemetry_samples,ujani_control.leases,
- ujani_control.request_replays,ujani_control.audit_events TO ujani_runtime;
 GRANT USAGE ON SCHEMA ujani_control TO ujani_runtime;
-GRANT SELECT ON ujani_control.operator_subjects TO ujani_runtime;
+GRANT SELECT ON ujani_control.devices,ujani_control.device_keys,
+ ujani_control.owner_consents,ujani_control.workloads,ujani_control.approvals,
+ ujani_control.operator_subjects,ujani_control.device_telemetry_samples,
+ ujani_control.leases,ujani_control.request_replays,ujani_control.audit_events
+ TO ujani_runtime;
+GRANT UPDATE (reservation_revision, updated_at)
+ ON ujani_control.devices TO ujani_runtime;
+GRANT INSERT ON ujani_control.leases,ujani_control.request_replays,
+ ujani_control.audit_events TO ujani_runtime;
 GRANT EXECUTE ON FUNCTION ujani_control.admit_device_lease(
  text,text,text,text,text,bytea,bytea,bytea,bigint,bigint,integer,bigint,bytea,timestamptz,uuid
 ) TO ujani_runtime;
@@ -80,6 +84,34 @@ DECLARE replay_count integer;
 DECLARE audit_count integer;
 DECLARE revision_value bigint;
 BEGIN
+ IF has_table_privilege(current_user,'ujani_control.devices','INSERT')
+    OR has_table_privilege(current_user,'ujani_control.devices','DELETE')
+    OR has_column_privilege(current_user,'ujani_control.devices','trust_state','UPDATE')
+    OR has_column_privilege(current_user,'ujani_control.devices','owner_consent_state','UPDATE')
+    OR has_column_privilege(current_user,'ujani_control.devices','admin_approval_state','UPDATE')
+    OR has_column_privilege(current_user,'ujani_control.devices','active_key_id','UPDATE')
+    OR has_table_privilege(current_user,'ujani_control.owner_consents','INSERT')
+    OR has_table_privilege(current_user,'ujani_control.owner_consents','UPDATE')
+    OR has_table_privilege(current_user,'ujani_control.owner_consents','DELETE')
+    OR has_table_privilege(current_user,'ujani_control.device_keys','INSERT')
+    OR has_table_privilege(current_user,'ujani_control.device_keys','UPDATE')
+    OR has_table_privilege(current_user,'ujani_control.approvals','INSERT')
+    OR has_table_privilege(current_user,'ujani_control.approvals','UPDATE')
+    OR has_table_privilege(current_user,'ujani_control.approvals','DELETE')
+    OR has_table_privilege(current_user,'ujani_control.operator_subjects','UPDATE')
+ THEN RAISE EXCEPTION 'runtime role can mutate device trust or consent state'; END IF;
+ IF has_table_privilege(current_user,'ujani_control.leases','UPDATE')
+    OR has_table_privilege(current_user,'ujani_control.leases','DELETE')
+    OR has_table_privilege(current_user,'ujani_control.request_replays','UPDATE')
+    OR has_table_privilege(current_user,'ujani_control.request_replays','DELETE')
+    OR has_table_privilege(current_user,'ujani_control.audit_events','UPDATE')
+    OR has_table_privilege(current_user,'ujani_control.audit_events','DELETE')
+ THEN RAISE EXCEPTION 'runtime role can rewrite lease, replay or audit history'; END IF;
+ IF NOT has_column_privilege(current_user,'ujani_control.devices','reservation_revision','UPDATE')
+    OR NOT has_column_privilege(current_user,'ujani_control.devices','updated_at','UPDATE')
+    OR has_column_privilege(current_user,'ujani_control.devices','trust_state','UPDATE')
+ THEN RAISE EXCEPTION 'runtime role does not have only the required reservation update columns'; END IF;
+
  admitted := ujani_control.admit_device_lease(
   'admission-test','admission-device','admission-workload','admission-approval',
   'admission-lease-1',decode(repeat('51',16),'hex'),decode(repeat('52',32),'hex'),
