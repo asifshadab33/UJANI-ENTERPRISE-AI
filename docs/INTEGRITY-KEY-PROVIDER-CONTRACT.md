@@ -13,7 +13,10 @@ provider-backed anchored backup recovery.
 Both stores retain caller-injected raw-key constructors for prototype
 compatibility and existing tests. Those constructors are not a completed
 production custody design. There is no production OS-keyring, TPM, KMS or HSM
-adapter in this repository.
+adapter in this repository. Windows anchored ledger snapshot writes remain
+disabled until a safe durable-rename adapter is available; the provider-backed
+anchored backup-recovery regression therefore runs on Unix platforms only.
+Unanchored provider-backed ledger persistence is still exercised on Windows.
 
 ## Provider boundary
 
