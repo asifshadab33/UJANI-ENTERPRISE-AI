@@ -968,7 +968,10 @@ mod tests {
         safe_manifest.network_access = true;
         let substituted_workload = workload_from_manifest(&safe_manifest).unwrap();
         assert_eq!(safe_workload.workload_id, substituted_workload.workload_id);
-        assert_ne!(safe_workload.manifest_sha256, substituted_workload.manifest_sha256);
+        assert_ne!(
+            safe_workload.manifest_sha256,
+            substituted_workload.manifest_sha256
+        );
 
         // Reuse the original signed policy against the substituted workload.
         // The exact manifest binding must fail before admission or reservation.
