@@ -7,6 +7,9 @@
 use crate::device_trust::durable::{
     AnchorCallPolicy, MonotonicSnapshotAnchor, SnapshotAnchorRecord,
 };
+use crate::integrity_key_provider::{
+    IntegrityKeyProvider, IntegrityKeyProviderError, IntegrityKeyPurpose,
+};
 #[cfg(test)]
 use crate::{Admission, ClassPolicy, Device, SchedulingContext, VerifiedAdminApproval, Workload};
 use crate::{Ledger, TelemetryChallengeError};
@@ -32,6 +35,7 @@ pub enum DurableLedgerError {
     InvalidRecord,
     CapacityExceeded,
     LockPoisoned,
+    KeyProvider(IntegrityKeyProviderError),
     AnchorUnavailable(String),
     AnchorMismatch,
     AnchorConflict,
@@ -55,6 +59,7 @@ impl std::fmt::Display for DurableLedgerError {
                 "durable ledger snapshot would exceed the 16 MiB safety limit; committed state was not changed"
             ),
             Self::LockPoisoned => write!(formatter, "durable ledger thread lock is poisoned"),
+            Self::KeyProvider(error) => write!(formatter, "protected integrity-key provider failed: {error}"),
             Self::AnchorUnavailable(message) => write!(formatter, "external ledger monotonic anchor unavailable: {message}"),
             Self::AnchorMismatch => write!(formatter, "durable ledger snapshot does not match its external monotonic anchor"),
             Self::AnchorConflict => write!(formatter, "external ledger anchor rejected a stale generation"),
@@ -127,7 +132,8 @@ pub struct DurableLedger {
     lock_path: PathBuf,
     thread_lock: Arc<Mutex<()>>,
     integrity_keys: Arc<HashMap<String, LedgerIntegrityKey>>,
-    active_key_id: String,
+    active_key_id: Option<String>,
+    integrity_key_provider: Option<Arc<dyn IntegrityKeyProvider>>,
     anchor_namespace: Option<String>,
     anchor: Option<Arc<dyn MonotonicSnapshotAnchor>>,
     anchor_call_policy: Option<AnchorCallPolicy>,
@@ -139,6 +145,7 @@ impl std::fmt::Debug for DurableLedger {
             .debug_struct("DurableLedger")
             .field("path", &self.path)
             .field("active_key_id", &self.active_key_id)
+            .field("provider_backed", &self.integrity_key_provider.is_some())
             .field("anchor_enabled", &self.anchor.is_some())
             .finish()
     }
@@ -155,6 +162,35 @@ impl DurableLedger {
         keys: Vec<LedgerIntegrityKey>,
     ) -> Result<Self, DurableLedgerError> {
         Self::open_internal(path, active_key_id, keys, None)
+    }
+
+    /// Open a ledger using a host-owned non-exportable integrity-key provider.
+    /// Existing snapshots remain readable while their key IDs are retained by
+    /// the provider; every successful write uses the provider's active key.
+    pub fn open_with_key_provider(
+        path: impl AsRef<Path>,
+        provider: Arc<dyn IntegrityKeyProvider>,
+    ) -> Result<Self, DurableLedgerError> {
+        Self::open_internal_with_provider(path, provider, None)
+    }
+
+    /// Open an anchored ledger using a host-owned protected key provider.
+    pub fn open_with_anchor_and_key_provider(
+        path: impl AsRef<Path>,
+        registry_id: impl Into<String>,
+        provider: Arc<dyn IntegrityKeyProvider>,
+        anchor: Arc<dyn MonotonicSnapshotAnchor>,
+        anchor_call_policy: AnchorCallPolicy,
+    ) -> Result<Self, DurableLedgerError> {
+        let registry_id = registry_id.into();
+        if !valid_stored_identifier(&registry_id, 128) {
+            return Err(DurableLedgerError::InvalidRecord);
+        }
+        Self::open_internal_with_provider(
+            path,
+            provider,
+            Some((registry_id, anchor, anchor_call_policy)),
+        )
     }
 
     /// Open a V2 ledger whose snapshot digest and generation are pinned by an
@@ -243,7 +279,53 @@ impl DurableLedger {
         if !integrity_keys.contains_key(active_key_id) {
             return Err(DurableLedgerError::InvalidRecord);
         }
+        Self::open_internal_with_sources(
+            path,
+            integrity_keys,
+            Some(active_key_id.to_string()),
+            None,
+            anchor,
+            sync_ancestors,
+        )
+    }
 
+    fn open_internal_with_provider(
+        path: impl AsRef<Path>,
+        provider: Arc<dyn IntegrityKeyProvider>,
+        anchor: Option<(String, Arc<dyn MonotonicSnapshotAnchor>, AnchorCallPolicy)>,
+    ) -> Result<Self, DurableLedgerError> {
+        #[cfg(unix)]
+        let sync_ancestors = sync_ancestor_directories;
+        #[cfg(not(unix))]
+        let sync_ancestors = |_path: &Path| Ok(());
+        Self::open_internal_with_sources(
+            path,
+            HashMap::new(),
+            None,
+            Some(provider),
+            anchor,
+            sync_ancestors,
+        )
+    }
+
+    fn open_internal_with_sources(
+        path: impl AsRef<Path>,
+        integrity_keys: HashMap<String, LedgerIntegrityKey>,
+        active_key_id: Option<String>,
+        integrity_key_provider: Option<Arc<dyn IntegrityKeyProvider>>,
+        anchor: Option<(String, Arc<dyn MonotonicSnapshotAnchor>, AnchorCallPolicy)>,
+        sync_ancestors: impl FnOnce(&Path) -> Result<(), DurableLedgerError>,
+    ) -> Result<Self, DurableLedgerError> {
+        if active_key_id.is_some() == integrity_key_provider.is_some() {
+            return Err(DurableLedgerError::InvalidRecord);
+        }
+        if active_key_id
+            .as_ref()
+            .is_some_and(|id| !integrity_keys.contains_key(id))
+            || (active_key_id.is_none() && !integrity_keys.is_empty())
+        {
+            return Err(DurableLedgerError::InvalidRecord);
+        }
         let mut path = path.as_ref().to_path_buf();
         let anchored = anchor.is_some();
         let parent = path
@@ -251,9 +333,7 @@ impl DurableLedger {
             .filter(|parent| !parent.as_os_str().is_empty())
             .unwrap_or_else(|| Path::new("."));
         if anchored {
-            // Anchored mode requires a pre-existing ledger directory. Creating a
-            // directory tree here would require syncing every new ancestor entry
-            // before the external anchor can safely advance.
+            // Anchored mode requires a pre-existing real directory with safe permissions.
             let metadata = fs::symlink_metadata(parent)?;
             if !metadata.is_dir() || metadata.file_type().is_symlink() {
                 return Err(DurableLedgerError::Io(
@@ -275,7 +355,6 @@ impl DurableLedger {
                 .to_os_string();
             let canonical_parent = fs::canonicalize(parent)?;
             sync_ancestors(&canonical_parent)?;
-            // Use the canonical, checked directory path for all subsequent file operations.
             path = canonical_parent.join(file_name);
         } else {
             fs::create_dir_all(parent)?;
@@ -289,7 +368,8 @@ impl DurableLedger {
             path,
             thread_lock: Arc::new(Mutex::new(())),
             integrity_keys: Arc::new(integrity_keys),
-            active_key_id: active_key_id.to_string(),
+            active_key_id,
+            integrity_key_provider,
             anchor_namespace,
             anchor,
             anchor_call_policy,
@@ -297,7 +377,6 @@ impl DurableLedger {
         store.transact(|_| Ok(()))?;
         Ok(store)
     }
-
     /// Test-only raw-context reservation helper. Production callers must use
     /// the signed-evidence wrapper in scheduling_evidence.
     #[cfg(test)]
@@ -508,6 +587,36 @@ impl DurableLedger {
         })
     }
 
+    fn encode_ledger_snapshot(&self, ledger: &Ledger) -> Result<Vec<u8>, DurableLedgerError> {
+        if let Some(provider) = &self.integrity_key_provider {
+            return serialize_snapshot_with_provider(ledger, provider.as_ref());
+        }
+        let key_id = self
+            .active_key_id
+            .as_deref()
+            .ok_or(DurableLedgerError::InvalidRecord)?;
+        let key = self
+            .integrity_keys
+            .get(key_id)
+            .ok_or(DurableLedgerError::InvalidRecord)?;
+        Ok(serialize_snapshot(ledger, key_id, &key.key))
+    }
+
+    fn decode_ledger_snapshot(&self, bytes: &[u8]) -> Result<Ledger, DurableLedgerError> {
+        if let Some(provider) = &self.integrity_key_provider {
+            return deserialize_snapshot_with_provider(bytes, provider.as_ref());
+        }
+        deserialize_snapshot(bytes, &self.integrity_keys)
+    }
+
+    fn load_unanchored_ledger(&self) -> Result<Ledger, DurableLedgerError> {
+        if let Some(provider) = &self.integrity_key_provider {
+            load_or_recover_with_provider(&self.path, provider.as_ref())
+        } else {
+            load_or_recover(&self.path, &self.integrity_keys)
+        }
+    }
+
     fn load_anchored_ledger(
         &self,
         anchor_record: Option<&SnapshotAnchorRecord>,
@@ -520,14 +629,14 @@ impl DurableLedger {
                 if self.path.exists() {
                     let bytes = read_snapshot(&self.path)?;
                     if snapshot_sha256(&bytes) == record.snapshot_sha256() {
-                        return deserialize_snapshot(&bytes, &self.integrity_keys);
+                        return self.decode_ledger_snapshot(&bytes);
                     }
                 }
                 if backup.exists() {
                     let bytes = read_snapshot(&backup)?;
                     if snapshot_sha256(&bytes) == record.snapshot_sha256() {
                         restore_anchored_backup(&self.path, &backup)?;
-                        return deserialize_snapshot(&bytes, &self.integrity_keys);
+                        return self.decode_ledger_snapshot(&bytes);
                     }
                 }
                 Err(DurableLedgerError::AnchorMismatch)
@@ -578,14 +687,10 @@ impl DurableLedger {
         let mut ledger = if self.anchor.is_some() {
             self.load_anchored_ledger(anchor_record.as_ref())?
         } else {
-            load_or_recover(&self.path, &self.integrity_keys)?
+            self.load_unanchored_ledger()?
         };
         let result = operation(&mut ledger)?;
-        let active_key = self
-            .integrity_keys
-            .get(&self.active_key_id)
-            .ok_or(DurableLedgerError::InvalidRecord)?;
-        let bytes = serialize_snapshot(&ledger, &self.active_key_id, &active_key.key);
+        let bytes = self.encode_ledger_snapshot(&ledger)?;
         if bytes.len() as u64 > MAX_LEDGER_BYTES {
             return Err(DurableLedgerError::CapacityExceeded);
         }
@@ -602,13 +707,7 @@ impl DurableLedger {
             &self.anchor_namespace,
             &self.anchor_call_policy,
         ) {
-            persist_snapshot(
-                &self.path,
-                &ledger,
-                &self.active_key_id,
-                &active_key.key,
-                true,
-            )?;
+            persist_snapshot_bytes(&self.path, &bytes, true)?;
             let expected_generation = anchor_record.as_ref().map(SnapshotAnchorRecord::generation);
             let generation = expected_generation
                 .unwrap_or(0)
@@ -657,13 +756,7 @@ impl DurableLedger {
                 }
             }
         } else {
-            persist_snapshot(
-                &self.path,
-                &ledger,
-                &self.active_key_id,
-                &active_key.key,
-                false,
-            )?;
+            persist_snapshot_bytes(&self.path, &bytes, false)?;
         }
         Ok(result)
     }
@@ -892,7 +985,7 @@ fn verify_ledger_mac(key: &[u8; 32], key_id: &str, body: &[u8], expected: &[u8])
     mac.verify_slice(expected).is_ok()
 }
 
-fn serialize_snapshot(ledger: &Ledger, key_id: &str, key: &[u8; 32]) -> Vec<u8> {
+fn serialize_snapshot_body(ledger: &Ledger) -> String {
     let mut body = format!("{LEDGER_HEADER}\n");
     let mut workload_ids = ledger.jobs.keys().collect::<Vec<_>>();
     workload_ids.sort();
@@ -967,14 +1060,63 @@ fn serialize_snapshot(ledger: &Ledger, key_id: &str, key: &[u8; 32]) -> Vec<u8> 
             revision,
         ));
     }
+    body
+}
+
+fn serialize_snapshot(ledger: &Ledger, key_id: &str, key: &[u8; 32]) -> Vec<u8> {
+    let mut body = serialize_snapshot_body(ledger);
     let mac = ledger_mac(key, key_id, body.as_bytes());
     body.push_str(&format!("M\t{}\t{}\n", key_id, hex_encode(&mac)));
     body.into_bytes()
 }
 
+fn serialize_snapshot_with_provider(
+    ledger: &Ledger,
+    provider: &dyn IntegrityKeyProvider,
+) -> Result<Vec<u8>, DurableLedgerError> {
+    let mut body = serialize_snapshot_body(ledger);
+    let (key_id, mac) = provider
+        .sign_active(IntegrityKeyPurpose::ReservationLedger, body.as_bytes())
+        .map_err(DurableLedgerError::KeyProvider)?;
+    if !valid_stored_identifier(&key_id, 128) {
+        return Err(DurableLedgerError::InvalidRecord);
+    }
+    body.push_str(&format!("M\t{}\t{}\n", key_id, hex_encode(&mac)));
+    Ok(body.into_bytes())
+}
 fn deserialize_snapshot(
     bytes: &[u8],
     integrity_keys: &HashMap<String, LedgerIntegrityKey>,
+) -> Result<Ledger, DurableLedgerError> {
+    deserialize_snapshot_with_verifier(bytes, |key_id, body, expected| {
+        let key = integrity_keys
+            .get(key_id)
+            .ok_or(DurableLedgerError::CorruptState)?;
+        if verify_ledger_mac(&key.key, key_id, body, expected) {
+            Ok(())
+        } else {
+            Err(DurableLedgerError::CorruptState)
+        }
+    })
+}
+
+fn deserialize_snapshot_with_provider(
+    bytes: &[u8],
+    provider: &dyn IntegrityKeyProvider,
+) -> Result<Ledger, DurableLedgerError> {
+    deserialize_snapshot_with_verifier(bytes, |key_id, body, expected| {
+        let tag: [u8; 32] = expected
+            .try_into()
+            .map_err(|_| DurableLedgerError::CorruptState)?;
+        provider
+            .verify(IntegrityKeyPurpose::ReservationLedger, key_id, body, &tag)
+            .map_err(DurableLedgerError::KeyProvider)
+    })
+}
+
+fn deserialize_snapshot_with_verifier(
+    bytes: &[u8],
+    verify: impl FnOnce(&str, &[u8], &[u8]) -> Result<(), DurableLedgerError>,
 ) -> Result<Ledger, DurableLedgerError> {
     let text = std::str::from_utf8(bytes).map_err(|_| DurableLedgerError::CorruptState)?;
     if bytes.len() as u64 > MAX_LEDGER_BYTES || !text.ends_with('\n') {
@@ -995,14 +1137,8 @@ fn deserialize_snapshot(
     if mac_fields.next().is_some() || !valid_stored_identifier(key_id, 128) {
         return Err(DurableLedgerError::CorruptState);
     }
-    let key = integrity_keys
-        .get(key_id)
-        .ok_or(DurableLedgerError::CorruptState)?;
     let expected_mac = hex_decode(encoded_mac)?;
-    if !verify_ledger_mac(&key.key, key_id, body.as_bytes(), &expected_mac) {
-        return Err(DurableLedgerError::CorruptState);
-    }
-
+    verify(key_id, body.as_bytes(), &expected_mac)?;
     let mut lines = body.lines();
     let snapshot_header = lines.next();
     let (is_v4, is_v3) = match snapshot_header {
@@ -1222,11 +1358,60 @@ fn load_or_recover(
     }
 }
 
+fn load_or_recover_with_provider(
+    path: &Path,
+    provider: &dyn IntegrityKeyProvider,
+) -> Result<Ledger, DurableLedgerError> {
+    let backup = append_suffix(path, ".bak");
+    if !path.exists() {
+        if backup.exists() {
+            fs::rename(&backup, path)?;
+        } else {
+            return Ok(Ledger::default());
+        }
+    }
+    let current = read_snapshot(path);
+    match current.and_then(|bytes| deserialize_snapshot_with_provider(&bytes, provider)) {
+        Ok(ledger) => {
+            if backup.exists() {
+                let _ = fs::remove_file(backup);
+            }
+            Ok(ledger)
+        }
+        Err(current_error) => {
+            if !backup.exists() {
+                return Err(current_error);
+            }
+            let backup_bytes = read_snapshot(&backup)?;
+            let recovered = deserialize_snapshot_with_provider(&backup_bytes, provider)?;
+            let corrupt = append_suffix(path, ".corrupt");
+            if corrupt.exists() {
+                fs::remove_file(&corrupt)?;
+            }
+            if path.exists() {
+                fs::rename(path, &corrupt)?;
+            }
+            fs::rename(&backup, path)?;
+            Ok(recovered)
+        }
+    }
+}
+
+#[cfg(test)]
 fn persist_snapshot(
     path: &Path,
     ledger: &Ledger,
     key_id: &str,
     key: &[u8; 32],
+    preserve_backup: bool,
+) -> Result<(), DurableLedgerError> {
+    let bytes = serialize_snapshot(ledger, key_id, key);
+    persist_snapshot_bytes(path, &bytes, preserve_backup)
+}
+
+fn persist_snapshot_bytes(
+    path: &Path,
+    bytes: &[u8],
     preserve_backup: bool,
 ) -> Result<(), DurableLedgerError> {
     // This crate forbids unsafe code. Until a reviewed safe Windows durability
@@ -1246,7 +1431,6 @@ fn persist_snapshot(
     if temp.exists() {
         fs::remove_file(&temp)?;
     }
-    let bytes = serialize_snapshot(ledger, key_id, key);
     if bytes.len() as u64 > MAX_LEDGER_BYTES {
         return Err(DurableLedgerError::CapacityExceeded);
     }
@@ -1258,7 +1442,7 @@ fn persist_snapshot(
         temp_options.mode(0o600);
     }
     let mut file = temp_options.open(&temp)?;
-    file.write_all(&bytes)?;
+    file.write_all(bytes)?;
     file.sync_all()?;
 
     if path.exists() {
@@ -2419,6 +2603,116 @@ mod tests {
     }
 
     #[test]
+    fn protected_key_provider_wires_durable_ledger_and_rotates_without_exporting_keys() {
+        use crate::integrity_key_provider::{IntegrityKeyPurpose, TestIntegrityKeyProvider};
+
+        let path = temp_path("provider-key-rotation");
+        let provider = Arc::new(TestIntegrityKeyProvider::default());
+        let purpose = IntegrityKeyPurpose::ReservationLedger;
+
+        provider.provision_key(purpose, "ledger-v1").unwrap();
+        provider.activate_key(purpose, "ledger-v1").unwrap();
+        let ledger = DurableLedger::open_with_key_provider(&path, provider.clone()).unwrap();
+        assert_eq!(ledger.snapshot().unwrap().active_jobs, 0);
+        drop(ledger);
+
+        provider.provision_key(purpose, "ledger-v2").unwrap();
+        provider.activate_key(purpose, "ledger-v2").unwrap();
+        let ledger = DurableLedger::open_with_key_provider(&path, provider.clone()).unwrap();
+        assert_eq!(ledger.snapshot().unwrap().active_jobs, 0);
+        drop(ledger);
+
+        // Opening with v2 verified and rewrote the v1 snapshot before retirement.
+        provider.retire_key(purpose, "ledger-v1").unwrap();
+        let ledger = DurableLedger::open_with_key_provider(&path, provider).unwrap();
+        assert_eq!(ledger.snapshot().unwrap().active_jobs, 0);
+        drop(ledger);
+        cleanup(&path);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn protected_key_provider_verifies_anchored_backup_recovery() {
+        use crate::integrity_key_provider::{IntegrityKeyPurpose, TestIntegrityKeyProvider};
+
+        let path = temp_path("provider-anchor-recovery");
+        let provider = Arc::new(TestIntegrityKeyProvider::default());
+        provider
+            .provision_key(IntegrityKeyPurpose::ReservationLedger, "anchored-v1")
+            .unwrap();
+        provider
+            .activate_key(IntegrityKeyPurpose::ReservationLedger, "anchored-v1")
+            .unwrap();
+        let anchor = Arc::new(MemoryAnchor::default());
+
+        let ledger = DurableLedger::open_with_anchor_and_key_provider(
+            &path,
+            "provider-ledger",
+            provider.clone(),
+            anchor.clone(),
+            AnchorCallPolicy::default(),
+        )
+        .unwrap();
+        drop(ledger);
+
+        let anchored_snapshot = fs::read(&path).unwrap();
+        let original_anchor = anchor.load("provider-ledger").unwrap().unwrap();
+
+        let ledger = DurableLedger::open_with_anchor_and_key_provider(
+            &path,
+            "provider-ledger",
+            provider.clone(),
+            anchor.clone(),
+            AnchorCallPolicy::default(),
+        )
+        .unwrap();
+        ledger
+            .consume_telemetry_challenge("worker-01", 1, 0, [7; 16], 10_000, 2_000)
+            .unwrap()
+            .unwrap();
+        drop(ledger);
+
+        // Simulate a crash after the prior snapshot was retained but before the
+        // monotonic anchor advanced to the newer candidate.
+        fs::write(append_suffix(&path, ".bak"), &anchored_snapshot).unwrap();
+        anchor
+            .records
+            .lock()
+            .unwrap()
+            .insert("provider-ledger".into(), original_anchor);
+        fs::write(&path, b"damaged-primary").unwrap();
+
+        let recovered = DurableLedger::open_with_anchor_and_key_provider(
+            &path,
+            "provider-ledger",
+            provider,
+            anchor,
+            AnchorCallPolicy::default(),
+        )
+        .unwrap();
+        assert_eq!(recovered.snapshot().unwrap().active_jobs, 0);
+        assert_eq!(fs::read(&path).unwrap(), anchored_snapshot);
+        drop(recovered);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn protected_key_provider_unavailable_fails_closed_for_durable_ledger() {
+        use crate::integrity_key_provider::TestIntegrityKeyProvider;
+
+        let path = temp_path("provider-key-unavailable");
+        let provider = Arc::new(TestIntegrityKeyProvider::default());
+        let result = DurableLedger::open_with_key_provider(&path, provider);
+        assert_eq!(
+            result.err(),
+            Some(DurableLedgerError::KeyProvider(
+                IntegrityKeyProviderError::UnknownKey
+            ))
+        );
+        cleanup(&path);
+    }
+
+    #[test]
     fn key_material_is_redacted_from_debug_output() {
         let key = integrity_key("secret-key");
         let debug = format!("{key:?}");
@@ -2430,7 +2724,7 @@ mod tests {
     #[test]
     fn legacy_checksum_only_v1_snapshot_is_rejected() {
         let path = temp_path("legacy-v1");
-        fs::write(&path, b"UJANI-ENTERPRISE-LEDGER-V1\\nH\\tdeadbeef\\n").unwrap();
+        fs::write(&path, b"UJANI-ENTERPRISE-LEDGER-V1\nH\tdeadbeef\n").unwrap();
         assert_eq!(
             open_ledger(&path).err(),
             Some(DurableLedgerError::CorruptState)
