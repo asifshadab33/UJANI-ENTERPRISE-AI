@@ -5,6 +5,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SQL_PATH = ROOT / "migrations" / "0001_customer_hosted_control_plane.sql"
 TASK_REPLAY_SQL_PATH = ROOT / "migrations" / "0002_task_contract_replay_storage.sql"
+SELF_EVOLUTION_REPLAY_SQL_PATH = ROOT / "migrations" / "0006_self_evolution_approval_replay.sql"
+SELF_EVOLUTION_REPLAY_TEST_PATH = ROOT / "scripts" / "test_self_evolution_approval_replay.sql"
 TENANT_TEST_SQL_PATH = ROOT / "scripts" / "test_customer_hosted_migration.sql"
 
 
@@ -53,6 +55,35 @@ def main() -> None:
         raise SystemExit("task-contract storage must fail closed without tenant context")
     if "SECURITY DEFINER" in replay_sql or "GRANT ALL" in replay_sql:
         raise SystemExit("task-contract migration must not add privileged functions or grants")
+    self_evolution_replay_sql = SELF_EVOLUTION_REPLAY_SQL_PATH.read_text(encoding="utf-8")
+    for required in (
+        "CREATE TABLE IF NOT EXISTS ujani_control.self_evolution_approval_replays",
+        "PRIMARY KEY (tenant_id, approval_id)",
+        "UNIQUE (tenant_id, nonce)",
+        "octet_length(nonce) = 16",
+        "octet_length(proposal_sha256) = 32",
+        "octet_length(target_sha256) = 32",
+        "octet_length(approved_scope_sha256) = 32",
+        "approved_scope_count BETWEEN 1 AND 32",
+        "ENABLE ROW LEVEL SECURITY",
+        "FORCE ROW LEVEL SECURITY",
+        "current_setting('ujani.tenant_id', true)",
+    ):
+        if required not in self_evolution_replay_sql:
+            raise SystemExit(f"Self-Evolution approval replay migration is missing invariant: {required}")
+    if "SECURITY DEFINER" in self_evolution_replay_sql or "GRANT ALL" in self_evolution_replay_sql:
+        raise SystemExit("Self-Evolution replay migration must not add privileged functions or broad grants")
+    self_evolution_replay_test = SELF_EVOLUTION_REPLAY_TEST_PATH.read_text(encoding="utf-8")
+    for required in (
+        "replayed approval nonce was consumed twice",
+        "replayed approval ID was consumed twice",
+        "tenant-b can see tenant-a approval replay rows",
+        "missing tenant context did not fail closed",
+        "runtime role can mutate or erase consumed approval tombstones",
+        "cross-tenant approval replay insert unexpectedly succeeded",
+    ):
+        if required not in self_evolution_replay_test:
+            raise SystemExit(f"Self-Evolution approval replay regression test missing: {required}")
     telemetry_sql = (ROOT / "migrations" / "0003_monotonic_device_telemetry.sql").read_text(encoding="utf-8")
     telemetry_test = (ROOT / "scripts" / "test_monotonic_device_telemetry.sql").read_text(encoding="utf-8")
     for required in (
@@ -110,7 +141,7 @@ def main() -> None:
     concurrency_test = (ROOT / "scripts" / "test_monotonic_device_telemetry_concurrency.sh").read_text(encoding="utf-8")
     if 'PSQL_BIN="${PSQL_BIN:-psql}"' not in concurrency_test:
         raise SystemExit("telemetry concurrency test must use the configured PostgreSQL client adapter")
-    print("Customer-hosted, task-contract and monotonic telemetry migration static checks passed.")
+    print("Customer-hosted, task-contract, Self-Evolution approval replay and monotonic telemetry migration static checks passed.")
 
 
 if __name__ == "__main__":
