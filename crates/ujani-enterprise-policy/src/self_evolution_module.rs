@@ -71,7 +71,9 @@ fn is_protected_scope(value: &str) -> bool {
     let candidate = value.to_ascii_lowercase();
     PROTECTED_SCOPES.iter().any(|protected| {
         let protected = protected.to_ascii_lowercase();
-        candidate == protected || candidate.starts_with(&(protected + "/"))
+        candidate == protected
+            || candidate.starts_with(&(protected.clone() + "/"))
+            || protected.starts_with(&(candidate.clone() + "/"))
     }) || candidate.split('/').any(|segment| {
         segment == ".env"
             || segment.starts_with(".env.")
@@ -87,10 +89,28 @@ fn is_protected_scope(value: &str) -> bool {
     })
 }
 
+fn normalize_scope(value: &str) -> Option<String> {
+    if value.is_empty() || value.len() > 512 || value.starts_with('/') || value.contains('\\\\') {
+        return None;
+    }
+    let segments: Vec<&str> = value.split('/').collect();
+    if segments.iter().any(|segment| {
+        segment.is_empty()
+            || *segment == "."
+            || *segment == ".."
+            || !segment.bytes().all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
+    }) {
+        return None;
+    }
+    Some(segments.join("/").to_ascii_lowercase())
+}
+
 fn valid_identifier(value: &str) -> bool {
     !value.trim().is_empty()
         && value.len() <= 128
-        && value.bytes().all(|byte| byte.is_ascii_alphanumeric() || b"._:-/".contains(&byte))
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._:-/".contains(&byte))
 }
 
 pub fn evaluate_enterprise_self_evolution(
@@ -98,6 +118,7 @@ pub fn evaluate_enterprise_self_evolution(
     policy: &EnterpriseSelfEvolutionPolicy,
     request: &SelfEvolutionRequest,
 ) -> SelfEvolutionPermission {
+    let normalized_scope = normalize_scope(&request.requested_write_scope);
     let blocked_by = if installation == ModuleInstallState::NotInstalled {
         Some(SelfEvolutionBlock::ModuleNotInstalled)
     } else if !policy.permitted_by_administrator {
@@ -110,13 +131,17 @@ pub fn evaluate_enterprise_self_evolution(
             .contains(&request.selected_model_id)
     {
         Some(SelfEvolutionBlock::ModelNotApproved)
-    } else if !valid_identifier(&request.requested_write_scope)
-        || !policy
-            .approved_write_scopes
-            .contains(&request.requested_write_scope)
+    } else if normalized_scope.is_none()
+        || !policy.approved_write_scopes.iter().any(|approved| {
+            normalize_scope(approved)
+                .zip(normalized_scope.as_ref())
+                .is_some_and(|(approved, requested)| {
+                    requested == &approved || requested.starts_with(&(approved + "/"))
+                })
+        })
     {
         Some(SelfEvolutionBlock::ScopeNotApproved)
-    } else if is_protected_scope(&request.requested_write_scope) {
+    } else if is_protected_scope(normalized_scope.as_deref().unwrap_or_default()) {
         Some(SelfEvolutionBlock::ProtectedScope)
     } else if !request.trusted_source_and_build_environment_configured {
         Some(SelfEvolutionBlock::TrustedBuildEnvironmentRequired)
@@ -279,4 +304,30 @@ mod tests {
         let result = evaluate_enterprise_self_evolution(ModuleInstallState::Installed, &p, &r);
         assert!(result.may_submit_for_review);
     }
+    #[test]
+    fn scope_aliases_and_parent_directories_cannot_bypass_protected_paths() {
+        let mut p = policy();
+        let mut r = request();
+        r.requested_write_scope = "./crates/ujani-enterprise-policy".into();
+        p.approved_write_scopes = BTreeSet::from([r.requested_write_scope.clone()]);
+        assert_eq!(
+            evaluate_enterprise_self_evolution(ModuleInstallState::Installed, &p, &r).blocked_by,
+            Some(SelfEvolutionBlock::ScopeNotApproved)
+        );
+
+        r.requested_write_scope = "crates".into();
+        p.approved_write_scopes = BTreeSet::from(["crates".into()]);
+        assert_eq!(
+            evaluate_enterprise_self_evolution(ModuleInstallState::Installed, &p, &r).blocked_by,
+            Some(SelfEvolutionBlock::ProtectedScope)
+        );
+
+        r.requested_write_scope = "crates/ujani-enterprise-policy-extra".into();
+        p.approved_write_scopes = BTreeSet::from([r.requested_write_scope.clone()]);
+        assert_ne!(
+            evaluate_enterprise_self_evolution(ModuleInstallState::Installed, &p, &r).blocked_by,
+            Some(SelfEvolutionBlock::ProtectedScope)
+        );
+    }
+
 }
