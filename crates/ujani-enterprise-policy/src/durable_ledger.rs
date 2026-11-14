@@ -2630,6 +2630,7 @@ mod tests {
         cleanup(&path);
     }
 
+    #[cfg(unix)]
     #[test]
     fn protected_key_provider_verifies_anchored_backup_recovery() {
         use crate::integrity_key_provider::{IntegrityKeyPurpose, TestIntegrityKeyProvider};
