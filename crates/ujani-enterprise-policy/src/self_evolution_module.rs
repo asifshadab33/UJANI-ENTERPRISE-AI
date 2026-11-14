@@ -436,8 +436,7 @@ pub fn authorize_enterprise_self_evolution_action(
     ) {
         return Err(SelfEvolutionBlock::ApprovalPipelineUnavailable);
     }
-    if requested_change_count == 0 || requested_change_count > policy.max_proposal_changes
-    {
+    if requested_change_count == 0 || requested_change_count > policy.max_proposal_changes {
         return Err(SelfEvolutionBlock::TooManyChanges);
     }
     let permission = evaluate_enterprise_self_evolution(installation, policy, request);
