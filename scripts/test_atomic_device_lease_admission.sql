@@ -1,6 +1,7 @@
 -- Run after migrations 0001-0008 on PostgreSQL 16.
 -- This exercises the post-authentication transaction only. Cryptographic
 -- verification remains the responsibility of the trusted HTTP adapter.
+SELECT pg_catalog.set_config('ujani.tenant_id','admission-test',false);
 INSERT INTO ujani_control.tenants (tenant_id, display_name)
 VALUES ('admission-test','Admission Test') ON CONFLICT (tenant_id) DO NOTHING;
 INSERT INTO ujani_control.operator_subjects
