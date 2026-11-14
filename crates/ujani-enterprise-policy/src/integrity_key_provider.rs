@@ -120,6 +120,9 @@ pub fn valid_integrity_key_id(value: &str) -> bool {
 }
 
 #[cfg(test)]
+pub(crate) use tests::TestIntegrityKeyProvider;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use hmac::{Hmac, KeyInit, Mac};
@@ -394,5 +397,4 @@ mod tests {
     }
 }
 
-#[cfg(test)]
-pub(crate) use tests::TestIntegrityKeyProvider;
+
