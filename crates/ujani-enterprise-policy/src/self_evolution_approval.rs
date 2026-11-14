@@ -398,7 +398,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(verified.approval_id(), "approval-001");
-        assert_eq!(verified.nonce(), &[7; 16]);
+        assert_eq!(verified.nonce(), &signed.claims.nonce);
     }
 
     #[test]
