@@ -144,6 +144,10 @@ GRANT SELECT ON ujani_control.devices,ujani_control.device_keys,
  ujani_control.operator_subjects,ujani_control.device_telemetry_samples,
  ujani_control.leases,ujani_control.request_replays,ujani_control.audit_events
  TO ujani_runtime;
+-- Column-only UPDATE grants permit SELECT FOR SHARE but cannot change the marker.
+GRANT UPDATE (admission_lock_marker) ON ujani_control.device_keys,
+ ujani_control.owner_consents,ujani_control.workloads,ujani_control.approvals,
+ ujani_control.operator_subjects TO ujani_runtime;
 GRANT UPDATE (reservation_revision, updated_at)
  ON ujani_control.devices TO ujani_runtime;
 GRANT INSERT ON ujani_control.leases,ujani_control.request_replays,
@@ -161,6 +165,7 @@ DECLARE lease_count integer;
 DECLARE replay_count integer;
 DECLARE audit_count integer;
 DECLARE revision_value bigint;
+DECLARE table_name text;
 BEGIN
  IF has_table_privilege(current_user,'ujani_control.devices','INSERT')
     OR has_table_privilege(current_user,'ujani_control.devices','DELETE')
@@ -205,6 +210,28 @@ BEGIN
     OR NOT has_column_privilege(current_user,'ujani_control.devices','updated_at','UPDATE')
     OR has_column_privilege(current_user,'ujani_control.devices','trust_state','UPDATE')
  THEN RAISE EXCEPTION 'runtime role does not have only the required reservation update columns'; END IF;
+ IF NOT has_column_privilege(current_user,'ujani_control.device_keys','admission_lock_marker','UPDATE')
+    OR NOT has_column_privilege(current_user,'ujani_control.owner_consents','admission_lock_marker','UPDATE')
+    OR NOT has_column_privilege(current_user,'ujani_control.workloads','admission_lock_marker','UPDATE')
+    OR NOT has_column_privilege(current_user,'ujani_control.approvals','admission_lock_marker','UPDATE')
+    OR NOT has_column_privilege(current_user,'ujani_control.operator_subjects','admission_lock_marker','UPDATE')
+ THEN RAISE EXCEPTION 'runtime role is missing the narrow row-lock-only column privileges'; END IF;
+
+ -- The row-lock marker is not mutable, even though PostgreSQL requires a
+ -- column-level UPDATE grant for SELECT FOR SHARE.
+ FOREACH table_name IN ARRAY ARRAY[
+  'device_keys','owner_consents','workloads','approvals','operator_subjects'
+ ] LOOP
+  BEGIN
+   EXECUTE format(
+    'UPDATE ujani_control.%I SET admission_lock_marker = true WHERE tenant_id = $1',
+    table_name
+   ) USING 'admission-test';
+   RAISE EXCEPTION 'runtime role changed immutable admission lock marker on %', table_name;
+  EXCEPTION WHEN insufficient_privilege THEN
+   NULL;
+  END;
+ END LOOP;
 
  admitted := ujani_control.admit_device_lease(
   'admission-test','admission-device','admission-workload','admission-approval',
