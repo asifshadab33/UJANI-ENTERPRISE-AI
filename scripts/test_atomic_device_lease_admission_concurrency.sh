@@ -5,6 +5,7 @@ PSQL_BIN="${PSQL_BIN:-psql}"
 PSQL=("$PSQL_BIN" --host "${PGHOST:-localhost}" --username "${PGUSER:-postgres}" --dbname "${PGDATABASE:-ujani_test}" --set ON_ERROR_STOP=1 --quiet --tuples-only --no-align)
 
 "${PSQL[@]}" <<'SQL'
+SELECT pg_catalog.set_config('ujani.tenant_id','admission-concurrency',false);
 INSERT INTO ujani_control.tenants (tenant_id,display_name)
 VALUES ('admission-concurrency','Admission Concurrency') ON CONFLICT DO NOTHING;
 INSERT INTO ujani_control.operator_subjects
