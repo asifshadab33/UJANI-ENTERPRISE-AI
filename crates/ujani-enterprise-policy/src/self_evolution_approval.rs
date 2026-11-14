@@ -12,11 +12,14 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 pub const SELF_EVOLUTION_APPROVAL_TTL_MAX_MS: u64 = 15 * 60 * 1000;
-const APPROVAL_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-SELF-EVOLUTION-APPROVAL-V1\0";
+const APPROVAL_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-SELF-EVOLUTION-APPROVAL-V2\0";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct SelfEvolutionApprovalClaims {
+    /// Tenant and human administrator identity are signed, not inferred from a key ID.
+    pub tenant_id: String,
+    pub approver_subject_id: String,
     pub approval_id: String,
     pub repository: String,
     pub base_ref: String,
@@ -43,12 +46,16 @@ pub struct VerifiedSelfEvolutionApproval(SelfEvolutionApprovalClaims);
 pub enum SelfEvolutionApprovalError {
     InvalidClaims,
     UnknownApproverKey,
+    AmbiguousApproverKey,
     InvalidSignature,
     ProposalDigestMismatch,
     InvalidProposal,
 }
 
-/// Trusted key enrollment tuple: key ID, tenant ID, operator subject ID, public key.\npub type TrustedSelfEvolutionAdminKey = (String, String, String, VerifyingKey);\n\nfn valid_identifier(value: &str, max_bytes: usize) -> bool {
+/// Trusted key enrollment tuple: key ID, tenant ID, operator subject ID, public key.
+pub type TrustedSelfEvolutionAdminKey = (String, String, String, VerifyingKey);
+
+fn valid_identifier(value: &str, max_bytes: usize) -> bool {
     !value.is_empty()
         && value.len() <= max_bytes
         && value
@@ -65,6 +72,8 @@ fn valid_revision(value: &str) -> bool {
 pub fn approval_signing_bytes(claims: &SelfEvolutionApprovalClaims) -> Vec<u8> {
     let mut bytes = APPROVAL_DOMAIN.to_vec();
     for value in [
+        claims.tenant_id.as_str(),
+        claims.approver_subject_id.as_str(),
         claims.approval_id.as_str(),
         claims.repository.as_str(),
         claims.base_ref.as_str(),
@@ -107,7 +116,9 @@ pub fn verify_self_evolution_approval(
     now_unix_ms: u64,
 ) -> Result<VerifiedSelfEvolutionApproval, SelfEvolutionApprovalError> {
     let claims = &signed.claims;
-    if !valid_identifier(&claims.approval_id, 128)
+    if !valid_identifier(&claims.tenant_id, 128)
+        || !valid_identifier(&claims.approver_subject_id, 128)
+        || !valid_identifier(&claims.approval_id, 128)
         || !valid_identifier(&claims.approver_key_id, 128)
         || claims.repository != trusted_target.repository
         || claims.base_ref != trusted_target.base_ref
@@ -247,6 +258,8 @@ mod tests {
         signing_key: &SigningKey,
     ) -> SignedSelfEvolutionApproval {
         let claims = SelfEvolutionApprovalClaims {
+            tenant_id: "tenant-a".into(),
+            approver_subject_id: "admin-a".into(),
             approval_id: "approval-001".into(),
             repository: target.repository.clone(),
             base_ref: target.base_ref.clone(),
