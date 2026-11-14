@@ -91,7 +91,7 @@
         </article>
         <article class="feature-risk-card">
           <div class="feature-risk-card-heading"><strong>Self-Evolution Engine</strong><span class="pill">Policy foundation · not production-wired</span></div>
-          <p>The existing policy already enforces administrator permission and activation, approved models and scopes, dual approval and a trusted build environment. The signed-approval verifier and action-level role/owner-opt-in gate are code foundations only; this read-only console has no activation, staging or apply workflow.</p>
+          <p>The policy requires administrator permission and activation, approved models and scopes, the dual-approval setting, and a trusted build environment. The generation gate does not yet verify two distinct approvals. The signed-approval verifier and action-level role/owner-opt-in gate are code foundations only; this read-only console has no activation, staging or apply workflow.</p>
           <details><summary>Prerequisites and evidence</summary><ul><li>Authenticated operator sessions and durable device-owner opt-in, with revocation checked at use.</li><li>Atomic durable single-use approval-nonce consumption before any follow-on change workflow; signature verification alone is not replay protection.</li><li>Tenant-scoped trusted source checkout, isolated build workspace and independent review.</li><li>Organization-controlled KMS/HSM signing, staged rollout and rollback.</li><li>Fleet devices receive only verified signed artifacts; generated code is never executed on worker devices.</li></ul></details>
         </article>
       </div>
