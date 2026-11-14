@@ -2396,15 +2396,23 @@ mod tests {
 
     #[cfg(unix)]
     impl MonotonicSnapshotAnchor for BlockingAnchor {
-        fn load(&self, _registry_id: &str) -> Result<Option<SnapshotAnchorRecord>, String> {
+        fn load(
+            &self,
+            _registry_id: &str,
+            context: &crate::device_trust::durable::AnchorCallContext,
+        ) -> Result<Option<SnapshotAnchorRecord>, String> {
+            context.check_active().map_err(|error| error.to_string())?;
             if self.block_next_load.swap(false, Ordering::SeqCst) {
                 self.entered.wait();
                 self.release.wait();
             }
-            self.record
+            let record = self
+                .record
                 .lock()
                 .map(|record| record.clone())
-                .map_err(|_| "test anchor mutex poisoned".to_owned())
+                .map_err(|_| "test anchor mutex poisoned".to_owned())?;
+            context.check_active().map_err(|error| error.to_string())?;
+            Ok(record)
         }
 
         fn compare_and_set(
@@ -2412,7 +2420,9 @@ mod tests {
             _registry_id: &str,
             expected_generation: Option<u64>,
             next: SnapshotAnchorRecord,
+            context: &crate::device_trust::durable::AnchorCallContext,
         ) -> Result<bool, String> {
+            context.check_active().map_err(|error| error.to_string())?;
             let mut record = self
                 .record
                 .lock()
@@ -2429,6 +2439,7 @@ mod tests {
                 return Ok(false);
             }
             *record = Some(next);
+            context.check_active().map_err(|error| error.to_string())?;
             Ok(true)
         }
     }
