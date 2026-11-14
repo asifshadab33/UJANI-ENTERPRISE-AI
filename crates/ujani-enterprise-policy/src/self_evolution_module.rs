@@ -22,8 +22,8 @@ pub enum SelfEvolutionBlock {
     ScopeNotApproved,
     ProtectedScope,
     TrustedBuildEnvironmentRequired,
-    PrimaryApprovalRequired,
-    SecondaryApprovalRequired,
+    ApprovalPolicyInvalid,
+    ApprovalPipelineUnavailable,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,9 +41,8 @@ pub struct EnterpriseSelfEvolutionPolicy {
 pub struct SelfEvolutionRequest {
     pub selected_model_id: String,
     pub requested_write_scope: String,
+    /// Supplied by the trusted host after source and build-environment checks.
     pub trusted_source_and_build_environment_configured: bool,
-    pub primary_approval_present: bool,
-    pub secondary_approval_present: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,6 +53,8 @@ pub struct SelfEvolutionPermission {
     /// It does not authorize applying, executing, signing or deploying changes.
     pub may_submit_for_review: bool,
     pub blocked_by: Option<SelfEvolutionBlock>,
+    /// Submission remains fail-closed until typed approval and durable replay are integrated.
+    pub submission_blocked_by: Option<SelfEvolutionBlock>,
 }
 
 const PROTECTED_SCOPES: &[&str] = &[
@@ -145,6 +146,8 @@ pub fn evaluate_enterprise_self_evolution(
         Some(SelfEvolutionBlock::ScopeNotApproved)
     } else if is_protected_scope(normalized_scope.as_deref().unwrap_or_default()) {
         Some(SelfEvolutionBlock::ProtectedScope)
+    } else if !policy.require_dual_approval {
+        Some(SelfEvolutionBlock::ApprovalPolicyInvalid)
     } else if !request.trusted_source_and_build_environment_configured {
         Some(SelfEvolutionBlock::TrustedBuildEnvironmentRequired)
     } else {
@@ -152,21 +155,13 @@ pub fn evaluate_enterprise_self_evolution(
     };
 
     let may_prepare = blocked_by.is_none();
-    let approval_block = if !may_prepare {
-        blocked_by
-    } else if !request.primary_approval_present {
-        Some(SelfEvolutionBlock::PrimaryApprovalRequired)
-    } else if policy.require_dual_approval && !request.secondary_approval_present {
-        Some(SelfEvolutionBlock::SecondaryApprovalRequired)
-    } else {
-        None
-    };
 
     SelfEvolutionPermission {
         may_analyse: may_prepare,
         may_prepare_proposals: may_prepare,
-        may_submit_for_review: approval_block.is_none(),
-        blocked_by: approval_block.or(blocked_by),
+        may_submit_for_review: false,
+        blocked_by,
+        submission_blocked_by: Some(SelfEvolutionBlock::ApprovalPipelineUnavailable),
     }
 }
 
@@ -189,8 +184,6 @@ mod tests {
             selected_model_id: "local-coder-v1".into(),
             requested_write_scope: "apps/operator-console/help".into(),
             trusted_source_and_build_environment_configured: true,
-            primary_approval_present: true,
-            secondary_approval_present: true,
         }
     }
 
@@ -284,27 +277,19 @@ mod tests {
     }
 
     #[test]
-    fn dual_approval_is_enforced_when_configured() {
-        let mut r = request();
-        r.secondary_approval_present = false;
-        let result =
-            evaluate_enterprise_self_evolution(ModuleInstallState::Installed, &policy(), &r);
+    fn review_submission_fails_closed_until_typed_approval_pipeline_is_integrated() {
+        let result = evaluate_enterprise_self_evolution(
+            ModuleInstallState::Installed,
+            &policy(),
+            &request(),
+        );
         assert!(result.may_prepare_proposals);
         assert!(!result.may_submit_for_review);
+        assert_eq!(result.blocked_by, None);
         assert_eq!(
-            result.blocked_by,
-            Some(SelfEvolutionBlock::SecondaryApprovalRequired)
+            result.submission_blocked_by,
+            Some(SelfEvolutionBlock::ApprovalPipelineUnavailable)
         );
-    }
-
-    #[test]
-    fn single_approval_policy_is_supported_but_not_implicit() {
-        let mut p = policy();
-        p.require_dual_approval = false;
-        let mut r = request();
-        r.secondary_approval_present = false;
-        let result = evaluate_enterprise_self_evolution(ModuleInstallState::Installed, &p, &r);
-        assert!(result.may_submit_for_review);
     }
     #[test]
     fn scope_aliases_and_parent_directories_cannot_bypass_protected_paths() {
