@@ -277,6 +277,18 @@ mod tests {
     }
 
     #[test]
+    fn replay_digests_change_when_target_or_scope_changes() {
+        assert_ne!(
+            target_digest("owner/repository", "main", &"a".repeat(40)),
+            target_digest("owner/repository", "release", &"a".repeat(40))
+        );
+        assert_ne!(
+            approved_scope_digest(&["apps/console".into()]),
+            approved_scope_digest(&["crates/core".into()])
+        );
+    }
+
+    #[test]
     fn consumes_verified_approval_once_and_binds_authenticated_context() {
         let approval = verified_approval();
         let mut store = MemoryStore::default();
