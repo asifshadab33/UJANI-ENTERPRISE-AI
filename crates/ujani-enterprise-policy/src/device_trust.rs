@@ -469,15 +469,31 @@ impl DeviceRegistry {
         self.authenticate_request(signed, body, now)
     }
 
-    /// Authenticate one short-lived device request and consume its replay nonce.
-    /// Tenant, enrolled key ID and monotonic key generation are checked here;
-    /// downstream APIs must still authorize the authenticated tenant/principal.
-    /// Authenticates a signed device request against the exact raw body bytes.
+    /// Verify a signed device request without consuming replay state.
     ///
-    /// The body digest is checked before the request nonce is consumed, so a
-    /// transport/body mismatch can be rejected without burning a valid request.
-    pub fn authenticate_request(
-        &mut self,
+    /// Use only when a downstream transaction atomically claims request_id with
+    /// the protected state mutation. This separation prevents a database failure
+    /// after authentication from burning a request that must be retried.
+    pub fn verify_request_for(
+        &self,
+        signed: &SignedDeviceRequest,
+        expected_method: &str,
+        expected_resource_id: &str,
+        body: &[u8],
+        now: u64,
+    ) -> Result<AuthenticatedDeviceRequest, DeviceTrustError> {
+        if signed.claims.method != expected_method
+            || signed.claims.resource_id != expected_resource_id
+        {
+            return Err(DeviceTrustError::RequestTargetMismatch);
+        }
+        self.verify_request(signed, body, now)
+    }
+
+    /// Verify identity, key generation, signature, expiry and exact body bytes
+    /// without changing the durable replay window.
+    pub fn verify_request(
+        &self,
         signed: &SignedDeviceRequest,
         body: &[u8],
         now: u64,
@@ -510,7 +526,6 @@ impl DeviceRegistry {
         {
             return Err(DeviceTrustError::InvalidRequestWindow);
         }
-        self.request_nonces.retain(|_, expiry| *expiry > now);
         let record = self
             .devices
             .get(&c.device_id)
@@ -520,12 +535,6 @@ impl DeviceRegistry {
         }
         if record.tenant_id != c.tenant_id {
             return Err(DeviceTrustError::TenantMismatch);
-        }
-        if self.request_nonces.contains_key(&c.request_id) {
-            return Err(DeviceTrustError::ReplayDetected);
-        }
-        if self.request_nonces.len() >= MAX_REPLAY_ENTRIES {
-            return Err(DeviceTrustError::ReplayDetected);
         }
         if record.key_id != c.key_id || record.generation != c.key_generation {
             return Err(DeviceTrustError::StaleKeyGeneration);
@@ -537,8 +546,6 @@ impl DeviceRegistry {
                 &Signature::from_bytes(&signed.signature),
             )
             .map_err(|_| DeviceTrustError::InvalidDeviceSignature)?;
-        self.request_nonces
-            .insert(c.request_id, c.expires_at_unix_ms);
         Ok(AuthenticatedDeviceRequest {
             device: AuthenticatedDevice {
                 tenant_id: c.tenant_id.clone(),
@@ -553,6 +560,28 @@ impl DeviceRegistry {
             resource_id: c.resource_id.clone(),
             expires_at_unix_ms: c.expires_at_unix_ms,
         })
+    }
+
+    /// Authenticate one short-lived device request and consume its replay nonce.
+    /// Tenant, enrolled key ID and monotonic key generation are checked here;
+    /// downstream APIs must still authorize the authenticated tenant/principal.
+    pub fn authenticate_request(
+        &mut self,
+        signed: &SignedDeviceRequest,
+        body: &[u8],
+        now: u64,
+    ) -> Result<AuthenticatedDeviceRequest, DeviceTrustError> {
+        let authenticated = self.verify_request(signed, body, now)?;
+        let request_id = signed.claims.request_id;
+        self.request_nonces.retain(|_, expiry| *expiry > now);
+        if self.request_nonces.contains_key(&request_id)
+            || self.request_nonces.len() >= MAX_REPLAY_ENTRIES
+        {
+            return Err(DeviceTrustError::ReplayDetected);
+        }
+        self.request_nonces
+            .insert(request_id, signed.claims.expires_at_unix_ms);
+        Ok(authenticated)
     }
 
     /// List non-secret device identity and explicit owner-consent status for one tenant.
@@ -819,6 +848,37 @@ mod tests {
         assert_eq!(auth.tenant_id(), "tenant-a");
         assert_eq!(auth.device_id(), "device-1");
     }
+    #[test]
+    fn verification_does_not_consume_nonce_before_downstream_transaction() {
+        let (mut r, admin, device) = registry();
+        r.apply_admin_command(&enrollment(&admin, &device, 1), 200).unwrap();
+        let claims = DeviceRequestClaims {
+            tenant_id: "tenant-a".into(),
+            device_id: "device-1".into(),
+            key_id: "device-key-v1".into(),
+            key_generation: 1,
+            request_id: [4; 16],
+            issued_at_unix_ms: 200,
+            expires_at_unix_ms: 500,
+            method: "POST".into(),
+            resource_id: "device-telemetry:ingest".into(),
+            workload_id: "device-telemetry".into(),
+            manifest_sha256: sha2::Sha256::digest(b"telemetry-manifest").into(),
+            body_sha256: sha2::Sha256::digest([]).into(),
+        };
+        let signed = SignedDeviceRequest {
+            signature: device.sign(&device_request_bytes(&claims)).to_bytes(),
+            claims,
+        };
+        assert!(r.verify_request_for(&signed, "POST", "device-telemetry:ingest", b"", 250).is_ok());
+        assert!(r.verify_request_for(&signed, "POST", "device-telemetry:ingest", b"", 251).is_ok());
+        assert!(r.authenticate_request_for(&signed, "POST", "device-telemetry:ingest", b"", 252).is_ok());
+        assert_eq!(
+            r.authenticate_request_for(&signed, "POST", "device-telemetry:ingest", b"", 253),
+            Err(DeviceTrustError::ReplayDetected)
+        );
+    }
+
     #[test]
     fn request_replay_revoked_device_and_cross_tenant_are_rejected() {
         let (mut r, admin, device) = registry();
