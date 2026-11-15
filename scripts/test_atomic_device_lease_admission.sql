@@ -74,6 +74,7 @@ ON CONFLICT DO NOTHING;
 
 -- A new owner-binding revision must invalidate even a previously granted
 -- consent; a fresh consent generation from the current owner restores it.
+BEGIN;
 SELECT 1 FROM ujani_control.devices
 WHERE tenant_id='admission-test' AND device_id='admission-device' FOR UPDATE;
 UPDATE ujani_control.device_owner_bindings
@@ -88,6 +89,7 @@ BEGIN
  END IF;
 END;
 $block$;
+COMMIT;
 INSERT INTO ujani_control.owner_consents
  (tenant_id,device_id,consent_generation,state,actor_ref,evidence_digest)
 VALUES ('admission-test','admission-device',2,'granted','admission-owner',decode(repeat('23',32),'hex'))
