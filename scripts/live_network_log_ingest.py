@@ -181,7 +181,7 @@ def ingest_once(*, log_path, database, checkpoint, provider, tenant_id,
         checkpoint_value = {
             "schema_version": 1, "tenant_id": tenant_id, "provider_id": checkpoint_provider,
             "device": identity[0], "inode": identity[1], "offset": next_offset,
-            "size": int(info.st_size),
+            "size": max(int(info.st_size), next_offset),
         }
         _save_checkpoint(checkpoint, checkpoint_value)
         return inserted, len(records), next_offset
