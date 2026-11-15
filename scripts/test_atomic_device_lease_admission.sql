@@ -204,6 +204,43 @@ VALUES
 ON CONFLICT (tenant_id,approval_id) DO UPDATE SET
  decision='approved',expires_at=clock_timestamp()+interval '10 minutes';
 
+-- Separate device for the telemetry/reservation-revision accounting regression.
+INSERT INTO ujani_control.devices
+ (tenant_id,device_id,display_name,platform,trust_state,owner_consent_state,
+  admin_approval_state,active_key_id,key_generation,consent_generation,
+  telemetry_generation,telemetry_sequence,last_seen_at)
+VALUES ('admission-test','admission-device-capacity','Capacity Device','linux','enrolled',
+ 'unknown','approved','capacity-key',1,0,1,1,clock_timestamp())
+ON CONFLICT (tenant_id,device_id) DO UPDATE SET
+ trust_state='enrolled',owner_consent_state='unknown',admin_approval_state='approved',
+ active_key_id='capacity-key',key_generation=1,consent_generation=0,
+ telemetry_generation=1,telemetry_sequence=1,last_seen_at=clock_timestamp(),
+ reservation_revision=0;
+INSERT INTO ujani_control.device_keys
+ (tenant_id,device_id,key_id,public_key,generation,state)
+VALUES ('admission-test','admission-device-capacity','capacity-key',
+ decode(repeat('a1',32),'hex'),1,'active')
+ON CONFLICT (tenant_id,device_id,key_id) DO UPDATE SET state='active';
+INSERT INTO ujani_control.device_owner_bindings
+ (tenant_id,device_id,owner_subject_id,bound_by_subject_id,binding_revision,active,binding_digest)
+VALUES ('admission-test','admission-device-capacity','admission-owner','admission-admin',1,true,
+ decode(repeat('a2',32),'hex'))
+ON CONFLICT (tenant_id,device_id) DO UPDATE SET
+ owner_subject_id=EXCLUDED.owner_subject_id,
+ bound_by_subject_id=EXCLUDED.bound_by_subject_id,
+ binding_revision=ujani_control.device_owner_bindings.binding_revision+1,
+ active=true,binding_digest=decode(repeat('a3',32),'hex'),bound_at=clock_timestamp();
+INSERT INTO ujani_control.owner_consents
+ (tenant_id,device_id,consent_generation,state,actor_ref,evidence_digest)
+VALUES ('admission-test','admission-device-capacity',1,'granted','admission-owner',
+ decode(repeat('a4',32),'hex'))
+ON CONFLICT DO NOTHING;
+INSERT INTO ujani_control.device_telemetry_samples
+ (tenant_id,device_id,generation,sequence,request_id,observed_at,payload_digest,
+  cpu_available_millis,memory_available_mb,thermal_state,power_state,participation_state)
+VALUES ('admission-test','admission-device-capacity',1,1,decode(repeat('a5',16),'hex'),
+ clock_timestamp(),decode(repeat('a6',32),'hex'),4000,8192,'cool','ac','idle');
+
 -- Active key rows with inconsistent validity metadata must fail closed.
 INSERT INTO ujani_control.devices
  (tenant_id,device_id,display_name,platform,trust_state,owner_consent_state,
