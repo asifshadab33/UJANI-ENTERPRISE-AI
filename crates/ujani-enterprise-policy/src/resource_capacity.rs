@@ -96,12 +96,12 @@ pub enum ExtendedResourceRejection {
     NetworkPolicyDenied,
 }
 
-fn measured_value<'a, T>(
-    measurement: Option<&'a ResourceMeasurement<T>>,
+fn measured_value<T>(
+    measurement: Option<&ResourceMeasurement<T>>,
     kind: ResourceKind,
     now_unix_ms: u64,
     max_age_ms: u64,
-) -> Result<&'a T, ExtendedResourceRejection> {
+) -> Result<&T, ExtendedResourceRejection> {
     let measurement = measurement.ok_or(ExtendedResourceRejection::MissingMeasurement(kind))?;
     if !measurement.authenticated {
         return Err(ExtendedResourceRejection::UnauthenticatedMeasurement(kind));
