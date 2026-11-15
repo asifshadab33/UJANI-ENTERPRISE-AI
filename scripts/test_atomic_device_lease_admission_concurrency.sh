@@ -63,16 +63,28 @@ ON CONFLICT (tenant_id,approval_id) DO UPDATE SET decision='approved',
  expires_at=clock_timestamp()+interval '10 minutes';
 SQL
 
-first_out="$(mktemp)"; second_out="$(mktemp)"; release_dir="$(mktemp -d)"
-release_file="$release_dir/release"
+first_out="$(mktemp)"; second_out="$(mktemp)"
+release_dir=""
+if [[ -n "${POSTGRES_CONTAINER_ID:-}" ]]; then
+ # PSQL_BIN executes psql inside the PostgreSQL service container. The marker
+ # must live in that same container filesystem, not the Actions runner.
+ release_file="/tmp/ujani-admission-release-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}-$"
+ release_controller(){ docker exec "$POSTGRES_CONTAINER_ID" touch "$release_file"; }
+ release_cleanup(){ docker exec "$POSTGRES_CONTAINER_ID" rm -f "$release_file" 2>/dev/null || true; }
+else
+ release_dir="$(mktemp -d)"
+ release_file="$release_dir/release"
+ release_controller(){ touch "$release_file"; }
+ release_cleanup(){ rm -rf "$release_dir"; }
+fi
 export UJANI_ADMISSION_RELEASE_FILE="$release_file"
 first_pid=""; second_pid=""
 cleanup(){
- touch "$release_file" 2>/dev/null || true
+ release_controller 2>/dev/null || true
  if [[ -n "$first_pid" ]]; then wait "$first_pid" 2>/dev/null || true; fi
  if [[ -n "$second_pid" ]]; then wait "$second_pid" 2>/dev/null || true; fi
  rm -f "$first_out" "$second_out"
- rm -rf "$release_dir"
+ release_cleanup
 }
 trap cleanup EXIT
 (
@@ -87,7 +99,7 @@ SELECT ujani_control.admit_device_lease(
  clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000091');
 -- Keep the transaction and device lock until the controller observes the
 -- second connection waiting. The release is an explicit file handshake.
-\! while [ ! -f "$UJANI_ADMISSION_RELEASE_FILE" ]; do sleep 0.05; done
+\! for i in $(seq 1 300); do [ -f "$UJANI_ADMISSION_RELEASE_FILE" ] && exit 0; sleep 0.05; done; exit 1
 COMMIT;
 RESET ROLE;
 SQL
@@ -127,7 +139,7 @@ for _ in $(seq 1 100); do
  sleep 0.1
 done
 # Release only after observing the second admission blocked on the device lock.
-touch "$release_file"
+release_controller
 
 set +e
 wait "$first_pid"
