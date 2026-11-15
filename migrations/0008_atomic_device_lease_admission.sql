@@ -3,7 +3,7 @@
 -- request and administrator approval before calling this SECURITY INVOKER function.
 -- This transaction rechecks mutable tenant/device/consent/approval/capacity facts.
 -- It does not dispatch work or execute models.
--- Binding UPDATE callers must lock the matching devices row FOR UPDATE in the
+-- Binding UPDATE callers must lock the matching device row FOR UPDATE in the
 -- same transaction before updating device_owner_bindings; PostgreSQL takes the
 -- binding-row lock before its trigger runs. New binding INSERTs need no caller
 -- pre-lock because they do not hold an existing binding-row lock.
@@ -41,9 +41,6 @@ DROP POLICY IF EXISTS tenant_isolation ON ujani_control.device_owner_bindings;
 CREATE POLICY tenant_isolation ON ujani_control.device_owner_bindings
  USING (tenant_id = current_setting('ujani.tenant_id', true))
  WITH CHECK (tenant_id = current_setting('ujani.tenant_id', true));
-
-COMMENT ON FUNCTION ujani_control.validate_device_owner_binding() IS
- 'Validates an administrator-established owner binding and invalidates prior device consent. UPDATE callers must lock the matching ujani_control.devices row FOR UPDATE in the same transaction before updating device_owner_bindings; the trigger cannot acquire device-first order after PostgreSQL has locked the existing binding row. INSERT callers do not need this pre-lock.';
 
 CREATE OR REPLACE FUNCTION ujani_control.validate_device_owner_binding()
 RETURNS trigger
@@ -122,6 +119,9 @@ BEGIN
  RETURN NEW;
 END;
 $function$;
+
+COMMENT ON FUNCTION ujani_control.validate_device_owner_binding() IS
+ 'Validates an administrator-established owner binding and invalidates prior device consent. UPDATE callers must lock the matching ujani_control.devices row FOR UPDATE in the same transaction before updating device_owner_bindings; the trigger cannot acquire device-first order after PostgreSQL has locked the existing binding row. INSERT callers do not need this pre-lock.';
 
 DROP TRIGGER IF EXISTS device_owner_binding_validate ON ujani_control.device_owner_bindings;
 CREATE TRIGGER device_owner_binding_validate
