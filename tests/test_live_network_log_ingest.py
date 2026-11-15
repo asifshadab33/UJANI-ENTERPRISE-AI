@@ -70,7 +70,7 @@ class LiveNetworkLogIngestTests(unittest.TestCase):
         def append_after_open(path):
             fd, info = original_safe_open(path)
             with self.log.open("ab") as stream:
-                stream.write(zeek_line(3.0, "appended"))
+                stream.write(zeek_line(3.0, "appended").encode("utf-8"))
             return fd, info
 
         with patch(
