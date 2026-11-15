@@ -8,10 +8,10 @@
 //! The database transaction remains authoritative for monotonic generation /
 //! sequence, replay, trust and dual-consent checks under concurrent requests.
 
+use crate::device_trust::durable::{DurableDeviceRegistry, DurableDeviceTrustError};
 use crate::device_trust::{
     AuthenticatedDeviceRequest, SignedDeviceRequest, MAX_DEVICE_REQUEST_BODY_BYTES,
 };
-use crate::device_trust::durable::{DurableDeviceRegistry, DurableDeviceTrustError};
 use crate::operator_http_contract::{resolve_route, HttpMethod, OperatorHttpRoute};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -145,8 +145,12 @@ pub fn validate_device_telemetry_body(
     if body.generation == 0 || body.sequence == 0 {
         return Err(DeviceTelemetryIntakeError::InvalidGenerationOrSequence);
     }
-    if body.cpu_available_millis.is_some_and(|value| value > 65_535_000)
-        || body.memory_available_mb.is_some_and(|value| value > 16_777_216)
+    if body
+        .cpu_available_millis
+        .is_some_and(|value| value > 65_535_000)
+        || body
+            .memory_available_mb
+            .is_some_and(|value| value > 16_777_216)
     {
         return Err(DeviceTelemetryIntakeError::InvalidResourceMeasurement);
     }
@@ -277,7 +281,9 @@ mod tests {
             Err(DeviceTelemetryIntakeError::StaleOrFutureSample)
         );
         let zero = body(1_000).iter().copied().collect::<Vec<_>>();
-        let zero = String::from_utf8(zero).unwrap().replace("\"sequence\":7", "\"sequence\":0");
+        let zero = String::from_utf8(zero)
+            .unwrap()
+            .replace("\"sequence\":7", "\"sequence\":0");
         assert_eq!(
             validate_device_telemetry_body(zero.as_bytes(), 1_000),
             Err(DeviceTelemetryIntakeError::InvalidGenerationOrSequence)
