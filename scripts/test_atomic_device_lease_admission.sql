@@ -83,6 +83,40 @@ INSERT INTO ujani_control.owner_consents
 VALUES ('admission-test','admission-device',1,'granted','admission-owner',decode(repeat('22',32),'hex'))
 ON CONFLICT DO NOTHING;
 
+-- A duplicate enrollment retry that does not persist a binding must not revoke
+-- current consent or append a false owner-binding audit event.
+DO $block$
+DECLARE
+ v_before bigint;
+ v_after bigint;
+ v_consent_state text;
+BEGIN
+ SELECT count(*) INTO v_before
+ FROM ujani_control.audit_events
+ WHERE tenant_id='admission-test'
+   AND event_type='device.owner_binding.created'
+   AND object_ref LIKE 'device=admission-device;%';
+
+ INSERT INTO ujani_control.device_owner_bindings
+  (tenant_id,device_id,owner_subject_id,bound_by_subject_id,binding_revision,active,binding_digest)
+ VALUES ('admission-test','admission-device','admission-owner','admission-admin',1,true,
+  decode(repeat('21',32),'hex'))
+ ON CONFLICT (tenant_id,device_id) DO NOTHING;
+
+ SELECT owner_consent_state INTO v_consent_state
+ FROM ujani_control.devices
+ WHERE tenant_id='admission-test' AND device_id='admission-device';
+ SELECT count(*) INTO v_after
+ FROM ujani_control.audit_events
+ WHERE tenant_id='admission-test'
+   AND event_type='device.owner_binding.created'
+   AND object_ref LIKE 'device=admission-device;%';
+ IF v_consent_state IS DISTINCT FROM 'granted' OR v_after <> v_before THEN
+  RAISE EXCEPTION 'no-op owner-binding retry changed consent or audit state';
+ END IF;
+END;
+$block$;
+
 -- A new owner-binding revision must invalidate even a previously granted
 -- consent; a fresh consent generation from the current owner restores it.
 BEGIN;
