@@ -146,37 +146,65 @@ pub fn evaluate_extended_resource_placement(
     .map_err(ExtendedResourceRejection::Cpu)?;
 
     if request.gpu_memory_mb > 0 {
-        let gpu = measured_value(snapshot.gpu.as_ref(), ResourceKind::Gpu, now_unix_ms, max_telemetry_age_ms)?;
+        let gpu = measured_value(
+            snapshot.gpu.as_ref(),
+            ResourceKind::Gpu,
+            now_unix_ms,
+            max_telemetry_age_ms,
+        )?;
         if gpu.available_memory_mb < request.gpu_memory_mb
             || gpu.available_compute_units < request.gpu_compute_units
         {
-            return Err(ExtendedResourceRejection::InsufficientCapacity(ResourceKind::Gpu));
+            return Err(ExtendedResourceRejection::InsufficientCapacity(
+                ResourceKind::Gpu,
+            ));
         }
     }
 
     if request.npu_memory_mb > 0 {
-        let npu = measured_value(snapshot.npu.as_ref(), ResourceKind::Npu, now_unix_ms, max_telemetry_age_ms)?;
+        let npu = measured_value(
+            snapshot.npu.as_ref(),
+            ResourceKind::Npu,
+            now_unix_ms,
+            max_telemetry_age_ms,
+        )?;
         if npu.available_memory_mb < request.npu_memory_mb
             || npu.available_compute_units < request.npu_compute_units
         {
-            return Err(ExtendedResourceRejection::InsufficientCapacity(ResourceKind::Npu));
+            return Err(ExtendedResourceRejection::InsufficientCapacity(
+                ResourceKind::Npu,
+            ));
         }
     }
 
     if request.scratch_storage_bytes > 0 {
-        let storage = measured_value(snapshot.storage.as_ref(), ResourceKind::Storage, now_unix_ms, max_telemetry_age_ms)?;
+        let storage = measured_value(
+            snapshot.storage.as_ref(),
+            ResourceKind::Storage,
+            now_unix_ms,
+            max_telemetry_age_ms,
+        )?;
         if storage.available_scratch_bytes < request.scratch_storage_bytes {
-            return Err(ExtendedResourceRejection::InsufficientCapacity(ResourceKind::Storage));
+            return Err(ExtendedResourceRejection::InsufficientCapacity(
+                ResourceKind::Storage,
+            ));
         }
     }
 
     if request.network_access {
-        let network = measured_value(snapshot.network.as_ref(), ResourceKind::Network, now_unix_ms, max_telemetry_age_ms)?;
+        let network = measured_value(
+            snapshot.network.as_ref(),
+            ResourceKind::Network,
+            now_unix_ms,
+            max_telemetry_age_ms,
+        )?;
         if !network.egress_allowed {
             return Err(ExtendedResourceRejection::NetworkPolicyDenied);
         }
         if network.available_bandwidth_kbps < request.network_bandwidth_kbps {
-            return Err(ExtendedResourceRejection::InsufficientCapacity(ResourceKind::Network));
+            return Err(ExtendedResourceRejection::InsufficientCapacity(
+                ResourceKind::Network,
+            ));
         }
     }
 
@@ -219,22 +247,41 @@ mod tests {
     }
 
     fn measured<T>(value: T) -> ResourceMeasurement<T> {
-        ResourceMeasurement { sampled_at_unix_ms: NOW, authenticated: true, basis: MeasurementBasis::Measured, value }
+        ResourceMeasurement {
+            sampled_at_unix_ms: NOW,
+            authenticated: true,
+            basis: MeasurementBasis::Measured,
+            value,
+        }
     }
 
     fn snapshot() -> ExtendedWorkerSnapshot {
         ExtendedWorkerSnapshot {
             cpu: cpu_snapshot(),
-            gpu: Some(measured(AcceleratorHeadroom { available_memory_mb: 8_000, available_compute_units: 64 })),
-            npu: Some(measured(AcceleratorHeadroom { available_memory_mb: 2_000, available_compute_units: 16 })),
-            storage: Some(measured(StorageHeadroom { available_scratch_bytes: 20_000_000_000 })),
-            network: Some(measured(NetworkHeadroom { available_bandwidth_kbps: 100_000, egress_allowed: true })),
+            gpu: Some(measured(AcceleratorHeadroom {
+                available_memory_mb: 8_000,
+                available_compute_units: 64,
+            })),
+            npu: Some(measured(AcceleratorHeadroom {
+                available_memory_mb: 2_000,
+                available_compute_units: 16,
+            })),
+            storage: Some(measured(StorageHeadroom {
+                available_scratch_bytes: 20_000_000_000,
+            })),
+            network: Some(measured(NetworkHeadroom {
+                available_bandwidth_kbps: 100_000,
+                egress_allowed: true,
+            })),
         }
     }
 
     fn request() -> ExtendedResourceRequest {
         ExtendedResourceRequest {
-            cpu: CpuPlacementRequest { requested_cpu_millis: 1_000, requested_memory_mb: 2_048 },
+            cpu: CpuPlacementRequest {
+                requested_cpu_millis: 1_000,
+                requested_memory_mb: 2_048,
+            },
             gpu_memory_mb: 0,
             gpu_compute_units: 0,
             npu_memory_mb: 0,
@@ -279,7 +326,12 @@ mod tests {
         let mut ask = request();
         ask.gpu_memory_mb = 1_000;
         ask.gpu_compute_units = 1;
-        assert_eq!(evaluate_extended_resource_placement(&value, ask, NOW, 5_000), Err(ExtendedResourceRejection::MissingMeasurement(ResourceKind::Gpu)));
+        assert_eq!(
+            evaluate_extended_resource_placement(&value, ask, NOW, 5_000),
+            Err(ExtendedResourceRejection::MissingMeasurement(
+                ResourceKind::Gpu
+            ))
+        );
     }
 
     #[test]
@@ -288,22 +340,63 @@ mod tests {
         let mut ask = request();
         ask.gpu_memory_mb = 1;
         ask.gpu_compute_units = 1;
-        value.gpu = Some(ResourceMeasurement { basis: MeasurementBasis::Estimated, ..measured(AcceleratorHeadroom { available_memory_mb: 8_000, available_compute_units: 64 }) });
-        assert_eq!(evaluate_extended_resource_placement(&value, ask, NOW, 5_000), Err(ExtendedResourceRejection::EstimatedMeasurement(ResourceKind::Gpu)));
-        value.gpu = Some(ResourceMeasurement { authenticated: false, ..measured(AcceleratorHeadroom { available_memory_mb: 8_000, available_compute_units: 64 }) });
-        assert_eq!(evaluate_extended_resource_placement(&value, ask, NOW, 5_000), Err(ExtendedResourceRejection::UnauthenticatedMeasurement(ResourceKind::Gpu)));
-        value.gpu = Some(ResourceMeasurement { sampled_at_unix_ms: NOW - 10_000, ..measured(AcceleratorHeadroom { available_memory_mb: 8_000, available_compute_units: 64 }) });
-        assert_eq!(evaluate_extended_resource_placement(&value, ask, NOW, 5_000), Err(ExtendedResourceRejection::StaleMeasurement(ResourceKind::Gpu)));
+        value.gpu = Some(ResourceMeasurement {
+            basis: MeasurementBasis::Estimated,
+            ..measured(AcceleratorHeadroom {
+                available_memory_mb: 8_000,
+                available_compute_units: 64,
+            })
+        });
+        assert_eq!(
+            evaluate_extended_resource_placement(&value, ask, NOW, 5_000),
+            Err(ExtendedResourceRejection::EstimatedMeasurement(
+                ResourceKind::Gpu
+            ))
+        );
+        value.gpu = Some(ResourceMeasurement {
+            authenticated: false,
+            ..measured(AcceleratorHeadroom {
+                available_memory_mb: 8_000,
+                available_compute_units: 64,
+            })
+        });
+        assert_eq!(
+            evaluate_extended_resource_placement(&value, ask, NOW, 5_000),
+            Err(ExtendedResourceRejection::UnauthenticatedMeasurement(
+                ResourceKind::Gpu
+            ))
+        );
+        value.gpu = Some(ResourceMeasurement {
+            sampled_at_unix_ms: NOW - 10_000,
+            ..measured(AcceleratorHeadroom {
+                available_memory_mb: 8_000,
+                available_compute_units: 64,
+            })
+        });
+        assert_eq!(
+            evaluate_extended_resource_placement(&value, ask, NOW, 5_000),
+            Err(ExtendedResourceRejection::StaleMeasurement(
+                ResourceKind::Gpu
+            ))
+        );
     }
 
     #[test]
     fn insufficient_accelerator_memory_or_compute_is_rejected() {
         let mut value = snapshot();
-        value.gpu = Some(measured(AcceleratorHeadroom { available_memory_mb: 500, available_compute_units: 2 }));
+        value.gpu = Some(measured(AcceleratorHeadroom {
+            available_memory_mb: 500,
+            available_compute_units: 2,
+        }));
         let mut ask = request();
         ask.gpu_memory_mb = 1_000;
         ask.gpu_compute_units = 4;
-        assert_eq!(evaluate_extended_resource_placement(&value, ask, NOW, 5_000), Err(ExtendedResourceRejection::InsufficientCapacity(ResourceKind::Gpu)));
+        assert_eq!(
+            evaluate_extended_resource_placement(&value, ask, NOW, 5_000),
+            Err(ExtendedResourceRejection::InsufficientCapacity(
+                ResourceKind::Gpu
+            ))
+        );
     }
 
     #[test]
@@ -313,12 +406,22 @@ mod tests {
         let mut ask = request();
         ask.npu_memory_mb = 256;
         ask.npu_compute_units = 1;
-        assert_eq!(evaluate_extended_resource_placement(&value, ask, NOW, 5_000), Err(ExtendedResourceRejection::MissingMeasurement(ResourceKind::Npu)));
+        assert_eq!(
+            evaluate_extended_resource_placement(&value, ask, NOW, 5_000),
+            Err(ExtendedResourceRejection::MissingMeasurement(
+                ResourceKind::Npu
+            ))
+        );
         value = snapshot();
         value.storage = None;
         ask = request();
         ask.scratch_storage_bytes = 1;
-        assert_eq!(evaluate_extended_resource_placement(&value, ask, NOW, 5_000), Err(ExtendedResourceRejection::MissingMeasurement(ResourceKind::Storage)));
+        assert_eq!(
+            evaluate_extended_resource_placement(&value, ask, NOW, 5_000),
+            Err(ExtendedResourceRejection::MissingMeasurement(
+                ResourceKind::Storage
+            ))
+        );
     }
 
     #[test]
@@ -327,33 +430,67 @@ mod tests {
         let mut ask = request();
         ask.network_access = true;
         ask.network_bandwidth_kbps = 1;
-        value.network = Some(measured(NetworkHeadroom { available_bandwidth_kbps: 10_000, egress_allowed: false }));
-        assert_eq!(evaluate_extended_resource_placement(&value, ask, NOW, 5_000), Err(ExtendedResourceRejection::NetworkPolicyDenied));
+        value.network = Some(measured(NetworkHeadroom {
+            available_bandwidth_kbps: 10_000,
+            egress_allowed: false,
+        }));
+        assert_eq!(
+            evaluate_extended_resource_placement(&value, ask, NOW, 5_000),
+            Err(ExtendedResourceRejection::NetworkPolicyDenied)
+        );
         value.network = None;
-        assert_eq!(evaluate_extended_resource_placement(&value, ask, NOW, 5_000), Err(ExtendedResourceRejection::MissingMeasurement(ResourceKind::Network)));
+        assert_eq!(
+            evaluate_extended_resource_placement(&value, ask, NOW, 5_000),
+            Err(ExtendedResourceRejection::MissingMeasurement(
+                ResourceKind::Network
+            ))
+        );
     }
 
     #[test]
     fn insufficient_npu_storage_and_network_capacity_are_rejected() {
         let mut value = snapshot();
-        value.npu = Some(measured(AcceleratorHeadroom { available_memory_mb: 100, available_compute_units: 1 }));
+        value.npu = Some(measured(AcceleratorHeadroom {
+            available_memory_mb: 100,
+            available_compute_units: 1,
+        }));
         let mut ask = request();
         ask.npu_memory_mb = 256;
         ask.npu_compute_units = 2;
-        assert_eq!(evaluate_extended_resource_placement(&value, ask, NOW, 5_000), Err(ExtendedResourceRejection::InsufficientCapacity(ResourceKind::Npu)));
+        assert_eq!(
+            evaluate_extended_resource_placement(&value, ask, NOW, 5_000),
+            Err(ExtendedResourceRejection::InsufficientCapacity(
+                ResourceKind::Npu
+            ))
+        );
 
         value = snapshot();
-        value.storage = Some(measured(StorageHeadroom { available_scratch_bytes: 100 }));
+        value.storage = Some(measured(StorageHeadroom {
+            available_scratch_bytes: 100,
+        }));
         ask = request();
         ask.scratch_storage_bytes = 101;
-        assert_eq!(evaluate_extended_resource_placement(&value, ask, NOW, 5_000), Err(ExtendedResourceRejection::InsufficientCapacity(ResourceKind::Storage)));
+        assert_eq!(
+            evaluate_extended_resource_placement(&value, ask, NOW, 5_000),
+            Err(ExtendedResourceRejection::InsufficientCapacity(
+                ResourceKind::Storage
+            ))
+        );
 
         value = snapshot();
-        value.network = Some(measured(NetworkHeadroom { available_bandwidth_kbps: 100, egress_allowed: true }));
+        value.network = Some(measured(NetworkHeadroom {
+            available_bandwidth_kbps: 100,
+            egress_allowed: true,
+        }));
         ask = request();
         ask.network_access = true;
         ask.network_bandwidth_kbps = 101;
-        assert_eq!(evaluate_extended_resource_placement(&value, ask, NOW, 5_000), Err(ExtendedResourceRejection::InsufficientCapacity(ResourceKind::Network)));
+        assert_eq!(
+            evaluate_extended_resource_placement(&value, ask, NOW, 5_000),
+            Err(ExtendedResourceRejection::InsufficientCapacity(
+                ResourceKind::Network
+            ))
+        );
     }
 
     #[test]
@@ -361,43 +498,79 @@ mod tests {
         let mut value = snapshot();
         value.storage = Some(ResourceMeasurement {
             authenticated: false,
-            ..measured(StorageHeadroom { available_scratch_bytes: 10_000 })
+            ..measured(StorageHeadroom {
+                available_scratch_bytes: 10_000,
+            })
         });
         let mut ask = request();
         ask.scratch_storage_bytes = 1;
-        assert_eq!(evaluate_extended_resource_placement(&value, ask, NOW, 5_000), Err(ExtendedResourceRejection::UnauthenticatedMeasurement(ResourceKind::Storage)));
+        assert_eq!(
+            evaluate_extended_resource_placement(&value, ask, NOW, 5_000),
+            Err(ExtendedResourceRejection::UnauthenticatedMeasurement(
+                ResourceKind::Storage
+            ))
+        );
 
         value = snapshot();
         value.network = Some(ResourceMeasurement {
             sampled_at_unix_ms: NOW - 10_000,
-            ..measured(NetworkHeadroom { available_bandwidth_kbps: 10_000, egress_allowed: true })
+            ..measured(NetworkHeadroom {
+                available_bandwidth_kbps: 10_000,
+                egress_allowed: true,
+            })
         });
         ask = request();
         ask.network_access = true;
         ask.network_bandwidth_kbps = 1;
-        assert_eq!(evaluate_extended_resource_placement(&value, ask, NOW, 5_000), Err(ExtendedResourceRejection::StaleMeasurement(ResourceKind::Network)));
+        assert_eq!(
+            evaluate_extended_resource_placement(&value, ask, NOW, 5_000),
+            Err(ExtendedResourceRejection::StaleMeasurement(
+                ResourceKind::Network
+            ))
+        );
     }
 
     #[test]
     fn inconsistent_resource_requests_are_rejected() {
         let mut ask = request();
         ask.gpu_memory_mb = 1;
-        assert_eq!(evaluate_extended_resource_placement(&snapshot(), ask, NOW, 5_000), Err(ExtendedResourceRejection::InvalidRequest));
+        assert_eq!(
+            evaluate_extended_resource_placement(&snapshot(), ask, NOW, 5_000),
+            Err(ExtendedResourceRejection::InvalidRequest)
+        );
         ask = request();
         ask.network_bandwidth_kbps = 1;
-        assert_eq!(evaluate_extended_resource_placement(&snapshot(), ask, NOW, 5_000), Err(ExtendedResourceRejection::InvalidRequest));
+        assert_eq!(
+            evaluate_extended_resource_placement(&snapshot(), ask, NOW, 5_000),
+            Err(ExtendedResourceRejection::InvalidRequest)
+        );
     }
 
     #[test]
     fn sleeping_battery_or_thermally_unsafe_devices_remain_rejected() {
         let mut value = snapshot();
         value.cpu.powered_on = false;
-        assert!(matches!(evaluate_extended_resource_placement(&value, request(), NOW, 5_000), Err(ExtendedResourceRejection::Cpu(CpuPlacementRejection::DevicePoweredOff))));
+        assert!(matches!(
+            evaluate_extended_resource_placement(&value, request(), NOW, 5_000),
+            Err(ExtendedResourceRejection::Cpu(
+                CpuPlacementRejection::DevicePoweredOff
+            ))
+        ));
         value = snapshot();
         value.cpu.on_ac_power = false;
-        assert!(matches!(evaluate_extended_resource_placement(&value, request(), NOW, 5_000), Err(ExtendedResourceRejection::Cpu(CpuPlacementRejection::BatteryPower))));
+        assert!(matches!(
+            evaluate_extended_resource_placement(&value, request(), NOW, 5_000),
+            Err(ExtendedResourceRejection::Cpu(
+                CpuPlacementRejection::BatteryPower
+            ))
+        ));
         value = snapshot();
         value.cpu.thermal_state_safe = false;
-        assert!(matches!(evaluate_extended_resource_placement(&value, request(), NOW, 5_000), Err(ExtendedResourceRejection::Cpu(CpuPlacementRejection::ThermalUnsafe))));
+        assert!(matches!(
+            evaluate_extended_resource_placement(&value, request(), NOW, 5_000),
+            Err(ExtendedResourceRejection::Cpu(
+                CpuPlacementRejection::ThermalUnsafe
+            ))
+        ));
     }
 }
