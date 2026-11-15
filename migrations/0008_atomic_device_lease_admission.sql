@@ -365,7 +365,6 @@ BEGIN
     OR p_thermal_state IS NULL OR p_thermal_state NOT IN ('cool','warm','hot','critical','unknown')
     OR p_power_state IS NULL OR p_power_state NOT IN ('ac','battery','low_battery','unknown')
     OR p_participation_state IS NULL OR p_participation_state NOT IN ('idle','interactive','paused','disabled','unknown') THEN
-  RAISE NOTICE 'telemetry v2 diagnostic: invalid arguments';
   RETURN false;
  END IF;
 
@@ -380,10 +379,8 @@ BEGIN
    AND admin_approval_state = 'approved'
  FOR UPDATE;
  IF NOT FOUND OR p_reservation_revision > v_current_reservation_revision THEN
-  RAISE NOTICE 'telemetry v2 diagnostic: device missing/ineligible or reservation revision ahead; found=%, current_revision=%, requested_revision=%', FOUND, v_current_reservation_revision, p_reservation_revision;
   RETURN false;
  END IF;
- RAISE NOTICE 'telemetry v2 diagnostic: device lock acquired; current_revision=%', v_current_reservation_revision;
 
  INSERT INTO ujani_control.request_replays
   (tenant_id, device_id, request_id, expires_at, operation_digest)
@@ -392,17 +389,14 @@ BEGIN
  ON CONFLICT (tenant_id, device_id, request_id) DO NOTHING
  RETURNING request_id INTO inserted_request_id;
  IF inserted_request_id IS NULL THEN
-  RAISE NOTICE 'telemetry v2 diagnostic: replay claim conflict';
   RETURN false;
  END IF;
- RAISE NOTICE 'telemetry v2 diagnostic: replay claim inserted';
 
  SELECT max(reservation_revision) INTO v_previous_reservation_revision
  FROM ujani_control.device_telemetry_samples
  WHERE tenant_id = p_tenant_id AND device_id = p_device_id;
  IF v_previous_reservation_revision IS NOT NULL
     AND p_reservation_revision < v_previous_reservation_revision THEN
-  RAISE NOTICE 'telemetry v2 diagnostic: stale reservation revision; previous=%, requested=%', v_previous_reservation_revision, p_reservation_revision;
   DELETE FROM ujani_control.request_replays
    WHERE tenant_id = p_tenant_id AND device_id = p_device_id AND request_id = p_request_id;
   RETURN false;
@@ -420,7 +414,6 @@ BEGIN
         OR (p_generation = telemetry_generation AND p_sequence > telemetry_sequence))
    AND p_reservation_revision <= reservation_revision;
  GET DIAGNOSTICS updated_rows = ROW_COUNT;
- RAISE NOTICE 'telemetry v2 diagnostic: checkpoint update rows=%; generation=%; sequence=%; observed_at=%; reservation_revision=%', updated_rows, p_generation, p_sequence, p_observed_at, p_reservation_revision;
  IF updated_rows <> 1 THEN
   DELETE FROM ujani_control.request_replays
    WHERE tenant_id = p_tenant_id AND device_id = p_device_id AND request_id = p_request_id;
