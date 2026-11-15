@@ -81,3 +81,27 @@ UJANI's proposed shared coordination architecture is documented in [Enterprise I
 ## Legal and operational notice
 
 Read [the legal and operational notice](docs/LEGAL-DISCLAIMER.md) together with the [GNU GPL v3.0 licence](LICENSE). The notice is informational and does not replace qualified legal review or applicable law.
+
+
+## What happens after installing Enterprise AI?
+
+**There is not yet a production Enterprise AI installer or deployable fleet manager.** The repository currently provides Rust policy/persistence foundations and a read-only operator-console prototype with a transport-independent service core. Do not install it on employee endpoints or connect it to production devices as if it were a finished agent/controller.
+
+For a safe developer evaluation today:
+
+1. Clone the repository on a trusted development machine.
+2. Install the Rust stable toolchain and the platform prerequisites required by the workspace.
+3. Run `cargo test --workspace --locked` from the repository root. This validates the policy/workspace test suite; it does not deploy a controller or contact devices.
+4. Review the operator-console and service-core contracts. The console intentionally has no live fleet data until a hosting identity adapter, authenticated HTTPS server, tenant-isolated durable repository and durable audit sink are connected.
+5. Use only synthetic/test fixtures and explicitly enrolled lab devices in any future integration test. Do not send workloads or employee telemetry through the current prototype.
+
+### Intended operator experience after a future approved deployment
+
+1. An organisation administrator deploys the controller with its selected identity provider, database, protected key provider, independent anti-rollback anchor, audit storage and TLS configuration.
+2. An operator signs in through the organisation's identity provider. Tenant and role claims are verified server-side; the browser must never choose its own tenant or role.
+3. The operator reviews an inventory of already-powered, enrolled devices and their fresh, authenticated capability/health reports. Sleeping devices are never awakened.
+4. The administrator defines workload class, data boundaries, allowed resources, schedule, quotas, network policy and approval requirements.
+5. A device owner separately opts in. Scheduling admission checks current trust, owner consent, administrator approval, signed manifest, replay state, telemetry freshness, interactive activity, power/thermal state, capacity and isolation readiness.
+6. Only after independent security gates pass may a future worker execute a narrowly scoped workload in OS-enforced isolation. Results, cancellation and resource use must be attributable and auditable.
+
+This is the intended workflow, **not a claim that those deployment steps or remote execution are available today**. Production identity, database and audit adapters, protected key custody, an independent monotonic anchor, OS isolation, endpoint agent, authenticated transport and independent security review remain gates. Remote worker dispatch and automated containment remain disabled. See [Operator Control Plane](docs/OPERATOR-CONTROL-PLANE.md), [Device Trust Integration](docs/DEVICE-TRUST-SERVICE-INTEGRATION.md), [Collective Defence Durable Authority](docs/COLLECTIVE-DEFENCE-DURABLE-AUTHORITY.md) and [Release Gates](docs/RELEASE-GATES.md).
