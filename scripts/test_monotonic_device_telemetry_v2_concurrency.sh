@@ -28,6 +28,13 @@ trap cleanup EXIT
 SET ROLE ujani_runtime;
 BEGIN;
 SET LOCAL ujani.tenant_id = 'telemetry-concurrency-test';
+SELECT current_user || ':' || current_setting('ujani.tenant_id', true);
+SELECT trust_state || ':' || owner_consent_state || ':' || admin_approval_state || ':' ||
+ telemetry_generation::text || ':' || telemetry_sequence::text || ':' || reservation_revision::text || ':' ||
+ COALESCE(last_seen_at::text, 'null')
+FROM ujani_control.devices WHERE tenant_id='telemetry-concurrency-test' AND device_id='worker-1';
+SELECT CASE WHEN has_table_privilege(current_user, 'ujani_control.devices', 'UPDATE') THEN 'device-update-ok' ELSE 'device-update-denied' END;
+SELECT CASE WHEN has_function_privilege(current_user, 'ujani_control.accept_device_telemetry_v2(text,text,bigint,bigint,bigint,bytea,timestamptz,bytea,integer,bigint,text,text,text)', 'EXECUTE') THEN 'function-execute-ok' ELSE 'function-execute-denied' END;
 SELECT ujani_control.accept_device_telemetry_v2(
  'telemetry-concurrency-test','worker-1',1,1,0,decode(repeat('a1',16),'hex'),
  clock_timestamp(),decode(repeat('b1',32),'hex'),2000,4096,'cool','ac','idle');
