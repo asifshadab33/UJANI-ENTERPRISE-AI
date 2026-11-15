@@ -21,6 +21,23 @@ The objective is not to keep every computer busy. The objective is to complete t
 9. **Transparent governance.** Provide administrator audit and a visible device participation indicator, pause controls and revocation paths.
 10. **No hidden monetisation.** The product mission is shared resource efficiency and access for small organisations, not extracting profit from employee devices.
 
+## Implementation status — current repository
+
+The target model above is broader than the current executable code. Keep these distinctions visible in operator-facing material; a policy helper or database migration is not a deployed scheduler.
+
+| Capability | Present in the repository | Not yet delivered |
+|---|---|---|
+| CPU and RAM placement | Deterministic CPU/RAM admission and local-first placement policy helpers; PostgreSQL reference lease-admission migration | A production scheduler service, live capacity collector, worker-side quota enforcement and end-to-end dispatch |
+| GPU and NPU | GPU/NPU are named as target scheduling dimensions in this strategy | No production GPU/NPU inventory contract, driver/runtime compatibility probe, accelerator-memory accounting or accelerator-aware placement implementation |
+| Power and thermal | Fail-closed policy inputs for AC power and thermal safety; energy comparison helper accepts measured or estimated inputs | Trusted cross-platform sensor collection, calibrated energy measurement and automatic thermal/power throttling |
+| Device telemetry | Monotonic telemetry and read-only Suricata/Zeek evidence ingestion prototypes with bounded validation | A production endpoint agent, authenticated live telemetry transport, durable tenant operations and fleet-wide health service |
+| Trust, consent and leases | Device-owner binding, consent-generation, approval and atomic reservation reference logic with PostgreSQL regression fixtures | Production identity-provider integration, selected database topology, protected key custody, independent anti-rollback anchor and operator workflow |
+| Worker execution | Explicit execution gates and policy contracts | Authenticated worker dispatch, OS isolation, result verification and production remote execution; these remain disabled |
+
+**Important:** the current placement and capacity modules are advisory policy components. They do not collect hardware telemetry, reserve resources by themselves or execute work. The PostgreSQL migration is a reference implementation, not a final production database choice. No device may be awakened for work, and no remote execution or automatic containment may be inferred from these prototypes.
+
+The next accelerator implementation must be versioned and evidence-backed: enumerate GPU/NPU vendor and device identity, driver/runtime and model compatibility, usable accelerator memory, current reservations, power/thermal state and owner/admin policy. It must fail closed when a field is unknown and must not claim that CPU/RAM capacity can substitute for accelerator memory. Do not add an unused parallel schema; integrate it with the selected workload and telemetry contracts after the control-plane architecture is approved.
+
 ## Scheduler decision model
 
 A device is eligible only if all hard constraints pass:
