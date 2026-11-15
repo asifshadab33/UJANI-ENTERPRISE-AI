@@ -71,6 +71,25 @@ INSERT INTO ujani_control.owner_consents
  (tenant_id,device_id,consent_generation,state,actor_ref,evidence_digest)
 VALUES ('admission-test','admission-device',1,'granted','admission-owner',decode(repeat('22',32),'hex'))
 ON CONFLICT DO NOTHING;
+
+-- A new owner-binding revision must invalidate even a previously granted
+-- consent; a fresh consent generation from the current owner restores it.
+UPDATE ujani_control.device_owner_bindings
+SET binding_revision = binding_revision + 1,
+    binding_digest = decode(repeat('32',32),'hex')
+WHERE tenant_id='admission-test' AND device_id='admission-device';
+DO $block$
+BEGIN
+ IF (SELECT owner_consent_state FROM ujani_control.devices
+     WHERE tenant_id='admission-test' AND device_id='admission-device') <> 'unknown' THEN
+  RAISE EXCEPTION 'owner binding change did not invalidate prior consent';
+ END IF;
+END;
+$block$;
+INSERT INTO ujani_control.owner_consents
+ (tenant_id,device_id,consent_generation,state,actor_ref,evidence_digest)
+VALUES ('admission-test','admission-device',2,'granted','admission-owner',decode(repeat('23',32),'hex'))
+ON CONFLICT DO NOTHING;
 INSERT INTO ujani_control.device_telemetry_samples
  (tenant_id,device_id,generation,sequence,request_id,observed_at,payload_digest,
   cpu_available_millis,memory_available_mb,thermal_state,power_state,participation_state)
@@ -358,7 +377,7 @@ BEGIN
  admitted := ujani_control.admit_device_lease(
   'admission-test','admission-device','admission-workload','admission-approval',
   'admission-lease-1',decode(repeat('51',16),'hex'),decode(repeat('52',32),'hex'),
-  decode(repeat('44',32),'hex'),1,1,1000,1024,decode(repeat('53',32),'hex'),
+  decode(repeat('44',32),'hex'),1,2,1000,1024,decode(repeat('53',32),'hex'),
   clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000081');
  IF admitted IS DISTINCT FROM true THEN RAISE EXCEPTION 'valid admission was not committed'; END IF;
 
@@ -372,14 +391,14 @@ BEGIN
  admitted := ujani_control.admit_device_lease(
   'admission-test','admission-device','admission-workload','admission-approval',
   'admission-lease-replay',decode(repeat('51',16),'hex'),decode(repeat('52',32),'hex'),
-  decode(repeat('44',32),'hex'),1,1,1000,1024,decode(repeat('54',32),'hex'),
+  decode(repeat('44',32),'hex'),1,2,1000,1024,decode(repeat('54',32),'hex'),
   clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000082');
  IF admitted THEN RAISE EXCEPTION 'replayed request was admitted'; END IF;
 
  admitted := ujani_control.admit_device_lease(
   'admission-test','admission-device','admission-workload','admission-approval',
   'admission-lease-over-capacity',decode(repeat('55',16),'hex'),decode(repeat('56',32),'hex'),
-  decode(repeat('44',32),'hex'),1,1,3500,1024,decode(repeat('57',32),'hex'),
+  decode(repeat('44',32),'hex'),1,2,3500,1024,decode(repeat('57',32),'hex'),
   clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000083');
  IF admitted THEN RAISE EXCEPTION 'over-capacity request was admitted'; END IF;
 
