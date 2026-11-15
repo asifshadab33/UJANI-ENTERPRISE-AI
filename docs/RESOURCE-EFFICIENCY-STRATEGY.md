@@ -32,6 +32,24 @@ The policy crate now exposes `resource_capacity::evaluate_extended_resource_plac
 
 This contract closes part of the resource-dimension modelling gap, but it is not yet wired to an authenticated device-agent telemetry intake, durable lease admission, operator-console inventory or worker-side OS quota enforcement. Those integration and real-device checks remain release gates. Never infer GPU/NPU capability from hardware presence alone, and never wake sleeping or powered-off devices.
 
+## Implementation status — current repository
+
+The target model above is broader than the current executable code. Keep these distinctions visible in operator-facing material; a policy helper or database migration is not a deployed scheduler.
+
+| Capability | Present in the repository | Not yet delivered |
+|---|---|---|
+| CPU and RAM placement | Deterministic CPU/RAM admission and local-first placement policy helpers; PostgreSQL reference lease-admission work is under review | A production scheduler service, live capacity collector, worker-side quota enforcement and end-to-end dispatch |
+| GPU and NPU | Merged PR #218 adds a side-effect-free, fail-closed policy contract for requested accelerator memory and compute units; missing, stale, estimated or unauthenticated measurements are rejected | Production accelerator inventory/identity, driver-runtime-model compatibility probes, trusted sensor collection, durable lease integration and OS quota enforcement |
+| Storage and network | Merged PR #218 adds measured scratch-storage and bandwidth/egress admission fields | Trusted live storage/network telemetry collectors, durable quota reservation and worker-side enforcement |
+| Power and thermal | Fail-closed policy inputs for AC power and thermal safety; an energy comparison helper accepts measured or estimated inputs | Trusted cross-platform sensor collection, calibrated energy measurement and automatic thermal/power throttling |
+| Device telemetry | Monotonic telemetry and read-only Suricata/Zeek evidence-ingestion prototypes with bounded validation; the multi-resource policy consumes measurements supplied by its caller | A production endpoint agent, authenticated live telemetry transport for all resource dimensions, durable tenant operations and fleet-wide health service |
+| Trust, consent and leases | Device-owner binding, consent-generation, approval and atomic reservation reference logic with PostgreSQL regression fixtures | Production identity-provider integration, selected database topology, protected key custody, independent anti-rollback anchor and operator workflow |
+| Worker execution | Explicit execution gates and policy contracts | Authenticated worker dispatch, OS isolation, result verification and production remote execution; these remain disabled |
+
+**Important:** the current placement and capacity modules are advisory policy components. They do not collect hardware telemetry, reserve resources by themselves or execute work. The PostgreSQL migration is a reference implementation, not a final production database choice. No device may be awakened for work, and no remote execution or automatic containment may be inferred from these prototypes.
+
+The next accelerator implementation must extend the merged preview policy contract without duplicating it. It must be versioned and evidence-backed: enumerate GPU/NPU vendor and device identity, driver/runtime and model compatibility, usable accelerator memory, current reservations, power/thermal state and owner/admin policy. It must fail closed when a field is unknown and must not claim that CPU/RAM capacity can substitute for accelerator memory. Integrate this with the selected workload and telemetry contracts after the control-plane architecture is approved.
+
 ## Scheduler decision model
 
 A device is eligible only if all hard constraints pass:
