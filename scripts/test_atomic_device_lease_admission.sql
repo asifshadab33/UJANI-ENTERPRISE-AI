@@ -405,14 +405,14 @@ BEGIN
  admitted := ujani_control.admit_device_lease(
   'admission-test','admission-device','admission-workload','admission-disabled-approval',
   'admission-lease-disabled-admin',decode(repeat('65',16),'hex'),decode(repeat('66',32),'hex'),
-  decode(repeat('44',32),'hex'),1,1,100,100,decode(repeat('67',32),'hex'),
+  decode(repeat('44',32),'hex'),1,2,100,100,decode(repeat('67',32),'hex'),
   clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000085');
  IF admitted THEN RAISE EXCEPTION 'approval from a disabled administrator was accepted'; END IF;
 
  admitted := ujani_control.admit_device_lease(
   'admission-test','admission-device','admission-workload','admission-viewer-approval',
   'admission-lease-viewer',decode(repeat('68',16),'hex'),decode(repeat('69',32),'hex'),
-  decode(repeat('44',32),'hex'),1,1,100,100,decode(repeat('6a',32),'hex'),
+  decode(repeat('44',32),'hex'),1,2,100,100,decode(repeat('6a',32),'hex'),
   clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000086');
  IF admitted THEN RAISE EXCEPTION 'approval from a non-administrator was accepted'; END IF;
 
@@ -478,7 +478,7 @@ BEGIN
   PERFORM ujani_control.admit_device_lease(
    'admission-test','admission-device','admission-workload','admission-approval',
    'admission-lease-rollback',decode(repeat('61',16),'hex'),decode(repeat('62',32),'hex'),
-   decode(repeat('44',32),'hex'),1,1,100,100,decode(repeat('63',32),'hex'),
+   decode(repeat('44',32),'hex'),1,2,100,100,decode(repeat('63',32),'hex'),
    clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000081');
   RAISE EXCEPTION 'duplicate audit event id did not fail';
  EXCEPTION WHEN unique_violation THEN
