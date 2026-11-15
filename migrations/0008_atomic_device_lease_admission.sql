@@ -3,6 +3,7 @@
 -- request and administrator approval before calling this SECURITY INVOKER function.
 -- This transaction rechecks mutable tenant/device/consent/approval/capacity facts.
 -- It does not dispatch work or execute models.
+-- Run as a superuser or BYPASSRLS migration role: the consent-history backfill spans tenant rows protected by FORCE ROW LEVEL SECURITY.
 -- Binding UPDATE callers must lock the matching device row FOR UPDATE in the
 -- same transaction before updating device_owner_bindings; PostgreSQL takes the
 -- binding-row lock before its trigger runs. New binding INSERTs need no caller
@@ -57,11 +58,8 @@ BEGIN
   RAISE EXCEPTION 'authenticated tenant context mismatch' USING ERRCODE = '42501';
  END IF;
 
- -- The UPDATE caller must lock this device row FOR UPDATE in the same
- -- transaction before updating an existing binding row. PostgreSQL locks the
- -- binding row before firing this trigger, so this trigger's own device lock
- -- cannot establish device-first ordering for UPDATE. INSERT has no existing
- -- binding row lock and does not require that caller-side pre-lock.
+ -- UPDATE callers must lock the device row first in the same transaction.
+ -- The binding row is already locked when this trigger runs on UPDATE.
  PERFORM 1 FROM ujani_control.devices
  WHERE tenant_id = NEW.tenant_id AND device_id = NEW.device_id
  FOR UPDATE;
@@ -98,13 +96,26 @@ BEGIN
   END IF;
  END IF;
 
- -- Any binding change invalidates prior owner consent. The currently bound
- -- owner must record a new consent generation before lease admission resumes.
+ NEW.bound_at := pg_catalog.clock_timestamp();
+ RETURN NEW;
+END;
+$function$;
+
+CREATE OR REPLACE FUNCTION ujani_control.apply_device_owner_binding_side_effects()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = pg_catalog, ujani_control
+AS $function$
+BEGIN
+ -- This AFTER trigger runs only when INSERT/UPDATE actually persists. A
+ -- conflicting INSERT ... ON CONFLICT DO NOTHING must not revoke consent.
  UPDATE ujani_control.devices
  SET owner_consent_state = 'unknown', updated_at = pg_catalog.clock_timestamp()
  WHERE tenant_id = NEW.tenant_id AND device_id = NEW.device_id;
-
- NEW.bound_at := pg_catalog.clock_timestamp();
+ IF NOT FOUND THEN
+  RAISE EXCEPTION 'device owner binding references an unknown device' USING ERRCODE = '23503';
+ END IF;
 
  INSERT INTO ujani_control.audit_events
   (tenant_id,event_id,actor_ref,actor_role,event_type,outcome,object_ref)
@@ -121,12 +132,20 @@ END;
 $function$;
 
 COMMENT ON FUNCTION ujani_control.validate_device_owner_binding() IS
- 'Validates an administrator-established owner binding and invalidates prior device consent. UPDATE callers must lock the matching ujani_control.devices row FOR UPDATE in the same transaction before updating device_owner_bindings; the trigger cannot acquire device-first order after PostgreSQL has locked the existing binding row. INSERT callers do not need this pre-lock.';
+ 'Validates an administrator-established owner binding. UPDATE callers must lock the matching ujani_control.devices row FOR UPDATE in the same transaction before updating device_owner_bindings; INSERT callers do not need this pre-lock.';
+
+COMMENT ON FUNCTION ujani_control.apply_device_owner_binding_side_effects() IS
+ 'AFTER INSERT/UPDATE side effects: invalidate prior owner consent and append an audit event only after the binding row is actually persisted.';
 
 DROP TRIGGER IF EXISTS device_owner_binding_validate ON ujani_control.device_owner_bindings;
 CREATE TRIGGER device_owner_binding_validate
  BEFORE INSERT OR UPDATE ON ujani_control.device_owner_bindings
  FOR EACH ROW EXECUTE FUNCTION ujani_control.validate_device_owner_binding();
+
+DROP TRIGGER IF EXISTS device_owner_binding_side_effects ON ujani_control.device_owner_bindings;
+CREATE TRIGGER device_owner_binding_side_effects
+ AFTER INSERT OR UPDATE ON ujani_control.device_owner_bindings
+ FOR EACH ROW EXECUTE FUNCTION ujani_control.apply_device_owner_binding_side_effects();
 
 -- PostgreSQL requires UPDATE privilege on at least one column of a relation
 -- for SELECT ... FOR SHARE. Give the runtime role a column-only privilege on
@@ -175,6 +194,21 @@ BEGIN
 END;
 $block$;
 
+-- FORCE ROW LEVEL SECURITY also applies to migration-owned backfills.
+-- Fail before reading if the active migration role cannot see every tenant.
+DO $block$
+DECLARE
+ v_can_bypass_rls boolean;
+BEGIN
+ SELECT (rolsuper OR rolbypassrls) INTO v_can_bypass_rls
+ FROM pg_catalog.pg_roles
+ WHERE rolname = current_user;
+ IF v_can_bypass_rls IS DISTINCT FROM true THEN
+  RAISE EXCEPTION 'migration 0008 must run as a superuser or BYPASSRLS role for the cross-tenant consent-generation backfill';
+ END IF;
+END;
+$block$;
+
 -- Preserve monotonic consent history for devices that already have a durable
 -- owner-consent event. Devices without such evidence remain generation zero
 -- and cannot be admitted until a fresh owner-consent event is recorded.
@@ -195,6 +229,52 @@ ALTER TABLE ujani_control.leases
  ADD COLUMN IF NOT EXISTS capability_digest bytea CHECK (capability_digest IS NULL OR octet_length(capability_digest) = 32),
  ADD COLUMN IF NOT EXISTS consent_generation bigint NOT NULL DEFAULT 0 CHECK (consent_generation >= 0),
  ADD COLUMN IF NOT EXISTS request_id bytea CHECK (request_id IS NULL OR octet_length(request_id) = 16);
+
+-- The existing per-device lease revision is the reservation revision assigned
+-- atomically from devices.reservation_revision by admit_device_lease().
+COMMENT ON COLUMN ujani_control.leases.revision IS
+ 'Monotonic per-device reservation revision. Telemetry samples record the revision they observed; admission subtracts only leases with a newer revision.';
+
+-- Historical samples cannot prove which reservation revision they included.
+-- Keep them NULL and reject them until a fresh sample is captured by this trigger.
+ALTER TABLE ujani_control.device_telemetry_samples
+ ADD COLUMN IF NOT EXISTS reservation_revision bigint
+ CHECK (reservation_revision IS NULL OR reservation_revision >= 0);
+
+CREATE OR REPLACE FUNCTION ujani_control.capture_telemetry_reservation_revision()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = pg_catalog, ujani_control
+AS $function$
+DECLARE
+ v_revision bigint;
+BEGIN
+ IF NEW.tenant_id IS DISTINCT FROM pg_catalog.current_setting('ujani.tenant_id', true) THEN
+  RAISE EXCEPTION 'authenticated tenant context mismatch' USING ERRCODE = '42501';
+ END IF;
+ SELECT reservation_revision INTO v_revision
+ FROM ujani_control.devices
+ WHERE tenant_id = NEW.tenant_id AND device_id = NEW.device_id
+ FOR UPDATE;
+ IF NOT FOUND THEN
+  RAISE EXCEPTION 'telemetry sample references an unknown device' USING ERRCODE = '23503';
+ END IF;
+ NEW.reservation_revision := v_revision;
+ RETURN NEW;
+END;
+$function$;
+
+COMMENT ON FUNCTION ujani_control.capture_telemetry_reservation_revision() IS
+ 'Captures the device reservation revision under the same device-row lock used by lease admission. Existing samples remain unversioned and are rejected until refreshed.';
+
+DROP TRIGGER IF EXISTS device_telemetry_reservation_revision ON ujani_control.device_telemetry_samples;
+CREATE TRIGGER device_telemetry_reservation_revision
+ BEFORE INSERT ON ujani_control.device_telemetry_samples
+ FOR EACH ROW EXECUTE FUNCTION ujani_control.capture_telemetry_reservation_revision();
+
+COMMENT ON COLUMN ujani_control.device_telemetry_samples.reservation_revision IS
+ 'Device reservation revision observed when this telemetry sample was inserted under the device-row lock.';
 
 CREATE INDEX IF NOT EXISTS leases_active_device_capacity_idx
  ON ujani_control.leases (tenant_id, device_id, expires_at)
@@ -397,6 +477,8 @@ BEGIN
  END IF;
  IF NOT FOUND
     OR v_sample.received_at < v_now - interval '2 minutes'
+    OR v_sample.reservation_revision IS NULL
+    OR v_sample.reservation_revision > v_device.reservation_revision
     OR v_sample.generation <> v_device.telemetry_generation
     OR v_sample.sequence <> v_device.telemetry_sequence
     OR v_sample.cpu_available_millis IS NULL
@@ -412,7 +494,8 @@ BEGIN
  INTO v_reserved_cpu, v_reserved_memory
  FROM ujani_control.leases
  WHERE tenant_id = p_tenant_id AND device_id = p_device_id
-   AND state IN ('reserved','active') AND expires_at > v_now;
+   AND state IN ('reserved','active') AND expires_at > v_now
+   AND revision > v_sample.reservation_revision;
 
  IF v_reserved_cpu + p_cpu_millis > v_sample.cpu_available_millis
     OR v_reserved_memory + p_memory_mb > v_sample.memory_available_mb THEN
