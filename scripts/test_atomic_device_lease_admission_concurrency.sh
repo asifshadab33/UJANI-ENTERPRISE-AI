@@ -59,14 +59,16 @@ ON CONFLICT (tenant_id,approval_id) DO UPDATE SET decision='approved',
  expires_at=clock_timestamp()+interval '10 minutes';
 SQL
 
-first_out="$(mktemp)"; second_out="$(mktemp)"; release_file="$(mktemp)"
+first_out="$(mktemp)"; second_out="$(mktemp)"; release_dir="$(mktemp -d)"
+release_file="$release_dir/release"
 export UJANI_ADMISSION_RELEASE_FILE="$release_file"
 first_pid=""; second_pid=""
 cleanup(){
  touch "$release_file" 2>/dev/null || true
  if [[ -n "$first_pid" ]]; then wait "$first_pid" 2>/dev/null || true; fi
  if [[ -n "$second_pid" ]]; then wait "$second_pid" 2>/dev/null || true; fi
- rm -f "$first_out" "$second_out" "$release_file"
+ rm -f "$first_out" "$second_out"
+ rm -rf "$release_dir"
 }
 trap cleanup EXIT
 (
@@ -89,7 +91,7 @@ SQL
 first_pid=$!
 first_ready=0
 for _ in $(seq 1 100); do
- ready="$("${PSQL[@]}" -c "SELECT count(*) FROM pg_stat_activity WHERE application_name='ujani-admission-first' AND state='idle' AND xact_start IS NOT NULL")"
+ ready="$("${PSQL[@]}" -c "SELECT count(*) FROM pg_stat_activity WHERE application_name='ujani-admission-first' AND state='idle in transaction' AND xact_start IS NOT NULL")"
  if [[ "$ready" == "1" ]] && grep -qx 't' "$first_out"; then first_ready=1; break; fi
  sleep 0.1
 done
