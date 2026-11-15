@@ -334,6 +334,51 @@ mod tests {
     }
 
     #[test]
+    fn insufficient_npu_storage_and_network_capacity_are_rejected() {
+        let mut value = snapshot();
+        value.npu = Some(measured(AcceleratorHeadroom { available_memory_mb: 100, available_compute_units: 1 }));
+        let mut ask = request();
+        ask.npu_memory_mb = 256;
+        ask.npu_compute_units = 2;
+        assert_eq!(evaluate_extended_resource_placement(&value, ask, NOW, 5_000), Err(ExtendedResourceRejection::InsufficientCapacity(ResourceKind::Npu)));
+
+        value = snapshot();
+        value.storage = Some(measured(StorageHeadroom { available_scratch_bytes: 100 }));
+        ask = request();
+        ask.scratch_storage_bytes = 101;
+        assert_eq!(evaluate_extended_resource_placement(&value, ask, NOW, 5_000), Err(ExtendedResourceRejection::InsufficientCapacity(ResourceKind::Storage)));
+
+        value = snapshot();
+        value.network = Some(measured(NetworkHeadroom { available_bandwidth_kbps: 100, egress_allowed: true }));
+        ask = request();
+        ask.network_access = true;
+        ask.network_bandwidth_kbps = 101;
+        assert_eq!(evaluate_extended_resource_placement(&value, ask, NOW, 5_000), Err(ExtendedResourceRejection::InsufficientCapacity(ResourceKind::Network)));
+    }
+
+    #[test]
+    fn unauthenticated_or_stale_storage_and_network_measurements_are_rejected() {
+        let mut value = snapshot();
+        value.storage = Some(ResourceMeasurement {
+            authenticated: false,
+            ..measured(StorageHeadroom { available_scratch_bytes: 10_000 })
+        });
+        let mut ask = request();
+        ask.scratch_storage_bytes = 1;
+        assert_eq!(evaluate_extended_resource_placement(&value, ask, NOW, 5_000), Err(ExtendedResourceRejection::UnauthenticatedMeasurement(ResourceKind::Storage)));
+
+        value = snapshot();
+        value.network = Some(ResourceMeasurement {
+            sampled_at_unix_ms: NOW - 10_000,
+            ..measured(NetworkHeadroom { available_bandwidth_kbps: 10_000, egress_allowed: true })
+        });
+        ask = request();
+        ask.network_access = true;
+        ask.network_bandwidth_kbps = 1;
+        assert_eq!(evaluate_extended_resource_placement(&value, ask, NOW, 5_000), Err(ExtendedResourceRejection::StaleMeasurement(ResourceKind::Network)));
+    }
+
+    #[test]
     fn inconsistent_resource_requests_are_rejected() {
         let mut ask = request();
         ask.gpu_memory_mb = 1;
