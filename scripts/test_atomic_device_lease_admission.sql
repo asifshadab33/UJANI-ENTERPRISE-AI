@@ -43,6 +43,17 @@ ON CONFLICT (tenant_id,device_id) DO UPDATE SET
  binding_revision=ujani_control.device_owner_bindings.binding_revision+1,
  active=true,binding_digest=decode(repeat('31',32),'hex'),bound_at=clock_timestamp();
 
+-- Even an INSERT of a new owner binding invalidates a pre-existing consent
+-- state; the newly bound owner must issue a fresh consent event.
+DO $block$
+BEGIN
+ IF (SELECT owner_consent_state FROM ujani_control.devices
+     WHERE tenant_id='admission-test' AND device_id='admission-device') <> 'unknown' THEN
+  RAISE EXCEPTION 'initial owner binding did not invalidate prior consent';
+ END IF;
+END;
+$block$;
+
 DO $block$
 BEGIN
  UPDATE ujani_control.device_owner_bindings
