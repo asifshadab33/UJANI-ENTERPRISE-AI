@@ -9,9 +9,9 @@
 //! sequence, replay, trust and dual-consent checks under concurrent requests.
 
 use crate::device_trust::{
-    AuthenticatedDeviceRequest, DurableDeviceRegistry, DurableDeviceTrustError,
-    SignedDeviceRequest, MAX_DEVICE_REQUEST_BODY_BYTES,
+    AuthenticatedDeviceRequest, SignedDeviceRequest, MAX_DEVICE_REQUEST_BODY_BYTES,
 };
+use crate::device_trust::durable::{DurableDeviceRegistry, DurableDeviceTrustError};
 use crate::operator_http_contract::{resolve_route, HttpMethod, OperatorHttpRoute};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
