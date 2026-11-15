@@ -253,7 +253,8 @@ mod tests {
         assert_eq!(sample.sequence, 7);
         assert_eq!(sample.cpu_available_millis, Some(1_200));
         assert_eq!(sample.memory_available_mb, Some(4_096));
-        assert_eq!(sample.payload_digest, Sha256::digest(&raw).as_slice());
+        let expected_digest: [u8; 32] = Sha256::digest(&raw).into();
+        assert_eq!(sample.payload_digest, expected_digest);
     }
 
     #[test]
