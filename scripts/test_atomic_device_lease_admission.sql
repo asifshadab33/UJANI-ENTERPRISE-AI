@@ -333,10 +333,89 @@ GRANT EXECUTE ON FUNCTION ujani_control.admit_device_lease(
  text,text,text,text,text,bytea,bytea,bytea,bigint,bigint,integer,bigint,bytea,timestamptz,uuid
 ) TO ujani_runtime;
 
+-- The first sample is taken before lease A and reports 4,000 CPU millis.
+-- After lease A consumes 2,500, a fresh sample reports the residual 1,500.
+-- Lease A is already reflected in that sample and must not be subtracted again.
 SET ROLE ujani_runtime;
 BEGIN;
 SET LOCAL ujani.tenant_id='admission-test';
-DO $$
+DO $block$
+DECLARE admitted boolean;
+BEGIN
+ admitted := ujani_control.admit_device_lease(
+  'admission-test','admission-device-capacity','admission-workload','admission-approval',
+  'admission-capacity-lease-a',decode(repeat('a7',16),'hex'),decode(repeat('a8',32),'hex'),
+  decode(repeat('44',32),'hex'),1,1,2500,1024,decode(repeat('a9',32),'hex'),
+  clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000101');
+ IF admitted IS DISTINCT FROM true THEN
+  RAISE EXCEPTION 'first capacity accounting lease was not admitted';
+ END IF;
+END;
+$block$;
+COMMIT;
+RESET ROLE;
+
+-- Capture a new sample after lease A; the trigger records reservation_revision=1.
+UPDATE ujani_control.devices
+SET telemetry_sequence=2,last_seen_at=clock_timestamp()
+WHERE tenant_id='admission-test' AND device_id='admission-device-capacity';
+INSERT INTO ujani_control.device_telemetry_samples
+ (tenant_id,device_id,generation,sequence,request_id,observed_at,payload_digest,
+  cpu_available_millis,memory_available_mb,thermal_state,power_state,participation_state)
+VALUES ('admission-test','admission-device-capacity',1,2,decode(repeat('aa',16),'hex'),
+ clock_timestamp(),decode(repeat('ab',32),'hex'),1500,7168,'cool','ac','idle');
+
+SET ROLE ujani_runtime;
+BEGIN;
+SET LOCAL ujani.tenant_id='admission-test';
+DO $block$
+DECLARE admitted boolean;
+BEGIN
+ admitted := ujani_control.admit_device_lease(
+  'admission-test','admission-device-capacity','admission-workload','admission-approval',
+  'admission-capacity-lease-b',decode(repeat('ac',16),'hex'),decode(repeat('ad',32),'hex'),
+  decode(repeat('44',32),'hex'),1,1,1000,1024,decode(repeat('ae',32),'hex'),
+  clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000102');
+ IF admitted IS DISTINCT FROM true THEN
+  RAISE EXCEPTION 'lease using telemetry-reported residual capacity was incorrectly rejected';
+ END IF;
+END;
+$block$;
+COMMIT;
+RESET ROLE;
+
+DO $block$
+DECLARE first_sample_revision bigint;
+DECLARE second_sample_revision bigint;
+DECLARE final_device_revision bigint;
+DECLARE capacity_lease_count bigint;
+BEGIN
+ SELECT reservation_revision INTO first_sample_revision
+ FROM ujani_control.device_telemetry_samples
+ WHERE tenant_id='admission-test' AND device_id='admission-device-capacity' AND sequence=1;
+ SELECT reservation_revision INTO second_sample_revision
+ FROM ujani_control.device_telemetry_samples
+ WHERE tenant_id='admission-test' AND device_id='admission-device-capacity' AND sequence=2;
+ SELECT reservation_revision INTO final_device_revision
+ FROM ujani_control.devices
+ WHERE tenant_id='admission-test' AND device_id='admission-device-capacity';
+ SELECT count(*) INTO capacity_lease_count
+ FROM ujani_control.leases
+ WHERE tenant_id='admission-test' AND device_id='admission-device-capacity';
+ IF first_sample_revision IS DISTINCT FROM 0
+    OR second_sample_revision IS DISTINCT FROM 1
+    OR final_device_revision IS DISTINCT FROM 2
+    OR capacity_lease_count <> 2 THEN
+  RAISE EXCEPTION 'reservation revision accounting mismatch: samples %, %, device %, leases %',
+   first_sample_revision,second_sample_revision,final_device_revision,capacity_lease_count;
+ END IF;
+END;
+$block$;
+
+SET ROLE ujani_runtime;
+BEGIN;
+SET LOCAL ujani.tenant_id='admission-test';
+DO $
 DECLARE admitted boolean;
 DECLARE lease_count integer;
 DECLARE replay_count integer;
