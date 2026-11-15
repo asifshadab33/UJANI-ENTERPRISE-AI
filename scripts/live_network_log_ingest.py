@@ -80,12 +80,16 @@ def _load_checkpoint(path, tenant_id, provider_id):
     except (OSError, UnicodeDecodeError, ValueError):
         raise ImportErrorSafe("checkpoint is unreadable or malformed") from None
     expected = {"schema_version", "tenant_id", "provider_id", "device", "inode", "offset", "size"}
-    if not isinstance(value, dict) or set(value) != expected or value["schema_version"] != 1:
+    if (not isinstance(value, dict) or set(value) != expected
+            or isinstance(value["schema_version"], bool)
+            or not isinstance(value["schema_version"], int)
+            or value["schema_version"] != 1):
         raise ImportErrorSafe("checkpoint contract mismatch")
     if value["tenant_id"] != tenant_id or value["provider_id"] != provider_id:
         raise ImportErrorSafe("checkpoint tenant/provider/log-kind scope mismatch")
-    if any(isinstance(value[k], bool) or not isinstance(value[k], int) or value[k] < 0
-           for k in ("device", "inode", "offset", "size")):
+    if (any(isinstance(value[k], bool) or not isinstance(value[k], int) or value[k] < 0
+            for k in ("device", "inode", "offset", "size"))
+            or value["offset"] > value["size"]):
         raise ImportErrorSafe("checkpoint cursor is invalid")
     return value
 
