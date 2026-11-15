@@ -286,13 +286,16 @@ mod tests {
 
     #[test]
     fn rejects_oversized_resources_and_bad_device_ids() {
-        let huge = String::from_utf8(body(1_000)).unwrap()
-            .replace("\"cpu_available_millis\":1200", "\"cpu_available_millis\":70000000");
+        let huge = String::from_utf8(body(1_000)).unwrap().replace(
+            "\"cpu_available_millis\":1200",
+            "\"cpu_available_millis\":70000000",
+        );
         assert_eq!(
             validate_device_telemetry_body(huge.as_bytes(), 1_000),
             Err(DeviceTelemetryIntakeError::InvalidResourceMeasurement)
         );
-        let bad_id = String::from_utf8(body(1_000)).unwrap()
+        let bad_id = String::from_utf8(body(1_000))
+            .unwrap()
             .replace("device-1", "../other");
         assert_eq!(
             validate_device_telemetry_body(bad_id.as_bytes(), 1_000),
