@@ -46,10 +46,10 @@ INSERT INTO ujani_control.owner_consents
 VALUES ('admission-concurrency','device',1,'granted','owner',decode(repeat('72',32),'hex'))
 ON CONFLICT DO NOTHING;
 INSERT INTO ujani_control.device_telemetry_samples
- (tenant_id,device_id,generation,sequence,request_id,observed_at,payload_digest,
+ (tenant_id,device_id,generation,sequence,request_id,observed_at,payload_digest,reservation_revision,
   cpu_available_millis,memory_available_mb,thermal_state,power_state,participation_state)
 VALUES ('admission-concurrency','device',1,1,decode(repeat('73',16),'hex'),
- clock_timestamp(),decode(repeat('74',32),'hex'),4000,8192,'cool','ac','idle')
+ clock_timestamp(),decode(repeat('74',32),'hex'),0,4000,8192,'cool','ac','idle')
 ON CONFLICT DO NOTHING;
 INSERT INTO ujani_control.workloads
  (tenant_id,workload_id,manifest_digest,class,state,created_by)
