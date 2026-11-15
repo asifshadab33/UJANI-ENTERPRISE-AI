@@ -241,40 +241,168 @@ ALTER TABLE ujani_control.device_telemetry_samples
  ADD COLUMN IF NOT EXISTS reservation_revision bigint
  CHECK (reservation_revision IS NULL OR reservation_revision >= 0);
 
-CREATE OR REPLACE FUNCTION ujani_control.capture_telemetry_reservation_revision()
+-- A telemetry sample must carry the reservation revision observed by the
+-- authenticated device agent when the measurement was taken. Do not stamp the
+-- server's current revision at receipt time: a lease may have been admitted
+-- after the measurement but before its upload arrived.
+CREATE OR REPLACE FUNCTION ujani_control.validate_telemetry_reservation_revision()
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY INVOKER
 SET search_path = pg_catalog, ujani_control
 AS $function$
 DECLARE
- v_revision bigint;
+ v_current_revision bigint;
+ v_previous_revision bigint;
 BEGIN
  IF NEW.tenant_id IS DISTINCT FROM pg_catalog.current_setting('ujani.tenant_id', true) THEN
   RAISE EXCEPTION 'authenticated tenant context mismatch' USING ERRCODE = '42501';
  END IF;
- SELECT reservation_revision INTO v_revision
+ IF NEW.reservation_revision IS NULL OR NEW.reservation_revision < 0 THEN
+  RAISE EXCEPTION 'telemetry sample must include its observed reservation revision' USING ERRCODE = '23514';
+ END IF;
+ SELECT reservation_revision INTO v_current_revision
  FROM ujani_control.devices
  WHERE tenant_id = NEW.tenant_id AND device_id = NEW.device_id
  FOR UPDATE;
  IF NOT FOUND THEN
   RAISE EXCEPTION 'telemetry sample references an unknown device' USING ERRCODE = '23503';
  END IF;
- NEW.reservation_revision := v_revision;
+ IF NEW.reservation_revision > v_current_revision THEN
+  RAISE EXCEPTION 'telemetry sample reservation revision is ahead of the device' USING ERRCODE = '23514';
+ END IF;
+ SELECT max(reservation_revision) INTO v_previous_revision
+ FROM ujani_control.device_telemetry_samples
+ WHERE tenant_id = NEW.tenant_id AND device_id = NEW.device_id;
+ IF v_previous_revision IS NOT NULL AND NEW.reservation_revision < v_previous_revision THEN
+  RAISE EXCEPTION 'telemetry sample reservation revision must be non-decreasing' USING ERRCODE = '23514';
+ END IF;
  RETURN NEW;
 END;
 $function$;
 
-COMMENT ON FUNCTION ujani_control.capture_telemetry_reservation_revision() IS
- 'Captures the device reservation revision under the same device-row lock used by lease admission. Existing samples remain unversioned and are rejected until refreshed.';
+COMMENT ON FUNCTION ujani_control.validate_telemetry_reservation_revision() IS
+ 'Validates the reservation revision observed by the authenticated device agent at measurement time. It must not be replaced with the server revision at receipt time.';
 
 DROP TRIGGER IF EXISTS device_telemetry_reservation_revision ON ujani_control.device_telemetry_samples;
 CREATE TRIGGER device_telemetry_reservation_revision
  BEFORE INSERT ON ujani_control.device_telemetry_samples
- FOR EACH ROW EXECUTE FUNCTION ujani_control.capture_telemetry_reservation_revision();
+ FOR EACH ROW EXECUTE FUNCTION ujani_control.validate_telemetry_reservation_revision();
 
 COMMENT ON COLUMN ujani_control.device_telemetry_samples.reservation_revision IS
- 'Device reservation revision observed when this telemetry sample was inserted under the device-row lock.';
+ 'Reservation revision observed by the authenticated device agent when this telemetry sample was measured; older active leases are already reflected in the measured headroom.';
+
+-- The legacy v1 telemetry function cannot supply the reservation revision and
+-- would create samples that the lease admission path must reject. Require the
+-- versioned v2 contract for future authenticated telemetry ingestion.
+REVOKE ALL ON FUNCTION ujani_control.accept_device_telemetry(
+ text,text,bigint,bigint,bytea,timestamptz,bytea,integer,bigint,text,text,text
+) FROM PUBLIC, ujani_runtime;
+
+CREATE OR REPLACE FUNCTION ujani_control.accept_device_telemetry_v2(
+ p_tenant_id text,
+ p_device_id text,
+ p_generation bigint,
+ p_sequence bigint,
+ p_reservation_revision bigint,
+ p_request_id bytea,
+ p_observed_at timestamptz,
+ p_payload_digest bytea,
+ p_cpu_available_millis integer,
+ p_memory_available_mb bigint,
+ p_thermal_state text,
+ p_power_state text,
+ p_participation_state text
+) RETURNS boolean
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = pg_catalog, ujani_control
+AS $function$
+DECLARE
+ inserted_request_id bytea;
+ updated_rows integer;
+ v_previous_reservation_revision bigint;
+BEGIN
+ IF p_tenant_id IS NULL OR p_tenant_id = ''
+    OR p_tenant_id IS DISTINCT FROM pg_catalog.current_setting('ujani.tenant_id', true)
+    OR p_device_id IS NULL OR p_device_id = ''
+    OR p_generation IS NULL OR p_generation <= 0
+    OR p_sequence IS NULL OR p_sequence <= 0
+    OR p_reservation_revision IS NULL OR p_reservation_revision < 0
+    OR p_request_id IS NULL OR pg_catalog.octet_length(p_request_id) <> 16
+    OR p_payload_digest IS NULL OR pg_catalog.octet_length(p_payload_digest) <> 32
+    OR p_observed_at IS NULL
+    OR p_observed_at < pg_catalog.clock_timestamp() - interval '5 minutes'
+    OR p_observed_at > pg_catalog.clock_timestamp() + interval '60 seconds'
+    OR (p_cpu_available_millis IS NOT NULL AND p_cpu_available_millis NOT BETWEEN 0 AND 65535000)
+    OR (p_memory_available_mb IS NOT NULL AND p_memory_available_mb NOT BETWEEN 0 AND 16777216)
+    OR p_thermal_state IS NULL OR p_thermal_state NOT IN ('cool','warm','hot','critical','unknown')
+    OR p_power_state IS NULL OR p_power_state NOT IN ('ac','battery','low_battery','unknown')
+    OR p_participation_state IS NULL OR p_participation_state NOT IN ('idle','interactive','paused','disabled','unknown') THEN
+  RETURN false;
+ END IF;
+
+ INSERT INTO ujani_control.request_replays
+  (tenant_id, device_id, request_id, expires_at, operation_digest)
+ VALUES
+  (p_tenant_id, p_device_id, p_request_id, pg_catalog.clock_timestamp() + interval '10 minutes', p_payload_digest)
+ ON CONFLICT (tenant_id, device_id, request_id) DO NOTHING
+ RETURNING request_id INTO inserted_request_id;
+ IF inserted_request_id IS NULL THEN
+  RETURN false;
+ END IF;
+
+ -- The device row update serializes telemetry with lease admission. The signed
+ -- observed revision may lag the current server revision, but may never lead it.
+ UPDATE ujani_control.devices
+ SET telemetry_generation = p_generation,
+     telemetry_sequence = p_sequence,
+     last_seen_at = p_observed_at,
+     updated_at = pg_catalog.clock_timestamp()
+ WHERE tenant_id = p_tenant_id
+   AND device_id = p_device_id
+   AND trust_state = 'enrolled'
+   AND owner_consent_state = 'granted'
+   AND admin_approval_state = 'approved'
+   AND (last_seen_at IS NULL OR p_observed_at >= last_seen_at)
+   AND (p_generation > telemetry_generation
+        OR (p_generation = telemetry_generation AND p_sequence > telemetry_sequence))
+   AND p_reservation_revision <= reservation_revision;
+ GET DIAGNOSTICS updated_rows = ROW_COUNT;
+ IF updated_rows <> 1 THEN
+  DELETE FROM ujani_control.request_replays
+   WHERE tenant_id = p_tenant_id AND device_id = p_device_id AND request_id = p_request_id;
+  RETURN false;
+ END IF;
+
+ SELECT max(reservation_revision) INTO v_previous_reservation_revision
+ FROM ujani_control.device_telemetry_samples
+ WHERE tenant_id = p_tenant_id AND device_id = p_device_id;
+ IF v_previous_reservation_revision IS NOT NULL
+    AND p_reservation_revision < v_previous_reservation_revision THEN
+  DELETE FROM ujani_control.request_replays
+   WHERE tenant_id = p_tenant_id AND device_id = p_device_id AND request_id = p_request_id;
+  RETURN false;
+ END IF;
+
+ INSERT INTO ujani_control.device_telemetry_samples
+  (tenant_id, device_id, generation, sequence, request_id, observed_at,
+   payload_digest, reservation_revision, cpu_available_millis, memory_available_mb,
+   thermal_state, power_state, participation_state)
+ VALUES
+  (p_tenant_id, p_device_id, p_generation, p_sequence, p_request_id, p_observed_at,
+   p_payload_digest, p_reservation_revision, p_cpu_available_millis, p_memory_available_mb,
+   p_thermal_state, p_power_state, p_participation_state);
+ RETURN true;
+END;
+$function$;
+
+COMMENT ON FUNCTION ujani_control.accept_device_telemetry_v2(
+ text,text,bigint,bigint,bigint,bytea,timestamptz,bytea,integer,bigint,text,text,text
+) IS
+ 'SECURITY INVOKER telemetry admission. The trusted adapter must verify that the signed device payload binds p_reservation_revision to the measured capacity. Enforces tenant context, replay, monotonic sequence/time/revision, current trust/consent/approval and that the observed revision is not ahead of server state.';
+
+
 
 CREATE INDEX IF NOT EXISTS leases_active_device_capacity_idx
  ON ujani_control.leases (tenant_id, device_id, expires_at)
