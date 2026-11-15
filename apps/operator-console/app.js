@@ -223,6 +223,51 @@ function validModelInventory(entries) {
       && new Set(inventory.models.map((model) => model.model_ref)).size === inventory.models.length;
   });
 }
+function formatMiB(value) {
+  return value == null ? "Unknown" : Math.round(value).toLocaleString() + " MiB";
+}
+function evidenceSummary(evidence) {
+  if (!evidence) return "Unknown";
+  const observedAt = evidence.observed_at_unix_ms;
+  const freshness = observedAt == null ? "Unknown" : snapshotIsFresh(observedAt) ? "Fresh" : "Stale";
+  return (evidence.confidence || "Unknown") + " · " + freshness;
+}
+function runtimeSummary(runtimes) {
+  if (!runtimes || !runtimes.length) return "Runtime not reported";
+  return runtimes.map((runtime) =>
+    runtime.provider + " " + (runtime.version || "version unknown")
+      + " · " + runtime.availability + " · " + runtime.network_scope
+  ).join("; ");
+}
+function runtimeEvidenceSummary(runtimes) {
+  if (!runtimes || !runtimes.length) return "Runtime: Unknown";
+  return runtimes.map((runtime) =>
+    runtime.runtime_id + ": " + evidenceSummary(runtime.evidence)
+  ).join("; ");
+}
+function hardwareSummary(inventory) {
+  const hardware = inventory.hardware;
+  const parts = [
+    "CPU " + (hardware.cpu_logical_cores == null ? "unknown" : hardware.cpu_logical_cores + " logical cores"),
+    "RAM " + formatMiB(hardware.memory_available_mb) + " free / " + formatMiB(hardware.memory_total_mb) + " total",
+    "Storage " + formatMiB(hardware.storage_free_mb) + " free"
+  ];
+  if (!hardware.accelerators.length) {
+    parts.push("Accelerators not reported");
+  } else {
+    for (const accelerator of hardware.accelerators) {
+      const label = [
+        String(accelerator.kind).toUpperCase(),
+        accelerator.vendor || "vendor unknown",
+        accelerator.device_family || "family unknown"
+      ].join(" ");
+      parts.push(label + " · " + formatMiB(accelerator.memory_mb)
+        + " · " + evidenceSummary(accelerator.evidence));
+    }
+  }
+  parts.push("Snapshot " + formatAge(inventory.generated_at_unix_ms));
+  return parts.join(" · ");
+}
 function renderModelInventory(inventories, overview) {
   const body = byId("model-inventory");
   body.replaceChildren();
@@ -230,11 +275,15 @@ function renderModelInventory(inventories, overview) {
   let returnedModels = 0;
   for (const entry of inventories || []) {
     const inventory = entry.inventory;
+    if (!inventory.models.length) {
+      if (rows.length < 5120) rows.push({ device_id: entry.device_id, inventory, model: null, runtime: null });
+      continue;
+    }
     for (const model of inventory.models) {
       returnedModels += 1;
       if (rows.length < 5120) {
         const runtime = inventory.runtimes.find((item) => item.runtime_id === model.runtime_id);
-        rows.push({ device_id: entry.device_id, inventory_at: inventory.generated_at_unix_ms, memory_available_mb: inventory.hardware.memory_available_mb, model, runtime });
+        rows.push({ device_id: entry.device_id, inventory, model, runtime });
       }
     }
   }
@@ -245,37 +294,59 @@ function renderModelInventory(inventories, overview) {
     countLabel += " · response budget limited; " + returnedModels.toLocaleString()
       + " models from " + overview.model_inventory_returned_devices.toLocaleString() + " devices returned";
   }
-  if (totalModels > rows.length) countLabel += " · showing first " + rows.length.toLocaleString();
+  const renderedModels = rows.filter((item) => item.model).length;
+  if (returnedModels > renderedModels) {
+    countLabel += " · showing " + renderedModels.toLocaleString()
+      + " of " + returnedModels.toLocaleString() + " returned model rows";
+  }
+  const renderedDevices = new Set(rows.map((item) => item.device_id)).size;
+  if (renderedDevices < overview.model_inventory_returned_devices) {
+    countLabel += " · showing " + renderedDevices.toLocaleString() + " device inventories";
+  }
   byId("model-count").textContent = countLabel;
-  if (!returnedModels) {
+  if (!inventories || !inventories.length) {
     const row = document.createElement("tr");
     const message = overview.model_inventory_status === "partial_response_budget"
       ? "The response budget did not fit a complete device inventory; retry with a narrower fleet filter."
-      : "No model records were reported by authorised devices.";
+      : "No authenticated model/runtime inventory has been reported by authorised devices.";
     const cell = textCell(message);
-    cell.colSpan = 9; cell.className = "empty"; row.append(cell); body.append(row); return;
+    cell.colSpan = 10; cell.className = "empty"; row.append(cell); body.append(row); return;
   }
-  for (const item of rows.slice(0, 5120)) {
+  for (const item of rows) {
     const row = document.createElement("tr");
     row.append(textCell(item.device_id));
+    if (!item.model) {
+      row.append(textCell("No model metadata reported"));
+      row.append(textCell(null));
+      row.append(textCell(null));
+      row.append(textCell(runtimeSummary(item.inventory.runtimes)));
+      const availability = document.createElement("td"); availability.append(pill("unknown")); row.append(availability);
+      row.append(textCell("Not reported"));
+      row.append(textCell(hardwareSummary(item.inventory)));
+      const fitCell = document.createElement("td"); fitCell.append(pill("Unknown")); row.append(fitCell);
+      row.append(textCell("Model: Not reported · " + runtimeEvidenceSummary(item.inventory.runtimes)));
+      body.append(row);
+      continue;
+    }
     row.append(textCell(item.model.display_name));
     row.append(textCell(item.model.version));
     row.append(textCell(item.model.family));
     row.append(textCell(item.runtime
-      ? item.runtime.provider + " · " + (item.runtime.version || "version unknown") + " · " + item.runtime.availability + " · " + item.runtime.network_scope
+      ? runtimeSummary([item.runtime])
       : item.model.runtime_id + " · runtime metadata unknown"));
     const availability = document.createElement("td"); availability.append(pill(item.model.availability)); row.append(availability);
     row.append(textCell(item.model.capabilities.join(", ")));
+    row.append(textCell(hardwareSummary(item.inventory)));
     const requiredRam = item.model.estimated_min_memory_mb;
-    const ramFit = requiredRam == null || item.memory_available_mb == null
+    const availableRam = item.inventory.hardware.memory_available_mb;
+    const ramFit = requiredRam == null || availableRam == null
       ? "Unknown"
-      : requiredRam <= item.memory_available_mb
-        ? requiredRam + " MiB req / " + item.memory_available_mb + " MiB free · estimate fits"
-        : requiredRam + " MiB req / " + item.memory_available_mb + " MiB free · insufficient";
+      : requiredRam <= availableRam
+        ? requiredRam + " MiB req / " + availableRam + " MiB free · estimate fits"
+        : requiredRam + " MiB req / " + availableRam + " MiB free · insufficient";
     const fitCell = document.createElement("td"); fitCell.append(pill(ramFit)); row.append(fitCell);
-    const evidenceAt = item.model.evidence.observed_at_unix_ms;
-    const freshness = evidenceAt == null ? "Unknown" : snapshotIsFresh(evidenceAt) ? formatAge(evidenceAt) : "Stale";
-    row.append(textCell(item.model.evidence.confidence + " · " + freshness));
+    row.append(textCell("Model: " + evidenceSummary(item.model.evidence)
+      + " · Runtime: " + evidenceSummary(item.runtime && item.runtime.evidence)));
     body.append(row);
   }
 }
@@ -403,7 +474,7 @@ function clearOverview() {
   modelBody.replaceChildren();
   const modelRow = document.createElement("tr");
   const modelCell = textCell("No current authenticated model inventory available.");
-  modelCell.colSpan = 9;
+  modelCell.colSpan = 10;
   modelCell.className = "empty";
   modelRow.append(modelCell);
   modelBody.append(modelRow);
