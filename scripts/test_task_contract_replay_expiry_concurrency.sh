@@ -35,7 +35,8 @@ first_pid=$!
 # Wait until the conflicting uncommitted row is visible in pg_stat_activity.
 ready=0
 for _ in {1..50}; do
-  if grep -q 'pg_sleep' "$first_out" 2>/dev/null; then ready=1; break; fi
+  active="$("${PSQL[@]}" --command "SELECT count(*) FROM pg_stat_activity WHERE application_name='ujani-replay-conflict-holder' AND state='active' AND query LIKE '%pg_sleep(2)%';" | tr -d '[:space:]')"
+  if [[ "$active" == "1" ]]; then ready=1; break; fi
   if ! kill -0 "$first_pid" 2>/dev/null; then
     cat "$first_out" >&2
     echo "conflict-holder session exited before entering its lock-holding phase" >&2
