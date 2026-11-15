@@ -3,7 +3,7 @@
 -- SQL test exercises tenant-scoped, post-authentication database admission.
 GRANT SELECT, INSERT, UPDATE, DELETE ON ujani_control.devices,
  ujani_control.request_replays, ujani_control.device_telemetry_samples TO ujani_runtime;
-GRANT EXECUTE ON FUNCTION ujani_control.accept_device_telemetry(text,text,bigint,bigint,bytea,timestamptz,bytea,integer,bigint,text,text,text) TO ujani_runtime;
+GRANT EXECUTE ON FUNCTION ujani_control.accept_device_telemetry_v2(text,text,bigint,bigint,bytea,timestamptz,bytea,integer,bigint,text,text,text) TO ujani_runtime;
 
 INSERT INTO ujani_control.tenants (tenant_id, display_name)
 VALUES ('telemetry-test','Telemetry Test Tenant')
@@ -25,59 +25,59 @@ DECLARE sample_count integer;
 DECLARE current_generation bigint;
 DECLARE current_sequence bigint;
 BEGIN
- accepted := ujani_control.accept_device_telemetry(
-  'telemetry-test','telemetry-device',1,1,decode(repeat('01',16),'hex'),
+ accepted := ujani_control.accept_device_telemetry_v2(
+  'telemetry-test','telemetry-device',1,1,0,decode(repeat('01',16),'hex'),
   clock_timestamp(),decode(repeat('aa',32),'hex'),1500,4096,'cool','ac','idle');
  IF NOT accepted THEN RAISE EXCEPTION 'first fresh sample should be accepted'; END IF;
 
- accepted := ujani_control.accept_device_telemetry(
-  'telemetry-test','telemetry-device',1,1,decode(repeat('01',16),'hex'),
+ accepted := ujani_control.accept_device_telemetry_v2(
+  'telemetry-test','telemetry-device',1,1,0,decode(repeat('01',16),'hex'),
   clock_timestamp(),decode(repeat('aa',32),'hex'),1500,4096,'cool','ac','idle');
  IF accepted THEN RAISE EXCEPTION 'replayed request id should be rejected'; END IF;
 
- accepted := ujani_control.accept_device_telemetry(
-  'telemetry-test','telemetry-device',1,1,decode(repeat('02',16),'hex'),
+ accepted := ujani_control.accept_device_telemetry_v2(
+  'telemetry-test','telemetry-device',1,1,0,decode(repeat('02',16),'hex'),
   clock_timestamp(),decode(repeat('bb',32),'hex'),1500,4096,'cool','ac','idle');
  IF accepted THEN RAISE EXCEPTION 'duplicate generation/sequence should be rejected'; END IF;
 
- accepted := ujani_control.accept_device_telemetry(
-  'telemetry-test','telemetry-device',1,2,decode(repeat('03',16),'hex'),
+ accepted := ujani_control.accept_device_telemetry_v2(
+  'telemetry-test','telemetry-device',1,2,0,decode(repeat('03',16),'hex'),
   clock_timestamp(),decode(repeat('cc',32),'hex'),1200,3072,'warm','ac','idle');
  IF NOT accepted THEN RAISE EXCEPTION 'strictly newer sequence should be accepted'; END IF;
 
- accepted := ujani_control.accept_device_telemetry(
-  'telemetry-test','telemetry-device',1,3,decode(repeat('04',16),'hex'),
+ accepted := ujani_control.accept_device_telemetry_v2(
+  'telemetry-test','telemetry-device',1,3,0,decode(repeat('04',16),'hex'),
   clock_timestamp() - interval '1 minute',decode(repeat('dd',32),'hex'),1200,3072,'warm','ac','idle');
  IF accepted THEN RAISE EXCEPTION 'older observation timestamp must not roll back last_seen'; END IF;
 
- accepted := ujani_control.accept_device_telemetry(
-  'telemetry-test','telemetry-device',1,3,decode(repeat('05',16),'hex'),
+ accepted := ujani_control.accept_device_telemetry_v2(
+  'telemetry-test','telemetry-device',1,3,0,decode(repeat('05',16),'hex'),
   clock_timestamp() - interval '6 minutes',decode(repeat('ee',32),'hex'),1200,3072,'warm','ac','idle');
  IF accepted THEN RAISE EXCEPTION 'stale telemetry timestamp should be rejected'; END IF;
 
- accepted := ujani_control.accept_device_telemetry(
-  'telemetry-test','telemetry-device',1,3,decode(repeat('06',16),'hex'),
+ accepted := ujani_control.accept_device_telemetry_v2(
+  'telemetry-test','telemetry-device',1,3,0,decode(repeat('06',16),'hex'),
   clock_timestamp() + interval '2 minutes',decode(repeat('ff',32),'hex'),1200,3072,'warm','ac','idle');
  IF accepted THEN RAISE EXCEPTION 'future telemetry timestamp should be rejected'; END IF;
 
  UPDATE ujani_control.devices SET owner_consent_state='paused'
  WHERE tenant_id='telemetry-test' AND device_id='telemetry-device';
- accepted := ujani_control.accept_device_telemetry(
-  'telemetry-test','telemetry-device',1,3,decode(repeat('07',16),'hex'),
+ accepted := ujani_control.accept_device_telemetry_v2(
+  'telemetry-test','telemetry-device',1,3,0,decode(repeat('07',16),'hex'),
   clock_timestamp(),decode(repeat('11',32),'hex'),1200,3072,'warm','ac','idle');
  IF accepted THEN RAISE EXCEPTION 'owner opt-out should reject admission'; END IF;
 
  UPDATE ujani_control.devices SET owner_consent_state='granted', admin_approval_state='rejected'
  WHERE tenant_id='telemetry-test' AND device_id='telemetry-device';
- accepted := ujani_control.accept_device_telemetry(
-  'telemetry-test','telemetry-device',1,3,decode(repeat('08',16),'hex'),
+ accepted := ujani_control.accept_device_telemetry_v2(
+  'telemetry-test','telemetry-device',1,3,0,decode(repeat('08',16),'hex'),
   clock_timestamp(),decode(repeat('22',32),'hex'),1200,3072,'warm','ac','idle');
  IF accepted THEN RAISE EXCEPTION 'organization denial should reject admission'; END IF;
 
  UPDATE ujani_control.devices SET admin_approval_state='approved', trust_state='revoked'
  WHERE tenant_id='telemetry-test' AND device_id='telemetry-device';
- accepted := ujani_control.accept_device_telemetry(
-  'telemetry-test','telemetry-device',1,3,decode(repeat('09',16),'hex'),
+ accepted := ujani_control.accept_device_telemetry_v2(
+  'telemetry-test','telemetry-device',1,3,0,decode(repeat('09',16),'hex'),
   clock_timestamp(),decode(repeat('33',32),'hex'),1200,3072,'warm','ac','idle');
  IF accepted THEN RAISE EXCEPTION 'revoked device should reject admission'; END IF;
 
@@ -100,8 +100,8 @@ SAVEPOINT telemetry_rollback_test;
 DO $$
 DECLARE accepted boolean;
 BEGIN
- accepted := ujani_control.accept_device_telemetry(
-  'telemetry-test','telemetry-device',1,3,decode(repeat('0a',16),'hex'),
+ accepted := ujani_control.accept_device_telemetry_v2(
+  'telemetry-test','telemetry-device',1,3,0,decode(repeat('0a',16),'hex'),
   clock_timestamp(),decode(repeat('44',32),'hex'),1000,2048,'cool','ac','idle');
  IF NOT accepted THEN RAISE EXCEPTION 'fresh telemetry sample should be accepted before rollback'; END IF;
 END $$;
