@@ -502,6 +502,24 @@ impl DurableDeviceRegistry {
         })
     }
 
+    /// Verify a signed request against the durable enrolled-device registry without
+    /// consuming its replay nonce. The caller must atomically claim request_id in
+    /// the same database transaction as the protected telemetry/lease mutation.
+    pub fn verify_request_for(
+        &self,
+        request: &SignedDeviceRequest,
+        expected_method: &str,
+        expected_resource_id: &str,
+        body: &[u8],
+        now: u64,
+    ) -> Result<AuthenticatedDeviceRequest, DurableDeviceTrustError> {
+        self.read(|registry| {
+            registry
+                .verify_request_for(request, expected_method, expected_resource_id, body, now)
+                .map_err(Into::into)
+        })
+    }
+
     /// Authenticates only when the signed method/resource match the server-selected route.
     ///
     /// A route mismatch does not consume the durable replay nonce.
