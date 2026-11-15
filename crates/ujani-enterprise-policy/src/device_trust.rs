@@ -851,7 +851,8 @@ mod tests {
     #[test]
     fn verification_does_not_consume_nonce_before_downstream_transaction() {
         let (mut r, admin, device) = registry();
-        r.apply_admin_command(&enrollment(&admin, &device, 1), 200).unwrap();
+        r.apply_admin_command(&enrollment(&admin, &device, 1), 200)
+            .unwrap();
         let claims = DeviceRequestClaims {
             tenant_id: "tenant-a".into(),
             device_id: "device-1".into(),
@@ -870,9 +871,15 @@ mod tests {
             signature: device.sign(&device_request_bytes(&claims)).to_bytes(),
             claims,
         };
-        assert!(r.verify_request_for(&signed, "POST", "device-telemetry:ingest", b"", 250).is_ok());
-        assert!(r.verify_request_for(&signed, "POST", "device-telemetry:ingest", b"", 251).is_ok());
-        assert!(r.authenticate_request_for(&signed, "POST", "device-telemetry:ingest", b"", 252).is_ok());
+        assert!(r
+            .verify_request_for(&signed, "POST", "device-telemetry:ingest", b"", 250)
+            .is_ok());
+        assert!(r
+            .verify_request_for(&signed, "POST", "device-telemetry:ingest", b"", 251)
+            .is_ok());
+        assert!(r
+            .authenticate_request_for(&signed, "POST", "device-telemetry:ingest", b"", 252)
+            .is_ok());
         assert_eq!(
             r.authenticate_request_for(&signed, "POST", "device-telemetry:ingest", b"", 253),
             Err(DeviceTrustError::ReplayDetected)
