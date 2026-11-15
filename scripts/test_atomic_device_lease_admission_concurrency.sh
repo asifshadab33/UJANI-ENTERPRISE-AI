@@ -81,7 +81,7 @@ SELECT ujani_control.admit_device_lease(
  clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000091');
 -- Keep the transaction and device lock until the controller observes the
 -- second connection waiting. The release is an explicit file handshake.
-\\! while [ ! -f "$UJANI_ADMISSION_RELEASE_FILE" ]; do sleep 0.05; done
+\! while [ ! -f "$UJANI_ADMISSION_RELEASE_FILE" ]; do sleep 0.05; done
 COMMIT;
 RESET ROLE;
 SQL
