@@ -12,6 +12,9 @@ SELF_EVOLUTION_REPLAY_TEST_PATH = ROOT / "scripts" / "test_self_evolution_approv
 SELF_EVOLUTION_CONSUMPTION_SQL_PATH = ROOT / "migrations" / "0007_self_evolution_approval_consumption_function.sql"
 SELF_EVOLUTION_CONSUMPTION_TEST_PATH = ROOT / "scripts" / "test_self_evolution_approval_consumption_function.sql"
 SELF_EVOLUTION_CONCURRENCY_TEST_PATH = ROOT / "scripts" / "test_self_evolution_approval_consumption_concurrency.sh"
+ATOMIC_ADMISSION_SQL_PATH = ROOT / "migrations" / "0008_atomic_device_lease_admission.sql"
+ATOMIC_ADMISSION_TEST_PATH = ROOT / "scripts" / "test_atomic_device_lease_admission.sql"
+ATOMIC_ADMISSION_CONCURRENCY_PATH = ROOT / "scripts" / "test_atomic_device_lease_admission_concurrency.sh"
 TENANT_TEST_SQL_PATH = ROOT / "scripts" / "test_customer_hosted_migration.sql"
 
 
@@ -212,7 +215,82 @@ def main() -> None:
     concurrency_test = (ROOT / "scripts" / "test_monotonic_device_telemetry_concurrency.sh").read_text(encoding="utf-8")
     if 'PSQL_BIN="${PSQL_BIN:-psql}"' not in concurrency_test:
         raise SystemExit("telemetry concurrency test must use the configured PostgreSQL client adapter")
-    print("Customer-hosted, task-contract, Self-Evolution approval replay and monotonic telemetry migration static checks passed.")
+    atomic_sql = ATOMIC_ADMISSION_SQL_PATH.read_text(encoding="utf-8")
+    for required in (
+        "CREATE OR REPLACE FUNCTION ujani_control.admit_device_lease",
+        "SECURITY INVOKER",
+        "current_setting('ujani.tenant_id', true)",
+        "FOR UPDATE",
+        "consent_generation = p_consent_generation",
+        "device_key_generation",
+        "valid_from <= v_now AND revoked_at IS NULL",
+        "owner_consents",
+        "state = 'approved'",
+        "s.enabled IS TRUE AND s.role = 'administrator'",
+        "received_at DESC",
+        "participation_state <> 'idle'",
+        "ON CONFLICT (tenant_id, device_id, request_id) DO NOTHING",
+        "requested_cpu_millis",
+        "requested_memory_mb",
+        "reservation_revision",
+        "device.lease.admitted",
+        "admission_lock_marker",
+        "reject_admission_lock_marker_mutation",
+        "FOR SHARE OF a, s",
+        "REVOKE ALL ON FUNCTION",
+    ):
+        if required not in atomic_sql:
+            raise SystemExit(f"atomic device admission migration is missing invariant: {required}")
+    if "SECURITY DEFINER" in atomic_sql:
+        raise SystemExit("atomic device admission must preserve caller RLS and privileges")
+    atomic_test = ATOMIC_ADMISSION_TEST_PATH.read_text(encoding="utf-8")
+    if "GRANT SELECT,INSERT,UPDATE ON" in atomic_test or "UPDATE ujani_control.devices SET owner_consent_state" in atomic_test:
+        raise SystemExit("atomic admission test must not grant broad runtime mutation privileges or let runtime change owner consent")
+    for required in (
+        "REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA ujani_control FROM ujani_runtime",
+        "REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA ujani_control FROM ujani_runtime",
+        "REVOKE ALL ON SCHEMA ujani_control FROM ujani_runtime",
+        "REVOKE ALL ON FUNCTION ujani_control.admit_device_lease(",
+        "GRANT UPDATE (reservation_revision, updated_at)",
+        "GRANT UPDATE (admission_lock_marker)",
+        "runtime role is missing the narrow row-lock-only column privileges",
+        "runtime role can update protected column",
+        "pg_catalog.pg_attribute",
+        "runtime role changed immutable admission lock marker",
+        "GRANT INSERT ON ujani_control.leases,ujani_control.request_replays",
+        "runtime role can mutate device trust or consent state",
+        "ujani_control.device_keys','INSERT",
+        "ujani_control.device_keys','UPDATE",
+        "runtime role can rewrite lease, replay or audit history",
+        "runtime role does not have only the required reservation update columns",
+        "valid admission was not committed",
+        "replayed request was admitted",
+        "over-capacity request was admitted",
+        "admission-device-paused",
+        "paused owner consent admitted work",
+        "approval from a disabled administrator was accepted",
+        "approval from a non-administrator was accepted",
+        "future-dated active device key was accepted",
+        "revoked active device key was accepted",
+        "admission writes were not atomic",
+        "late failure left partial admission state",
+    ):
+        if required not in atomic_test:
+            raise SystemExit(f"atomic device admission regression test missing: {required}")
+    atomic_concurrency = ATOMIC_ADMISSION_CONCURRENCY_PATH.read_text(encoding="utf-8")
+    for required in (
+        "pg_sleep(15)",
+        "PGAPPNAME=ujani-admission-first",
+        "application_name='ujani-admission-first'",
+        "application_name='ujani-admission-second'",
+        "wait_event_type='Lock'",
+        "second admission was not observed waiting on the device row lock",
+        "second admission should be rejected",
+        "1:2500",
+    ):
+        if required not in atomic_concurrency:
+            raise SystemExit(f"atomic admission concurrency regression missing: {required}")
+    print("Customer-hosted, task-contract, Self-Evolution approval replay, monotonic telemetry and atomic device admission migration static checks passed.")
 
 
 if __name__ == "__main__":
