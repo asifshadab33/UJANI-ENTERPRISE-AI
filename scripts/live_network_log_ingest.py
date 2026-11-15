@@ -80,12 +80,16 @@ def _load_checkpoint(path, tenant_id, provider_id):
     except (OSError, UnicodeDecodeError, ValueError):
         raise ImportErrorSafe("checkpoint is unreadable or malformed") from None
     expected = {"schema_version", "tenant_id", "provider_id", "device", "inode", "offset", "size"}
-    if not isinstance(value, dict) or set(value) != expected or value["schema_version"] != 1:
+    if (not isinstance(value, dict) or set(value) != expected
+            or isinstance(value["schema_version"], bool)
+            or not isinstance(value["schema_version"], int)
+            or value["schema_version"] != 1):
         raise ImportErrorSafe("checkpoint contract mismatch")
     if value["tenant_id"] != tenant_id or value["provider_id"] != provider_id:
         raise ImportErrorSafe("checkpoint tenant/provider/log-kind scope mismatch")
-    if any(isinstance(value[k], bool) or not isinstance(value[k], int) or value[k] < 0
-           for k in ("device", "inode", "offset", "size")):
+    if (any(isinstance(value[k], bool) or not isinstance(value[k], int) or value[k] < 0
+            for k in ("device", "inode", "offset", "size"))
+            or value["offset"] > value["size"]):
         raise ImportErrorSafe("checkpoint cursor is invalid")
     return value
 
@@ -177,7 +181,7 @@ def ingest_once(*, log_path, database, checkpoint, provider, tenant_id,
         checkpoint_value = {
             "schema_version": 1, "tenant_id": tenant_id, "provider_id": checkpoint_provider,
             "device": identity[0], "inode": identity[1], "offset": next_offset,
-            "size": int(info.st_size),
+            "size": max(int(info.st_size), next_offset),
         }
         _save_checkpoint(checkpoint, checkpoint_value)
         return inserted, len(records), next_offset

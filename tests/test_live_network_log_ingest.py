@@ -2,8 +2,10 @@ import json
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
+import scripts.live_network_log_ingest as live_ingest
 from scripts.live_network_log_ingest import ingest_once
 from scripts.normalize_network_logs import ImportErrorSafe
 from scripts.security_event_store import SecurityEventStore
@@ -60,6 +62,36 @@ class LiveNetworkLogIngestTests(unittest.TestCase):
         )
         self.assertEqual((inserted, read_count), (1, 1))
         self.assertEqual(self.count(), 1)
+
+    def test_checkpoint_size_covers_bytes_appended_after_initial_stat(self):
+        self.log.write_text(zeek_line(2.0, "initial"), encoding="utf-8")
+        original_safe_open = live_ingest._safe_open
+
+        def append_after_open(path):
+            fd, info = original_safe_open(path)
+            with self.log.open("ab") as stream:
+                stream.write(zeek_line(3.0, "appended").encode("utf-8"))
+            return fd, info
+
+        with patch(
+            "scripts.live_network_log_ingest._safe_open",
+            side_effect=append_after_open,
+        ):
+            inserted, read_count, offset = ingest_once(
+                log_path=self.log, database=self.db, checkpoint=self.cursor,
+                provider="zeek", tenant_id="tenant-a", from_start=True, now_ms=10_000,
+            )
+        checkpoint = json.loads(self.cursor.read_text(encoding="utf-8"))
+        self.assertEqual((inserted, read_count), (2, 2))
+        self.assertEqual(checkpoint["offset"], offset)
+        self.assertLessEqual(checkpoint["offset"], checkpoint["size"])
+
+        inserted, read_count, _ = ingest_once(
+            log_path=self.log, database=self.db, checkpoint=self.cursor,
+            provider="zeek", tenant_id="tenant-a", now_ms=10_000,
+        )
+        self.assertEqual((inserted, read_count), (0, 0))
+        self.assertEqual(self.count(), 2)
 
     def test_partial_final_line_is_not_checkpointed(self):
         self.log.write_text('{"ts": 2.0, "uid": "partial"', encoding="utf-8")
@@ -134,6 +166,30 @@ class LiveNetworkLogIngestTests(unittest.TestCase):
             ingest_once(log_path=self.log, database=self.db, checkpoint=self.cursor,
                         provider="zeek", tenant_id="tenant-a", now_ms=10_000,
                         zeek_log_kind="weird")
+
+
+    def test_rejects_boolean_schema_version_and_offset_beyond_checkpoint_size(self):
+        self.log.write_text(zeek_line(2.0, "checkpoint-validation"), encoding="utf-8")
+        cases = [
+            (
+                {"schema_version": True, "tenant_id": "tenant-a", "provider_id": "zeek",
+                 "device": 1, "inode": 1, "offset": 0, "size": 0},
+                "checkpoint contract mismatch",
+            ),
+            (
+                {"schema_version": 1, "tenant_id": "tenant-a", "provider_id": "zeek",
+                 "device": 1, "inode": 1, "offset": 2, "size": 1},
+                "checkpoint cursor is invalid",
+            ),
+        ]
+        for checkpoint, message in cases:
+            with self.subTest(checkpoint=checkpoint):
+                self.cursor.write_text(json.dumps(checkpoint), encoding="utf-8")
+                with self.assertRaisesRegex(ImportErrorSafe, message):
+                    ingest_once(
+                        log_path=self.log, database=self.db, checkpoint=self.cursor,
+                        provider="zeek", tenant_id="tenant-a", now_ms=10_000,
+                    )
 
 
 if __name__ == "__main__":
