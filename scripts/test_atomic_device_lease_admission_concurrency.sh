@@ -59,8 +59,15 @@ ON CONFLICT (tenant_id,approval_id) DO UPDATE SET decision='approved',
  expires_at=clock_timestamp()+interval '10 minutes';
 SQL
 
-first_out="$(mktemp)"; second_out="$(mktemp)"
-cleanup(){ rm -f "$first_out" "$second_out"; }
+first_out="$(mktemp)"; second_out="$(mktemp)"; release_file="$(mktemp)"
+export UJANI_ADMISSION_RELEASE_FILE="$release_file"
+first_pid=""; second_pid=""
+cleanup(){
+ touch "$release_file" 2>/dev/null || true
+ if [[ -n "$first_pid" ]]; then wait "$first_pid" 2>/dev/null || true; fi
+ if [[ -n "$second_pid" ]]; then wait "$second_pid" 2>/dev/null || true; fi
+ rm -f "$first_out" "$second_out" "$release_file"
+}
 trap cleanup EXIT
 (
  PGAPPNAME=ujani-admission-first "${PSQL[@]}" >"$first_out" 2>&1 <<'SQL'
@@ -72,26 +79,23 @@ SELECT ujani_control.admit_device_lease(
  decode(repeat('81',16),'hex'),decode(repeat('82',32),'hex'),decode(repeat('75',32),'hex'),
  1,1,2500,1024,decode(repeat('83',32),'hex'),
  clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000091');
--- Keep the transaction (and its device row lock) open long enough to observe
--- a second admission blocked on that same lock.
-SELECT pg_sleep(15);
+-- Keep the transaction and device lock until the controller observes the
+-- second connection waiting. The release is an explicit file handshake.
+\\! while [ ! -f "$UJANI_ADMISSION_RELEASE_FILE" ]; do sleep 0.05; done
 COMMIT;
 RESET ROLE;
 SQL
 ) &
 first_pid=$!
-first_locked=0
+first_ready=0
 for _ in $(seq 1 100); do
- active="$("${PSQL[@]}" -c "SELECT count(*) FROM pg_stat_activity WHERE application_name='ujani-admission-first' AND state='active' AND query LIKE '%pg_sleep(15)%'")"
- if [[ "$active" == "1" ]]; then first_locked=1; break; fi
+ ready="$("${PSQL[@]}" -c "SELECT count(*) FROM pg_stat_activity WHERE application_name='ujani-admission-first' AND state='idle' AND xact_start IS NOT NULL")"
+ if [[ "$ready" == "1" ]] && grep -qx 't' "$first_out"; then first_ready=1; break; fi
  sleep 0.1
 done
-if [[ "$first_locked" != "1" ]]; then
- echo "first admission did not enter lock-holding phase" >&2
+if [[ "$first_ready" != "1" ]]; then
+ echo "first admission did not enter its lock-holding handshake" >&2
  cat "$first_out" >&2
- set +e
- wait "$first_pid"
- set -e
  exit 1
 fi
 
@@ -116,6 +120,8 @@ for _ in $(seq 1 100); do
  if [[ "$waiting" == "1" ]]; then second_waiting=1; break; fi
  sleep 0.1
 done
+# Release only after observing the second admission blocked on the device lock.
+touch "$release_file"
 
 set +e
 wait "$first_pid"
