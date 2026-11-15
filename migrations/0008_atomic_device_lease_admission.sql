@@ -157,7 +157,7 @@ END;
 $function$;
 
 COMMENT ON FUNCTION ujani_control.validate_device_owner_binding() IS
- 'Validates an administrator-established owner binding. UPDATE callers must lock the matching ujani_control.devices row FOR UPDATE in the same transaction before updating device_owner_bindings; INSERT callers do not need this pre-lock.';
+ 'Validates an administrator-established owner binding. A statement-level trigger acquires the tenant audit-chain advisory lock before binding row locks. Callers that explicitly pre-lock the matching ujani_control.devices row must acquire that same tenant audit lock first, then the device row, in the same transaction.';
 
 COMMENT ON FUNCTION ujani_control.apply_device_owner_binding_side_effects() IS
  'AFTER INSERT/UPDATE side effects: invalidate prior owner consent and append an audit event only after the binding row is actually persisted.';
