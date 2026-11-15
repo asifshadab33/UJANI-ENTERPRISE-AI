@@ -24,9 +24,9 @@ pub use resource_capacity::{
     ExtendedResourceRejection, ExtendedResourceRequest, ExtendedWorkerSnapshot, MeasurementBasis,
     NetworkHeadroom, ResourceKind, ResourceMeasurement, StorageHeadroom,
 };
-pub mod device_trust;
 /// Authenticated, bounded service-boundary intake for privacy-minimised device telemetry.
 pub mod device_telemetry_ingest;
+pub mod device_trust;
 pub mod energy;
 pub mod fleet_capacity;
 pub mod integrity_key_provider;
