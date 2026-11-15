@@ -283,7 +283,10 @@ def main() -> None:
     atomic_concurrency = ATOMIC_ADMISSION_CONCURRENCY_PATH.read_text(encoding="utf-8")
     for required in (
         "UJANI_ADMISSION_RELEASE_FILE",
+        'release_dir="$(mktemp -d)"',
         "\\! while",
+        "state='idle in transaction'",
+        "FOR UPDATE;",
         "PGAPPNAME=ujani-admission-first",
         "application_name='ujani-admission-first'",
         "application_name='ujani-admission-second'",
