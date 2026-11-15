@@ -321,6 +321,7 @@ AS $function$
 DECLARE
  inserted_request_id bytea;
  updated_rows integer;
+ v_current_reservation_revision bigint;
  v_previous_reservation_revision bigint;
 BEGIN
  IF p_tenant_id IS NULL OR p_tenant_id = ''
@@ -352,24 +353,16 @@ BEGIN
   RETURN false;
  END IF;
 
- -- The device row update serializes telemetry with lease admission. The signed
- -- observed revision may lag the current server revision, but may never lead it.
- UPDATE ujani_control.devices
- SET telemetry_generation = p_generation,
-     telemetry_sequence = p_sequence,
-     last_seen_at = p_observed_at,
-     updated_at = pg_catalog.clock_timestamp()
- WHERE tenant_id = p_tenant_id
-   AND device_id = p_device_id
+ -- Lock and verify the device before changing telemetry sequence state. The
+ -- signed observed revision may lag current server state, but may never lead it.
+ SELECT reservation_revision INTO v_current_reservation_revision
+ FROM ujani_control.devices
+ WHERE tenant_id = p_tenant_id AND device_id = p_device_id
    AND trust_state = 'enrolled'
    AND owner_consent_state = 'granted'
    AND admin_approval_state = 'approved'
-   AND (last_seen_at IS NULL OR p_observed_at >= last_seen_at)
-   AND (p_generation > telemetry_generation
-        OR (p_generation = telemetry_generation AND p_sequence > telemetry_sequence))
-   AND p_reservation_revision <= reservation_revision;
- GET DIAGNOSTICS updated_rows = ROW_COUNT;
- IF updated_rows <> 1 THEN
+ FOR UPDATE;
+ IF NOT FOUND OR p_reservation_revision > v_current_reservation_revision THEN
   DELETE FROM ujani_control.request_replays
    WHERE tenant_id = p_tenant_id AND device_id = p_device_id AND request_id = p_request_id;
   RETURN false;
@@ -380,6 +373,24 @@ BEGIN
  WHERE tenant_id = p_tenant_id AND device_id = p_device_id;
  IF v_previous_reservation_revision IS NOT NULL
     AND p_reservation_revision < v_previous_reservation_revision THEN
+  DELETE FROM ujani_control.request_replays
+   WHERE tenant_id = p_tenant_id AND device_id = p_device_id AND request_id = p_request_id;
+  RETURN false;
+ END IF;
+
+ UPDATE ujani_control.devices
+ SET telemetry_generation = p_generation,
+     telemetry_sequence = p_sequence,
+     last_seen_at = p_observed_at,
+     updated_at = pg_catalog.clock_timestamp()
+ WHERE tenant_id = p_tenant_id
+   AND device_id = p_device_id
+   AND (last_seen_at IS NULL OR p_observed_at >= last_seen_at)
+   AND (p_generation > telemetry_generation
+        OR (p_generation = telemetry_generation AND p_sequence > telemetry_sequence))
+   AND p_reservation_revision <= reservation_revision;
+ GET DIAGNOSTICS updated_rows = ROW_COUNT;
+ IF updated_rows <> 1 THEN
   DELETE FROM ujani_control.request_replays
    WHERE tenant_id = p_tenant_id AND device_id = p_device_id AND request_id = p_request_id;
   RETURN false;
