@@ -8,6 +8,8 @@ pub mod self_evolution_action_gate;
 pub mod self_evolution_approval;
 pub mod self_evolution_approval_replay;
 pub mod self_evolution_module;
+/// Validates exact approved patch artifacts against a trusted workspace snapshot; no writes or execution.
+pub mod self_evolution_patch;
 
 pub mod capability_registry;
 pub mod collective_defence_authority;

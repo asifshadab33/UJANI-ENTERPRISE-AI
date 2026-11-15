@@ -4,8 +4,9 @@
 //! reimplementing it. Callers must supply CurrentOperatorSession from the
 //! revocation-checking verifier and owner opt-in from current trusted consent
 //! storage, never from UI input.
-//! It authorizes proposal preparation only; review submission, staging and apply
-//! remain blocked until signed approval and durable single-use replay are wired.
+//! It authorizes proposal preparation only; signed approval verification and durable
+//! replay are available, but review submission, staging and apply remain blocked
+//! until a host staging store and atomic install/rollback workflow are integrated.
 use crate::operator_session_revocation::CurrentOperatorSession;
 use crate::self_evolution::{MAX_PROPOSAL_CHANGES, MAX_PROPOSAL_SCOPE_PATHS};
 use crate::self_evolution_module::{
@@ -33,7 +34,7 @@ pub enum SelfEvolutionActionError {
     ProposalGenerationDisabled,
     InvalidChangeLimit,
     TooManyChanges,
-    ApprovalPipelineUnavailable,
+    PatchWorkflowUnavailable,
     PolicyBlocked(SelfEvolutionBlock),
 }
 
@@ -139,7 +140,7 @@ pub fn authorize_self_evolution_action(
         SelfEvolutionAction::SubmitForReview
         | SelfEvolutionAction::StageChanges
         | SelfEvolutionAction::ApplyChanges => {
-            return Err(SelfEvolutionActionError::ApprovalPipelineUnavailable);
+            return Err(SelfEvolutionActionError::PatchWorkflowUnavailable);
         }
         SelfEvolutionAction::ViewStatus | SelfEvolutionAction::InstallFeature => {
             return Ok(None);
@@ -431,7 +432,7 @@ mod tests {
     }
 
     #[test]
-    fn submit_stage_and_apply_are_blocked_until_durable_approval_pipeline_exists() {
+    fn submit_stage_and_apply_are_blocked_until_patch_workflow_exists() {
         for action in [
             SelfEvolutionAction::SubmitForReview,
             SelfEvolutionAction::StageChanges,
@@ -439,7 +440,7 @@ mod tests {
         ] {
             assert_eq!(
                 authorize(OperatorRole::Administrator, action, true),
-                Err(SelfEvolutionActionError::ApprovalPipelineUnavailable)
+                Err(SelfEvolutionActionError::PatchWorkflowUnavailable)
             );
         }
     }

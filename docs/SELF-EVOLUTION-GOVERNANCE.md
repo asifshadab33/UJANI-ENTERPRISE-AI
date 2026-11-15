@@ -1,6 +1,6 @@
 # UJANI Enterprise AI — Governed Self-Evolution
 
-**Status: approved architectural direction; implementation not yet enabled.**  
+**Status: proposal validation, signed approval, durable replay and exact patch-bundle validation are implemented in code; staging, application, build/signing and fleet rollout remain disabled.**  
 **Scope:** Enterprise control-plane governance for proposed software/module updates. This is not authorization for remote code execution or an autonomous fleet updater.
 
 ## 1. Product intent
@@ -48,6 +48,16 @@ New plugins and connectors require signed manifests, tenant-scoped capabilities,
 
 The model-authored proposal body contains only a schema version, summary, findings and proposed file changes. It must not contain or choose the repository, source revision, approved write scope, proposal ID, model identity, permissions, reviewer decisions or signing authority. The authenticated control plane binds the proposal to a tenant-scoped source checkout and administrator-approved path scope, generates the proposal ID, and records model/provider/version and approval metadata in a separate trusted audit envelope. The host rejects unknown model fields rather than accepting model-supplied authority.
 
+## 2B. Current implementation boundary
+
+The repositories now contain:
+- A host-owned proposal contract with protected-path and approved-scope validation.
+- A signed, short-lived administrator approval bound to the exact proposal, repository revision and approved scope.
+- Durable single-use approval nonce consumption with expiry and concurrency protection.
+- A pure patch-bundle validator that binds each changed path, operation, base-file digest and replacement content to the approved proposal; it rejects stale workspace snapshots, path/scope mismatches, malformed content and oversized bundles.
+
+The patch validator has no filesystem access. It does not create an isolated workspace, write or replace source files, create backups, commit a branch, run tests, install an update or roll back. The action gate therefore continues to deny review submission, staging and application until the host-side staging store and atomic install/rollback workflow are implemented and reviewed. No generated code is executed.
+
 ## 3. Governed lifecycle
 
 1. An authenticated administrator initiates an improvement request and selects the target repository, release line and permitted scope.
@@ -90,16 +100,16 @@ Every proposal and artifact should bind:
 
 The AI must not create or hold signing keys, modify audit records, bypass tenant authorization or suppress failed validation.
 
-## 6. Initial implementation slices
+## 6. Implementation slices and current status
 
-- **EE-0:** threat model, authority map, protected-path inventory and tenant-isolation acceptance criteria.
-- **EE-1:** tenant-scoped, read-only source inventory and proposal contract.
-- **EE-2:** protected-path policy, change classification and diff/review evidence.
-- **EE-3:** isolated build/validation pipeline with SBOM, dependency and secret scanning.
-- **EE-4:** authenticated administrator approval and separation-of-duties policy.
-- **EE-5:** KMS/HSM-backed signing integration and artifact verification contract.
-- **EE-6:** staged rollout, health gates, cancellation and rollback contract.
-- **EE-7:** durable tenant-scoped evolution audit records and operator-console visibility.
+- **EE-0 — threat model and authority map:** policy boundaries and protected-path inventory exist; independent threat review remains required.
+- **EE-1 — source/proposal contract:** proposal schema, trusted target binding and protected-scope validation are implemented; a live read-only source inventory service is not.
+- **EE-2 — patch validation:** exact patch digests, base-file snapshot matching, size limits and protected-path checks are implemented as a pure validator; diff presentation and isolated staging are not.
+- **EE-3 — isolated build/validation:** not implemented. Generated code is not executed.
+- **EE-4 — administrator approval:** signed approval verification, operator-session checks, owner opt-in and durable single-use nonce consumption are implemented; a complete review-submission workflow is not.
+- **EE-5 — KMS/HSM signing:** not implemented; no model or application component receives signing authority.
+- **EE-6 — staged rollout and rollback:** not implemented; no fleet update or remote execution is enabled.
+- **EE-7 — audit:** approval/replay metadata and existing audit foundations exist; artifact lifecycle, rollout and rollback audit events are not integrated.
 
 Each slice must be independently reviewable. Do not enable remote execution, agent deployment or fleet-wide automatic installation in this workstream.
 

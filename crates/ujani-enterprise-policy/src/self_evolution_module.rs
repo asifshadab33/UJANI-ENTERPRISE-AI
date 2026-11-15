@@ -23,7 +23,7 @@ pub enum SelfEvolutionBlock {
     ProtectedScope,
     TrustedBuildEnvironmentRequired,
     ApprovalPolicyInvalid,
-    ApprovalPipelineUnavailable,
+    PatchWorkflowUnavailable,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,7 +53,7 @@ pub struct SelfEvolutionPermission {
     /// It never authorizes applying, executing, signing or deploying changes.
     pub may_submit_for_review: bool,
     pub blocked_by: Option<SelfEvolutionBlock>,
-    /// Submission remains fail-closed until typed approval and durable replay are integrated.
+    /// Submission remains fail-closed until a reviewed patch staging and audit workflow is integrated.
     pub submission_blocked_by: Option<SelfEvolutionBlock>,
 }
 
@@ -161,7 +161,7 @@ pub fn evaluate_enterprise_self_evolution(
         may_submit_for_review: false,
         blocked_by,
         submission_blocked_by: Some(
-            blocked_by.unwrap_or(SelfEvolutionBlock::ApprovalPipelineUnavailable),
+            blocked_by.unwrap_or(SelfEvolutionBlock::PatchWorkflowUnavailable),
         ),
     }
 }
@@ -291,7 +291,7 @@ mod tests {
     }
 
     #[test]
-    fn review_submission_fails_closed_until_typed_approval_pipeline_is_integrated() {
+    fn review_submission_fails_closed_until_patch_workflow_is_integrated() {
         let result = evaluate_enterprise_self_evolution(
             ModuleInstallState::Installed,
             &policy(),
@@ -302,7 +302,7 @@ mod tests {
         assert_eq!(result.blocked_by, None);
         assert_eq!(
             result.submission_blocked_by,
-            Some(SelfEvolutionBlock::ApprovalPipelineUnavailable)
+            Some(SelfEvolutionBlock::PatchWorkflowUnavailable)
         );
     }
 
