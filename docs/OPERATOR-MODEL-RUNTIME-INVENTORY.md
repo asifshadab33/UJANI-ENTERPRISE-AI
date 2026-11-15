@@ -48,3 +48,8 @@ authenticated device samples is not yet implemented; neither is device-side
 runtime/model discovery or durable inventory persistence. Until that adapter
 exists, the normal repository may return an empty array. Do not populate it from
 UI-supplied or unauthenticated client data.
+
+
+## Operator hardware and evidence presentation
+
+The read-only console presents reported CPU, RAM, free storage and GPU/NPU accelerator summaries alongside runtime/model rows. It shows model, runtime and accelerator evidence freshness separately. A device snapshot with hardware/runtime metadata but no model rows remains visible as a hardware-only entry; an empty accelerator list is labelled "not reported", not interpreted as proof that the device has no accelerator. RAM comparison remains an estimate and is not a verified workload-fit or admission decision.
