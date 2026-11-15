@@ -85,6 +85,7 @@ jobs:
           docker exec -i \
             -e "PGPASSWORD=${PGPASSWORD:-postgres}" \
             -e "PGAPPNAME=${PGAPPNAME:-}" \
+            -e "UJANI_ADMISSION_RELEASE_FILE=${UJANI_ADMISSION_RELEASE_FILE:-}" \
             "${POSTGRES_CONTAINER_ID:?}" psql "$@"
           EOF
           chmod +x "$RUNNER_TEMP/ujani-psql"
