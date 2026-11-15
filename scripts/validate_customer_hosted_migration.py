@@ -200,7 +200,9 @@ def main() -> None:
     if "verify the signed device request" not in telemetry_sql:
         raise SystemExit("telemetry migration must document upstream signature verification boundary")
     concurrency_test = (ROOT / "scripts" / "test_monotonic_device_telemetry_concurrency.sh").read_text(encoding="utf-8")
-    for required in ("pg_stat_activity", "pg_sleep(1)", "1:2:2", "--quiet"):
+    if "pg_sleep(1)" in concurrency_test:
+        raise SystemExit("telemetry concurrency test must use an observed lock-wait handshake, not a fixed sleep")
+    for required in ("pg_stat_activity", "UJANI_TELEMETRY_RELEASE_FILE", "idle in transaction", "wait_event_type='Lock'", "1:2:2", "--quiet"):
         if required not in concurrency_test:
             raise SystemExit(f"telemetry concurrency regression test missing: {required}")
     tenant_test = TENANT_TEST_SQL_PATH.read_text(encoding="utf-8")
@@ -335,12 +337,16 @@ def main() -> None:
         if required not in telemetry_v2_test:
             raise SystemExit("telemetry v2 PostgreSQL regression test missing: " + required)
     telemetry_v2_concurrency = TELEMETRY_V2_CONCURRENCY_PATH.read_text(encoding="utf-8")
-    for required in ("accept_device_telemetry_v2", "pg_stat_activity", "pg_sleep(1)", "1:2:2", "--quiet"):
+    if "pg_sleep(1)" in telemetry_v2_concurrency:
+        raise SystemExit("telemetry v2 concurrency test must use an observed lock-wait handshake, not a fixed sleep")
+    for required in ("accept_device_telemetry_v2", "pg_stat_activity", "UJANI_TELEMETRY_RELEASE_FILE", "idle in transaction", "wait_event_type='Lock'", "1:2:2", "--quiet"):
         if required not in telemetry_v2_concurrency:
             raise SystemExit("telemetry v2 concurrency regression missing: " + required)
     ci_workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     if "UJANI_ADMISSION_RELEASE_FILE=${UJANI_ADMISSION_RELEASE_FILE:-}" not in ci_workflow:
         raise SystemExit("CI PostgreSQL adapter must pass the bounded admission release-marker path")
+    if "UJANI_TELEMETRY_RELEASE_FILE=${UJANI_TELEMETRY_RELEASE_FILE:-}" not in ci_workflow:
+        raise SystemExit("CI PostgreSQL adapter must pass the bounded telemetry release-marker path")
     if not (
         ci_workflow.index("migrations/0008_atomic_device_lease_admission.sql")
         < ci_workflow.index("scripts/test_monotonic_device_telemetry_v2.sql")
