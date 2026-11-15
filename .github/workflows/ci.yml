@@ -188,3 +188,9 @@ jobs:
           PGPASSWORD: postgres
         run: |
           "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < scripts/test_task_contract_replay_functions.sql
+      - name: Verify replay-claim expiry after a conflicting transaction wait
+        env:
+          PGPASSWORD: postgres
+          PGUSER: postgres
+          PGDATABASE: ujani_test
+        run: bash scripts/test_task_contract_replay_expiry_concurrency.sh
