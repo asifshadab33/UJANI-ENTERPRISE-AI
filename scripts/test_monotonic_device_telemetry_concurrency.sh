@@ -28,8 +28,8 @@ trap cleanup EXIT
 SET ROLE ujani_runtime;
 BEGIN;
 SET LOCAL ujani.tenant_id = 'telemetry-concurrency-test';
-SELECT ujani_control.accept_device_telemetry(
- 'telemetry-concurrency-test','worker-1',1,1,decode(repeat('a1',16),'hex'),
+SELECT ujani_control.accept_device_telemetry_v2(
+ 'telemetry-concurrency-test','worker-1',1,1,0,decode(repeat('a1',16),'hex'),
  clock_timestamp(),decode(repeat('b1',32),'hex'),2000,4096,'cool','ac','idle');
 SELECT pg_sleep(1);
 COMMIT;
@@ -54,8 +54,8 @@ fi
 SET ROLE ujani_runtime;
 BEGIN;
 SET LOCAL ujani.tenant_id = 'telemetry-concurrency-test';
-SELECT ujani_control.accept_device_telemetry(
- 'telemetry-concurrency-test','worker-1',1,2,decode(repeat('a2',16),'hex'),
+SELECT ujani_control.accept_device_telemetry_v2(
+ 'telemetry-concurrency-test','worker-1',1,2,0,decode(repeat('a2',16),'hex'),
  clock_timestamp(),decode(repeat('b2',32),'hex'),1800,3584,'cool','ac','idle');
 COMMIT;
 RESET ROLE;
