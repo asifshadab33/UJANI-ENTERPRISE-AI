@@ -6,6 +6,8 @@ Migration `0002_task_contract_replay_storage.sql` adds tenant-scoped PostgreSQL 
 
 The migration stores only identifiers, decoded nonces, SHA-256 digests, expiry/state metadata and sequence watermarks. It never stores prompts, user files, model outputs or payload bytes.
 
+Migration `0009_task_contract_replay_functions.sql` adds two `SECURITY INVOKER` helpers: `claim_task_contract_replay` atomically claims a tenant/task/sender/nonce tuple (returning false on a task-ID or sender-nonce conflict), and `advance_task_contract_sequence` atomically advances a `task_status` or `execution_receipt` watermark (returning false on repeated or stale sequences). They preserve caller RLS and require explicit, least-privilege runtime grants. The caller must still authenticate and verify the signed message before calling them, and must use the same surrounding transaction for the replay claim, approval/consent checks, resource admission and lease write.
+
 ## Atomic task admission boundary
 
 After authenticating the sender and validating the envelope/signature/consent context, a future intake adapter must claim the task in the same database transaction as the authoritative admission record:
@@ -22,7 +24,7 @@ The sender device must already be authenticated and enrolled in the tenant devic
 
 `task_contract_sequences` stores separate watermarks for `task_status` and `execution_receipt`, keyed by tenant, task and message type. Each stream may start at sequence 1.
 
-A future adapter must advance a watermark with a conditional upsert in the same transaction as the verified message/task update:
+The database helper `ujani_control.advance_task_contract_sequence` now performs the conditional upsert and returns a boolean. A future adapter must call it in the same transaction as the verified message/task update; a false result is a replay/stale-sequence rejection and must abort the associated state transition. The equivalent SQL is:
 
 ```sql
 INSERT INTO ujani_control.task_contract_sequences
@@ -41,6 +43,8 @@ A row count of zero means the sequence was repeated or stale and must be rejecte
 
 Both tables enable and force row-level security using the transaction-local `ujani.tenant_id` setting. The runtime role must be non-owner, non-superuser and must not have `BYPASSRLS`. Missing tenant context returns no rows and prevents writes. The migration grants no role privileges; deployment grants must be reviewed separately.
 
+**Security boundary:** `ujani.tenant_id` is a transaction context value, not an authenticated identity or an unforgeable database principal. These policies protect against missing/mismatched tenant context when the trusted service sets the value correctly; they do not protect one tenant from a caller that can execute arbitrary SQL using the shared runtime database role and freely change that setting. Do not expose the runtime database credentials or direct SQL access to tenant clients. If tenant principals are allowed to connect to PostgreSQL directly, use separately authenticated database roles or another database-enforced tenant identity mechanism rather than relying on this custom setting alone. A compromised service/runtime role remains inside the database trust boundary.
+
 Expired rows are not automatically deleted by this migration. A future retention/cleanup policy must retain replay tombstones for the full task expiry and clock-skew window and must never delete an active task or a sequence watermark still needed for receipt verification.
 
 ## Not implemented by this migration
@@ -48,7 +52,7 @@ Expired rows are not automatically deleted by this migration. A future retention
 - Authenticated HTTP/gRPC transport or identity-provider integration.
 - Sender/worker key enrollment, rotation, revocation or KMS custody.
 - Verification of Ed25519 signatures or payload bytes (the native Rust verifier is a separate module).
-- Atomic coupling to administrator approval, device-owner consent, resource reservation or leases.
+- An authenticated intake adapter that atomically couples these replay helpers to administrator approval, device-owner consent, resource reservation or leases.
 - Task dispatch, worker execution, OS sandboxing, cancellation or egress enforcement.
 
 Remote worker execution remains disabled.
