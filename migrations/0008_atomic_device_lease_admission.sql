@@ -53,7 +53,11 @@ BEGIN
   RAISE EXCEPTION 'authenticated tenant context mismatch' USING ERRCODE = '42501';
  END IF;
 
- -- Use the same device-row lock order as consent changes and lease admission.
+ -- The UPDATE caller must lock this device row FOR UPDATE in the same
+ -- transaction before updating an existing binding row. PostgreSQL locks the
+ -- binding row before firing this trigger, so this trigger's own device lock
+ -- cannot establish device-first ordering for UPDATE. INSERT has no existing
+ -- binding row lock and does not require that caller-side pre-lock.
  PERFORM 1 FROM ujani_control.devices
  WHERE tenant_id = NEW.tenant_id AND device_id = NEW.device_id
  FOR UPDATE;
@@ -89,6 +93,13 @@ BEGIN
    RAISE EXCEPTION 'device owner binding revision and signed-command digest must advance' USING ERRCODE = '23514';
   END IF;
  END IF;
+
+ -- Any binding change invalidates prior owner consent. The currently bound
+ -- owner must record a new consent generation before lease admission resumes.
+ UPDATE ujani_control.devices
+ SET owner_consent_state = 'unknown', updated_at = pg_catalog.clock_timestamp()
+ WHERE tenant_id = NEW.tenant_id AND device_id = NEW.device_id;
+
  NEW.bound_at := pg_catalog.clock_timestamp();
 
  INSERT INTO ujani_control.audit_events
@@ -272,6 +283,7 @@ DECLARE
  v_revision bigint;
  v_inserted bytea;
  v_owner_subject_id text;
+ v_approval_expires_at timestamptz;
 BEGIN
  IF p_tenant_id IS NULL OR p_tenant_id = ''
     OR p_tenant_id IS DISTINCT FROM pg_catalog.current_setting('ujani.tenant_id', true) THEN
@@ -325,10 +337,12 @@ BEGIN
  IF NOT FOUND THEN RETURN false; END IF;
 
  -- The device must have an active, administrator-established owner binding.
+ -- Read the binding without a row lock. Device-row serialization makes
+ -- admission linearize before/after a binding writer; taking a binding-row
+ -- lock here would deadlock with UPDATE, which locks that row before its trigger.
  SELECT owner_subject_id INTO v_owner_subject_id
  FROM ujani_control.device_owner_bindings
- WHERE tenant_id = p_tenant_id AND device_id = p_device_id AND active IS TRUE
- FOR SHARE;
+ WHERE tenant_id = p_tenant_id AND device_id = p_device_id AND active IS TRUE;
  IF NOT FOUND THEN RETURN false; END IF;
  PERFORM 1 FROM ujani_control.operator_subjects
  WHERE tenant_id = p_tenant_id AND subject_id = v_owner_subject_id AND enabled IS TRUE
@@ -350,7 +364,7 @@ BEGIN
    AND state = 'approved' AND manifest_digest = p_manifest_digest
  FOR SHARE;
  IF NOT FOUND THEN RETURN false; END IF;
- PERFORM 1
+ SELECT a.expires_at INTO v_approval_expires_at
  FROM ujani_control.approvals a
  JOIN ujani_control.operator_subjects s
    ON s.tenant_id = a.tenant_id
@@ -368,6 +382,12 @@ BEGIN
  FROM ujani_control.device_telemetry_samples
  WHERE tenant_id = p_tenant_id AND device_id = p_device_id
  ORDER BY received_at DESC LIMIT 1;
+ -- Re-sample time after all eligibility locks and telemetry have been read;
+ -- a lock wait must not extend request, approval or telemetry freshness.
+ v_now := pg_catalog.clock_timestamp();
+ IF p_expires_at <= v_now OR v_approval_expires_at <= v_now THEN
+  RETURN false;
+ END IF;
  IF NOT FOUND
     OR v_sample.received_at < v_now - interval '2 minutes'
     OR v_sample.generation <> v_device.telemetry_generation
@@ -423,6 +443,16 @@ BEGIN
  VALUES
   (p_tenant_id, p_event_id, p_device_id, 'device',
    'device.lease.admitted', 'reserved', p_lease_id);
+
+ -- Audit insertion may wait on tenant-scoped serialization. Abort the SQL
+ -- statement (rolling back replay, lease and revision writes) if authorization
+ -- or telemetry expires while the audit receipt is being recorded.
+ v_now := pg_catalog.clock_timestamp();
+ IF p_expires_at <= v_now OR v_approval_expires_at <= v_now
+    OR v_sample.received_at < v_now - interval '2 minutes' THEN
+  RAISE EXCEPTION 'device admission authorization or telemetry expired while recording the audit receipt'
+   USING ERRCODE = '40001';
+ END IF;
 
  RETURN true;
 END;
