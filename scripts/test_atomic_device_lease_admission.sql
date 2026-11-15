@@ -140,10 +140,10 @@ INSERT INTO ujani_control.owner_consents
 VALUES ('admission-test','admission-device',2,'granted','admission-owner',decode(repeat('23',32),'hex'))
 ON CONFLICT DO NOTHING;
 INSERT INTO ujani_control.device_telemetry_samples
- (tenant_id,device_id,generation,sequence,request_id,observed_at,payload_digest,
+ (tenant_id,device_id,generation,sequence,request_id,observed_at,payload_digest,reservation_revision,
   cpu_available_millis,memory_available_mb,thermal_state,power_state,participation_state)
 VALUES ('admission-test','admission-device',1,1,decode(repeat('31',16),'hex'),
- clock_timestamp(),decode(repeat('33',32),'hex'),4000,8192,'cool','ac','idle')
+ clock_timestamp(),decode(repeat('33',32),'hex'),0,4000,8192,'cool','ac','idle')
 ON CONFLICT DO NOTHING;
 -- A separate pre-paused device lets the runtime role remain unable to mutate
 -- owner consent or trust state while still exercising the denial path.
@@ -178,10 +178,10 @@ VALUES ('admission-test','admission-device-paused',1,'paused','admission-owner',
  decode(repeat('15',32),'hex'))
 ON CONFLICT DO NOTHING;
 INSERT INTO ujani_control.device_telemetry_samples
- (tenant_id,device_id,generation,sequence,request_id,observed_at,payload_digest,
+ (tenant_id,device_id,generation,sequence,request_id,observed_at,payload_digest,reservation_revision,
   cpu_available_millis,memory_available_mb,thermal_state,power_state,participation_state)
 VALUES ('admission-test','admission-device-paused',1,1,decode(repeat('34',16),'hex'),
- clock_timestamp(),decode(repeat('35',32),'hex'),4000,8192,'cool','ac','idle')
+ clock_timestamp(),decode(repeat('35',32),'hex'),0,4000,8192,'cool','ac','idle')
 ON CONFLICT DO NOTHING;
 INSERT INTO ujani_control.workloads
  (tenant_id,workload_id,manifest_digest,class,state,created_by)
@@ -236,10 +236,10 @@ VALUES ('admission-test','admission-device-capacity',1,'granted','admission-owne
  decode(repeat('a4',32),'hex'))
 ON CONFLICT DO NOTHING;
 INSERT INTO ujani_control.device_telemetry_samples
- (tenant_id,device_id,generation,sequence,request_id,observed_at,payload_digest,
+ (tenant_id,device_id,generation,sequence,request_id,observed_at,payload_digest,reservation_revision,
   cpu_available_millis,memory_available_mb,thermal_state,power_state,participation_state)
 VALUES ('admission-test','admission-device-capacity',1,1,decode(repeat('a5',16),'hex'),
- clock_timestamp(),decode(repeat('a6',32),'hex'),4000,8192,'cool','ac','idle');
+ clock_timestamp(),decode(repeat('a6',32),'hex'),0,4000,8192,'cool','ac','idle');
 
 -- Active key rows with inconsistent validity metadata must fail closed.
 INSERT INTO ujani_control.devices
@@ -292,15 +292,15 @@ VALUES
  ('admission-test','admission-device-disabled-owner',1,'granted','admission-disabled-owner',decode(repeat('1b',32),'hex'))
 ON CONFLICT DO NOTHING;
 INSERT INTO ujani_control.device_telemetry_samples
- (tenant_id,device_id,generation,sequence,request_id,observed_at,payload_digest,
+ (tenant_id,device_id,generation,sequence,request_id,observed_at,payload_digest,reservation_revision,
   cpu_available_millis,memory_available_mb,thermal_state,power_state,participation_state)
 VALUES
  ('admission-test','admission-device-future-key',1,1,decode(repeat('3a',16),'hex'),
-  clock_timestamp(),decode(repeat('3b',32),'hex'),4000,8192,'cool','ac','idle'),
+  clock_timestamp(),decode(repeat('3b',32),'hex'),0,4000,8192,'cool','ac','idle'),
  ('admission-test','admission-device-revoked-key',1,1,decode(repeat('3c',16),'hex'),
-  clock_timestamp(),decode(repeat('3d',32),'hex'),4000,8192,'cool','ac','idle'),
+  clock_timestamp(),decode(repeat('3d',32),'hex'),0,4000,8192,'cool','ac','idle'),
  ('admission-test','admission-device-disabled-owner',1,1,decode(repeat('3e',16),'hex'),
-  clock_timestamp(),decode(repeat('3f',32),'hex'),4000,8192,'cool','ac','idle')
+  clock_timestamp(),decode(repeat('3f',32),'hex'),0,4000,8192,'cool','ac','idle')
 ON CONFLICT DO NOTHING;
 
 UPDATE ujani_control.operator_subjects
@@ -360,10 +360,10 @@ UPDATE ujani_control.devices
 SET telemetry_sequence=2,last_seen_at=clock_timestamp()
 WHERE tenant_id='admission-test' AND device_id='admission-device-capacity';
 INSERT INTO ujani_control.device_telemetry_samples
- (tenant_id,device_id,generation,sequence,request_id,observed_at,payload_digest,
+ (tenant_id,device_id,generation,sequence,request_id,observed_at,payload_digest,reservation_revision,
   cpu_available_millis,memory_available_mb,thermal_state,power_state,participation_state)
 VALUES ('admission-test','admission-device-capacity',1,2,decode(repeat('aa',16),'hex'),
- clock_timestamp(),decode(repeat('ab',32),'hex'),1500,7168,'cool','ac','idle');
+ clock_timestamp(),decode(repeat('ab',32),'hex'),1,1500,7168,'cool','ac','idle');
 
 SET ROLE ujani_runtime;
 BEGIN;
