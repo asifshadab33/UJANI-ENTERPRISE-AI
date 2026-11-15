@@ -732,6 +732,13 @@ pub(crate) fn owner_consent_bytes(command: &SignedOwnerConsentCommand) -> Vec<u8
     out
 }
 
+/// Return the exact domain-separated bytes that an enrolled device must sign
+/// for a request. Exposing this existing canonical encoder lets native agents
+/// construct protocol-compatible signatures without reimplementing field order.
+pub fn canonical_device_request_bytes(c: &DeviceRequestClaims) -> Vec<u8> {
+    device_request_bytes(c)
+}
+
 pub(crate) fn device_request_bytes(c: &DeviceRequestClaims) -> Vec<u8> {
     let mut out = DEVICE_DOMAIN.to_vec();
     for v in [
