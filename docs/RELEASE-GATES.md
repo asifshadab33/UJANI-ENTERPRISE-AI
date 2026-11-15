@@ -12,7 +12,7 @@ This file defines minimum gates before enabling remote work on enrolled devices.
 | Workload escape | OS-enforced isolation matched to threat level | Platform-specific sandbox escape review and independent test |
 | Data exfiltration | Scoped mounts, egress allow-list, data classification | Network-denial tests and data-flow review |
 | Employee disruption | Interactive activity detection, priority, pause and opt-out | Foreground-app simulation and interruption tests |
-| Resource exhaustion | CPU/RAM/GPU/disk/network/time quotas | Stress and quota enforcement tests |
+| Resource exhaustion | CPU/RAM/GPU/NPU/scratch-storage/network/time quotas; fresh authenticated measured telemetry; OS enforcement | Unknown/stale/estimated-capacity rejection tests plus platform stress and quota-enforcement evidence |
 | False worker results | Output verification, provenance and, where appropriate, redundant checks | Corrupt/forged output tests |
 | Device loss or compromise | Revocation, credential rotation and remote disable | Lost-device and revocation drill |
 | Supply-chain compromise | Signed updates, SBOM, dependency review and rollback | Signature failure, rollback and vulnerability-response exercise |
@@ -57,6 +57,8 @@ This file defines minimum gates before enabling remote work on enrolled devices.
 The policy crate exposes `admit_with_context`, layering these mandatory conditions on top of device enrolment and resource quotas: fresh telemetry, explicit owner opt-in, administrator-approved schedule, no interactive user activity, AC power, safe thermal state, network/egress approval and workload data-classification approval.
 
 This is side-effect-free policy logic. It does not read telemetry, authenticate devices, schedule or execute work. A production worker must independently revalidate the conditions immediately before launch using OS-enforced resource and isolation controls. Missing evidence fails closed.
+
+The `resource_capacity::evaluate_extended_resource_placement` contract additionally rejects missing, stale, unauthenticated or estimated GPU/NPU/storage/network measurements when those resources are requested. It is currently a policy/test foundation only: authenticated telemetry ingestion, durable lease reservation, operator-console display and worker-side quota enforcement remain separate production gates.
 
 
 ## No-wake scheduling and workload safety

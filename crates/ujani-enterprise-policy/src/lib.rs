@@ -17,6 +17,13 @@ pub mod collective_defence_consent;
 pub mod collective_defence_snapshot;
 pub mod connector_contract;
 pub mod cpu_capacity;
+/// Authenticated multi-resource placement checks for CPU/RAM/GPU/NPU/storage/network.
+pub mod resource_capacity;
+pub use resource_capacity::{
+    evaluate_extended_resource_placement, AcceleratorHeadroom, ExtendedResourcePlacement,
+    ExtendedResourceRejection, ExtendedResourceRequest, ExtendedWorkerSnapshot, MeasurementBasis,
+    NetworkHeadroom, ResourceKind, ResourceMeasurement, StorageHeadroom,
+};
 pub mod device_trust;
 pub mod energy;
 pub mod fleet_capacity;
