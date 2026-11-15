@@ -280,7 +280,7 @@ mod tests {
             validate_device_telemetry_body(&body(200_000), 1_000),
             Err(DeviceTelemetryIntakeError::StaleOrFutureSample)
         );
-        let zero = body(1_000).iter().copied().collect::<Vec<_>>();
+        let zero = body(1_000).to_vec();
         let zero = String::from_utf8(zero)
             .unwrap()
             .replace("\"sequence\":7", "\"sequence\":0");
