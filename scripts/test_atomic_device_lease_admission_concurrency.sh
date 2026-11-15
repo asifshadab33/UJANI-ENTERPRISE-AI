@@ -30,6 +30,7 @@ INSERT INTO ujani_control.device_keys
 VALUES ('admission-concurrency','device','key',decode(repeat('71',32),'hex'),1,'active')
 ON CONFLICT (tenant_id,device_id,key_id) DO UPDATE SET state='active';
 BEGIN;
+SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('admission-concurrency', 0));
 SELECT 1 FROM ujani_control.devices
 WHERE tenant_id='admission-concurrency' AND device_id='device' FOR UPDATE;
 INSERT INTO ujani_control.device_owner_bindings
@@ -68,7 +69,7 @@ release_dir=""
 if [[ -n "${POSTGRES_CONTAINER_ID:-}" ]]; then
  # PSQL_BIN executes psql inside the PostgreSQL service container. The marker
  # must live in that same container filesystem, not the Actions runner.
- release_file="/tmp/ujani-admission-release-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}-$"
+ release_file="/tmp/ujani-admission-release-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}-$$"
  release_controller(){ docker exec "$POSTGRES_CONTAINER_ID" touch "$release_file"; }
  release_cleanup(){ docker exec "$POSTGRES_CONTAINER_ID" rm -f "$release_file" 2>/dev/null || true; }
 else

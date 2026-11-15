@@ -120,6 +120,7 @@ $block$;
 -- A new owner-binding revision must invalidate even a previously granted
 -- consent; a fresh consent generation from the current owner restores it.
 BEGIN;
+SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('admission-test', 0));
 SELECT 1 FROM ujani_control.devices
 WHERE tenant_id='admission-test' AND device_id='admission-device' FOR UPDATE;
 UPDATE ujani_control.device_owner_bindings
@@ -415,7 +416,7 @@ $block$;
 SET ROLE ujani_runtime;
 BEGIN;
 SET LOCAL ujani.tenant_id='admission-test';
-DO $
+DO $$
 DECLARE admitted boolean;
 DECLARE lease_count integer;
 DECLARE replay_count integer;
@@ -607,7 +608,9 @@ BEGIN
  SELECT count(*) INTO replay_count FROM ujani_control.request_replays
  WHERE tenant_id='admission-test' AND device_id='admission-device';
  SELECT count(*) INTO audit_count FROM ujani_control.audit_events
- WHERE tenant_id='admission-test' AND event_type='device.lease.admitted';
+ WHERE tenant_id='admission-test'
+   AND event_type='device.lease.admitted'
+   AND event_id='00000000-0000-4000-8000-000000000081';
  SELECT reservation_revision INTO revision_value FROM ujani_control.devices
  WHERE tenant_id='admission-test' AND device_id='admission-device';
  IF lease_count <> 1 OR replay_count <> 1 OR audit_count <> 1 OR revision_value <> 1 THEN

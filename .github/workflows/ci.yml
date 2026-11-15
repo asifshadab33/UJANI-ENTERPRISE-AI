@@ -195,6 +195,17 @@ jobs:
           PGUSER: postgres
           PGDATABASE: ujani_test
         run: bash scripts/test_atomic_device_lease_admission_concurrency.sh
+      - name: Verify monotonic telemetry v2 admission and transaction rollback
+        env:
+          PGPASSWORD: postgres
+        run: |
+          "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < scripts/test_monotonic_device_telemetry_v2.sql
+      - name: Verify concurrent monotonic telemetry v2 serialization
+        env:
+          PGPASSWORD: postgres
+          PGUSER: postgres
+          PGDATABASE: ujani_test
+        run: bash scripts/test_monotonic_device_telemetry_v2_concurrency.sh
       - name: Apply shared task-contract replay helper functions
         env:
           PGPASSWORD: postgres

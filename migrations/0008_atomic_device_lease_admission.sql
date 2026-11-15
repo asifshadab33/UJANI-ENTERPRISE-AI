@@ -4,10 +4,10 @@
 -- This transaction rechecks mutable tenant/device/consent/approval/capacity facts.
 -- It does not dispatch work or execute models.
 -- Run as a superuser or BYPASSRLS migration role: the consent-history backfill spans tenant rows protected by FORCE ROW LEVEL SECURITY.
--- Binding UPDATE callers must lock the matching device row FOR UPDATE in the
--- same transaction before updating device_owner_bindings; PostgreSQL takes the
--- binding-row lock before its trigger runs. New binding INSERTs need no caller
--- pre-lock because they do not hold an existing binding-row lock.
+-- Audit-writing admission, consent and owner-binding paths acquire the tenant
+-- audit-chain advisory lock before any device-row lock. Binding UPDATE callers
+-- that explicitly pre-lock a device must take that advisory lock first; a
+-- statement trigger below also takes it before ordinary binding row locks.
 
 ALTER TABLE ujani_control.devices
  ADD COLUMN IF NOT EXISTS consent_generation bigint NOT NULL DEFAULT 0 CHECK (consent_generation >= 0),
@@ -43,6 +43,31 @@ CREATE POLICY tenant_isolation ON ujani_control.device_owner_bindings
  USING (tenant_id = current_setting('ujani.tenant_id', true))
  WITH CHECK (tenant_id = current_setting('ujani.tenant_id', true));
 
+-- Acquire tenant audit serialization before INSERT/UPDATE obtains row locks.
+-- The audit hash-chain trigger takes this same transaction lock reentrantly.
+CREATE OR REPLACE FUNCTION ujani_control.lock_device_owner_binding_audit_chain()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = pg_catalog, ujani_control
+AS $function$
+DECLARE
+ v_tenant_id text;
+BEGIN
+ v_tenant_id := pg_catalog.current_setting('ujani.tenant_id', true);
+ IF v_tenant_id IS NULL OR v_tenant_id = '' THEN
+  RAISE EXCEPTION 'authenticated tenant context is required for owner binding' USING ERRCODE = '42501';
+ END IF;
+ PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(v_tenant_id, 0));
+ RETURN NULL;
+END;
+$function$;
+
+DROP TRIGGER IF EXISTS device_owner_binding_audit_lock ON ujani_control.device_owner_bindings;
+CREATE TRIGGER device_owner_binding_audit_lock
+ BEFORE INSERT OR UPDATE ON ujani_control.device_owner_bindings
+ FOR EACH STATEMENT EXECUTE FUNCTION ujani_control.lock_device_owner_binding_audit_chain();
+
 CREATE OR REPLACE FUNCTION ujani_control.validate_device_owner_binding()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -58,8 +83,8 @@ BEGIN
   RAISE EXCEPTION 'authenticated tenant context mismatch' USING ERRCODE = '42501';
  END IF;
 
- -- UPDATE callers must lock the device row first in the same transaction.
- -- The binding row is already locked when this trigger runs on UPDATE.
+ -- The statement-level audit-lock trigger has already serialized this tenant
+ -- before PostgreSQL acquired the binding row lock for this statement.
  PERFORM 1 FROM ujani_control.devices
  WHERE tenant_id = NEW.tenant_id AND device_id = NEW.device_id
  FOR UPDATE;
@@ -343,18 +368,9 @@ BEGIN
   RETURN false;
  END IF;
 
- INSERT INTO ujani_control.request_replays
-  (tenant_id, device_id, request_id, expires_at, operation_digest)
- VALUES
-  (p_tenant_id, p_device_id, p_request_id, pg_catalog.clock_timestamp() + interval '10 minutes', p_payload_digest)
- ON CONFLICT (tenant_id, device_id, request_id) DO NOTHING
- RETURNING request_id INTO inserted_request_id;
- IF inserted_request_id IS NULL THEN
-  RETURN false;
- END IF;
-
- -- Lock and verify the device before changing telemetry sequence state. The
- -- signed observed revision may lag current server state, but may never lead it.
+ -- Lock and verify the device before claiming the replay identifier. Inserting
+ -- first makes the foreign key take a key-share lock that can deadlock when
+ -- concurrent samples later upgrade the same device row to FOR UPDATE.
  SELECT reservation_revision INTO v_current_reservation_revision
  FROM ujani_control.devices
  WHERE tenant_id = p_tenant_id AND device_id = p_device_id
@@ -363,8 +379,16 @@ BEGIN
    AND admin_approval_state = 'approved'
  FOR UPDATE;
  IF NOT FOUND OR p_reservation_revision > v_current_reservation_revision THEN
-  DELETE FROM ujani_control.request_replays
-   WHERE tenant_id = p_tenant_id AND device_id = p_device_id AND request_id = p_request_id;
+  RETURN false;
+ END IF;
+
+ INSERT INTO ujani_control.request_replays
+  (tenant_id, device_id, request_id, expires_at, operation_digest)
+ VALUES
+  (p_tenant_id, p_device_id, p_request_id, pg_catalog.clock_timestamp() + interval '10 minutes', p_payload_digest)
+ ON CONFLICT (tenant_id, device_id, request_id) DO NOTHING
+ RETURNING request_id INTO inserted_request_id;
+ IF inserted_request_id IS NULL THEN
   RETURN false;
  END IF;
 
@@ -435,6 +459,7 @@ BEGIN
  IF NEW.tenant_id IS DISTINCT FROM pg_catalog.current_setting('ujani.tenant_id', true) THEN
   RAISE EXCEPTION 'authenticated tenant context mismatch' USING ERRCODE = '42501';
  END IF;
+ PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(NEW.tenant_id, 0));
  SELECT consent_generation INTO v_current
  FROM ujani_control.devices
  WHERE tenant_id = NEW.tenant_id AND device_id = NEW.device_id
@@ -531,6 +556,10 @@ BEGIN
     OR p_expires_at IS NULL OR p_event_id IS NULL THEN
   RAISE EXCEPTION 'invalid device admission parameters' USING ERRCODE = '22023';
  END IF;
+
+ -- Serialize tenant audit writers before taking the device row lock. Consent
+ -- and owner-binding writers use the same audit-lock-first order.
+ PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(p_tenant_id, 0));
 
  -- Serialize all admissions for this device. Consent changes, key rotation and
  -- revocation must lock this same device row before updating their state.

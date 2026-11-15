@@ -21,6 +21,17 @@ The objective is not to keep every computer busy. The objective is to complete t
 9. **Transparent governance.** Provide administrator audit and a visible device participation indicator, pause controls and revocation paths.
 10. **No hidden monetisation.** The product mission is shared resource efficiency and access for small organisations, not extracting profit from employee devices.
 
+## Multi-resource admission contract — preview
+
+The policy crate now exposes `resource_capacity::evaluate_extended_resource_placement` as a side-effect-free admission contract layered over the existing authenticated CPU/RAM worker snapshot. It can additionally evaluate requested GPU memory/compute units, NPU memory/compute units, scratch-storage bytes and network bandwidth/egress policy.
+
+- Optional measurements are explicitly unknown when absent; a request that needs an unknown resource is rejected.
+- Accelerator, storage and network readings must be authenticated, fresh and marked measured. Estimated values are not accepted as admission evidence.
+- CPU/RAM, already-running state, AC power, owner consent, interactive-use priority, thermal safety and OS-isolation checks continue through the existing CPU admission gate.
+- A successful result is a policy estimate only. It does not collect telemetry, reserve resources, acquire a lease, start a worker, enforce quotas or prove a device's driver/runtime can execute a model.
+
+This contract closes part of the resource-dimension modelling gap, but it is not yet wired to an authenticated device-agent telemetry intake, durable lease admission, operator-console inventory or worker-side OS quota enforcement. Those integration and real-device checks remain release gates. Never infer GPU/NPU capability from hardware presence alone, and never wake sleeping or powered-off devices.
+
 ## Scheduler decision model
 
 A device is eligible only if all hard constraints pass:
