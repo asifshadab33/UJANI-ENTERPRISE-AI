@@ -95,7 +95,7 @@ second_pid=$!
 
 second_waiting=0
 for _ in $(seq 1 100); do
-  waiting="$("${PSQL[@]}" -c "SELECT count(*) FROM pg_stat_activity WHERE application_name='ujani-telemetry-v2-second' AND state='active' AND wait_event_type='Lock'")"
+  waiting="$("${PSQL[@]}" -c "SELECT count(*) FROM pg_catalog.pg_stat_activity AS waiting WHERE waiting.application_name='ujani-telemetry-v2-second' AND waiting.state='active' AND waiting.wait_event_type='Lock' AND EXISTS (SELECT 1 FROM pg_catalog.pg_stat_activity AS blocker WHERE blocker.pid = ANY(pg_catalog.pg_blocking_pids(waiting.pid)) AND blocker.application_name='ujani-telemetry-v2-first')")"
   if [[ "$waiting" == "1" ]]; then second_waiting=1; break; fi
   sleep 0.1
 done
