@@ -4,9 +4,10 @@
 //! the signed request nonce, then authenticates the exact raw bytes against the
 //! enrolled device key and rechecks current owner consent. The caller must pass
 //! the returned tenant/device identity and sample fields to the tenant-scoped
-//! database transaction (migration 0003); this module does not persist samples.
-//! The database transaction remains authoritative for monotonic generation /
-//! sequence, replay, trust and dual-consent checks under concurrent requests.
+//! database transaction; this module does not persist samples or consume replay
+//! state. The database transaction must atomically claim the authenticated
+//! request ID and enforce monotonic generation/sequence, trust and dual-consent
+//! checks with the sample write, so a failed database commit does not burn a nonce.
 
 use crate::device_trust::durable::{DurableDeviceRegistry, DurableDeviceTrustError};
 use crate::device_trust::{
@@ -209,7 +210,7 @@ pub fn authenticate_device_telemetry_request(
     }
 
     let authenticated = registry
-        .authenticate_request_for(
+        .verify_request_for(
             signed_request,
             DEVICE_TELEMETRY_REQUEST_METHOD,
             DEVICE_TELEMETRY_REQUEST_RESOURCE,
