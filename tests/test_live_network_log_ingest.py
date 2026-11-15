@@ -136,5 +136,29 @@ class LiveNetworkLogIngestTests(unittest.TestCase):
                         zeek_log_kind="weird")
 
 
+    def test_rejects_boolean_schema_version_and_offset_beyond_checkpoint_size(self):
+        self.log.write_text(zeek_line(2.0, "checkpoint-validation"), encoding="utf-8")
+        cases = [
+            (
+                {"schema_version": True, "tenant_id": "tenant-a", "provider_id": "zeek",
+                 "device": 1, "inode": 1, "offset": 0, "size": 0},
+                "checkpoint contract mismatch",
+            ),
+            (
+                {"schema_version": 1, "tenant_id": "tenant-a", "provider_id": "zeek",
+                 "device": 1, "inode": 1, "offset": 2, "size": 1},
+                "checkpoint cursor is invalid",
+            ),
+        ]
+        for checkpoint, message in cases:
+            with self.subTest(checkpoint=checkpoint):
+                self.cursor.write_text(json.dumps(checkpoint), encoding="utf-8")
+                with self.assertRaisesRegex(ImportErrorSafe, message):
+                    ingest_once(
+                        log_path=self.log, database=self.db, checkpoint=self.cursor,
+                        provider="zeek", tenant_id="tenant-a", now_ms=10_000,
+                    )
+
+
 if __name__ == "__main__":
     unittest.main()
