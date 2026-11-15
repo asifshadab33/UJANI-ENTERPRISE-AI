@@ -7,12 +7,14 @@ PSQL=("$PSQL_BIN" --host "${PGHOST:-localhost}" --username "${PGUSER:-postgres}"
 
 "${PSQL[@]}" <<'SQL'
 INSERT INTO ujani_control.tenants (tenant_id, display_name)
-VALUES ('telemetry-concurrency-test','Telemetry Concurrency Test')
+VALUES ('telemetry-v2-concurrency-test','Telemetry Concurrency Test')
 ON CONFLICT (tenant_id) DO NOTHING;
+DELETE FROM ujani_control.request_replays WHERE tenant_id='telemetry-v2-concurrency-test' AND device_id='worker-v2-1';
+DELETE FROM ujani_control.device_telemetry_samples WHERE tenant_id='telemetry-v2-concurrency-test' AND device_id='worker-v2-1';
 INSERT INTO ujani_control.devices
  (tenant_id, device_id, display_name, platform, trust_state, owner_consent_state, admin_approval_state)
 VALUES
- ('telemetry-concurrency-test','worker-1','Concurrency Worker','linux','enrolled','granted','approved')
+ ('telemetry-v2-concurrency-test','worker-v2-1','Concurrency Worker','linux','enrolled','granted','approved')
 ON CONFLICT (tenant_id, device_id) DO UPDATE
  SET trust_state='enrolled', owner_consent_state='granted', admin_approval_state='approved',
      telemetry_generation=0, telemetry_sequence=0, last_seen_at=NULL;
@@ -27,16 +29,9 @@ trap cleanup EXIT
  PGAPPNAME=ujani-telemetry-first "${PSQL[@]}" >"$first_out" <<'SQL'
 SET ROLE ujani_runtime;
 BEGIN;
-SET LOCAL ujani.tenant_id = 'telemetry-concurrency-test';
-SELECT current_user || ':' || current_setting('ujani.tenant_id', true);
-SELECT trust_state || ':' || owner_consent_state || ':' || admin_approval_state || ':' ||
- telemetry_generation::text || ':' || telemetry_sequence::text || ':' || reservation_revision::text || ':' ||
- COALESCE(last_seen_at::text, 'null')
-FROM ujani_control.devices WHERE tenant_id='telemetry-concurrency-test' AND device_id='worker-1';
-SELECT CASE WHEN has_table_privilege(current_user, 'ujani_control.devices', 'UPDATE') THEN 'device-update-ok' ELSE 'device-update-denied' END;
-SELECT CASE WHEN has_function_privilege(current_user, 'ujani_control.accept_device_telemetry_v2(text,text,bigint,bigint,bigint,bytea,timestamptz,bytea,integer,bigint,text,text,text)', 'EXECUTE') THEN 'function-execute-ok' ELSE 'function-execute-denied' END;
+SET LOCAL ujani.tenant_id = 'telemetry-v2-concurrency-test';
 SELECT ujani_control.accept_device_telemetry_v2(
- 'telemetry-concurrency-test','worker-1',1,1,0,decode(repeat('a1',16),'hex'),
+ 'telemetry-v2-concurrency-test','worker-v2-1',1,1,0,decode(repeat('c1',16),'hex'),
  clock_timestamp(),decode(repeat('b1',32),'hex'),2000,4096,'cool','ac','idle');
 SELECT pg_sleep(1);
 COMMIT;
@@ -60,9 +55,9 @@ fi
 "${PSQL[@]}" >"$second_out" <<'SQL'
 SET ROLE ujani_runtime;
 BEGIN;
-SET LOCAL ujani.tenant_id = 'telemetry-concurrency-test';
+SET LOCAL ujani.tenant_id = 'telemetry-v2-concurrency-test';
 SELECT ujani_control.accept_device_telemetry_v2(
- 'telemetry-concurrency-test','worker-1',1,2,0,decode(repeat('a2',16),'hex'),
+ 'telemetry-v2-concurrency-test','worker-v2-1',1,2,0,decode(repeat('c2',16),'hex'),
  clock_timestamp(),decode(repeat('b2',32),'hex'),1800,3584,'cool','ac','idle');
 COMMIT;
 RESET ROLE;
@@ -80,7 +75,7 @@ if ! grep -qx 't' "$second_out"; then
   exit 1
 fi
 
-final_state="$("${PSQL[@]}" -c "SELECT telemetry_generation || ':' || telemetry_sequence || ':' || (SELECT count(*) FROM ujani_control.device_telemetry_samples WHERE tenant_id='telemetry-concurrency-test' AND device_id='worker-1') FROM ujani_control.devices WHERE tenant_id='telemetry-concurrency-test' AND device_id='worker-1'")"
+final_state="$("${PSQL[@]}" -c "SELECT telemetry_generation || ':' || telemetry_sequence || ':' || (SELECT count(*) FROM ujani_control.device_telemetry_samples WHERE tenant_id='telemetry-v2-concurrency-test' AND device_id='worker-v2-1') FROM ujani_control.devices WHERE tenant_id='telemetry-v2-concurrency-test' AND device_id='worker-v2-1'")"
 if [[ "$final_state" != "1:2:2" ]]; then
   echo "unexpected serialized telemetry checkpoint/sample count: $final_state" >&2
   exit 1
