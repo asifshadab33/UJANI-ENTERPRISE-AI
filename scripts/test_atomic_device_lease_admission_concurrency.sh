@@ -29,6 +29,9 @@ INSERT INTO ujani_control.device_keys
  (tenant_id,device_id,key_id,public_key,generation,state)
 VALUES ('admission-concurrency','device','key',decode(repeat('71',32),'hex'),1,'active')
 ON CONFLICT (tenant_id,device_id,key_id) DO UPDATE SET state='active';
+BEGIN;
+SELECT 1 FROM ujani_control.devices
+WHERE tenant_id='admission-concurrency' AND device_id='device' FOR UPDATE;
 INSERT INTO ujani_control.device_owner_bindings
  (tenant_id,device_id,owner_subject_id,bound_by_subject_id,binding_revision,active,binding_digest)
 VALUES ('admission-concurrency','device','owner','admin',1,true,decode(repeat('70',32),'hex'))
@@ -37,6 +40,7 @@ ON CONFLICT (tenant_id,device_id) DO UPDATE SET
  bound_by_subject_id=EXCLUDED.bound_by_subject_id,
  binding_revision=ujani_control.device_owner_bindings.binding_revision+1,
  active=true,binding_digest=decode(repeat('72',32),'hex'),bound_at=clock_timestamp();
+COMMIT;
 INSERT INTO ujani_control.owner_consents
  (tenant_id,device_id,consent_generation,state,actor_ref,evidence_digest)
 VALUES ('admission-concurrency','device',1,'granted','owner',decode(repeat('72',32),'hex'))
