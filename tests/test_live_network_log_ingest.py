@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 import scripts.live_network_log_ingest as live_ingest
@@ -72,7 +73,7 @@ class LiveNetworkLogIngestTests(unittest.TestCase):
                 stream.write(zeek_line(3.0, "appended"))
             return fd, info
 
-        with unittest.mock.patch(
+        with patch(
             "scripts.live_network_log_ingest._safe_open",
             side_effect=append_after_open,
         ):
