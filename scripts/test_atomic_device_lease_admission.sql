@@ -74,6 +74,8 @@ ON CONFLICT DO NOTHING;
 
 -- A new owner-binding revision must invalidate even a previously granted
 -- consent; a fresh consent generation from the current owner restores it.
+SELECT 1 FROM ujani_control.devices
+WHERE tenant_id='admission-test' AND device_id='admission-device' FOR UPDATE;
 UPDATE ujani_control.device_owner_bindings
 SET binding_revision = binding_revision + 1,
     binding_digest = decode(repeat('32',32),'hex')
