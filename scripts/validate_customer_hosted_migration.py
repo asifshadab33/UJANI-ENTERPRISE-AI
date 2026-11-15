@@ -234,6 +234,8 @@ def main() -> None:
         "requested_memory_mb",
         "reservation_revision",
         "device.lease.admitted",
+        "owner_consent_state = 'unknown'",
+        "v_approval_expires_at",
         "admission_lock_marker",
         "reject_admission_lock_marker_mutation",
         "FOR SHARE OF a, s",
@@ -267,6 +269,7 @@ def main() -> None:
         "replayed request was admitted",
         "over-capacity request was admitted",
         "admission-device-paused",
+        "owner binding change did not invalidate prior consent",
         "paused owner consent admitted work",
         "approval from a disabled administrator was accepted",
         "approval from a non-administrator was accepted",
@@ -279,7 +282,8 @@ def main() -> None:
             raise SystemExit(f"atomic device admission regression test missing: {required}")
     atomic_concurrency = ATOMIC_ADMISSION_CONCURRENCY_PATH.read_text(encoding="utf-8")
     for required in (
-        "pg_sleep(15)",
+        "UJANI_ADMISSION_RELEASE_FILE",
+        "\\! while",
         "PGAPPNAME=ujani-admission-first",
         "application_name='ujani-admission-first'",
         "application_name='ujani-admission-second'",
