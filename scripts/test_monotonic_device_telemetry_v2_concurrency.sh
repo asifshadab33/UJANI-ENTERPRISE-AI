@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Keep the v2 fixture separate from the v1 replay test's tenant/device/request IDs.
+
 : "${PGPASSWORD:?PGPASSWORD must be set for the PostgreSQL integration test}"
 PSQL_BIN="${PSQL_BIN:-psql}"
 PSQL=("$PSQL_BIN" --host "${PGHOST:-localhost}" --username "${PGUSER:-postgres}" --dbname "${PGDATABASE:-ujani_test}" --set ON_ERROR_STOP=1 --quiet --tuples-only --no-align)
