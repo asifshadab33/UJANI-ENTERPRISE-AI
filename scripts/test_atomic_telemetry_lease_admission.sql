@@ -107,7 +107,7 @@ $block$;
 -- approval reference while still evaluating tenant RLS as the caller.
 GRANT USAGE ON SCHEMA ujani_control TO ujani_runtime;
 GRANT SELECT ON ujani_control.audit_events,ujani_control.leases,ujani_control.approvals TO ujani_runtime;
-GRANT EXECUTE ON FUNCTION ujani_control.list_device_lease_audit_evidence(NULL,10) TO ujani_runtime;
+GRANT EXECUTE ON FUNCTION ujani_control.list_device_lease_audit_evidence(bigint,integer) TO ujani_runtime;
 DO $block$
 BEGIN
  IF (SELECT rolbypassrls FROM pg_catalog.pg_roles WHERE rolname='ujani_runtime') IS DISTINCT FROM false THEN
