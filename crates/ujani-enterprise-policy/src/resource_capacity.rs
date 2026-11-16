@@ -573,4 +573,75 @@ mod tests {
             ))
         ));
     }
+
+    #[test]
+    fn telemetry_freshness_age_boundary_is_inclusive_for_every_resource_kind() {
+        let gpu_at_limit = ResourceMeasurement {
+            sampled_at_unix_ms: NOW - 5_000,
+            ..measured(AcceleratorHeadroom {
+                available_memory_mb: 1,
+                available_compute_units: 1,
+            })
+        };
+        let gpu_stale = ResourceMeasurement {
+            sampled_at_unix_ms: NOW - 5_001,
+            ..gpu_at_limit
+        };
+        assert!(measured_value(Some(&gpu_at_limit), ResourceKind::Gpu, NOW, 5_000).is_ok());
+        assert_eq!(
+            measured_value(Some(&gpu_stale), ResourceKind::Gpu, NOW, 5_000),
+            Err(ExtendedResourceRejection::StaleMeasurement(ResourceKind::Gpu))
+        );
+
+        let npu_at_limit = ResourceMeasurement {
+            sampled_at_unix_ms: NOW - 5_000,
+            ..measured(AcceleratorHeadroom {
+                available_memory_mb: 1,
+                available_compute_units: 1,
+            })
+        };
+        let npu_stale = ResourceMeasurement {
+            sampled_at_unix_ms: NOW - 5_001,
+            ..npu_at_limit
+        };
+        assert!(measured_value(Some(&npu_at_limit), ResourceKind::Npu, NOW, 5_000).is_ok());
+        assert_eq!(
+            measured_value(Some(&npu_stale), ResourceKind::Npu, NOW, 5_000),
+            Err(ExtendedResourceRejection::StaleMeasurement(ResourceKind::Npu))
+        );
+
+        let storage_at_limit = ResourceMeasurement {
+            sampled_at_unix_ms: NOW - 5_000,
+            ..measured(StorageHeadroom {
+                available_scratch_bytes: 1,
+            })
+        };
+        let storage_stale = ResourceMeasurement {
+            sampled_at_unix_ms: NOW - 5_001,
+            ..storage_at_limit
+        };
+        assert!(measured_value(Some(&storage_at_limit), ResourceKind::Storage, NOW, 5_000).is_ok());
+        assert_eq!(
+            measured_value(Some(&storage_stale), ResourceKind::Storage, NOW, 5_000),
+            Err(ExtendedResourceRejection::StaleMeasurement(ResourceKind::Storage))
+        );
+
+        let network_at_limit = ResourceMeasurement {
+            sampled_at_unix_ms: NOW - 5_000,
+            ..measured(NetworkHeadroom {
+                available_bandwidth_kbps: 1,
+                egress_allowed: true,
+            })
+        };
+        let network_stale = ResourceMeasurement {
+            sampled_at_unix_ms: NOW - 5_001,
+            ..network_at_limit
+        };
+        assert!(measured_value(Some(&network_at_limit), ResourceKind::Network, NOW, 5_000).is_ok());
+        assert_eq!(
+            measured_value(Some(&network_stale), ResourceKind::Network, NOW, 5_000),
+            Err(ExtendedResourceRejection::StaleMeasurement(ResourceKind::Network))
+        );
+    }
+
 }
