@@ -692,32 +692,34 @@ impl DurableLedger {
         } else {
             self.load_unanchored_ledger()?
         };
-        // Compare the canonical plaintext state before producing randomized AEAD
-        // ciphertext. A read-only operation must not rotate the nonce, rewrite the
-        // snapshot or advance the independent monotonic anchor.
+        // Compare canonical plaintext state before producing randomized AEAD
+        // ciphertext. Read-only operations must not rotate a nonce or advance an
+        // independent monotonic anchor. Key rotation still rewrites the snapshot.
         let original_state = serialize_snapshot_body(&ledger);
         let result = operation(&mut ledger)?;
-        if self.integrity_key_provider.is_some()
-            && self.path.exists()
-            && original_state == serialize_snapshot_body(&ledger)
-        {
-            let provider = self
-                .integrity_key_provider
-                .as_ref()
-                .ok_or(DurableLedgerError::InvalidRecord)?;
-            let current = read_snapshot(&self.path)?;
-            let stored_key_id = encrypted_snapshot_key_id(ENCRYPTED_LEDGER_HEADER, &current)
-                .map_err(DurableLedgerError::KeyProvider)?;
-            let (active_key_id, _) = provider
-                .sign_active(IntegrityKeyPurpose::ReservationLedger, &[])
-                .map_err(DurableLedgerError::KeyProvider)?;
-            if stored_key_id == active_key_id {
-                return Ok(result);
-            }
-        }
         let bytes = self.encode_ledger_snapshot(&ledger)?;
         if bytes.len() as u64 > MAX_LEDGER_BYTES {
             return Err(DurableLedgerError::CapacityExceeded);
+        }
+        if self.path.exists() && original_state == serialize_snapshot_body(&ledger) {
+            if let Some(provider) = &self.integrity_key_provider {
+                let current = read_snapshot(&self.path)?;
+                let stored_key_id = encrypted_snapshot_key_id(ENCRYPTED_LEDGER_HEADER, &current)
+                    .map_err(DurableLedgerError::KeyProvider)?;
+                let (active_key_id, _) = provider
+                    .sign_active(IntegrityKeyPurpose::ReservationLedger, &[])
+                    .map_err(DurableLedgerError::KeyProvider)?;
+                if stored_key_id == active_key_id {
+                    return Ok(result);
+                }
+            } else {
+                // The legacy authenticated format is deterministic, so byte
+                // equality proves both unchanged state and unchanged key ID.
+                let current = read_snapshot(&self.path)?;
+                if current == bytes {
+                    return Ok(result);
+                }
+            }
         }
         // Read-only transactions do not advance the external monotonic generation.
         if anchor_record
