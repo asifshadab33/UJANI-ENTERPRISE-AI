@@ -219,13 +219,17 @@ pub fn open_snapshot(
     caller_aad: &[u8],
     bytes: &[u8],
 ) -> Result<Vec<u8>, IntegrityKeyProviderError> {
-    let header_end = bytes.iter().position(|byte| *byte == b'\n')
+    let header_end = bytes
+        .iter()
+        .position(|byte| *byte == b'\n')
         .ok_or(IntegrityKeyProviderError::EncryptionFailed)?;
     if &bytes[..header_end] != expected_header.as_bytes() {
         return Err(IntegrityKeyProviderError::EncryptionFailed);
     }
     let remainder = &bytes[header_end + 1..];
-    let key_end = remainder.iter().position(|byte| *byte == b'\n')
+    let key_end = remainder
+        .iter()
+        .position(|byte| *byte == b'\n')
         .ok_or(IntegrityKeyProviderError::EncryptionFailed)?;
     let key_id = std::str::from_utf8(&remainder[..key_end])
         .map_err(|_| IntegrityKeyProviderError::InvalidKeyId)?;
