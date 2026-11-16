@@ -387,12 +387,15 @@ def main() -> None:
         "OLD.request_digest IS DISTINCT FROM NEW.request_digest",
         "OLD.approval_id IS DISTINCT FROM NEW.approval_id",
         "leases_admission_evidence_immutable",
-        "CREATE OR REPLACE FUNCTION ujani_control.list_device_lease_audit_evidence()",
+        "CREATE OR REPLACE FUNCTION ujani_control.list_device_lease_audit_evidence(",
+        "p_before_sequence bigint DEFAULT NULL",
+        "p_limit integer DEFAULT 100",
+        "LIMIT GREATEST(1, LEAST(COALESCE(p_limit, 100), 200))",
         "SECURITY INVOKER",
         "ae.event_digest",
         "l.request_digest",
         "l.approval_id",
-        "REVOKE ALL ON FUNCTION ujani_control.list_device_lease_audit_evidence() FROM PUBLIC",
+        "REVOKE ALL ON FUNCTION ujani_control.list_device_lease_audit_evidence(bigint,integer) FROM PUBLIC",
     ):
         if required not in lease_audit_view_sql:
             raise SystemExit("lease audit evidence migration is missing invariant: " + required)
