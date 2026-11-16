@@ -13,61 +13,14 @@ SCHEMA_PATH = ROOT / "schemas/model-runtime-inventory-v1.schema.json"
 V2_SCHEMA_PATH = ROOT / "schemas/model-runtime-inventory-v2.schema.json"
 
 
-def validate_self_evolution_schema() -> None:
-    schema_path = Path(__file__).resolve().parents[1] / "schemas/self-evolution-proposal-v1.schema.json"
-    fixture_path = Path(__file__).resolve().parents[1] / "schemas/test-vectors/self-evolution-proposal-v1.json"
-    schema = json.loads(schema_path.read_text(encoding="utf-8"))
-    jsonschema.Draft202012Validator.check_schema(schema)
-    assert schema["$id"] == "urn:ujani:self-evolution-proposal:v1"
-    assert schema["properties"]["schema_version"]["const"] == 1
-    validator = jsonschema.Draft202012Validator(schema)
-    fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
-    validator.validate(fixture)
-
-    # The schema is a structural contract, not an authorization grant.
-    # The model must not be able to supply a repository, source revision,
-    # proposal ID or writable scope; trusted host code binds those values.
-    invalid_path = copy.deepcopy(fixture)
-    invalid_path["changes"][0]["path"] = "../outside.rs"
-    assert list(validator.iter_errors(invalid_path))
-
-    invalid_digest = copy.deepcopy(fixture)
-    invalid_digest["changes"][0]["patch_sha256"] = "not-a-digest"
-    assert list(validator.iter_errors(invalid_digest))
-
-    incomplete_line_range = copy.deepcopy(fixture)
-    incomplete_line_range["findings"][0].pop("line_end")
-    assert list(validator.iter_errors(incomplete_line_range))
-
-    unknown_field = copy.deepcopy(fixture)
-    unknown_field["changes"][0]["unreviewed_permission"] = "shell"
-    assert list(validator.iter_errors(unknown_field))
-
-    # Authority-bearing fields are supplied only by the trusted host envelope.
-    forbidden_values = {
-        "proposal_id": "model-proposal-1",
-        "target": {
-            "repository": "owner/repository",
-            "base_ref": "main",
-            "source_revision": "a" * 40,
-        },
-        "scope": ["apps/operator-console"],
-    }
-    for forbidden_field, value in forbidden_values.items():
-        model_claim = copy.deepcopy(fixture)
-        model_claim[forbidden_field] = value
-        assert list(validator.iter_errors(model_claim))
-    print("Self-evolution proposal v1 schema and fixture checks passed.")
-
-
 EXPECTED_SHARED_ARTIFACTS = {
     "catalogs/local-model-catalog-v1.json": "8f97eeb59d5c6cdf6c07df027eaf587a64184ba6",
     "schemas/model-runtime-inventory-v1.schema.json": "8ff1a1db4700214ba687cd806c449bc1ea7dfdb4",
-    "schemas/model-runtime-inventory-v2.schema.json": "737b16538f63124bcb184311cf1884c809c3ea57",
+    "schemas/model-runtime-inventory-v2.schema.json": "6f1d5a6dd3b70a4b5e78203a20a67b71ed35a489",
     "schemas/personal-enterprise-task-contract-v1.schema.json": "566a0d72babd58636a3ef40e55b5c44168776522",
     "schemas/test-vectors/consent-binding-v1.json": "dcd7021560212504810e8438e14efd591e5e657d",
     "schemas/test-vectors/model-runtime-inventory-v1.json": "543d645d0154c9263ff7784ba4e203f54e498c3c",
-    "schemas/test-vectors/model-runtime-inventory-v2.json": "cad9d1fb8963298c4ba56a4124948a268d15f08f",
+    "schemas/test-vectors/model-runtime-inventory-v2.json": "7d3bc7b6990d0572547e2312a97032f5486539a8",
 }
 
 
@@ -99,6 +52,44 @@ def validate_shared_contract_manifest() -> None:
     )
 
 
+def validate_self_evolution_schema() -> None:
+    schema_path = Path(__file__).resolve().parents[1] / "schemas/self-evolution-proposal-v1.schema.json"
+    fixture_path = Path(__file__).resolve().parents[1] / "schemas/test-vectors/self-evolution-proposal-v1.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    jsonschema.Draft202012Validator.check_schema(schema)
+    assert schema["$id"] == "urn:ujani:self-evolution-proposal:v1"
+    assert schema["properties"]["schema_version"]["const"] == 1
+    validator = jsonschema.Draft202012Validator(schema)
+    fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+    validator.validate(fixture)
+
+    # The schema is a structural contract, not an authorization grant.
+    # The model must not be able to supply a repository, source revision,
+    # proposal ID or writable scope; trusted host code binds those values.
+    invalid_path = copy.deepcopy(fixture)
+    invalid_path["changes"][0]["path"] = "../outside.rs"
+    assert list(validator.iter_errors(invalid_path))
+
+    invalid_digest = copy.deepcopy(fixture)
+    invalid_digest["changes"][0]["patch_sha256"] = "not-a-digest"
+    assert list(validator.iter_errors(invalid_digest))
+
+    incomplete_line_range = copy.deepcopy(fixture)
+    incomplete_line_range["findings"][0].pop("line_end")
+    assert list(validator.iter_errors(incomplete_line_range))
+
+    unknown_field = copy.deepcopy(fixture)
+    unknown_field["changes"][0]["unreviewed_permission"] = "shell"
+    assert list(validator.iter_errors(unknown_field))
+
+    # Authority-bearing fields are supplied only by the trusted host envelope.
+    for forbidden_field in ("proposal_id", "target", "scope"):
+        model_claim = copy.deepcopy(fixture)
+        model_claim[forbidden_field] = "model-must-not-authorize-this"
+        assert list(validator.iter_errors(model_claim))
+    print("Self-evolution proposal v1 schema and fixture checks passed.")
+
+
 
 def _v2_evidence_recent(evidence: dict, now_unix_ms: int, max_age_ms: int) -> bool:
     observed = evidence.get("observed_at_unix_ms")
@@ -118,6 +109,23 @@ def _v2_evidence_claim_usable(evidence: dict, now_unix_ms: int, max_age_ms: int)
         and evidence.get("confidence") in {"verified", "reported"}
         and _v2_evidence_recent(evidence, now_unix_ms, max_age_ms)
     )
+
+
+def _v2_os_fact_usable(evidence: dict, now_unix_ms: int, max_age_ms: int) -> bool:
+    """Host platform/resource facts must come from a fresh, verified OS observation."""
+    return (
+        evidence.get("source") == "os_api"
+        and evidence.get("confidence") == "verified"
+        and _v2_evidence_recent(evidence, now_unix_ms, max_age_ms)
+    )
+
+
+SUPPORTED_RUNTIME_PROVIDERS = frozenset({"ollama"})
+
+
+def _v2_runtime_provider_supported(runtime: dict) -> bool:
+    provider = runtime.get("provider")
+    return isinstance(provider, str) and provider.strip().casefold() in SUPPORTED_RUNTIME_PROVIDERS
 
 
 def _v2_evidence_estimate_usable(evidence: dict, now_unix_ms: int, max_age_ms: int) -> bool:
@@ -145,8 +153,11 @@ def _v2_inventory_fresh(inventory: dict, now_unix_ms: int, max_age_ms: int) -> b
 
 def _v2_enterprise_inventory_authorized(inventory: dict) -> bool:
     context = inventory.get("collection_context", {})
+    device_ref = inventory.get("device_ref")
     return (
         context.get("scope") == "organisation_enrolled"
+        and isinstance(device_ref, str)
+        and bool(device_ref.strip())
         and context.get("owner_consent") == "granted"
         and context.get("organisation_authorisation") == "authorised"
     )
@@ -214,6 +225,7 @@ def _v2_model_fits(
     if (
         runtime is None
         or runtime["availability"] != "available"
+        or not _v2_runtime_provider_supported(runtime)
         or not _v2_evidence_claim_usable(runtime["evidence"], now_unix_ms, max_age_ms)
         or model["availability"] != "installed"
         or model["compatibility"]["status"] != "compatible"
@@ -226,7 +238,11 @@ def _v2_model_fits(
 
     platform = inventory["platform"]
     compatibility = model["compatibility"]
-    if not _v2_evidence_claim_usable(platform["evidence"], now_unix_ms, max_age_ms):
+    if (
+        platform["os"] == "unknown"
+        or platform["architecture"].strip().casefold() == "unknown"
+        or not _v2_os_fact_usable(platform["evidence"], now_unix_ms, max_age_ms)
+    ):
         return False
     if compatibility["supported_os"] and platform["os"] not in compatibility["supported_os"]:
         return False
@@ -259,7 +275,7 @@ def _v2_model_fits(
             "recommended_cpu_threads",
         )
     )
-    if has_host_resource_requirement and not _v2_evidence_claim_usable(
+    if has_host_resource_requirement and not _v2_os_fact_usable(
         hardware["evidence"], now_unix_ms, max_age_ms
     ):
         return False
@@ -348,6 +364,14 @@ def validate_model_runtime_inventory_v2() -> None:
     assert _v2_references_valid(fixture)
     assert _v2_enterprise_inventory_authorized(fixture)
 
+    anonymous_inventory = copy.deepcopy(fixture)
+    anonymous_inventory.pop("device_ref")
+    assert list(validator.iter_errors(anonymous_inventory))
+    assert not _v2_enterprise_inventory_authorized(anonymous_inventory)
+    null_device = copy.deepcopy(fixture)
+    null_device["device_ref"] = None
+    assert list(validator.iter_errors(null_device))
+
     now = fixture["generated_at_unix_ms"]
     selected = _v2_select_explicit_model(fixture, "example/model:1.0", "chat", now, 5_000)
     assert selected is not None and selected["model_ref"] == "example/model:1.0"
@@ -378,6 +402,48 @@ def validate_model_runtime_inventory_v2() -> None:
     future_runtime = copy.deepcopy(fixture)
     future_runtime["runtimes"][0]["provider"] = "future.vendor.runtime"
     validator.validate(future_runtime)
+    assert _v2_select_explicit_model(
+        future_runtime, "example/model:1.0", "chat", now, 5_000
+    ) is None
+
+    # Host platform and aggregate hardware facts require fresh, verified OS evidence.
+    for source, confidence in (
+        ("runtime_api", "reported"),
+        ("runtime_metadata", "reported"),
+        ("signed_catalogue", "verified"),
+        ("published_catalogue", "verified"),
+        ("os_api", "reported"),
+    ):
+        untrusted_platform = copy.deepcopy(fixture)
+        untrusted_platform["platform"]["evidence"] = {
+            "source": source, "confidence": confidence, "observed_at_unix_ms": now
+        }
+        validator.validate(untrusted_platform)
+        assert _v2_select_explicit_model(
+            untrusted_platform, "example/model:1.0", "chat", now, 5_000
+        ) is None
+
+        untrusted_hardware = copy.deepcopy(fixture)
+        untrusted_hardware["hardware"]["evidence"] = {
+            "source": source, "confidence": confidence, "observed_at_unix_ms": now
+        }
+        validator.validate(untrusted_hardware)
+        assert _v2_select_explicit_model(
+            untrusted_hardware, "example/model:1.0", "chat", now, 5_000
+        ) is None
+
+    unknown_os = copy.deepcopy(fixture)
+    unknown_os["platform"]["os"] = "unknown"
+    validator.validate(unknown_os)
+    assert _v2_select_explicit_model(
+        unknown_os, "example/model:1.0", "chat", now, 5_000
+    ) is None
+    unknown_architecture = copy.deepcopy(fixture)
+    unknown_architecture["platform"]["architecture"] = "unknown"
+    validator.validate(unknown_architecture)
+    assert _v2_select_explicit_model(
+        unknown_architecture, "example/model:1.0", "chat", now, 5_000
+    ) is None
 
     # Unknown/unavailable runtimes, dangling model references and uninstalled models cannot be selected.
     unknown_runtime = copy.deepcopy(fixture)
@@ -544,6 +610,7 @@ def validate_model_runtime_inventory_v2() -> None:
         assert not _v2_enterprise_inventory_authorized(denied)
 
     personal = copy.deepcopy(fixture)
+    personal["device_ref"] = None
     personal["collection_context"] = {
         "scope": "personal_local_only",
         "owner_consent": "not_required_local_only",
@@ -569,7 +636,6 @@ def validate_model_runtime_inventory_v2() -> None:
 
 def main() -> None:
     validate_shared_contract_manifest()
-    """Validate the model-runtime inventory schema and its bounded fixtures."""
     schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
     assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
     assert schema["$id"] == "urn:ujani:model-runtime-inventory:v1"
