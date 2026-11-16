@@ -301,7 +301,6 @@ mod tests {
         );
     }
 
-
     fn signed_registry(
         owner_opted_in: bool,
     ) -> (
@@ -417,7 +416,12 @@ mod tests {
         );
         assert!(first.is_ok());
         let second = authenticate_device_telemetry_request(
-            &registry, HttpMethod::Post, path, &signed, &raw, 250,
+            &registry,
+            HttpMethod::Post,
+            path,
+            &signed,
+            &raw,
+            250,
         );
         assert!(
             second.is_ok(),
@@ -454,7 +458,12 @@ mod tests {
         let signed = signed_telemetry_request(&device, &raw, "device-1");
         assert_eq!(
             authenticate_device_telemetry_request(
-                &registry, HttpMethod::Post, "/v1/devices/device-1/telemetry", &signed, &raw, 250,
+                &registry,
+                HttpMethod::Post,
+                "/v1/devices/device-1/telemetry",
+                &signed,
+                &raw,
+                250,
             ),
             Err(DeviceTelemetryIntakeError::OwnerConsentMissing)
         );
