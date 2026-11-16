@@ -217,7 +217,7 @@ pub fn authenticate_device_telemetry_request(
             raw_body,
             now_unix_ms,
         )
-        .map_err(|_| DeviceTelemetryIntakeError::DeviceAuthenticationFailed)?;
+        .map_err(map_device_trust_error)?;
 
     if authenticated.device_id() != sample.device_id {
         return Err(DeviceTelemetryIntakeError::RequestBindingMismatch);
@@ -225,7 +225,7 @@ pub fn authenticate_device_telemetry_request(
     let owner_opted_in = registry
         .authenticated_device_status_for_request(&authenticated)
         .map(|(_, opted_in)| opted_in)
-        .map_err(|_| DeviceTelemetryIntakeError::TrustStoreUnavailable)?;
+        .map_err(map_device_trust_error)?;
     if !owner_opted_in {
         return Err(DeviceTelemetryIntakeError::OwnerConsentMissing);
     }
@@ -234,8 +234,25 @@ pub fn authenticate_device_telemetry_request(
 
 /// Convert trust-store errors to a generic intake failure without leaking
 /// whether a device, tenant, key or replay record exists.
-pub fn map_device_trust_error(_: DurableDeviceTrustError) -> DeviceTelemetryIntakeError {
-    DeviceTelemetryIntakeError::DeviceAuthenticationFailed
+pub fn map_device_trust_error(error: DurableDeviceTrustError) -> DeviceTelemetryIntakeError {
+    match error {
+        // A verified service-side trust rejection is deliberately generic to avoid
+        // disclosing whether a device, tenant, key or replay record exists.
+        DurableDeviceTrustError::Trust(_) => DeviceTelemetryIntakeError::DeviceAuthenticationFailed,
+        // Storage, key-provider, corruption, capacity, lock and anti-rollback
+        // failures are service failures, not invalid device credentials.
+        DurableDeviceTrustError::Io(_)
+        | DurableDeviceTrustError::CorruptState
+        | DurableDeviceTrustError::CapacityExceeded
+        | DurableDeviceTrustError::KeyProvider(_)
+        | DurableDeviceTrustError::LockPoisoned
+        | DurableDeviceTrustError::AnchorUnavailable(_)
+        | DurableDeviceTrustError::AnchorMismatch
+        | DurableDeviceTrustError::AnchorConflict
+        | DurableDeviceTrustError::AnchorGenerationExhausted => {
+            DeviceTelemetryIntakeError::TrustStoreUnavailable
+        }
+    }
 }
 
 #[cfg(test)]
@@ -247,6 +264,36 @@ mod tests {
             r#"{{"schema_version":1,"device_id":"device-1","generation":2,"sequence":7,"observed_at_unix_ms":{observed_at},"cpu_available_millis":1200,"memory_available_mb":4096,"thermal_state":"cool","power_state":"ac","participation_state":"idle"}}"#
         )
         .into_bytes()
+    }
+
+    #[test]
+    fn trust_store_failures_are_service_unavailable_not_bad_credentials() {
+        assert_eq!(
+            map_device_trust_error(DurableDeviceTrustError::Io("disk unavailable".into())),
+            DeviceTelemetryIntakeError::TrustStoreUnavailable
+        );
+        assert_eq!(
+            map_device_trust_error(DurableDeviceTrustError::AnchorUnavailable("timeout".into())),
+            DeviceTelemetryIntakeError::TrustStoreUnavailable
+        );
+        assert_eq!(
+            DeviceTelemetryIntakeError::TrustStoreUnavailable.http_status(),
+            503
+        );
+    }
+
+    #[test]
+    fn rejected_device_credentials_remain_unauthorized() {
+        assert_eq!(
+            map_device_trust_error(DurableDeviceTrustError::Trust(
+                crate::device_trust::DeviceTrustError::InvalidDeviceSignature
+            )),
+            DeviceTelemetryIntakeError::DeviceAuthenticationFailed
+        );
+        assert_eq!(
+            DeviceTelemetryIntakeError::DeviceAuthenticationFailed.http_status(),
+            401
+        );
     }
 
     #[test]
