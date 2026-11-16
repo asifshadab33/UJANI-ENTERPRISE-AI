@@ -107,7 +107,7 @@ $block$;
 -- approval reference while still evaluating tenant RLS as the caller.
 GRANT USAGE ON SCHEMA ujani_control TO ujani_runtime;
 GRANT SELECT ON ujani_control.audit_events,ujani_control.leases,ujani_control.approvals TO ujani_runtime;
-GRANT EXECUTE ON FUNCTION ujani_control.list_device_lease_audit_evidence() TO ujani_runtime;
+GRANT EXECUTE ON FUNCTION ujani_control.list_device_lease_audit_evidence(NULL,10) TO ujani_runtime;
 DO $block$
 BEGIN
  IF (SELECT rolbypassrls FROM pg_catalog.pg_roles WHERE rolname='ujani_runtime') IS DISTINCT FROM false THEN
@@ -120,7 +120,7 @@ SELECT pg_catalog.set_config('ujani.tenant_id','admission-test',false);
 DO $block$
 DECLARE evidence_count integer;
 BEGIN
- SELECT count(*) INTO evidence_count FROM ujani_control.list_device_lease_audit_evidence()
+ SELECT count(*) INTO evidence_count FROM ujani_control.list_device_lease_audit_evidence(NULL,10)
  WHERE lease_id='admission-atomic-lease'
    AND approval_id='admission-approval'
    AND request_digest=decode(repeat('d4',32),'hex');
@@ -132,7 +132,7 @@ $block$;
 SELECT pg_catalog.set_config('ujani.tenant_id','another-tenant',false);
 DO $block$
 BEGIN
- IF EXISTS (SELECT 1 FROM ujani_control.list_device_lease_audit_evidence()
+ IF EXISTS (SELECT 1 FROM ujani_control.list_device_lease_audit_evidence(NULL,10)
             WHERE lease_id='admission-atomic-lease') THEN
   RAISE EXCEPTION 'audit evidence function leaked a lease across tenant context';
  END IF;
