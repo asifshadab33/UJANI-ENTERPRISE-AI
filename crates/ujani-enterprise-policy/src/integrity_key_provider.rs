@@ -160,7 +160,12 @@ pub fn seal_snapshot(
     caller_aad: &[u8],
     plaintext: &[u8],
 ) -> Result<Vec<u8>, IntegrityKeyProviderError> {
-    if header.is_empty() || header.len() > 128 || header.bytes().any(|byte| byte == b'\n' || byte == b'\r') {
+    if header.is_empty()
+        || header.len() > 128
+        || header
+            .bytes()
+            .any(|byte| byte == b'\n' || byte == b'\r')
+    {
         return Err(IntegrityKeyProviderError::InvalidKeyId);
     }
     let mut aad = Vec::with_capacity(header.len() + caller_aad.len() + 32);
@@ -371,7 +376,8 @@ mod tests {
             };
             // Test-only reversible transform to exercise provider plumbing. It is
             // not a cryptographic construction and must never ship outside cfg(test).
-            let nonce_hash = Sha256::digest(format!("test-only:{counter}:{}:{key_id}", purpose.as_str()).as_bytes());
+            let nonce_material = format!("test-only:{counter}:{}:{key_id}", purpose.as_str());
+            let nonce_hash = Sha256::digest(nonce_material.as_bytes());
             let nonce: [u8; 16] = nonce_hash[..16].try_into()
                 .map_err(|_| IntegrityKeyProviderError::EncryptionFailed)?;
             let mut encryption_key = test_encryption_key(&key, purpose);
@@ -407,7 +413,14 @@ mod tests {
             let tag: [u8; 32] = sealed[sealed.len() - 32..].try_into()
                 .map_err(|_| IntegrityKeyProviderError::EncryptionFailed)?;
             let mut encryption_key = test_encryption_key(&key, purpose);
-            let expected = test_sealed_tag(&encryption_key, purpose, key_id, aad, &nonce, ciphertext);
+            let expected = test_sealed_tag(
+                &encryption_key,
+                purpose,
+                key_id,
+                aad,
+                &nonce,
+                ciphertext,
+            );
             if expected != tag {
                 key.zeroize();
                 encryption_key.zeroize();
@@ -535,14 +548,42 @@ mod tests {
         ).unwrap();
         assert!(!sealed.windows(original.len()).any(|window| window == original));
         assert_eq!(
-            open_snapshot(&provider, purpose, "UJANI-TEST-ENCRYPTED-V1", b"test-context", &sealed).unwrap(),
+            open_snapshot(
+                &provider,
+                purpose,
+                "UJANI-TEST-ENCRYPTED-V1",
+                b"test-context",
+                &sealed,
+            )
+            .unwrap(),
             original
         );
-        assert!(open_snapshot(&provider, purpose, "UJANI-OTHER-HEADER-V1", b"test-context", &sealed).is_err());
-        assert!(open_snapshot(&provider, purpose, "UJANI-TEST-ENCRYPTED-V1", b"other-context", &sealed).is_err());
+        assert!(open_snapshot(
+            &provider,
+            purpose,
+            "UJANI-OTHER-HEADER-V1",
+            b"test-context",
+            &sealed,
+        )
+        .is_err());
+        assert!(open_snapshot(
+            &provider,
+            purpose,
+            "UJANI-TEST-ENCRYPTED-V1",
+            b"other-context",
+            &sealed,
+        )
+        .is_err());
         let mut tampered = sealed.clone();
         *tampered.last_mut().unwrap() ^= 1;
-        assert!(open_snapshot(&provider, purpose, "UJANI-TEST-ENCRYPTED-V1", b"test-context", &tampered).is_err());
+        assert!(open_snapshot(
+            &provider,
+            purpose,
+            "UJANI-TEST-ENCRYPTED-V1",
+            b"test-context",
+            &tampered,
+        )
+        .is_err());
     }
 
     #[test]
