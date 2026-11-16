@@ -9,15 +9,8 @@
 //! request ID and enforce monotonic generation/sequence, trust and dual-consent
 //! checks with the sample write, so a failed database commit does not burn a nonce.
 
-use crate::device_trust::durable::{
-    DeviceTrustIntegrityKey, DurableDeviceRegistry, DurableDeviceTrustError,
-};
-use crate::device_trust::{
-    admin_command_bytes, canonical_device_request_bytes, enrollment_proof_bytes,
-    owner_consent_bytes, AuthenticatedDeviceRequest, DeviceCommandAction, DeviceRequestClaims,
-    SignedDeviceAdminCommand, SignedDeviceRequest, SignedOwnerConsentCommand,
-    MAX_DEVICE_REQUEST_BODY_BYTES,
-};
+use crate::device_trust::durable::{DurableDeviceRegistry, DurableDeviceTrustError};
+use crate::device_trust::{AuthenticatedDeviceRequest, SignedDeviceRequest, MAX_DEVICE_REQUEST_BODY_BYTES};
 use crate::operator_http_contract::{resolve_route, HttpMethod, OperatorHttpRoute};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -263,6 +256,12 @@ pub fn map_device_trust_error(error: DurableDeviceTrustError) -> DeviceTelemetry
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::device_trust::durable::DeviceTrustIntegrityKey;
+    use crate::device_trust::{
+        admin_command_bytes, canonical_device_request_bytes, enrollment_proof_bytes,
+        owner_consent_bytes, DeviceCommandAction, DeviceRequestClaims, SignedDeviceAdminCommand,
+        SignedOwnerConsentCommand,
+    };
 
     fn body(observed_at: u64) -> Vec<u8> {
         format!(
