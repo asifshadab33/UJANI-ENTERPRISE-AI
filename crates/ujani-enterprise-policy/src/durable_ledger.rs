@@ -2733,8 +2733,7 @@ mod tests {
 
         let ledger = DurableLedger::open_with_key_provider(&path, provider.clone()).unwrap();
         let bytes = fs::read(&path).unwrap();
-        let envelope_key_id =
-            encrypted_snapshot_key_id(ENCRYPTED_LEDGER_HEADER, &bytes).unwrap();
+        let envelope_key_id = encrypted_snapshot_key_id(ENCRYPTED_LEDGER_HEADER, &bytes).unwrap();
         let plaintext = open_snapshot(
             provider.as_ref(),
             purpose,
