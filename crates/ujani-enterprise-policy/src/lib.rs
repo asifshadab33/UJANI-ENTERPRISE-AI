@@ -26,6 +26,8 @@ pub use resource_capacity::{
 };
 /// Authenticated, bounded service-boundary intake for privacy-minimised device telemetry.
 pub mod device_telemetry_ingest;
+/// Authenticated, bounded, privacy-minimised model/runtime inventory intake.
+pub mod model_inventory_ingest;
 pub mod device_trust;
 pub mod energy;
 pub mod fleet_capacity;
