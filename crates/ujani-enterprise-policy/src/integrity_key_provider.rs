@@ -1,8 +1,8 @@
 //! Protected integrity-key provider boundary for durable Enterprise state.
 //!
-//! This module defines operations over non-exportable MAC keys. It deliberately
-//! does not provide a production key store: hosts must supply an OS-protected
-//! provider or an organisation-managed KMS/HSM adapter.
+//! This module defines operations over non-exportable integrity and encryption keys.
+//! It deliberately does not provide a production key store: hosts must supply an
+//! OS-protected provider or an organisation-managed KMS/HSM adapter.
 
 use std::fmt;
 
@@ -33,6 +33,8 @@ pub enum IntegrityKeyProviderError {
     UnknownKey,
     ActiveKeyCannotBeRetired,
     VerificationFailed,
+    EncryptionUnavailable,
+    EncryptionFailed,
     Unavailable,
     LockPoisoned,
 }
@@ -45,6 +47,8 @@ impl fmt::Display for IntegrityKeyProviderError {
             Self::UnknownKey => "integrity key is unavailable",
             Self::ActiveKeyCannotBeRetired => "active integrity key cannot be retired",
             Self::VerificationFailed => "integrity authentication failed",
+            Self::EncryptionUnavailable => "authenticated encryption is not supported by this key provider",
+            Self::EncryptionFailed => "authenticated encryption or decryption failed",
             Self::Unavailable => "integrity key provider is unavailable",
             Self::LockPoisoned => "integrity key provider state is unavailable",
         };
@@ -62,6 +66,13 @@ impl std::error::Error for IntegrityKeyProviderError {}
 /// - sign only with the currently active key for the requested purpose;
 /// - verify with the named active or retained previous key, using a
 ///   constant-time MAC verification operation;
+/// - encrypt snapshots with vetted authenticated encryption (AEAD), never a
+///   home-grown production cipher; bind format, purpose, key ID and caller AAD;
+/// - decrypt only with the named active or retained previous encryption key;
+/// - generate a unique nonce for every encryption under a key and fail closed
+///   on nonce-generation, provider or authentication errors;
+/// - keep integrity and encryption key material cryptographically separated,
+///   even when they share a logical key ID;
 /// - keep key identifiers immutable and never reuse a retired identifier;
 /// - enforce bounded provider I/O and fail closed on timeout or outage;
 /// - isolate purposes so a key for one store cannot authenticate another.
@@ -102,12 +113,105 @@ pub trait IntegrityKeyProvider: Send + Sync {
         tag: &[u8; 32],
     ) -> Result<(), IntegrityKeyProviderError>;
 
+    /// Encrypt a snapshot using the active protected key. Implementations must
+    /// use a vetted AEAD construction and return an opaque nonce+ciphertext+tag
+    /// envelope; raw key material must never leave the provider.
+    ///
+    /// The supplied AAD binds the snapshot format and key purpose. Implementations
+    /// must additionally bind the selected key ID internally. The default keeps
+    /// older adapters fail-closed until they implement authenticated encryption.
+    fn seal_active(
+        &self,
+        _purpose: IntegrityKeyPurpose,
+        _aad: &[u8],
+        _plaintext: &[u8],
+    ) -> Result<(String, Vec<u8>), IntegrityKeyProviderError> {
+        Err(IntegrityKeyProviderError::EncryptionUnavailable)
+    }
+
+    /// Decrypt and authenticate an opaque envelope using the named active or
+    /// retained key. Implementations must authenticate AAD and key ID before
+    /// returning plaintext, and must not return unauthenticated partial data.
+    fn open_sealed(
+        &self,
+        _purpose: IntegrityKeyPurpose,
+        _key_id: &str,
+        _aad: &[u8],
+        _sealed: &[u8],
+    ) -> Result<Vec<u8>, IntegrityKeyProviderError> {
+        Err(IntegrityKeyProviderError::EncryptionUnavailable)
+    }
+
     /// Retire a non-active key after all snapshots and retained backups are migrated.
     fn retire_key(
         &self,
         purpose: IntegrityKeyPurpose,
         key_id: &str,
     ) -> Result<(), IntegrityKeyProviderError>;
+}
+
+/// Wrap authenticated ciphertext in a versioned, binary-safe snapshot envelope.
+/// The provider binds the selected key ID internally; this wrapper binds the
+/// version header and purpose through AEAD associated data.
+pub fn seal_snapshot(
+    provider: &dyn IntegrityKeyProvider,
+    purpose: IntegrityKeyPurpose,
+    header: &str,
+    caller_aad: &[u8],
+    plaintext: &[u8],
+) -> Result<Vec<u8>, IntegrityKeyProviderError> {
+    if header.is_empty() || header.len() > 128 || header.bytes().any(|byte| byte == b'\n' || byte == b'\r') {
+        return Err(IntegrityKeyProviderError::InvalidKeyId);
+    }
+    let mut aad = Vec::with_capacity(header.len() + caller_aad.len() + 32);
+    aad.extend_from_slice(header.as_bytes());
+    aad.push(0);
+    aad.extend_from_slice(purpose.as_str().as_bytes());
+    aad.push(0);
+    aad.extend_from_slice(caller_aad);
+    let (key_id, sealed) = provider.seal_active(purpose, &aad, plaintext)?;
+    if !valid_integrity_key_id(&key_id) || sealed.is_empty() {
+        return Err(IntegrityKeyProviderError::EncryptionFailed);
+    }
+    let mut output = Vec::with_capacity(header.len() + key_id.len() + sealed.len() + 2);
+    output.extend_from_slice(header.as_bytes());
+    output.push(b'\n');
+    output.extend_from_slice(key_id.as_bytes());
+    output.push(b'\n');
+    output.extend_from_slice(&sealed);
+    Ok(output)
+}
+
+/// Open a versioned encrypted snapshot. Plaintext legacy snapshots are not
+/// accepted through this provider-backed path; migration must be explicit.
+pub fn open_snapshot(
+    provider: &dyn IntegrityKeyProvider,
+    purpose: IntegrityKeyPurpose,
+    expected_header: &str,
+    caller_aad: &[u8],
+    bytes: &[u8],
+) -> Result<Vec<u8>, IntegrityKeyProviderError> {
+    let header_end = bytes.iter().position(|byte| *byte == b'\n')
+        .ok_or(IntegrityKeyProviderError::EncryptionFailed)?;
+    if &bytes[..header_end] != expected_header.as_bytes() {
+        return Err(IntegrityKeyProviderError::EncryptionFailed);
+    }
+    let remainder = &bytes[header_end + 1..];
+    let key_end = remainder.iter().position(|byte| *byte == b'\n')
+        .ok_or(IntegrityKeyProviderError::EncryptionFailed)?;
+    let key_id = std::str::from_utf8(&remainder[..key_end])
+        .map_err(|_| IntegrityKeyProviderError::InvalidKeyId)?;
+    if !valid_integrity_key_id(key_id) || key_end + 1 >= remainder.len() {
+        return Err(IntegrityKeyProviderError::EncryptionFailed);
+    }
+    let sealed = &remainder[key_end + 1..];
+    let mut aad = Vec::with_capacity(expected_header.len() + caller_aad.len() + 32);
+    aad.extend_from_slice(expected_header.as_bytes());
+    aad.push(0);
+    aad.extend_from_slice(purpose.as_str().as_bytes());
+    aad.push(0);
+    aad.extend_from_slice(caller_aad);
+    provider.open_sealed(purpose, key_id, &aad, sealed)
 }
 
 /// Validate the bounded, non-secret identifier stored alongside a snapshot MAC.
@@ -138,6 +242,7 @@ mod tests {
         keys: HashMap<(IntegrityKeyPurpose, String), [u8; 32]>,
         active: HashMap<IntegrityKeyPurpose, String>,
         retired: std::collections::HashSet<(IntegrityKeyPurpose, String)>,
+        nonce_counter: u64,
     }
 
     impl Drop for TestState {
@@ -248,6 +353,72 @@ mod tests {
             result
         }
 
+        fn seal_active(
+            &self,
+            purpose: IntegrityKeyPurpose,
+            aad: &[u8],
+            plaintext: &[u8],
+        ) -> Result<(String, Vec<u8>), IntegrityKeyProviderError> {
+            let (key_id, mut key, counter) = {
+                let mut state = self.0.lock().map_err(|_| IntegrityKeyProviderError::LockPoisoned)?;
+                let key_id = state.active.get(&purpose).cloned()
+                    .ok_or(IntegrityKeyProviderError::UnknownKey)?;
+                let key = state.keys.get(&(purpose, key_id.clone())).copied()
+                    .ok_or(IntegrityKeyProviderError::UnknownKey)?;
+                state.nonce_counter = state.nonce_counter.checked_add(1)
+                    .ok_or(IntegrityKeyProviderError::EncryptionFailed)?;
+                (key_id, key, state.nonce_counter)
+            };
+            // Test-only reversible transform to exercise provider plumbing. It is
+            // not a cryptographic construction and must never ship outside cfg(test).
+            let nonce_hash = Sha256::digest(format!("test-only:{counter}:{}:{key_id}", purpose.as_str()).as_bytes());
+            let nonce: [u8; 16] = nonce_hash[..16].try_into()
+                .map_err(|_| IntegrityKeyProviderError::EncryptionFailed)?;
+            let mut encryption_key = test_encryption_key(&key, purpose);
+            let encrypted = test_stream_xor(&encryption_key, &nonce, plaintext);
+            let tag = test_sealed_tag(&encryption_key, purpose, &key_id, aad, &nonce, &encrypted);
+            let mut sealed = Vec::with_capacity(16 + encrypted.len() + 32);
+            sealed.extend_from_slice(&nonce);
+            sealed.extend_from_slice(&encrypted);
+            sealed.extend_from_slice(&tag);
+            key.zeroize();
+            encryption_key.zeroize();
+            Ok((key_id, sealed))
+        }
+
+        fn open_sealed(
+            &self,
+            purpose: IntegrityKeyPurpose,
+            key_id: &str,
+            aad: &[u8],
+            sealed: &[u8],
+        ) -> Result<Vec<u8>, IntegrityKeyProviderError> {
+            if sealed.len() < 48 {
+                return Err(IntegrityKeyProviderError::EncryptionFailed);
+            }
+            let mut key = {
+                let state = self.0.lock().map_err(|_| IntegrityKeyProviderError::LockPoisoned)?;
+                state.keys.get(&(purpose, key_id.to_string())).copied()
+                    .ok_or(IntegrityKeyProviderError::UnknownKey)?
+            };
+            let nonce: [u8; 16] = sealed[..16].try_into()
+                .map_err(|_| IntegrityKeyProviderError::EncryptionFailed)?;
+            let ciphertext = &sealed[16..sealed.len() - 32];
+            let tag: [u8; 32] = sealed[sealed.len() - 32..].try_into()
+                .map_err(|_| IntegrityKeyProviderError::EncryptionFailed)?;
+            let mut encryption_key = test_encryption_key(&key, purpose);
+            let expected = test_sealed_tag(&encryption_key, purpose, key_id, aad, &nonce, ciphertext);
+            if expected != tag {
+                key.zeroize();
+                encryption_key.zeroize();
+                return Err(IntegrityKeyProviderError::VerificationFailed);
+            }
+            let plaintext = test_stream_xor(&encryption_key, &nonce, ciphertext);
+            key.zeroize();
+            encryption_key.zeroize();
+            Ok(plaintext)
+        }
+
         fn retire_key(
             &self,
             purpose: IntegrityKeyPurpose,
@@ -291,6 +462,48 @@ mod tests {
         mac.finalize().into_bytes().into()
     }
 
+    fn test_encryption_key(key: &[u8; 32], purpose: IntegrityKeyPurpose) -> [u8; 32] {
+        let mut digest = Sha256::new();
+        digest.update(b"UJANI-TEST-ENCRYPTION-SUBKEY-V1\0");
+        digest.update(purpose.as_str().as_bytes());
+        digest.update(key);
+        digest.finalize().into()
+    }
+
+    fn test_stream_xor(key: &[u8; 32], nonce: &[u8; 16], input: &[u8]) -> Vec<u8> {
+        let mut output = Vec::with_capacity(input.len());
+        for (index, chunk) in input.chunks(32).enumerate() {
+            let mut digest = Sha256::new();
+            digest.update(b"UJANI-TEST-STREAM-V1\0");
+            digest.update(key);
+            digest.update(nonce);
+            digest.update((index as u64).to_be_bytes());
+            let stream = digest.finalize();
+            output.extend(chunk.iter().zip(stream.iter()).map(|(left, right)| *left ^ *right));
+        }
+        output
+    }
+
+    fn test_sealed_tag(
+        key: &[u8; 32],
+        purpose: IntegrityKeyPurpose,
+        key_id: &str,
+        aad: &[u8],
+        nonce: &[u8; 16],
+        ciphertext: &[u8],
+    ) -> [u8; 32] {
+        let mut mac = Hmac::<Sha256>::new_from_slice(key).expect("32-byte test encryption key");
+        mac.update(b"UJANI-TEST-SEALED-SNAPSHOT-V1\0");
+        mac.update(purpose.as_str().as_bytes());
+        mac.update(&(key_id.len() as u32).to_be_bytes());
+        mac.update(key_id.as_bytes());
+        mac.update(&(aad.len() as u64).to_be_bytes());
+        mac.update(aad);
+        mac.update(nonce);
+        mac.update(ciphertext);
+        mac.finalize().into_bytes().into()
+    }
+
     fn verify_test_mac(
         key: &[u8; 32],
         purpose: IntegrityKeyPurpose,
@@ -308,6 +521,28 @@ mod tests {
         mac.update(payload);
         mac.verify_slice(tag)
             .map_err(|_| IntegrityKeyProviderError::VerificationFailed)
+    }
+
+    #[test]
+    fn sealed_snapshots_round_trip_and_authenticate_context_and_payload() {
+        let provider = TestIntegrityKeyProvider::default();
+        let purpose = IntegrityKeyPurpose::ReservationLedger;
+        provider.provision_key(purpose, "ledger-v1").unwrap();
+        provider.activate_key(purpose, "ledger-v1").unwrap();
+        let original = b"synthetic reservation snapshot";
+        let sealed = seal_snapshot(
+            &provider, purpose, "UJANI-TEST-ENCRYPTED-V1", b"test-context", original,
+        ).unwrap();
+        assert!(!sealed.windows(original.len()).any(|window| window == original));
+        assert_eq!(
+            open_snapshot(&provider, purpose, "UJANI-TEST-ENCRYPTED-V1", b"test-context", &sealed).unwrap(),
+            original
+        );
+        assert!(open_snapshot(&provider, purpose, "UJANI-OTHER-HEADER-V1", b"test-context", &sealed).is_err());
+        assert!(open_snapshot(&provider, purpose, "UJANI-TEST-ENCRYPTED-V1", b"other-context", &sealed).is_err());
+        let mut tampered = sealed.clone();
+        *tampered.last_mut().unwrap() ^= 1;
+        assert!(open_snapshot(&provider, purpose, "UJANI-TEST-ENCRYPTED-V1", b"test-context", &tampered).is_err());
     }
 
     #[test]
