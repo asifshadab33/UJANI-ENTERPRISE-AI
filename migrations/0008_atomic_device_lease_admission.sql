@@ -266,6 +266,10 @@ ALTER TABLE ujani_control.device_telemetry_samples
  ADD COLUMN IF NOT EXISTS reservation_revision bigint
  CHECK (reservation_revision IS NULL OR reservation_revision >= 0);
 
+-- Bound both reservation-revision history lookups to an indexed per-device range.
+CREATE INDEX IF NOT EXISTS device_telemetry_samples_reservation_revision_idx
+ ON ujani_control.device_telemetry_samples (tenant_id, device_id, reservation_revision);
+
 -- A telemetry sample must carry the reservation revision observed by the
 -- authenticated device agent when the measurement was taken. Do not stamp the
 -- server's current revision at receipt time: a lease may have been admitted
