@@ -393,7 +393,7 @@ def main() -> None:
         if required not in lease_audit_view_sql:
             raise SystemExit("lease audit evidence migration is missing invariant: " + required)
     if "SECURITY DEFINER" in lease_audit_view_sql:
-        raise SystemExit("lease audit evidence view must preserve caller RLS")
+        raise SystemExit("lease audit evidence function must preserve caller RLS")
     atomic_telemetry_lease_test = ATOMIC_TELEMETRY_LEASE_TEST_PATH.read_text(encoding="utf-8")
     for required in (
         "atomic telemetry-plus-lease admission was rejected",
