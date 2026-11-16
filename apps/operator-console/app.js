@@ -3,6 +3,8 @@ const byId = (id) => document.getElementById(id);
 const connection = byId("connection");
 const notice = byId("notice");
 const refreshButton = byId("refresh");
+const demoButton = byId("demo");
+const demoBanner = byId("demo-banner");
 
 function setConnection(label, state) {
   connection.textContent = label;
@@ -52,6 +54,96 @@ function renderDevices(records) {
     body.append(row);
   }
 }
+function renderDemoModelInventory() {
+  const body = byId("model-inventory");
+  body.replaceChildren();
+  const rows = [
+    [
+      "DEMO · Office workstation",
+      "Qwen3 0.6B",
+      "not pinned",
+      "Qwen3",
+      "Ollama",
+      "available (demo)",
+      "chat · classification",
+      "CPU · 8 threads · 16 GiB RAM",
+      "Advisory: 4 GiB RAM",
+      "Synthetic / unverified"
+    ],
+    [
+      "DEMO · GPU workstation",
+      "Qwen3 4B",
+      "not pinned",
+      "Qwen3",
+      "Ollama",
+      "available (demo)",
+      "chat · reasoning",
+      "GPU observation · 32 GiB RAM",
+      "Advisory: 12 GiB RAM",
+      "Synthetic / unverified"
+    ]
+  ];
+  for (const values of rows) {
+    const row = document.createElement("tr");
+    for (const value of values) row.append(textCell(value));
+    body.append(row);
+  }
+  byId("model-count").textContent = rows.length + " synthetic rows";
+}
+
+function showDemoData() {
+  const now = Date.now();
+  const devices = [
+    {
+      device_id: "demo-ws-01",
+      display_name: "DEMO · Office workstation",
+      platform: "Windows",
+      trust_state: "enrolled",
+      availability: "schedulable",
+      remaining_cpu_millis: 4200,
+      remaining_memory_mb: 12288,
+      last_seen_unix_ms: now - 45_000
+    },
+    {
+      device_id: "demo-ws-02",
+      display_name: "DEMO · GPU workstation",
+      platform: "Linux",
+      trust_state: "enrolled",
+      availability: "paused",
+      remaining_cpu_millis: 6100,
+      remaining_memory_mb: 24576,
+      last_seen_unix_ms: now - 90_000
+    },
+    {
+      device_id: "demo-srv-01",
+      display_name: "DEMO · Internal server",
+      platform: "Linux",
+      trust_state: "enrolled",
+      availability: "ineligible",
+      remaining_cpu_millis: 9000,
+      remaining_memory_mb: 32768,
+      last_seen_unix_ms: now - 30_000
+    }
+  ];
+  byId("registered").textContent = "3";
+  byId("trusted").textContent = "3";
+  byId("online").textContent = "3";
+  byId("schedulable").textContent = "1";
+  renderDevices(devices);
+  byId("device-count").textContent = devices.length + " synthetic records";
+  renderDemoModelInventory();
+  renderList("workloads", [
+    { title: "DEMO · Internal document summary", state: "queued", class: "internal", reason: "Waiting for a suitable approved worker" }
+  ], "No demo workloads.", ["state", "class", "reason"]);
+  renderList("approvals", [
+    { title: "DEMO · Qwen3 4B candidate review", state: "pending", requester: "Demo operator", scope: "Catalogue review only", expires_at: "Not a real approval" }
+  ], "No demo approvals.", ["requester", "scope", "expires_at"]);
+  byId("updated").textContent = "DEMO SNAPSHOT · " + new Date(now).toLocaleString();
+  notice.hidden = true;
+  demoBanner.hidden = false;
+  setConnection("DEMO DATA · not live", "unknown");
+}
+
 function renderList(id, records, emptyText, detailKeys) {
   const root = byId(id); root.replaceChildren();
   if (!records.length) { root.textContent = emptyText; root.classList.add("empty"); return; }
@@ -464,6 +556,7 @@ function renderOverview(data) {
   setConnection("Connected · live snapshot", "online");
 }
 function clearOverview() {
+  demoBanner.hidden = true;
   for (const id of ["registered", "trusted", "online", "schedulable"]) {
     byId(id).textContent = "—";
   }
@@ -484,7 +577,9 @@ function clearOverview() {
 
 async function refreshOverview() {
   refreshButton.disabled = true;
+  demoButton.disabled = true;
   clearOverview();
+  notice.hidden = false;
   setConnection("Connecting…", "unknown");
   const controller = new AbortController();
   const requestTimeout = window.setTimeout(() => controller.abort(), 10_000);
@@ -515,8 +610,10 @@ async function refreshOverview() {
   } finally {
     window.clearTimeout(requestTimeout);
     refreshButton.disabled = false;
+    demoButton.disabled = false;
   }
 }
+demoButton.addEventListener("click", showDemoData);
 refreshButton.addEventListener("click", refreshOverview);
 setConnection("Control plane not connected", "unknown");
 loadModelCatalogue();
