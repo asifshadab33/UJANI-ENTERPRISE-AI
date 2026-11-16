@@ -32,8 +32,8 @@
   },
   "runtimes": [
     {
-      "runtime_id": "future-runtime.local",
-      "provider": "example.runtime",
+      "runtime_id": "ollama.local",
+      "provider": "Ollama",
       "version": "1.2.3",
       "availability": "available",
       "network_scope": "loopback_only",
@@ -47,7 +47,7 @@
   "models": [
     {
       "model_ref": "example/model:1.0",
-      "runtime_id": "future-runtime.local",
+      "runtime_id": "ollama.local",
       "display_name": "Example Local Model",
       "family": "example",
       "version": "1.0",
