@@ -20,6 +20,7 @@ TELEMETRY_V2_CONCURRENCY_PATH = ROOT / "scripts" / "test_monotonic_device_teleme
 ATOMIC_TELEMETRY_LEASE_SQL_PATH = ROOT / "migrations" / "0010_atomic_telemetry_lease_admission.sql"
 ATOMIC_TELEMETRY_LEASE_TEST_PATH = ROOT / "scripts" / "test_atomic_telemetry_lease_admission.sql"
 LEASE_APPROVAL_SQL_PATH = ROOT / "migrations" / "0011_persist_lease_approval_reference.sql"
+LEASE_AUDIT_VIEW_SQL_PATH = ROOT / "migrations" / "0012_lease_audit_evidence_view.sql"
 TENANT_TEST_SQL_PATH = ROOT / "scripts" / "test_customer_hosted_migration.sql"
 
 
@@ -378,10 +379,28 @@ def main() -> None:
             raise SystemExit("lease approval-reference migration is missing invariant: " + required)
     if "SECURITY DEFINER" in lease_approval_sql:
         raise SystemExit("lease approval-reference update must preserve caller RLS and privileges")
+    lease_audit_view_sql = LEASE_AUDIT_VIEW_SQL_PATH.read_text(encoding="utf-8")
+    for required in (
+        "ADD COLUMN IF NOT EXISTS request_digest bytea",
+        "p_request_id, p_operation_digest",
+        "CREATE OR REPLACE VIEW ujani_control.device_lease_audit_evidence",
+        "security_invoker = true",
+        "ae.event_digest AS audit_event_digest",
+        "l.request_digest",
+        "l.approval_id",
+        "REVOKE ALL ON ujani_control.device_lease_audit_evidence FROM PUBLIC",
+    ):
+        if required not in lease_audit_view_sql:
+            raise SystemExit("lease audit evidence migration is missing invariant: " + required)
+    if "SECURITY DEFINER" in lease_audit_view_sql:
+        raise SystemExit("lease audit evidence view must preserve caller RLS")
     atomic_telemetry_lease_test = ATOMIC_TELEMETRY_LEASE_TEST_PATH.read_text(encoding="utf-8")
     for required in (
         "atomic telemetry-plus-lease admission was rejected",
         "approval_ref IS DISTINCT FROM 'admission-approval'",
+        "stored_request_digest IS DISTINCT FROM decode(repeat('d4',32),'hex')",
+        "GRANT SELECT ON ujani_control.audit_events,ujani_control.leases,ujani_control.approvals,",
+        "audit evidence view leaked a lease across tenant context",
         "interactive telemetry must deny lease admission",
         "expected denial left partial telemetry or lease state",
         "duplicate audit event did not abort atomic admission",
@@ -406,9 +425,10 @@ def main() -> None:
         ci_workflow.index("migrations/0009_task_contract_replay_functions.sql")
         < ci_workflow.index("migrations/0010_atomic_telemetry_lease_admission.sql")
         < ci_workflow.index("migrations/0011_persist_lease_approval_reference.sql")
+        < ci_workflow.index("migrations/0012_lease_audit_evidence_view.sql")
         < ci_workflow.index("scripts/test_atomic_telemetry_lease_admission.sql")
     ):
-        raise SystemExit("atomic telemetry-plus-lease test must run after migrations 0009, 0010 and 0011")
+        raise SystemExit("atomic telemetry-plus-lease test must run after migrations 0009-0012")
 
     print("Customer-hosted, task-contract, Self-Evolution approval replay, v1/v2 monotonic telemetry, atomic device admission and atomic telemetry-plus-lease checks passed.")
 
