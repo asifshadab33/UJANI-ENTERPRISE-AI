@@ -127,6 +127,33 @@
           }
         }
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "collection_context": {
+            "properties": {
+              "scope": {
+                "const": "organisation_enrolled"
+              }
+            }
+          }
+        },
+        "required": [
+          "collection_context"
+        ]
+      },
+      "then": {
+        "required": [
+          "device_ref"
+        ],
+        "properties": {
+          "device_ref": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
     }
   ],
   "$defs": {
