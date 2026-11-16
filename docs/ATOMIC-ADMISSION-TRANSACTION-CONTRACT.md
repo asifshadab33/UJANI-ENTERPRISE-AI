@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-This document defines the next production service boundary. It is an implementation contract, not evidence that a PostgreSQL service or distributed worker dispatch exists. The current Rust policy crate contains authenticated device telemetry admission and durable reservation primitives, but device-request replay state and reservation/lease state are separate stores. A request nonce may therefore be consumed even when later admission fails. Keep worker dispatch disabled.
+This document defines the production service boundary. It is an implementation contract, not evidence that a PostgreSQL service or distributed worker dispatch exists. The Rust policy crate contains authenticated device telemetry admission and durable reservation primitives. Migration 0010 now provides a single PostgreSQL statement transaction for the telemetry-ingest-plus-lease path; the separate DurableDeviceRegistry replay state and DurableLedger scheduling-evidence path are still not one cross-store transaction. Keep worker dispatch disabled.
 
 The target is a tenant-scoped PostgreSQL transaction for admission state. It must not attempt to make a filesystem registry, a remote KMS, an external monotonic anchor and PostgreSQL one distributed transaction. Those external dependencies are authenticated before the SQL transaction and must have explicit fail-closed and reconciliation semantics.
 
@@ -34,6 +34,13 @@ One database transaction must own and commit all mutable admission facts:
 
 A denial may be recorded in a separate bounded audit transaction, but it must never create or partially retain a reservation. If a transaction aborts, nonce consumption, telemetry watermarks, capacity accounting, lease creation and success receipt must all roll back together.
 
+## Implemented SQL composition boundary (migration 0010)
+
+`ujani_control.admit_device_lease_with_telemetry` composes the existing `accept_device_telemetry_v2` and `admit_device_lease` functions in one PostgreSQL statement transaction. Before accepting telemetry it locks the tenant-scoped device row and compares the device-key generation and owner-consent generation covered by the signed request with the current database values. Key rotation, revocation and consent updates that use the same device-row lock therefore linearize before or after this admission.
+
+The function requires two distinct request IDs: one for the telemetry request and one for the lease-admission operation. On success, telemetry replay/sample/watermarks, lease replay/reservation/revision and the append-only audit event commit together. If telemetry is accepted but lease policy denies admission, a nested PostgreSQL subtransaction rolls back the telemetry write and replay claim and returns `false`. Unexpected database or audit errors propagate and abort the statement. The function is `SECURITY INVOKER`, preserves tenant RLS and does not verify cryptographic signatures itself.
+
+The CI SQL regression covers successful admission, interactive-use denial with no partial telemetry, a late duplicate-audit failure with full rollback, and a stale device-key generation. This is a database composition primitive, not a live HTTP listener. The trusted adapter must verify the exact signed device body and administrator approval, derive tenant identity from authenticated context, call this function, and return success only after commit. The separate DurableDeviceRegistry/DurableLedger scheduling-evidence path and external monotonic-anchor/KMS operations still require explicit reconciliation; no remote job dispatch or execution is enabled.
 ## Concurrency and capacity invariants
 
 - Serialize admission for a device using a row lock or an equivalent serializable transaction strategy.
