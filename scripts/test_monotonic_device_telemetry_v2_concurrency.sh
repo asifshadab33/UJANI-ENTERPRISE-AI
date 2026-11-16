@@ -86,7 +86,7 @@ BEGIN;
 SET LOCAL ujani.tenant_id = 'telemetry-v2-concurrency-test';
 SELECT ujani_control.accept_device_telemetry_v2(
  'telemetry-v2-concurrency-test','worker-v2-1',1,2,0,decode(repeat('c2',16),'hex'),
- clock_timestamp(),decode(repeat('b2',32),'hex'),1800,3584,'cool','ac','idle');
+ clock_timestamp() - interval '4 minutes 59 seconds',decode(repeat('b2',32),'hex'),1800,3584,'cool','ac','idle');
 COMMIT;
 RESET ROLE;
 SQL
@@ -105,6 +105,9 @@ if [[ "$second_waiting" != "1" ]]; then
   exit 1
 fi
 
+# Let the observation cross the five-minute age boundary while the second
+# transaction is blocked on the device row. It must be rejected after the lock.
+sleep 2
 # Release only after PostgreSQL reports the second connection waiting on a lock.
 release_controller
 
@@ -125,16 +128,15 @@ if ! grep -qx 't' "$first_out"; then
   cat "$first_out" >&2
   exit 1
 fi
-if ! grep -qx 't' "$second_out"; then
-  echo "second concurrent telemetry transaction was not accepted after row-lock serialization" >&2
+if ! grep -qx 'f' "$second_out"; then
+  echo "second telemetry transaction should be rejected after its observation aged while waiting for the device lock" >&2
   cat "$second_out" >&2
   exit 1
 fi
 
-final_state="$("${PSQL[@]}" -c "SELECT telemetry_generation || ':' || telemetry_sequence || ':' || (SELECT count(*) FROM ujani_control.device_telemetry_samples WHERE tenant_id='telemetry-v2-concurrency-test' AND device_id='worker-v2-1') FROM ujani_control.devices WHERE tenant_id='telemetry-v2-concurrency-test' AND device_id='worker-v2-1'")"
-if [[ "$final_state" != "1:2:2" ]]; then
-  echo "unexpected serialized telemetry checkpoint/sample count: $final_state" >&2
+final_state="$("${PSQL[@]}" -c "SELECT telemetry_generation || ':' || telemetry_sequence || ':' || (SELECT count(*) FROM ujani_control.device_telemetry_samples WHERE tenant_id='telemetry-v2-concurrency-test' AND device_id='worker-v2-1') || ':' || (SELECT count(*) FROM ujani_control.request_replays WHERE tenant_id='telemetry-v2-concurrency-test' AND device_id='worker-v2-1' AND request_id=decode(repeat('c2',16),'hex')) FROM ujani_control.devices WHERE tenant_id='telemetry-v2-concurrency-test' AND device_id='worker-v2-1'")"
+if [[ "$final_state" != "1:1:1:0" ]]; then
+  echo "stale lock-wait telemetry changed the checkpoint, sample or replay ledger: $final_state" >&2
   exit 1
 fi
-
 echo "Concurrent telemetry row-lock serialization passed."
