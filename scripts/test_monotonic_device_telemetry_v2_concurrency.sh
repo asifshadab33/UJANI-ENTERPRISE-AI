@@ -57,7 +57,7 @@ BEGIN;
 SET LOCAL ujani.tenant_id = 'telemetry-v2-concurrency-test';
 SELECT ujani_control.accept_device_telemetry_v2(
  'telemetry-v2-concurrency-test','worker-v2-1',1,1,0,decode(repeat('c1',16),'hex'),
- clock_timestamp(),decode(repeat('b1',32),'hex'),2000,4096,'cool','ac','idle');
+ clock_timestamp() - interval '4 minutes 59 seconds',decode(repeat('b1',32),'hex'),2000,4096,'cool','ac','idle');
 -- Hold the transaction and device-row lock until the controller has observed
 -- the second connection blocked on that same row.
 \! for i in $(seq 1 300); do [ -f "$UJANI_TELEMETRY_RELEASE_FILE" ] && exit 0; sleep 0.05; done; exit 1
@@ -86,7 +86,7 @@ BEGIN;
 SET LOCAL ujani.tenant_id = 'telemetry-v2-concurrency-test';
 SELECT ujani_control.accept_device_telemetry_v2(
  'telemetry-v2-concurrency-test','worker-v2-1',1,2,0,decode(repeat('c2',16),'hex'),
- clock_timestamp() - interval '4 minutes 59 seconds',decode(repeat('b2',32),'hex'),1800,3584,'cool','ac','idle');
+ clock_timestamp() - interval '4 minutes 58 seconds',decode(repeat('b2',32),'hex'),1800,3584,'cool','ac','idle');
 COMMIT;
 RESET ROLE;
 SQL
