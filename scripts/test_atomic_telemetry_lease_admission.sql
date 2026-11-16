@@ -103,7 +103,7 @@ BEGIN
 END;
 $block$;
 
--- The operator evidence view must expose the durable request digest and
+-- The operator evidence function must expose the durable request digest and
 -- approval reference while still evaluating tenant RLS as the caller.
 GRANT USAGE ON SCHEMA ujani_control TO ujani_runtime;
 GRANT SELECT ON ujani_control.audit_events,ujani_control.leases,ujani_control.approvals TO ujani_runtime;
@@ -125,7 +125,7 @@ BEGIN
    AND approval_id='admission-approval'
    AND request_digest=decode(repeat('d4',32),'hex');
  IF evidence_count <> 1 THEN
-  RAISE EXCEPTION 'tenant-scoped audit evidence view omitted the admitted lease';
+  RAISE EXCEPTION 'tenant-scoped audit evidence function omitted the admitted lease';
  END IF;
 END;
 $block$;
