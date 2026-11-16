@@ -573,4 +573,109 @@ mod tests {
             ))
         ));
     }
+
+    #[test]
+    fn telemetry_freshness_age_boundary_is_inclusive_for_every_resource_kind() {
+        let mut value = snapshot();
+        let mut ask = request();
+
+        value.gpu = Some(ResourceMeasurement {
+            sampled_at_unix_ms: NOW - 5_000,
+            ..measured(AcceleratorHeadroom {
+                available_memory_mb: 1,
+                available_compute_units: 1,
+            })
+        });
+        ask.gpu_memory_mb = 1;
+        ask.gpu_compute_units = 1;
+        assert!(evaluate_extended_resource_placement(&value, ask, NOW, 5_000).is_ok());
+        value.gpu = Some(ResourceMeasurement {
+            sampled_at_unix_ms: NOW - 5_001,
+            ..measured(AcceleratorHeadroom {
+                available_memory_mb: 1,
+                available_compute_units: 1,
+            })
+        });
+        assert_eq!(
+            evaluate_extended_resource_placement(&value, ask, NOW, 5_000),
+            Err(ExtendedResourceRejection::StaleMeasurement(
+                ResourceKind::Gpu
+            ))
+        );
+
+        value = snapshot();
+        ask = request();
+        value.npu = Some(ResourceMeasurement {
+            sampled_at_unix_ms: NOW - 5_000,
+            ..measured(AcceleratorHeadroom {
+                available_memory_mb: 1,
+                available_compute_units: 1,
+            })
+        });
+        ask.npu_memory_mb = 1;
+        ask.npu_compute_units = 1;
+        assert!(evaluate_extended_resource_placement(&value, ask, NOW, 5_000).is_ok());
+        value.npu = Some(ResourceMeasurement {
+            sampled_at_unix_ms: NOW - 5_001,
+            ..measured(AcceleratorHeadroom {
+                available_memory_mb: 1,
+                available_compute_units: 1,
+            })
+        });
+        assert_eq!(
+            evaluate_extended_resource_placement(&value, ask, NOW, 5_000),
+            Err(ExtendedResourceRejection::StaleMeasurement(
+                ResourceKind::Npu
+            ))
+        );
+
+        value = snapshot();
+        ask = request();
+        value.storage = Some(ResourceMeasurement {
+            sampled_at_unix_ms: NOW - 5_000,
+            ..measured(StorageHeadroom {
+                available_scratch_bytes: 1,
+            })
+        });
+        ask.scratch_storage_bytes = 1;
+        assert!(evaluate_extended_resource_placement(&value, ask, NOW, 5_000).is_ok());
+        value.storage = Some(ResourceMeasurement {
+            sampled_at_unix_ms: NOW - 5_001,
+            ..measured(StorageHeadroom {
+                available_scratch_bytes: 1,
+            })
+        });
+        assert_eq!(
+            evaluate_extended_resource_placement(&value, ask, NOW, 5_000),
+            Err(ExtendedResourceRejection::StaleMeasurement(
+                ResourceKind::Storage
+            ))
+        );
+
+        value = snapshot();
+        ask = request();
+        value.network = Some(ResourceMeasurement {
+            sampled_at_unix_ms: NOW - 5_000,
+            ..measured(NetworkHeadroom {
+                available_bandwidth_kbps: 1,
+                egress_allowed: true,
+            })
+        });
+        ask.network_access = true;
+        ask.network_bandwidth_kbps = 1;
+        assert!(evaluate_extended_resource_placement(&value, ask, NOW, 5_000).is_ok());
+        value.network = Some(ResourceMeasurement {
+            sampled_at_unix_ms: NOW - 5_001,
+            ..measured(NetworkHeadroom {
+                available_bandwidth_kbps: 1,
+                egress_allowed: true,
+            })
+        });
+        assert_eq!(
+            evaluate_extended_resource_placement(&value, ask, NOW, 5_000),
+            Err(ExtendedResourceRejection::StaleMeasurement(
+                ResourceKind::Network
+            ))
+        );
+    }
 }
