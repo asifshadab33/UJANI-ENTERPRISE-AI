@@ -353,6 +353,19 @@ BEGIN
  IF admitted IS DISTINCT FROM false THEN
   RAISE EXCEPTION 'stale observed_at must be rejected even when received_at is recent';
  END IF;
+ IF EXISTS (
+  SELECT 1 FROM ujani_control.request_replays
+  WHERE tenant_id='admission-test' AND device_id='admission-device-capacity'
+    AND request_id=decode(repeat('a0',16),'hex')
+ ) THEN
+  RAISE EXCEPTION 'stale observation must not consume its replay identifier';
+ END IF;
+ IF EXISTS (
+  SELECT 1 FROM ujani_control.leases
+  WHERE tenant_id='admission-test' AND lease_id='admission-stale-observation-lease'
+ ) THEN
+  RAISE EXCEPTION 'stale observation must not create a lease';
+ END IF;
 END;
 $block$;
 COMMIT;
