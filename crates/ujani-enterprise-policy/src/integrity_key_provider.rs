@@ -407,20 +407,16 @@ mod tests {
                 state.keys.get(&(purpose, key_id.to_string())).copied()
                     .ok_or(IntegrityKeyProviderError::UnknownKey)?
             };
-            let nonce: [u8; 16] = sealed[..16].try_into()
+            let nonce: [u8; 16] = sealed[..16]
+                .try_into()
                 .map_err(|_| IntegrityKeyProviderError::EncryptionFailed)?;
             let ciphertext = &sealed[16..sealed.len() - 32];
-            let tag: [u8; 32] = sealed[sealed.len() - 32..].try_into()
+            let tag: [u8; 32] = sealed[sealed.len() - 32..]
+                .try_into()
                 .map_err(|_| IntegrityKeyProviderError::EncryptionFailed)?;
             let mut encryption_key = test_encryption_key(&key, purpose);
-            let expected = test_sealed_tag(
-                &encryption_key,
-                purpose,
-                key_id,
-                aad,
-                &nonce,
-                ciphertext,
-            );
+            let expected =
+                test_sealed_tag(&encryption_key, purpose, key_id, aad, &nonce, ciphertext);
             if expected != tag {
                 key.zeroize();
                 encryption_key.zeroize();
