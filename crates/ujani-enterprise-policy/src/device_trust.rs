@@ -808,7 +808,11 @@ mod tests {
             DeviceRegistry::new(vec![("admin-v1".into(), admin.verifying_key())]).unwrap();
         (registry, admin, device)
     }
-    fn enrollment(admin: &SigningKey, device: &SigningKey, nonce: u8) -> SignedDeviceAdminCommand {
+    fn enrollment(
+        admin: &SigningKey,
+        device: &SigningKey,
+        nonce: [u8; 16],
+    ) -> SignedDeviceAdminCommand {
         let mut c = SignedDeviceAdminCommand {
             action: DeviceCommandAction::Enroll,
             tenant_id: "tenant-a".into(),
@@ -818,7 +822,7 @@ mod tests {
             target_public_key: Some(device.verifying_key().to_bytes()),
             issued_at_unix_ms: 100,
             expires_at_unix_ms: 1000,
-            nonce: [nonce; 16],
+            nonce,
             signature: [0; 64],
             old_device_signature: None,
             new_device_signature: None,
@@ -830,7 +834,7 @@ mod tests {
     #[test]
     fn enrollment_requires_admin_and_device_proof_and_binds_tenant() {
         let (mut r, admin, device) = registry();
-        let c = enrollment(&admin, &device, 1);
+        let c = enrollment(&admin, &device, test_request_id(b"admin-enrollment"));
         assert_eq!(r.apply_admin_command(&c, 200), Ok(1));
         let claims = DeviceRequestClaims {
             tenant_id: "tenant-a".into(),
@@ -857,7 +861,7 @@ mod tests {
     #[test]
     fn verification_does_not_consume_nonce_before_downstream_transaction() {
         let (mut r, admin, device) = registry();
-        r.apply_admin_command(&enrollment(&admin, &device, 1), 200)
+        r.apply_admin_command(&enrollment(&admin, &device, test_request_id(b"admin-enrollment")), 200)
             .unwrap();
         let claims = DeviceRequestClaims {
             tenant_id: "tenant-a".into(),
@@ -895,7 +899,7 @@ mod tests {
     #[test]
     fn request_replay_revoked_device_and_cross_tenant_are_rejected() {
         let (mut r, admin, device) = registry();
-        let c = enrollment(&admin, &device, 1);
+        let c = enrollment(&admin, &device, test_request_id(b"admin-enrollment"));
         r.apply_admin_command(&c, 200).unwrap();
         let claims = DeviceRequestClaims {
             tenant_id: "tenant-a".into(),
@@ -934,7 +938,7 @@ mod tests {
     #[test]
     fn all_zero_request_nonce_is_rejected_before_persistence() {
         let (mut r, admin, device) = registry();
-        r.apply_admin_command(&enrollment(&admin, &device, 1), 200)
+        r.apply_admin_command(&enrollment(&admin, &device, test_request_id(b"admin-enrollment")), 200)
             .unwrap();
         let claims = DeviceRequestClaims {
             tenant_id: "tenant-a".into(),
@@ -963,7 +967,7 @@ mod tests {
     #[test]
     fn request_body_must_match_the_signed_digest() {
         let (mut r, admin, device) = registry();
-        r.apply_admin_command(&enrollment(&admin, &device, 1), 200)
+        r.apply_admin_command(&enrollment(&admin, &device, test_request_id(b"admin-enrollment")), 200)
             .unwrap();
         let body = b"tenant-scoped lease request";
         let manifest = crate::WorkloadManifest {
@@ -1060,7 +1064,7 @@ mod tests {
     #[test]
     fn oversized_request_body_is_rejected_before_nonce_consumption() {
         let (mut r, admin, device) = registry();
-        r.apply_admin_command(&enrollment(&admin, &device, 1), 200)
+        r.apply_admin_command(&enrollment(&admin, &device, test_request_id(b"admin-enrollment")), 200)
             .unwrap();
         let body = vec![b'x'; MAX_DEVICE_REQUEST_BODY_BYTES + 1];
         let request_digest = sha2::Sha256::digest(&body);
@@ -1093,7 +1097,7 @@ mod tests {
     #[test]
     fn signed_revocation_invalidates_the_enrolled_device() {
         let (mut r, admin, device) = registry();
-        let enroll = enrollment(&admin, &device, 1);
+        let enroll = enrollment(&admin, &device, test_request_id(b"admin-enrollment"));
         r.apply_admin_command(&enroll, 200).unwrap();
         let mut revoke = SignedDeviceAdminCommand {
             action: DeviceCommandAction::Revoke,
@@ -1138,7 +1142,7 @@ mod tests {
     #[test]
     fn tenant_device_summaries_are_scoped_and_do_not_expose_keys() {
         let (mut registry, admin, device) = registry();
-        let enroll = enrollment(&admin, &device, 1);
+        let enroll = enrollment(&admin, &device, test_request_id(b"admin-enrollment"));
         registry.apply_admin_command(&enroll, 200).unwrap();
         let summaries = registry.tenant_device_summaries("tenant-a").unwrap();
         assert_eq!(summaries.len(), 1);
@@ -1154,7 +1158,7 @@ mod tests {
     #[test]
     fn stale_key_generation_is_rejected_after_rotation() {
         let (mut r, admin, device) = registry();
-        let c = enrollment(&admin, &device, 1);
+        let c = enrollment(&admin, &device, test_request_id(b"admin-enrollment"));
         r.apply_admin_command(&c, 200).unwrap();
         let new_device = SigningKey::from_bytes(&[11u8; 32]);
         let mut rotate = SignedDeviceAdminCommand {
