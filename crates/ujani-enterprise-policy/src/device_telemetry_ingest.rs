@@ -307,18 +307,17 @@ mod tests {
         DurableDeviceRegistry,
         ed25519_dalek::SigningKey,
         std::path::PathBuf,
+        u64,
     ) {
         use ed25519_dalek::{Signer, SigningKey};
-        use std::time::{SystemTime, UNIX_EPOCH};
+        use std::sync::atomic::{AtomicU64, Ordering};
 
+        static NEXT_TEST_ID: AtomicU64 = AtomicU64::new(1);
+        let unique_id = NEXT_TEST_ID.fetch_add(1, Ordering::Relaxed);
         let admin = SigningKey::from_bytes(&[31; 32]);
         let device = SigningKey::from_bytes(&[41; 32]);
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
         let directory = std::env::temp_dir().join(format!(
-            "ujani-telemetry-ingest-{}-{nonce}",
+            "ujani-telemetry-ingest-{}-{unique_id}",
             std::process::id()
         ));
         std::fs::create_dir_all(&directory).unwrap();
@@ -342,7 +341,7 @@ mod tests {
             target_public_key: Some(device.verifying_key().to_bytes()),
             issued_at_unix_ms: 100,
             expires_at_unix_ms: 1_000,
-            nonce: [51; 16],
+            nonce: test_nonce(b"admin-enrollment", unique_id),
             signature: [0; 64],
             old_device_signature: None,
             new_device_signature: None,
@@ -362,19 +361,29 @@ mod tests {
                 opted_in: true,
                 issued_at_unix_ms: 210,
                 expires_at_unix_ms: 1_000,
-                nonce: [61; 16],
+                nonce: test_nonce(b"owner-consent", unique_id),
                 signature: [0; 64],
             };
             consent.signature = device.sign(&owner_consent_bytes(&consent)).to_bytes();
             registry.apply_owner_consent(&consent, 220).unwrap();
         }
-        (registry, device, directory)
+        (registry, device, directory, unique_id)
+    }
+
+    fn test_nonce(label: &[u8], unique_id: u64) -> [u8; 16] {
+        let mut digest = Sha256::new();
+        digest.update(label);
+        digest.update(std::process::id().to_be_bytes());
+        digest.update(unique_id.to_be_bytes());
+        let digest = digest.finalize();
+        digest[..16].try_into().expect("SHA-256 prefix is 16 bytes")
     }
 
     fn signed_telemetry_request(
         device: &ed25519_dalek::SigningKey,
         raw_body: &[u8],
         request_device_id: &str,
+        unique_id: u64,
     ) -> SignedDeviceRequest {
         use ed25519_dalek::Signer;
         let claims = DeviceRequestClaims {
@@ -382,7 +391,7 @@ mod tests {
             device_id: request_device_id.into(),
             key_id: "device-key-v1".into(),
             key_generation: 1,
-            request_id: [71; 16],
+            request_id: test_nonce(b"device-telemetry-request", unique_id),
             issued_at_unix_ms: 230,
             expires_at_unix_ms: 1_000,
             method: DEVICE_TELEMETRY_REQUEST_METHOD.into(),
@@ -402,9 +411,9 @@ mod tests {
     #[test]
     fn authenticated_intake_accepts_signed_owner_consented_request_without_consuming_replay_state()
     {
-        let (registry, device, directory) = signed_registry(true);
+        let (registry, device, directory, unique_id) = signed_registry(true);
         let raw = body(250);
-        let signed = signed_telemetry_request(&device, &raw, "device-1");
+        let signed = signed_telemetry_request(&device, &raw, "device-1", unique_id);
         let path = "/v1/devices/device-1/telemetry";
         let first = authenticate_device_telemetry_request(
             &registry,
@@ -435,7 +444,7 @@ mod tests {
     fn authenticated_intake_rejects_request_identity_binding_mismatch() {
         let (registry, device, directory) = signed_registry(true);
         let raw = body(250);
-        let signed = signed_telemetry_request(&device, &raw, "device-2");
+        let signed = signed_telemetry_request(&device, &raw, "device-2", unique_id);
         assert_eq!(
             authenticate_device_telemetry_request(
                 &registry,
@@ -453,7 +462,7 @@ mod tests {
 
     #[test]
     fn authenticated_intake_requires_current_owner_opt_in() {
-        let (registry, device, directory) = signed_registry(false);
+        let (registry, device, directory, unique_id) = signed_registry(false);
         let raw = body(250);
         let signed = signed_telemetry_request(&device, &raw, "device-1");
         assert_eq!(
