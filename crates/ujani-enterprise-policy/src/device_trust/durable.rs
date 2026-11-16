@@ -5,7 +5,8 @@
 //! This is a persistence primitive, not an HTTP server or a complete RBAC layer.
 use super::*;
 use crate::integrity_key_provider::{
-    IntegrityKeyProvider, IntegrityKeyProviderError, IntegrityKeyPurpose,
+    open_snapshot, seal_snapshot, IntegrityKeyProvider, IntegrityKeyProviderError,
+    IntegrityKeyPurpose,
 };
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::{Digest, Sha256};
@@ -18,6 +19,8 @@ use std::time::{Duration, Instant};
 
 const HEADER_V1: &str = "UJANI-DEVICE-TRUST-V1";
 const HEADER: &str = "UJANI-DEVICE-TRUST-V2";
+const ENCRYPTED_HEADER: &str = "UJANI-DEVICE-TRUST-ENC-V1";
+const ENCRYPTED_AAD: &[u8] = b"durable-device-trust-registry-snapshot";
 const DOMAIN: &[u8] = b"UJANI-DEVICE-TRUST-HMAC-SHA256-V1\0";
 const MAX_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_RECORDS: usize = MAX_REPLAY_ENTRIES;
@@ -980,7 +983,14 @@ fn encode_snapshot_with_provider(
         return Err(DurableDeviceTrustError::CorruptState);
     }
     body.push_str(&format!("H|{}|{}\n", hex(key_id.as_bytes()), hex(&mac)));
-    Ok(body.into_bytes())
+    seal_snapshot(
+        provider,
+        IntegrityKeyPurpose::DeviceTrustRegistry,
+        ENCRYPTED_HEADER,
+        ENCRYPTED_AAD,
+        body.as_bytes(),
+    )
+    .map_err(DurableDeviceTrustError::KeyProvider)
 }
 fn decode_snapshot(
     bytes: &[u8],
@@ -1008,7 +1018,15 @@ fn decode_snapshot_with_provider(
     admin_keys: &[(String, VerifyingKey)],
     provider: &dyn IntegrityKeyProvider,
 ) -> Result<DeviceRegistry, DurableDeviceTrustError> {
-    decode_snapshot_with_verifier(bytes, admin_keys, |key_id, body, expected| {
+    let plaintext = open_snapshot(
+        provider,
+        IntegrityKeyPurpose::DeviceTrustRegistry,
+        ENCRYPTED_HEADER,
+        ENCRYPTED_AAD,
+        bytes,
+    )
+    .map_err(DurableDeviceTrustError::KeyProvider)?;
+    decode_snapshot_with_verifier(&plaintext, admin_keys, |key_id, body, expected| {
         let tag: [u8; 32] = expected
             .try_into()
             .map_err(|_| DurableDeviceTrustError::CorruptState)?;

@@ -8,7 +8,8 @@ use crate::device_trust::durable::{
     AnchorCallPolicy, MonotonicSnapshotAnchor, SnapshotAnchorRecord,
 };
 use crate::integrity_key_provider::{
-    IntegrityKeyProvider, IntegrityKeyProviderError, IntegrityKeyPurpose,
+    encrypted_snapshot_key_id, open_snapshot, seal_snapshot, IntegrityKeyProvider,
+    IntegrityKeyProviderError, IntegrityKeyPurpose,
 };
 #[cfg(test)]
 use crate::{Admission, ClassPolicy, Device, SchedulingContext, VerifiedAdminApproval, Workload};
@@ -26,6 +27,8 @@ const LEDGER_HEADER: &str = "UJANI-ENTERPRISE-LEDGER-V4";
 const LEGACY_LEDGER_HEADER_V3: &str = "UJANI-ENTERPRISE-LEDGER-V3";
 const LEGACY_LEDGER_HEADER_V2: &str = "UJANI-ENTERPRISE-LEDGER-V2";
 const LEDGER_MAC_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-LEDGER-HMAC-SHA256-V2\0";
+const ENCRYPTED_LEDGER_HEADER: &str = "UJANI-ENTERPRISE-LEDGER-ENC-V1";
+const ENCRYPTED_LEDGER_AAD: &[u8] = b"durable-reservation-ledger-snapshot";
 const MAX_LEDGER_BYTES: u64 = 16 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -689,10 +692,36 @@ impl DurableLedger {
         } else {
             self.load_unanchored_ledger()?
         };
+        // Compare canonical plaintext state before producing randomized AEAD
+        // ciphertext. Read-only operations must not rotate a nonce or advance an
+        // independent monotonic anchor. Key rotation still rewrites the snapshot.
+        let original_state = serialize_snapshot_body(&ledger);
         let result = operation(&mut ledger)?;
         let bytes = self.encode_ledger_snapshot(&ledger)?;
         if bytes.len() as u64 > MAX_LEDGER_BYTES {
             return Err(DurableLedgerError::CapacityExceeded);
+        }
+        if self.path.exists() && original_state == serialize_snapshot_body(&ledger) {
+            if let Some(provider) = &self.integrity_key_provider {
+                let current = read_snapshot(&self.path)?;
+                let stored_envelope_key_id =
+                    encrypted_snapshot_key_id(ENCRYPTED_LEDGER_HEADER, &current)
+                        .map_err(DurableLedgerError::KeyProvider)?;
+                let stored_mac_key_id = encrypted_ledger_mac_key_id(&current, provider.as_ref())?;
+                let (active_key_id, _) = provider
+                    .sign_active(IntegrityKeyPurpose::ReservationLedger, &[])
+                    .map_err(DurableLedgerError::KeyProvider)?;
+                if stored_envelope_key_id == active_key_id && stored_mac_key_id == active_key_id {
+                    return Ok(result);
+                }
+            } else {
+                // The legacy authenticated format is deterministic, so byte
+                // equality proves both unchanged state and unchanged key ID.
+                let current = read_snapshot(&self.path)?;
+                if current == bytes {
+                    return Ok(result);
+                }
+            }
         }
         // Read-only transactions do not advance the external monotonic generation.
         if anchor_record
@@ -1074,15 +1103,65 @@ fn serialize_snapshot_with_provider(
     ledger: &Ledger,
     provider: &dyn IntegrityKeyProvider,
 ) -> Result<Vec<u8>, DurableLedgerError> {
-    let mut body = serialize_snapshot_body(ledger);
-    let (key_id, mac) = provider
-        .sign_active(IntegrityKeyPurpose::ReservationLedger, body.as_bytes())
+    // MAC signing and AEAD sealing are separate provider calls. A host may
+    // rotate the active key between them, so retry a bounded number of times
+    // until the inner MAC key and outer envelope key are the same version.
+    for _ in 0..3 {
+        let mut body = serialize_snapshot_body(ledger);
+        let (mac_key_id, mac) = provider
+            .sign_active(IntegrityKeyPurpose::ReservationLedger, body.as_bytes())
+            .map_err(DurableLedgerError::KeyProvider)?;
+        if !valid_stored_identifier(&mac_key_id, 128) {
+            return Err(DurableLedgerError::InvalidRecord);
+        }
+        body.push_str(&format!("M\t{}\t{}\n", mac_key_id, hex_encode(&mac)));
+        let sealed = seal_snapshot(
+            provider,
+            IntegrityKeyPurpose::ReservationLedger,
+            ENCRYPTED_LEDGER_HEADER,
+            ENCRYPTED_LEDGER_AAD,
+            body.as_bytes(),
+        )
         .map_err(DurableLedgerError::KeyProvider)?;
-    if !valid_stored_identifier(&key_id, 128) {
-        return Err(DurableLedgerError::InvalidRecord);
+        let envelope_key_id = encrypted_snapshot_key_id(ENCRYPTED_LEDGER_HEADER, &sealed)
+            .map_err(DurableLedgerError::KeyProvider)?;
+        if envelope_key_id == mac_key_id {
+            return Ok(sealed);
+        }
     }
-    body.push_str(&format!("M\t{}\t{}\n", key_id, hex_encode(&mac)));
-    Ok(body.into_bytes())
+    Err(DurableLedgerError::KeyProvider(
+        IntegrityKeyProviderError::EncryptionFailed,
+    ))
+}
+
+fn encrypted_ledger_mac_key_id(
+    bytes: &[u8],
+    provider: &dyn IntegrityKeyProvider,
+) -> Result<String, DurableLedgerError> {
+    let plaintext = open_snapshot(
+        provider,
+        IntegrityKeyPurpose::ReservationLedger,
+        ENCRYPTED_LEDGER_HEADER,
+        ENCRYPTED_LEDGER_AAD,
+        bytes,
+    )
+    .map_err(DurableLedgerError::KeyProvider)?;
+    let text = std::str::from_utf8(&plaintext).map_err(|_| DurableLedgerError::CorruptState)?;
+    let mac_start = text.rfind("M\t").ok_or(DurableLedgerError::CorruptState)?;
+    let mac_line = text[mac_start..]
+        .strip_suffix('\n')
+        .ok_or(DurableLedgerError::CorruptState)?;
+    let mut fields = mac_line.split('\t');
+    if fields.next() != Some("M") {
+        return Err(DurableLedgerError::CorruptState);
+    }
+    let key_id = fields.next().ok_or(DurableLedgerError::CorruptState)?;
+    let encoded_mac = fields.next().ok_or(DurableLedgerError::CorruptState)?;
+    if fields.next().is_some() || !valid_stored_identifier(key_id, 128) {
+        return Err(DurableLedgerError::CorruptState);
+    }
+    let _ = hex_decode(encoded_mac)?;
+    Ok(key_id.to_string())
 }
 fn deserialize_snapshot(
     bytes: &[u8],
@@ -1104,7 +1183,15 @@ fn deserialize_snapshot_with_provider(
     bytes: &[u8],
     provider: &dyn IntegrityKeyProvider,
 ) -> Result<Ledger, DurableLedgerError> {
-    deserialize_snapshot_with_verifier(bytes, |key_id, body, expected| {
+    let plaintext = open_snapshot(
+        provider,
+        IntegrityKeyPurpose::ReservationLedger,
+        ENCRYPTED_LEDGER_HEADER,
+        ENCRYPTED_LEDGER_AAD,
+        bytes,
+    )
+    .map_err(DurableLedgerError::KeyProvider)?;
+    deserialize_snapshot_with_verifier(&plaintext, |key_id, body, expected| {
         let tag: [u8; 32] = expected
             .try_into()
             .map_err(|_| DurableLedgerError::CorruptState)?;
@@ -2630,6 +2717,41 @@ mod tests {
         cleanup(&path);
     }
 
+    #[test]
+    fn provider_rotation_between_mac_and_envelope_sealing_retries_consistent_snapshot() {
+        use crate::integrity_key_provider::{IntegrityKeyPurpose, TestIntegrityKeyProvider};
+
+        let path = temp_path("provider-rotation-between-sign-and-seal");
+        let provider = Arc::new(TestIntegrityKeyProvider::default());
+        let purpose = IntegrityKeyPurpose::ReservationLedger;
+        provider.provision_key(purpose, "ledger-v1").unwrap();
+        provider.provision_key(purpose, "ledger-v2").unwrap();
+        provider.activate_key(purpose, "ledger-v1").unwrap();
+        provider
+            .rotate_after_next_sign(purpose, "ledger-v2")
+            .unwrap();
+
+        let ledger = DurableLedger::open_with_key_provider(&path, provider.clone()).unwrap();
+        let bytes = fs::read(&path).unwrap();
+        let envelope_key_id = encrypted_snapshot_key_id(ENCRYPTED_LEDGER_HEADER, &bytes).unwrap();
+        let plaintext = open_snapshot(
+            provider.as_ref(),
+            purpose,
+            ENCRYPTED_LEDGER_HEADER,
+            ENCRYPTED_LEDGER_AAD,
+            &bytes,
+        )
+        .unwrap();
+        let text = std::str::from_utf8(&plaintext).unwrap();
+        let mac_line = &text[text.rfind("M\t").unwrap()..];
+        let mac_key_id = mac_line.split('\t').nth(1).unwrap();
+
+        assert_eq!(envelope_key_id, "ledger-v2");
+        assert_eq!(mac_key_id, "ledger-v2");
+        drop(ledger);
+        cleanup(&path);
+    }
+
     #[cfg(unix)]
     #[test]
     fn protected_key_provider_verifies_anchored_backup_recovery() {
@@ -2686,12 +2808,21 @@ mod tests {
             &path,
             "provider-ledger",
             provider,
-            anchor,
+            anchor.clone(),
             AnchorCallPolicy::default(),
         )
         .unwrap();
         assert_eq!(recovered.snapshot().unwrap().active_jobs, 0);
-        assert_eq!(fs::read(&path).unwrap(), anchored_snapshot);
+        let recovered_bytes = fs::read(&path).unwrap();
+        let recovered_digest: [u8; 32] = Sha256::digest(&recovered_bytes).into();
+        assert_eq!(
+            anchor
+                .load("provider-ledger")
+                .unwrap()
+                .unwrap()
+                .snapshot_sha256(),
+            recovered_digest
+        );
         drop(recovered);
         cleanup(&path);
     }
