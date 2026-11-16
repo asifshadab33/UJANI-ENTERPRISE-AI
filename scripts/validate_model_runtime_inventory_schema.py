@@ -373,6 +373,16 @@ def validate_model_runtime_inventory_v2() -> None:
     assert _v2_references_valid(fixture)
     assert _v2_enterprise_inventory_authorized(fixture)
 
+    # Organisation-enrolled inventory must bind to a non-empty pseudonymous device identity.
+    anonymous_inventory = copy.deepcopy(fixture)
+    anonymous_inventory.pop("device_ref")
+    assert list(validator.iter_errors(anonymous_inventory))
+    assert not _v2_enterprise_inventory_authorized(anonymous_inventory)
+    null_device = copy.deepcopy(fixture)
+    null_device["device_ref"] = None
+    assert list(validator.iter_errors(null_device))
+    assert not _v2_enterprise_inventory_authorized(null_device)
+
     now = fixture["generated_at_unix_ms"]
     selected = _v2_select_explicit_model(fixture, "example/model:1.0", "chat", now, 5_000)
     assert selected is not None and selected["model_ref"] == "example/model:1.0"
