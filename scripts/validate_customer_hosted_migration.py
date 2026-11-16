@@ -393,6 +393,7 @@ def main() -> None:
         "LIMIT GREATEST(1, LEAST(COALESCE(p_limit, 100), 200))",
         "SECURITY INVOKER",
         "ae.event_digest",
+        "ae.event_type LIKE 'device.lease.%'",
         "l.request_digest",
         "l.approval_id",
         "REVOKE ALL ON FUNCTION ujani_control.list_device_lease_audit_evidence(bigint,integer) FROM PUBLIC",
