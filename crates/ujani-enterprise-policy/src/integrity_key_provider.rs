@@ -275,6 +275,7 @@ mod tests {
         active: HashMap<IntegrityKeyPurpose, String>,
         retired: std::collections::HashSet<(IntegrityKeyPurpose, String)>,
         nonce_counter: u64,
+        rotate_after_next_sign: Option<(IntegrityKeyPurpose, String)>,
     }
 
     impl Drop for TestState {
@@ -288,6 +289,26 @@ mod tests {
     /// Deterministic in-memory provider for contract tests only. Never use in production.
     #[derive(Default)]
     pub(crate) struct TestIntegrityKeyProvider(Mutex<TestState>);
+
+    impl TestIntegrityKeyProvider {
+        /// Simulate an administrator activating a new key after MAC signing but
+        /// before the subsequent snapshot-sealing call.
+        pub(crate) fn rotate_after_next_sign(
+            &self,
+            purpose: IntegrityKeyPurpose,
+            key_id: &str,
+        ) -> Result<(), IntegrityKeyProviderError> {
+            let mut state = self
+                .0
+                .lock()
+                .map_err(|_| IntegrityKeyProviderError::LockPoisoned)?;
+            if !state.keys.contains_key(&(purpose, key_id.to_string())) {
+                return Err(IntegrityKeyProviderError::UnknownKey);
+            }
+            state.rotate_after_next_sign = Some((purpose, key_id.to_string()));
+            Ok(())
+        }
+    }
 
     impl IntegrityKeyProvider for TestIntegrityKeyProvider {
         fn provision_key(
@@ -359,6 +380,27 @@ mod tests {
             };
             let tag = test_mac(&key, purpose, &key_id, payload);
             key.zeroize();
+            {
+                let mut state = self
+                    .0
+                    .lock()
+                    .map_err(|_| IntegrityKeyProviderError::LockPoisoned)?;
+                if let Some((rotate_purpose, next_key_id)) =
+                    state.rotate_after_next_sign.take()
+                {
+                    if rotate_purpose == purpose {
+                        if !state
+                            .keys
+                            .contains_key(&(purpose, next_key_id.clone()))
+                        {
+                            return Err(IntegrityKeyProviderError::UnknownKey);
+                        }
+                        state.active.insert(purpose, next_key_id);
+                    } else {
+                        state.rotate_after_next_sign = Some((rotate_purpose, next_key_id));
+                    }
+                }
+            }
             Ok((key_id, tag))
         }
 
