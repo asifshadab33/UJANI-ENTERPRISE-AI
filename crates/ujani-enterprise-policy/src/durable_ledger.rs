@@ -704,12 +704,14 @@ impl DurableLedger {
         if self.path.exists() && original_state == serialize_snapshot_body(&ledger) {
             if let Some(provider) = &self.integrity_key_provider {
                 let current = read_snapshot(&self.path)?;
-                let stored_key_id = encrypted_snapshot_key_id(ENCRYPTED_LEDGER_HEADER, &current)
-                    .map_err(DurableLedgerError::KeyProvider)?;
+                let stored_envelope_key_id =
+                    encrypted_snapshot_key_id(ENCRYPTED_LEDGER_HEADER, &current)
+                        .map_err(DurableLedgerError::KeyProvider)?;
+                let stored_mac_key_id = encrypted_ledger_mac_key_id(&current, provider.as_ref())?;
                 let (active_key_id, _) = provider
                     .sign_active(IntegrityKeyPurpose::ReservationLedger, &[])
                     .map_err(DurableLedgerError::KeyProvider)?;
-                if stored_key_id == active_key_id {
+                if stored_envelope_key_id == active_key_id && stored_mac_key_id == active_key_id {
                     return Ok(result);
                 }
             } else {
@@ -1101,22 +1103,65 @@ fn serialize_snapshot_with_provider(
     ledger: &Ledger,
     provider: &dyn IntegrityKeyProvider,
 ) -> Result<Vec<u8>, DurableLedgerError> {
-    let mut body = serialize_snapshot_body(ledger);
-    let (key_id, mac) = provider
-        .sign_active(IntegrityKeyPurpose::ReservationLedger, body.as_bytes())
+    // MAC signing and AEAD sealing are separate provider calls. A host may
+    // rotate the active key between them, so retry a bounded number of times
+    // until the inner MAC key and outer envelope key are the same version.
+    for _ in 0..3 {
+        let mut body = serialize_snapshot_body(ledger);
+        let (mac_key_id, mac) = provider
+            .sign_active(IntegrityKeyPurpose::ReservationLedger, body.as_bytes())
+            .map_err(DurableLedgerError::KeyProvider)?;
+        if !valid_stored_identifier(&mac_key_id, 128) {
+            return Err(DurableLedgerError::InvalidRecord);
+        }
+        body.push_str(&format!("M\t{}\t{}\n", mac_key_id, hex_encode(&mac)));
+        let sealed = seal_snapshot(
+            provider,
+            IntegrityKeyPurpose::ReservationLedger,
+            ENCRYPTED_LEDGER_HEADER,
+            ENCRYPTED_LEDGER_AAD,
+            body.as_bytes(),
+        )
         .map_err(DurableLedgerError::KeyProvider)?;
-    if !valid_stored_identifier(&key_id, 128) {
-        return Err(DurableLedgerError::InvalidRecord);
+        let envelope_key_id = encrypted_snapshot_key_id(ENCRYPTED_LEDGER_HEADER, &sealed)
+            .map_err(DurableLedgerError::KeyProvider)?;
+        if envelope_key_id == mac_key_id {
+            return Ok(sealed);
+        }
     }
-    body.push_str(&format!("M\t{}\t{}\n", key_id, hex_encode(&mac)));
-    seal_snapshot(
+    Err(DurableLedgerError::KeyProvider(
+        IntegrityKeyProviderError::EncryptionFailed,
+    ))
+}
+
+fn encrypted_ledger_mac_key_id(
+    bytes: &[u8],
+    provider: &dyn IntegrityKeyProvider,
+) -> Result<String, DurableLedgerError> {
+    let plaintext = open_snapshot(
         provider,
         IntegrityKeyPurpose::ReservationLedger,
         ENCRYPTED_LEDGER_HEADER,
         ENCRYPTED_LEDGER_AAD,
-        body.as_bytes(),
+        bytes,
     )
-    .map_err(DurableLedgerError::KeyProvider)
+    .map_err(DurableLedgerError::KeyProvider)?;
+    let text = std::str::from_utf8(&plaintext).map_err(|_| DurableLedgerError::CorruptState)?;
+    let mac_start = text.rfind("M\\t").ok_or(DurableLedgerError::CorruptState)?;
+    let mac_line = text[mac_start..]
+        .strip_suffix('\\n')
+        .ok_or(DurableLedgerError::CorruptState)?;
+    let mut fields = mac_line.split('\\t');
+    if fields.next() != Some("M") {
+        return Err(DurableLedgerError::CorruptState);
+    }
+    let key_id = fields.next().ok_or(DurableLedgerError::CorruptState)?;
+    let encoded_mac = fields.next().ok_or(DurableLedgerError::CorruptState)?;
+    if fields.next().is_some() || !valid_stored_identifier(key_id, 128) {
+        return Err(DurableLedgerError::CorruptState);
+    }
+    let _ = hex_decode(encoded_mac)?;
+    Ok(key_id.to_string())
 }
 fn deserialize_snapshot(
     bytes: &[u8],
