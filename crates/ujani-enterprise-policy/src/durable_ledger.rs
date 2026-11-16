@@ -1147,11 +1147,11 @@ fn encrypted_ledger_mac_key_id(
     )
     .map_err(DurableLedgerError::KeyProvider)?;
     let text = std::str::from_utf8(&plaintext).map_err(|_| DurableLedgerError::CorruptState)?;
-    let mac_start = text.rfind("M\\t").ok_or(DurableLedgerError::CorruptState)?;
+    let mac_start = text.rfind("M\t").ok_or(DurableLedgerError::CorruptState)?;
     let mac_line = text[mac_start..]
-        .strip_suffix('\\n')
+        .strip_suffix('\n')
         .ok_or(DurableLedgerError::CorruptState)?;
-    let mut fields = mac_line.split('\\t');
+    let mut fields = mac_line.split('\t');
     if fields.next() != Some("M") {
         return Err(DurableLedgerError::CorruptState);
     }
@@ -2744,8 +2744,8 @@ mod tests {
         )
         .unwrap();
         let text = std::str::from_utf8(&plaintext).unwrap();
-        let mac_line = &text[text.rfind("M\\t").unwrap()..];
-        let mac_key_id = mac_line.split('\\t').nth(1).unwrap();
+        let mac_line = &text[text.rfind("M\t").unwrap()..];
+        let mac_key_id = mac_line.split('\t').nth(1).unwrap();
 
         assert_eq!(envelope_key_id, "ledger-v2");
         assert_eq!(mac_key_id, "ledger-v2");
