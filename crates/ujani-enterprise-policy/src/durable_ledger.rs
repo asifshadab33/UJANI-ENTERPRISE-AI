@@ -706,9 +706,8 @@ impl DurableLedger {
                 .as_ref()
                 .ok_or(DurableLedgerError::InvalidRecord)?;
             let current = read_snapshot(&self.path)?;
-            let stored_key_id =
-                encrypted_snapshot_key_id(ENCRYPTED_LEDGER_HEADER, &current)
-                    .map_err(DurableLedgerError::KeyProvider)?;
+            let stored_key_id = encrypted_snapshot_key_id(ENCRYPTED_LEDGER_HEADER, &current)
+                .map_err(DurableLedgerError::KeyProvider)?;
             let (active_key_id, _) = provider
                 .sign_active(IntegrityKeyPurpose::ReservationLedger, &[])
                 .map_err(DurableLedgerError::KeyProvider)?;
