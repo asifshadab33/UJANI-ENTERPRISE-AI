@@ -48,6 +48,8 @@ jobs:
         run: python scripts/validate_customer_hosted_migration.py
       - name: Check operator console JavaScript syntax
         run: node --check apps/operator-console/app.js
+      - name: Test operator console demo-to-live transition
+        run: node --test apps/operator-console/tests/demo-transition.test.mjs
       - name: Test local read-only network log adapters
         run: python -m unittest discover -s tests -v
       - name: Check formatting
