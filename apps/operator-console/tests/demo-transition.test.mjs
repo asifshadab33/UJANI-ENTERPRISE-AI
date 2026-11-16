@@ -139,7 +139,7 @@ test("live snapshot freshness uses server time plus a monotonic clock, not the l
   vm.runInContext("setServerTimeAnchor(2_000_000)", context);
   assert.equal(vm.runInContext("snapshotIsFresh(1_880_000)", context), true);
   assert.equal(getElement("clock-warning").hidden, false);
-  assert.match(getElement("clock-warning").textContent, /clock is 1000 seconds ahead/);
+  assert.match(getElement("clock-warning").textContent, /clock is 1000 seconds behind/);
   assert.equal(vm.runInContext("formatAge(1_880_000)", context), "2 min ago");
 
   // A large local wall-clock correction must not change the anchored server time.
