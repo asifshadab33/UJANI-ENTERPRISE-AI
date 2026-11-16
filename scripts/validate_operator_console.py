@@ -35,6 +35,7 @@ def main():
     html = (APP / "index.html").read_text(encoding="utf-8")
     js = (APP / "app.js").read_text(encoding="utf-8")
     css = (APP / "styles.css").read_text(encoding="utf-8")
+    readme = (APP / "README.md").read_text(encoding="utf-8")
     parser = ConsoleParser()
     parser.feed(html)
     assert parser.inline_scripts == 0, "Console must not use inline scripts."
