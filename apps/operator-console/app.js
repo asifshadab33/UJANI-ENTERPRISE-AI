@@ -9,13 +9,29 @@ const clockWarning = byId("clock-warning");
 let serverTimeAnchorUnixMs = null;
 let serverTimeAnchorMonotonicMs = null;
 let demoMode = false;
+let refreshInFlight = false;
+
+function updateClockWarning(controlPlaneNowUnixMs) {
+  const offsetMs = controlPlaneNowUnixMs - Date.now();
+  if (Math.abs(offsetMs) > MAX_OVERVIEW_CLOCK_SKEW_MS) {
+    const direction = offsetMs > 0 ? "behind" : "ahead";
+    clockWarning.hidden = false;
+    clockWarning.textContent = "This computer's clock is " + Math.round(Math.abs(offsetMs) / 1000)
+      + " seconds " + direction + " the control-plane clock. Snapshot freshness is calculated from the control-plane time and a monotonic timer, not the computer's wall clock. Correct the operating-system time settings; UJANI will not change them.";
+  } else {
+    clockWarning.hidden = true;
+    clockWarning.textContent = "";
+  }
+}
 
 function trustedDisplayNow() {
   if (!Number.isFinite(serverTimeAnchorUnixMs) || !Number.isFinite(serverTimeAnchorMonotonicMs)
       || typeof performance === "undefined" || typeof performance.now !== "function") return null;
   const elapsed = performance.now() - serverTimeAnchorMonotonicMs;
   if (!Number.isFinite(elapsed) || elapsed < 0) return null;
-  return serverTimeAnchorUnixMs + elapsed;
+  const trustedNow = serverTimeAnchorUnixMs + elapsed;
+  updateClockWarning(trustedNow);
+  return trustedNow;
 }
 
 function setServerTimeAnchor(serverTimeUnixMs) {
@@ -29,16 +45,7 @@ function setServerTimeAnchor(serverTimeUnixMs) {
   serverTimeAnchorUnixMs = serverTimeUnixMs;
   serverTimeAnchorMonotonicMs = performance.now();
   demoMode = false;
-  const offsetMs = serverTimeUnixMs - Date.now();
-  if (Math.abs(offsetMs) > MAX_OVERVIEW_CLOCK_SKEW_MS) {
-    const direction = offsetMs > 0 ? "behind" : "ahead";
-    clockWarning.hidden = false;
-    clockWarning.textContent = "This computer's clock is " + Math.round(Math.abs(offsetMs) / 1000)
-      + " seconds " + direction + " the control-plane clock. Snapshot freshness is calculated from the control-plane time and a monotonic timer, not the computer's wall clock. Correct the operating-system time settings; UJANI will not change them.";
-  } else {
-    clockWarning.hidden = true;
-    clockWarning.textContent = "";
-  }
+  updateClockWarning(serverTimeUnixMs);
 }
 
 function setConnection(label, state) {
@@ -626,6 +633,8 @@ function clearOverview() {
 }
 
 async function refreshOverview() {
+  if (refreshInFlight) return;
+  refreshInFlight = true;
   refreshButton.disabled = true;
   demoButton.disabled = true;
   clearOverview();
@@ -659,10 +668,19 @@ async function refreshOverview() {
       : error instanceof Error ? error.message : "Could not load the Enterprise overview.";
   } finally {
     window.clearTimeout(requestTimeout);
+    refreshInFlight = false;
     refreshButton.disabled = false;
     demoButton.disabled = false;
   }
 }
+function refreshAfterResume() {
+  if (demoMode || refreshInFlight) return;
+  void refreshOverview();
+}
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) refreshAfterResume();
+});
+window.addEventListener("focus", refreshAfterResume);
 demoButton.addEventListener("click", showDemoData);
 refreshButton.addEventListener("click", refreshOverview);
 setConnection("Control plane not connected", "unknown");
