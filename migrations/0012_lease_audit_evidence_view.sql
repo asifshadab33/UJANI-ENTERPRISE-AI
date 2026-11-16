@@ -230,45 +230,80 @@ REVOKE ALL ON FUNCTION ujani_control.admit_device_lease(
 COMMENT ON COLUMN ujani_control.leases.request_digest IS
  'Domain-separated digest of the exact admitted lease request; NULL only for legacy leases predating migration 0012.';
 
-CREATE OR REPLACE VIEW ujani_control.device_lease_audit_evidence
-WITH (security_invoker = true)
-AS
-SELECT
- ae.tenant_id,
- ae.sequence_id AS audit_sequence,
- ae.event_id AS audit_event_id,
- ae.actor_ref,
- ae.actor_role,
- ae.event_type,
- ae.outcome,
- ae.object_ref AS lease_id,
- ae.occurred_at AS audit_occurred_at,
- ae.previous_digest AS audit_previous_digest,
- ae.event_digest AS audit_event_digest,
- l.device_id,
- l.workload_id,
- l.approval_id,
- l.request_id,
- l.request_digest,
- l.manifest_digest,
- l.device_key_generation,
- l.consent_generation,
- l.requested_cpu_millis,
- l.requested_memory_mb,
- l.capability_digest,
- l.state AS lease_state,
- l.expires_at AS lease_expires_at,
- l.revision AS lease_revision,
- a.decision AS approval_decision,
- a.approver_subject_id,
- a.expires_at AS approval_expires_at
-FROM ujani_control.audit_events ae
-JOIN ujani_control.leases l
- ON l.tenant_id = ae.tenant_id AND l.lease_id = ae.object_ref
-LEFT JOIN ujani_control.approvals a
- ON a.tenant_id = l.tenant_id AND a.approval_id = l.approval_id
-WHERE ae.event_type = 'device.lease.admitted';
+CREATE OR REPLACE FUNCTION ujani_control.list_device_lease_audit_evidence()
+RETURNS TABLE (
+ tenant_id text,
+ audit_sequence bigint,
+ audit_event_id uuid,
+ actor_ref text,
+ actor_role text,
+ event_type text,
+ outcome text,
+ lease_id text,
+ audit_occurred_at timestamptz,
+ audit_previous_digest bytea,
+ audit_event_digest bytea,
+ device_id text,
+ workload_id text,
+ approval_id text,
+ request_id bytea,
+ request_digest bytea,
+ manifest_digest bytea,
+ device_key_generation bigint,
+ consent_generation bigint,
+ requested_cpu_millis integer,
+ requested_memory_mb bigint,
+ capability_digest bytea,
+ lease_state text,
+ lease_expires_at timestamptz,
+ lease_revision bigint,
+ current_approval_decision text,
+ current_approver_subject_id text,
+ current_approval_expires_at timestamptz
+)
+LANGUAGE sql
+STABLE
+SECURITY INVOKER
+SET search_path = pg_catalog, ujani_control
+AS $function$
+ SELECT
+  ae.tenant_id,
+  ae.sequence_id,
+  ae.event_id,
+  ae.actor_ref,
+  ae.actor_role,
+  ae.event_type,
+  ae.outcome,
+  ae.object_ref,
+  ae.occurred_at,
+  ae.previous_digest,
+  ae.event_digest,
+  l.device_id,
+  l.workload_id,
+  l.approval_id,
+  l.request_id,
+  l.request_digest,
+  l.manifest_digest,
+  l.device_key_generation,
+  l.consent_generation,
+  l.requested_cpu_millis,
+  l.requested_memory_mb,
+  l.capability_digest,
+  l.state,
+  l.expires_at,
+  l.revision,
+  a.decision,
+  a.approver_subject_id,
+  a.expires_at
+ FROM ujani_control.audit_events ae
+ JOIN ujani_control.leases l
+  ON l.tenant_id = ae.tenant_id AND l.lease_id = ae.object_ref
+ LEFT JOIN ujani_control.approvals a
+  ON a.tenant_id = l.tenant_id AND a.approval_id = l.approval_id
+ WHERE ae.event_type = 'device.lease.admitted'
+   AND ae.tenant_id = pg_catalog.current_setting('ujani.tenant_id', true);
+$function$;
 
-REVOKE ALL ON ujani_control.device_lease_audit_evidence FROM PUBLIC;
-COMMENT ON VIEW ujani_control.device_lease_audit_evidence IS
- 'Read-only security-invoker view joining append-only lease admission audit events to durable lease, request-digest and approval evidence. Underlying tenant RLS is evaluated as the querying role. Legacy leases may have NULL approval_id/request_digest.';
+REVOKE ALL ON FUNCTION ujani_control.list_device_lease_audit_evidence() FROM PUBLIC;
+COMMENT ON FUNCTION ujani_control.list_device_lease_audit_evidence() IS
+ 'Read-only SECURITY INVOKER function joining append-only lease admission audit events to durable lease, request-digest and current approval evidence. Caller privileges and tenant RLS are preserved. Legacy leases may have NULL approval_id/request_digest.';
