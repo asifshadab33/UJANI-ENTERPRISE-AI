@@ -8,7 +8,8 @@ use crate::device_trust::durable::{
     AnchorCallPolicy, MonotonicSnapshotAnchor, SnapshotAnchorRecord,
 };
 use crate::integrity_key_provider::{
-    IntegrityKeyProvider, IntegrityKeyProviderError, IntegrityKeyPurpose,
+    open_snapshot, seal_snapshot, IntegrityKeyProvider, IntegrityKeyProviderError,
+    IntegrityKeyPurpose,
 };
 #[cfg(test)]
 use crate::{Admission, ClassPolicy, Device, SchedulingContext, VerifiedAdminApproval, Workload};
@@ -26,6 +27,8 @@ const LEDGER_HEADER: &str = "UJANI-ENTERPRISE-LEDGER-V4";
 const LEGACY_LEDGER_HEADER_V3: &str = "UJANI-ENTERPRISE-LEDGER-V3";
 const LEGACY_LEDGER_HEADER_V2: &str = "UJANI-ENTERPRISE-LEDGER-V2";
 const LEDGER_MAC_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-LEDGER-HMAC-SHA256-V2\0";
+const ENCRYPTED_LEDGER_HEADER: &str = "UJANI-ENTERPRISE-LEDGER-ENC-V1";
+const ENCRYPTED_LEDGER_AAD: &[u8] = b"durable-reservation-ledger-snapshot";
 const MAX_LEDGER_BYTES: u64 = 16 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1082,7 +1085,14 @@ fn serialize_snapshot_with_provider(
         return Err(DurableLedgerError::InvalidRecord);
     }
     body.push_str(&format!("M\t{}\t{}\n", key_id, hex_encode(&mac)));
-    Ok(body.into_bytes())
+    seal_snapshot(
+        provider,
+        IntegrityKeyPurpose::ReservationLedger,
+        ENCRYPTED_LEDGER_HEADER,
+        ENCRYPTED_LEDGER_AAD,
+        body.as_bytes(),
+    )
+    .map_err(DurableLedgerError::KeyProvider)
 }
 fn deserialize_snapshot(
     bytes: &[u8],
@@ -1104,7 +1114,15 @@ fn deserialize_snapshot_with_provider(
     bytes: &[u8],
     provider: &dyn IntegrityKeyProvider,
 ) -> Result<Ledger, DurableLedgerError> {
-    deserialize_snapshot_with_verifier(bytes, |key_id, body, expected| {
+    let plaintext = open_snapshot(
+        provider,
+        IntegrityKeyPurpose::ReservationLedger,
+        ENCRYPTED_LEDGER_HEADER,
+        ENCRYPTED_LEDGER_AAD,
+        bytes,
+    )
+    .map_err(DurableLedgerError::KeyProvider)?;
+    deserialize_snapshot_with_verifier(&plaintext, |key_id, body, expected| {
         let tag: [u8; 32] = expected
             .try_into()
             .map_err(|_| DurableLedgerError::CorruptState)?;
