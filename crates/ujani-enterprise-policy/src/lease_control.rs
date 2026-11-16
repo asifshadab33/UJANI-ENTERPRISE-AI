@@ -869,16 +869,21 @@ mod tests {
         assert_eq!(after.reserved_cpu_millis, before.reserved_cpu_millis);
         assert_eq!(after.reserved_memory_mb, before.reserved_memory_mb);
         assert_eq!(
-            fixture.ledger.reservation_revision(DEVICE_ID, 1_501).unwrap(),
+            fixture
+                .ledger
+                .reservation_revision(DEVICE_ID, 1_501)
+                .unwrap(),
             2,
             "the shared nonce must be consumed once and create exactly one renewal revision"
         );
         assert_eq!(
-            fixture.ledger.reservation_revision(DEVICE_ID, 1_502).unwrap(),
+            fixture
+                .ledger
+                .reservation_revision(DEVICE_ID, 1_502)
+                .unwrap(),
             2,
             "the losing replay must not create a second renewal revision"
         );
         cleanup(fixture);
     }
-
 }
