@@ -246,8 +246,18 @@ jobs:
           PGPASSWORD: postgres
         run: |
           "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < migrations/0013_revoke_leases_on_owner_consent_change.sql
+      - name: Persist authenticated model/runtime inventory snapshots
+        env:
+          PGPASSWORD: postgres
+        run: |
+          "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < migrations/0014_device_model_runtime_inventory.sql
       - name: Verify atomic telemetry-plus-lease admission and rollback
         env:
           PGPASSWORD: postgres
         run: |
           "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < scripts/test_atomic_telemetry_lease_admission.sql
+      - name: Verify authenticated model/runtime inventory persistence and consent purge
+        env:
+          PGPASSWORD: postgres
+        run: |
+          "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < scripts/test_device_model_runtime_inventory.sql
