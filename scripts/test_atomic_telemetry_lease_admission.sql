@@ -134,7 +134,7 @@ DO $block$
 BEGIN
  IF EXISTS (SELECT 1 FROM ujani_control.list_device_lease_audit_evidence()
             WHERE lease_id='admission-atomic-lease') THEN
-  RAISE EXCEPTION 'audit evidence view leaked a lease across tenant context';
+  RAISE EXCEPTION 'audit evidence function leaked a lease across tenant context';
  END IF;
 END;
 $block$;
