@@ -19,6 +19,7 @@ Example response shape (contract only; not fixture data):
 {
   "schema_version": 1,
   "generated_at_unix_ms": 0,
+  "server_time_unix_ms": 0,
   "fleet": {
     "registered_devices": 0,
     "trusted_consented_devices": 0,
