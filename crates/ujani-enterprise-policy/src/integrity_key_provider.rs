@@ -162,9 +162,7 @@ pub fn seal_snapshot(
 ) -> Result<Vec<u8>, IntegrityKeyProviderError> {
     if header.is_empty()
         || header.len() > 128
-        || header
-            .bytes()
-            .any(|byte| byte == b'\n' || byte == b'\r')
+        || header.bytes().any(|byte| byte == b'\n' || byte == b'\r')
     {
         return Err(IntegrityKeyProviderError::InvalidKeyId);
     }
@@ -192,13 +190,17 @@ pub fn encrypted_snapshot_key_id(
     expected_header: &str,
     bytes: &[u8],
 ) -> Result<String, IntegrityKeyProviderError> {
-    let header_end = bytes.iter().position(|byte| *byte == b'\n')
+    let header_end = bytes
+        .iter()
+        .position(|byte| *byte == b'\n')
         .ok_or(IntegrityKeyProviderError::EncryptionFailed)?;
     if &bytes[..header_end] != expected_header.as_bytes() {
         return Err(IntegrityKeyProviderError::EncryptionFailed);
     }
     let remainder = &bytes[header_end + 1..];
-    let key_end = remainder.iter().position(|byte| *byte == b'\n')
+    let key_end = remainder
+        .iter()
+        .position(|byte| *byte == b'\n')
         .ok_or(IntegrityKeyProviderError::EncryptionFailed)?;
     let key_id = std::str::from_utf8(&remainder[..key_end])
         .map_err(|_| IntegrityKeyProviderError::InvalidKeyId)?;
@@ -386,12 +388,23 @@ mod tests {
             plaintext: &[u8],
         ) -> Result<(String, Vec<u8>), IntegrityKeyProviderError> {
             let (key_id, mut key, counter) = {
-                let mut state = self.0.lock().map_err(|_| IntegrityKeyProviderError::LockPoisoned)?;
-                let key_id = state.active.get(&purpose).cloned()
+                let mut state = self
+                    .0
+                    .lock()
+                    .map_err(|_| IntegrityKeyProviderError::LockPoisoned)?;
+                let key_id = state
+                    .active
+                    .get(&purpose)
+                    .cloned()
                     .ok_or(IntegrityKeyProviderError::UnknownKey)?;
-                let key = state.keys.get(&(purpose, key_id.clone())).copied()
+                let key = state
+                    .keys
+                    .get(&(purpose, key_id.clone()))
+                    .copied()
                     .ok_or(IntegrityKeyProviderError::UnknownKey)?;
-                state.nonce_counter = state.nonce_counter.checked_add(1)
+                state.nonce_counter = state
+                    .nonce_counter
+                    .checked_add(1)
                     .ok_or(IntegrityKeyProviderError::EncryptionFailed)?;
                 (key_id, key, state.nonce_counter)
             };
@@ -399,11 +412,19 @@ mod tests {
             // not a cryptographic construction and must never ship outside cfg(test).
             let nonce_material = format!("test-only:{counter}:{}:{key_id}", purpose.as_str());
             let nonce_hash = Sha256::digest(nonce_material.as_bytes());
-            let nonce: [u8; 16] = nonce_hash[..16].try_into()
+            let nonce: [u8; 16] = nonce_hash[..16]
+                .try_into()
                 .map_err(|_| IntegrityKeyProviderError::EncryptionFailed)?;
             let mut encryption_key = test_encryption_key(&key, purpose);
             let encrypted = test_stream_xor(&encryption_key, &nonce, plaintext);
-            let tag = test_sealed_tag(&encryption_key, purpose, &key_id, aad, &nonce, &encrypted);
+            let tag = test_sealed_tag(
+                &encryption_key,
+                purpose,
+                &key_id,
+                aad,
+                &nonce,
+                &encrypted,
+            );
             let mut sealed = Vec::with_capacity(16 + encrypted.len() + 32);
             sealed.extend_from_slice(&nonce);
             sealed.extend_from_slice(&encrypted);
@@ -424,8 +445,14 @@ mod tests {
                 return Err(IntegrityKeyProviderError::EncryptionFailed);
             }
             let mut key = {
-                let state = self.0.lock().map_err(|_| IntegrityKeyProviderError::LockPoisoned)?;
-                state.keys.get(&(purpose, key_id.to_string())).copied()
+                let state = self
+                    .0
+                    .lock()
+                    .map_err(|_| IntegrityKeyProviderError::LockPoisoned)?;
+                state
+                    .keys
+                    .get(&(purpose, key_id.to_string()))
+                    .copied()
                     .ok_or(IntegrityKeyProviderError::UnknownKey)?
             };
             let nonce: [u8; 16] = sealed[..16]
