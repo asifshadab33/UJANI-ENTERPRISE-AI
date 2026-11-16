@@ -302,7 +302,13 @@ mod tests {
     }
 
 
-    fn signed_registry(owner_opted_in: bool) -> (DurableDeviceRegistry, ed25519_dalek::SigningKey, std::path::PathBuf) {
+    fn signed_registry(
+        owner_opted_in: bool,
+    ) -> (
+        DurableDeviceRegistry,
+        ed25519_dalek::SigningKey,
+        std::path::PathBuf,
+    ) {
         use ed25519_dalek::{Signer, SigningKey};
         use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -387,25 +393,36 @@ mod tests {
             body_sha256: Sha256::digest(raw_body).into(),
         };
         SignedDeviceRequest {
-            signature: device.sign(&canonical_device_request_bytes(&claims)).to_bytes(),
+            signature: device
+                .sign(&canonical_device_request_bytes(&claims))
+                .to_bytes(),
             claims,
         }
     }
 
     #[test]
-    fn authenticated_intake_accepts_signed_owner_consented_request_without_consuming_replay_state() {
+    fn authenticated_intake_accepts_signed_owner_consented_request_without_consuming_replay_state()
+    {
         let (registry, device, directory) = signed_registry(true);
         let raw = body(250);
         let signed = signed_telemetry_request(&device, &raw, "device-1");
         let path = "/v1/devices/device-1/telemetry";
         let first = authenticate_device_telemetry_request(
-            &registry, HttpMethod::Post, path, &signed, &raw, 250,
+            &registry,
+            HttpMethod::Post,
+            path,
+            &signed,
+            &raw,
+            250,
         );
         assert!(first.is_ok());
         let second = authenticate_device_telemetry_request(
             &registry, HttpMethod::Post, path, &signed, &raw, 250,
         );
-        assert!(second.is_ok(), "verification must not consume the database-owned replay claim");
+        assert!(
+            second.is_ok(),
+            "verification must not consume the database-owned replay claim"
+        );
         drop(registry);
         let _ = std::fs::remove_dir_all(directory);
     }
@@ -417,7 +434,12 @@ mod tests {
         let signed = signed_telemetry_request(&device, &raw, "device-2");
         assert_eq!(
             authenticate_device_telemetry_request(
-                &registry, HttpMethod::Post, "/v1/devices/device-1/telemetry", &signed, &raw, 250,
+                &registry,
+                HttpMethod::Post,
+                "/v1/devices/device-1/telemetry",
+                &signed,
+                &raw,
+                250,
             ),
             Err(DeviceTelemetryIntakeError::RequestBindingMismatch)
         );
@@ -447,8 +469,14 @@ mod tests {
         let signed = signed_telemetry_request(&device, &raw, "device-1");
         std::fs::remove_dir_all(&directory).unwrap();
         let error = authenticate_device_telemetry_request(
-            &registry, HttpMethod::Post, "/v1/devices/device-1/telemetry", &signed, &raw, 250,
-        ).unwrap_err();
+            &registry,
+            HttpMethod::Post,
+            "/v1/devices/device-1/telemetry",
+            &signed,
+            &raw,
+            250,
+        )
+        .unwrap_err();
         assert_eq!(error, DeviceTelemetryIntakeError::TrustStoreUnavailable);
         assert_eq!(error.http_status(), 503);
     }
