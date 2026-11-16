@@ -5,6 +5,41 @@ const notice = byId("notice");
 const refreshButton = byId("refresh");
 const demoButton = byId("demo");
 const demoBanner = byId("demo-banner");
+const clockWarning = byId("clock-warning");
+let serverTimeAnchorUnixMs = null;
+let serverTimeAnchorMonotonicMs = null;
+let demoMode = false;
+
+function trustedDisplayNow() {
+  if (!Number.isFinite(serverTimeAnchorUnixMs) || !Number.isFinite(serverTimeAnchorMonotonicMs)
+      || typeof performance === "undefined" || typeof performance.now !== "function") return null;
+  const elapsed = performance.now() - serverTimeAnchorMonotonicMs;
+  if (!Number.isFinite(elapsed) || elapsed < 0) return null;
+  return serverTimeAnchorUnixMs + elapsed;
+}
+
+function setServerTimeAnchor(serverTimeUnixMs) {
+  if (!Number.isSafeInteger(serverTimeUnixMs) || serverTimeUnixMs <= 0) {
+    throw new Error("The control plane did not provide a valid server-time reference.");
+  }
+  if (typeof performance === "undefined" || typeof performance.now !== "function"
+      || !Number.isFinite(performance.now())) {
+    throw new Error("A monotonic browser clock is unavailable; refresh the live snapshot in a supported browser.");
+  }
+  serverTimeAnchorUnixMs = serverTimeUnixMs;
+  serverTimeAnchorMonotonicMs = performance.now();
+  demoMode = false;
+  const offsetMs = serverTimeUnixMs - Date.now();
+  if (Math.abs(offsetMs) > MAX_OVERVIEW_CLOCK_SKEW_MS) {
+    const direction = offsetMs > 0 ? "behind" : "ahead";
+    clockWarning.hidden = false;
+    clockWarning.textContent = "This computer's clock is " + Math.round(Math.abs(offsetMs) / 1000)
+      + " seconds " + direction + " the control-plane clock. Snapshot freshness is calculated from the control-plane time and a monotonic timer, not the computer's wall clock. Correct the operating-system time settings; UJANI will not change them.";
+  } else {
+    clockWarning.hidden = true;
+    clockWarning.textContent = "";
+  }
+}
 
 function setConnection(label, state) {
   connection.textContent = label;
@@ -15,9 +50,9 @@ function textCell(value) {
   cell.textContent = value == null || value === "" ? "—" : String(value);
   return cell;
 }
-function formatAge(timestamp) {
-  if (!Number.isFinite(timestamp) || timestamp <= 0) return "Unknown";
-  const age = Math.max(0, Date.now() - timestamp);
+function formatAge(timestamp, now = demoMode ? Date.now() : trustedDisplayNow()) {
+  if (!Number.isFinite(timestamp) || timestamp <= 0 || !Number.isFinite(now)) return "Unknown";
+  const age = Math.max(0, now - timestamp);
   if (age < 60_000) return "Just now";
   if (age < 3_600_000) return Math.floor(age / 60_000) + " min ago";
   if (age < 86_400_000) return Math.floor(age / 3_600_000) + " hr ago";
@@ -92,6 +127,11 @@ function renderDemoModelInventory() {
 }
 
 function showDemoData() {
+  demoMode = true;
+  serverTimeAnchorUnixMs = null;
+  serverTimeAnchorMonotonicMs = null;
+  clockWarning.hidden = true;
+  clockWarning.textContent = "";
   const now = Date.now();
   const devices = [
     {
@@ -450,8 +490,8 @@ const MAX_INVENTORY_EVIDENCE_SKEW_MS = 30 * 1000;
 const MAX_MODEL_MEMORY_ESTIMATE_MB = 16_777_216;
 const MAX_TOTAL_MODEL_ROWS = 100_000;
 
-function snapshotIsFresh(generatedAtUnixMs, now = Date.now()) {
-  if (!Number.isSafeInteger(generatedAtUnixMs) || generatedAtUnixMs <= 0) return false;
+function snapshotIsFresh(generatedAtUnixMs, now = trustedDisplayNow()) {
+  if (!Number.isSafeInteger(generatedAtUnixMs) || generatedAtUnixMs <= 0 || !Number.isFinite(now)) return false;
   const age = now - generatedAtUnixMs;
   return age >= -MAX_OVERVIEW_CLOCK_SKEW_MS && age <= MAX_OVERVIEW_SNAPSHOT_AGE_MS;
 }
@@ -536,9 +576,14 @@ function validOverview(data) {
       : data.model_inventory_total_devices > data.model_inventory_returned_devices
         || data.model_inventory_total_models > data.model_inventory_returned_models)
     && data.devices.length === counts.registered_devices
-    && Number.isSafeInteger(data.generated_at_unix_ms) && data.generated_at_unix_ms > 0;
+    && Number.isSafeInteger(data.generated_at_unix_ms) && data.generated_at_unix_ms > 0
+    && Number.isSafeInteger(data.server_time_unix_ms) && data.server_time_unix_ms > 0;
 }
 function renderOverview(data) {
+  if (!data || !Number.isSafeInteger(data.server_time_unix_ms) || data.server_time_unix_ms <= 0) {
+    throw new Error("The control plane response is missing its trusted server-time reference. Refresh after the service is upgraded.");
+  }
+  setServerTimeAnchor(data.server_time_unix_ms);
   if (!validOverview(data)) throw new Error("The control plane returned an unsupported or incomplete overview schema.");
   if (!snapshotIsFresh(data.generated_at_unix_ms)) {
     throw new Error("The control plane overview is stale or has an invalid timestamp. Refresh after the service publishes a fresh snapshot.");
@@ -556,6 +601,11 @@ function renderOverview(data) {
   setConnection("Connected · live snapshot", "online");
 }
 function clearOverview() {
+  demoMode = false;
+  serverTimeAnchorUnixMs = null;
+  serverTimeAnchorMonotonicMs = null;
+  clockWarning.hidden = true;
+  clockWarning.textContent = "";
   demoBanner.hidden = true;
   for (const id of ["registered", "trusted", "online", "schedulable"]) {
     byId(id).textContent = "—";

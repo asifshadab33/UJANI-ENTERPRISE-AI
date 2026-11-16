@@ -112,3 +112,42 @@ test("live refresh clears synthetic demo data before the API request resolves", 
   assert.equal(getElement("demo").disabled, false);
   assert.match(message.textContent, /API is not deployed yet/);
 });
+
+
+test("live snapshot freshness uses server time plus a monotonic clock, not the local wall clock", async () => {
+  const source = await readFile(new URL("../app.js", import.meta.url), "utf8");
+  const elements = new Map();
+  const getElement = (id) => {
+    if (!elements.has(id)) elements.set(id, new FakeElement());
+    return elements.get(id);
+  };
+  let localWallNow = 1_000_000;
+  let monotonicNow = 100;
+  class TestDate extends Date {
+    static now() { return localWallNow; }
+  }
+  const context = vm.createContext({
+    document: { getElementById: getElement, createElement: () => new FakeElement() },
+    window: { setTimeout: () => 1, clearTimeout: () => {} },
+    fetch: async () => ({ ok: false, status: 404 }),
+    AbortController,
+    Date: TestDate,
+    performance: { now: () => monotonicNow },
+    console
+  });
+  vm.runInContext(source, context);
+  vm.runInContext("setServerTimeAnchor(2_000_000)", context);
+  assert.equal(vm.runInContext("snapshotIsFresh(1_880_000)", context), true);
+  assert.equal(getElement("clock-warning").hidden, false);
+  assert.match(getElement("clock-warning").textContent, /clock is 1000 seconds behind/);
+  assert.equal(vm.runInContext("formatAge(1_880_000)", context), "2 min ago");
+
+  // A large local wall-clock correction must not change the anchored server time.
+  localWallNow = 9_000_000;
+  monotonicNow += 120_000;
+  assert.equal(vm.runInContext("snapshotIsFresh(1_880_000)", context), true);
+  assert.equal(vm.runInContext("formatAge(1_880_000)", context), "4 min ago");
+
+  monotonicNow += 200_001;
+  assert.equal(vm.runInContext("snapshotIsFresh(1_880_000)", context), false);
+});
