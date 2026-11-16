@@ -678,4 +678,122 @@ mod tests {
             ))
         );
     }
+    #[test]
+    fn future_resource_measurements_obey_exact_clock_skew_boundary() {
+        let mut value = snapshot();
+        let mut ask = request();
+
+        value.gpu = Some(ResourceMeasurement {
+            sampled_at_unix_ms: NOW + MAX_TELEMETRY_FUTURE_SKEW_MS,
+            ..measured(AcceleratorHeadroom {
+                available_memory_mb: 1,
+                available_compute_units: 1,
+            })
+        });
+        ask.gpu_memory_mb = 1;
+        ask.gpu_compute_units = 1;
+        assert!(evaluate_extended_resource_placement(&value, ask, NOW, 5_000).is_ok());
+        value.gpu = Some(ResourceMeasurement {
+            sampled_at_unix_ms: NOW + MAX_TELEMETRY_FUTURE_SKEW_MS + 1,
+            ..measured(AcceleratorHeadroom {
+                available_memory_mb: 1,
+                available_compute_units: 1,
+            })
+        });
+        assert_eq!(
+            evaluate_extended_resource_placement(&value, ask, NOW, 5_000),
+            Err(ExtendedResourceRejection::StaleMeasurement(
+                ResourceKind::Gpu
+            ))
+        );
+        value.gpu = Some(ResourceMeasurement {
+            sampled_at_unix_ms: u64::MAX,
+            ..measured(AcceleratorHeadroom {
+                available_memory_mb: 1,
+                available_compute_units: 1,
+            })
+        });
+        assert_eq!(
+            evaluate_extended_resource_placement(&value, ask, NOW, 5_000),
+            Err(ExtendedResourceRejection::StaleMeasurement(
+                ResourceKind::Gpu
+            ))
+        );
+
+        value = snapshot();
+        ask = request();
+        value.npu = Some(ResourceMeasurement {
+            sampled_at_unix_ms: NOW + MAX_TELEMETRY_FUTURE_SKEW_MS,
+            ..measured(AcceleratorHeadroom {
+                available_memory_mb: 1,
+                available_compute_units: 1,
+            })
+        });
+        ask.npu_memory_mb = 1;
+        ask.npu_compute_units = 1;
+        assert!(evaluate_extended_resource_placement(&value, ask, NOW, 5_000).is_ok());
+        value.npu = Some(ResourceMeasurement {
+            sampled_at_unix_ms: NOW + MAX_TELEMETRY_FUTURE_SKEW_MS + 1,
+            ..measured(AcceleratorHeadroom {
+                available_memory_mb: 1,
+                available_compute_units: 1,
+            })
+        });
+        assert_eq!(
+            evaluate_extended_resource_placement(&value, ask, NOW, 5_000),
+            Err(ExtendedResourceRejection::StaleMeasurement(
+                ResourceKind::Npu
+            ))
+        );
+
+        value = snapshot();
+        ask = request();
+        value.storage = Some(ResourceMeasurement {
+            sampled_at_unix_ms: NOW + MAX_TELEMETRY_FUTURE_SKEW_MS,
+            ..measured(StorageHeadroom {
+                available_scratch_bytes: 1,
+            })
+        });
+        ask.scratch_storage_bytes = 1;
+        assert!(evaluate_extended_resource_placement(&value, ask, NOW, 5_000).is_ok());
+        value.storage = Some(ResourceMeasurement {
+            sampled_at_unix_ms: NOW + MAX_TELEMETRY_FUTURE_SKEW_MS + 1,
+            ..measured(StorageHeadroom {
+                available_scratch_bytes: 1,
+            })
+        });
+        assert_eq!(
+            evaluate_extended_resource_placement(&value, ask, NOW, 5_000),
+            Err(ExtendedResourceRejection::StaleMeasurement(
+                ResourceKind::Storage
+            ))
+        );
+
+        value = snapshot();
+        ask = request();
+        value.network = Some(ResourceMeasurement {
+            sampled_at_unix_ms: NOW + MAX_TELEMETRY_FUTURE_SKEW_MS,
+            ..measured(NetworkHeadroom {
+                available_bandwidth_kbps: 1,
+                egress_allowed: true,
+            })
+        });
+        ask.network_access = true;
+        ask.network_bandwidth_kbps = 1;
+        assert!(evaluate_extended_resource_placement(&value, ask, NOW, 5_000).is_ok());
+        value.network = Some(ResourceMeasurement {
+            sampled_at_unix_ms: NOW + MAX_TELEMETRY_FUTURE_SKEW_MS + 1,
+            ..measured(NetworkHeadroom {
+                available_bandwidth_kbps: 1,
+                egress_allowed: true,
+            })
+        });
+        assert_eq!(
+            evaluate_extended_resource_placement(&value, ask, NOW, 5_000),
+            Err(ExtendedResourceRejection::StaleMeasurement(
+                ResourceKind::Network
+            ))
+        );
+    }
+
 }
