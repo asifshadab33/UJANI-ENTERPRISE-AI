@@ -341,7 +341,7 @@ AS $function$
   ON l.tenant_id = ae.tenant_id AND l.lease_id = ae.object_ref
  LEFT JOIN ujani_control.approvals a
   ON a.tenant_id = l.tenant_id AND a.approval_id = l.approval_id
- WHERE ae.event_type = 'device.lease.admitted'
+ WHERE ae.event_type LIKE 'device.lease.%'
    AND ae.tenant_id = pg_catalog.current_setting('ujani.tenant_id', true)
    AND (p_before_sequence IS NULL OR ae.sequence_id < p_before_sequence)
  ORDER BY ae.sequence_id DESC
