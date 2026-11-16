@@ -385,14 +385,9 @@ mod tests {
                     .0
                     .lock()
                     .map_err(|_| IntegrityKeyProviderError::LockPoisoned)?;
-                if let Some((rotate_purpose, next_key_id)) =
-                    state.rotate_after_next_sign.take()
-                {
+                if let Some((rotate_purpose, next_key_id)) = state.rotate_after_next_sign.take() {
                     if rotate_purpose == purpose {
-                        if !state
-                            .keys
-                            .contains_key(&(purpose, next_key_id.clone()))
-                        {
+                        if !state.keys.contains_key(&(purpose, next_key_id.clone())) {
                             return Err(IntegrityKeyProviderError::UnknownKey);
                         }
                         state.active.insert(purpose, next_key_id);
