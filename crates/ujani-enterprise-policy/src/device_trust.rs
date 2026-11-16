@@ -795,6 +795,12 @@ mod tests {
     use ed25519_dalek::{Signer, SigningKey};
     use sha2::Digest;
 
+    // Stable, distinct test identifiers; never used as production cryptographic nonces.
+    fn test_request_id(label: &[u8]) -> [u8; 16] {
+        let digest = sha2::Sha256::digest(label);
+        digest[..16].try_into().unwrap()
+    }
+
     fn registry() -> (DeviceRegistry, SigningKey, SigningKey) {
         let admin = SigningKey::from_bytes(&[7u8; 32]);
         let device = SigningKey::from_bytes(&[9u8; 32]);
@@ -831,7 +837,7 @@ mod tests {
             device_id: "device-1".into(),
             key_id: "device-key-v1".into(),
             key_generation: 1,
-            request_id: [2; 16],
+            request_id: test_request_id(b"enrollment-proof-binding"),
             issued_at_unix_ms: 200,
             expires_at_unix_ms: 500,
             method: "POST".into(),
@@ -858,7 +864,7 @@ mod tests {
             device_id: "device-1".into(),
             key_id: "device-key-v1".into(),
             key_generation: 1,
-            request_id: [4; 16],
+            request_id: test_request_id(b"telemetry-transaction-retry"),
             issued_at_unix_ms: 200,
             expires_at_unix_ms: 500,
             method: "POST".into(),
@@ -896,7 +902,7 @@ mod tests {
             device_id: "device-1".into(),
             key_id: "device-key-v1".into(),
             key_generation: 1,
-            request_id: [3; 16],
+            request_id: test_request_id(b"request-authentication"),
             issued_at_unix_ms: 200,
             expires_at_unix_ms: 500,
             method: "POST".into(),
@@ -935,7 +941,7 @@ mod tests {
             device_id: "device-1".into(),
             key_id: "device-key-v1".into(),
             key_generation: 1,
-            request_id: [0; 16],
+            request_id: test_request_id(b"zero-id-rejection"),
             issued_at_unix_ms: 200,
             expires_at_unix_ms: 500,
             method: "POST".into(),
@@ -977,7 +983,7 @@ mod tests {
             device_id: "device-1".into(),
             key_id: "device-key-v1".into(),
             key_generation: 1,
-            request_id: [12; 16],
+            request_id: test_request_id(b"request-replay-window"),
             issued_at_unix_ms: 200,
             expires_at_unix_ms: 500,
             method: "POST".into(),
@@ -1098,7 +1104,7 @@ mod tests {
             target_public_key: None,
             issued_at_unix_ms: 300,
             expires_at_unix_ms: 1000,
-            nonce: [8; 16],
+            nonce: test_request_id(b"owner-consent-opt-in"),
             signature: [0; 64],
             old_device_signature: None,
             new_device_signature: None,
@@ -1110,7 +1116,7 @@ mod tests {
             device_id: "device-1".into(),
             key_id: "device-key-v1".into(),
             key_generation: 1,
-            request_id: [9; 16],
+            request_id: test_request_id(b"owner-consent-request"),
             issued_at_unix_ms: 350,
             expires_at_unix_ms: 500,
             method: "POST".into(),
@@ -1160,7 +1166,7 @@ mod tests {
             target_public_key: Some(new_device.verifying_key().to_bytes()),
             issued_at_unix_ms: 300,
             expires_at_unix_ms: 1000,
-            nonce: [4; 16],
+            nonce: test_request_id(b"key-rotation-proof"),
             signature: [0; 64],
             old_device_signature: None,
             new_device_signature: None,
@@ -1175,7 +1181,7 @@ mod tests {
             device_id: "device-1".into(),
             key_id: "device-key-v1".into(),
             key_generation: 1,
-            request_id: [5; 16],
+            request_id: test_request_id(b"key-rotation-request"),
             issued_at_unix_ms: 350,
             expires_at_unix_ms: 500,
             method: "POST".into(),
