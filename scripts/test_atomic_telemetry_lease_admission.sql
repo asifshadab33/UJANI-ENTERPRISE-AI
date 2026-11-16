@@ -65,6 +65,7 @@ DECLARE
  lease_replays integer;
  sample_count integer;
  lease_count integer;
+ approval_ref text;
  audit_count integer;
 BEGIN
  SELECT d.telemetry_generation,d.telemetry_sequence,d.reservation_revision
@@ -82,12 +83,16 @@ BEGIN
    AND generation=1 AND sequence=1;
  SELECT count(*) INTO lease_count FROM ujani_control.leases
  WHERE tenant_id='admission-test' AND lease_id='admission-atomic-lease';
+ SELECT approval_id INTO approval_ref FROM ujani_control.leases
+ WHERE tenant_id='admission-test' AND lease_id='admission-atomic-lease';
  SELECT count(*) INTO audit_count FROM ujani_control.audit_events
  WHERE tenant_id='admission-test'
    AND event_id='00000000-0000-4000-8000-000000000201';
  IF telemetry_generation <> 1 OR telemetry_sequence <> 1 OR reservation_revision <> 1
     OR telemetry_replays <> 1 OR lease_replays <> 1
-    OR sample_count <> 1 OR lease_count <> 1 OR audit_count <> 1 THEN
+    OR sample_count <> 1 OR lease_count <> 1
+    OR approval_ref IS DISTINCT FROM 'admission-approval'
+    OR audit_count <> 1 THEN
   RAISE EXCEPTION 'atomic success was incomplete: telemetry %, sequence %, revision %, replay %, %, sample %, lease %, audit %',
    telemetry_generation,telemetry_sequence,reservation_revision,
    telemetry_replays,lease_replays,sample_count,lease_count,audit_count;
