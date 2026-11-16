@@ -9,7 +9,8 @@ This roadmap is a statement of intended work, not a claim that these capabilitie
 - [x] Document enrolment, policy, security and threat boundaries.
 - [x] Add initial Rust policy types and admission tests.
 - [x] Add a pure CPU-capacity admission helper with configurable OS headroom, memory reserve, authenticated/fresh telemetry, owner opt-in, interactive-use, power/thermal and isolation gates (no live sensor or scheduler yet).
-- [ ] Agree a versioned task/capability protocol with UJANI Public AI.
+- [x] Publish matching draft v1 task-envelope/status/receipt and model-runtime-inventory schemas, test vectors and hash-pinned shared manifests with UJANI Public AI.
+- [ ] Agree and approve the production task/capability protocol semantics and end-to-end interoperability with UJANI Public AI.
 
 ## Phase 1 — trusted lab prototype
 - [x] Signed administrator device-enrollment command primitives with proof of possession and tenant binding (policy library only; no authenticated service endpoint).
@@ -59,13 +60,13 @@ Do not claim secure isolation, guaranteed savings, compliance or production read
 
 ## Operator dashboard implementation sequence (added 2026-11-07)
 - [ ] P1: Complete trusted enrollment, key custody/rotation/revocation and authenticated lease control plane (issue #20); this blocks live fleet telemetry and every privileged action.
-- [ ] Build a read-only dashboard shell using synthetic fixtures, always marked DEMO DATA.
+- [x] Add a static read-only operator dashboard preview with an explicit, always-labelled DEMO DATA mode; authenticated live inventory remains pending.
 - [ ] Add server-authorized live inventory using `schemas/fleet-inventory-v1.schema.json`; display source and freshness, preserving unknown/stale states.
 - [ ] Add site/subnet grouping, health alerts, workload/lease status and audit search/export.
 - [ ] Add maintenance and rollout visibility; keep actions disabled until receiver-side authorization, scoped approvals, audit and rollback are verified.
 - [ ] Complete independent threat review and tenant-isolation/IDOR tests before production deployment.
 
-See [docs/OPERATOR-WORKFLOWS.md](docs/OPERATOR-WORKFLOWS.md). The dashboard design and schema are contracts only; they do not represent an implemented web UI, agent or live control plane.
+See [docs/OPERATOR-WORKFLOWS.md](docs/OPERATOR-WORKFLOWS.md). The static read-only UI and explicit synthetic demo are implemented; there is still no authenticated live fleet API, agent or production control plane.
 
 
 ## Device trust persistence update — 2026-11-07
