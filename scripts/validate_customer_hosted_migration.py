@@ -20,6 +20,8 @@ TELEMETRY_V2_CONCURRENCY_PATH = ROOT / "scripts" / "test_monotonic_device_teleme
 ATOMIC_TELEMETRY_LEASE_SQL_PATH = ROOT / "migrations" / "0010_atomic_telemetry_lease_admission.sql"
 ATOMIC_TELEMETRY_LEASE_TEST_PATH = ROOT / "scripts" / "test_atomic_telemetry_lease_admission.sql"
 LEASE_APPROVAL_SQL_PATH = ROOT / "migrations" / "0011_persist_lease_approval_reference.sql"
+LEASE_AUDIT_VIEW_SQL_PATH = ROOT / "migrations" / "0012_lease_audit_evidence_view.sql"
+OWNER_CONSENT_REVOCATION_SQL_PATH = ROOT / "migrations" / "0013_revoke_leases_on_owner_consent_change.sql"
 TENANT_TEST_SQL_PATH = ROOT / "scripts" / "test_customer_hosted_migration.sql"
 
 
@@ -378,10 +380,52 @@ def main() -> None:
             raise SystemExit("lease approval-reference migration is missing invariant: " + required)
     if "SECURITY DEFINER" in lease_approval_sql:
         raise SystemExit("lease approval-reference update must preserve caller RLS and privileges")
+    lease_audit_view_sql = LEASE_AUDIT_VIEW_SQL_PATH.read_text(encoding="utf-8")
+    for required in (
+        "ADD COLUMN IF NOT EXISTS request_digest bytea",
+        "p_request_id, p_operation_digest",
+        "CREATE OR REPLACE FUNCTION ujani_control.reject_lease_admission_evidence_mutation()",
+        "OLD.request_digest IS DISTINCT FROM NEW.request_digest",
+        "OLD.approval_id IS DISTINCT FROM NEW.approval_id",
+        "leases_admission_evidence_immutable",
+        "CREATE OR REPLACE FUNCTION ujani_control.list_device_lease_audit_evidence(",
+        "p_before_sequence bigint DEFAULT NULL",
+        "p_limit integer DEFAULT 100",
+        "LIMIT GREATEST(1, LEAST(COALESCE(p_limit, 100), 200))",
+        "SECURITY INVOKER",
+        "ae.event_digest",
+        "ae.event_type LIKE 'device.lease.%'",
+        "l.request_digest",
+        "l.approval_id",
+        "REVOKE ALL ON FUNCTION ujani_control.list_device_lease_audit_evidence(bigint,integer) FROM PUBLIC",
+    ):
+        if required not in lease_audit_view_sql:
+            raise SystemExit("lease audit evidence migration is missing invariant: " + required)
+    if "SECURITY DEFINER" in lease_audit_view_sql:
+        raise SystemExit("lease audit evidence function must preserve caller RLS")
+    owner_consent_revocation_sql = OWNER_CONSENT_REVOCATION_SQL_PATH.read_text(encoding="utf-8")
+    if "SECURITY INVOKER" not in owner_consent_revocation_sql or "SECURITY DEFINER" in owner_consent_revocation_sql:
+        raise SystemExit("owner-consent lease revocation must preserve caller privilege checks")
+    for required in (
+        "CREATE OR REPLACE FUNCTION ujani_control.apply_owner_consent_revision()",
+        "IF NEW.state <> 'granted' THEN",
+        "SET state = 'revoked', revision = revision + 1",
+        "'device.lease.revoked'",
+        "'owner_consent_' || NEW.state",
+    ):
+        if required not in owner_consent_revocation_sql:
+            raise SystemExit("owner-consent lease revocation migration is missing invariant: " + required)
     atomic_telemetry_lease_test = ATOMIC_TELEMETRY_LEASE_TEST_PATH.read_text(encoding="utf-8")
     for required in (
         "atomic telemetry-plus-lease admission was rejected",
         "approval_ref IS DISTINCT FROM 'admission-approval'",
+        "stored_request_digest IS DISTINCT FROM decode(repeat('d4',32),'hex')",
+        "GRANT SELECT ON ujani_control.audit_events,ujani_control.leases,ujani_control.approvals TO ujani_runtime",
+        "audit evidence function leaked a lease across tenant context",
+        "lease request digest mutation was not rejected",
+        "lease approval reference mutation was not rejected",
+        "owner consent withdrawal did not atomically revoke outstanding leases",
+        "withdrawn owner consent must block new lease admission",
         "interactive telemetry must deny lease admission",
         "expected denial left partial telemetry or lease state",
         "duplicate audit event did not abort atomic admission",
@@ -406,9 +450,11 @@ def main() -> None:
         ci_workflow.index("migrations/0009_task_contract_replay_functions.sql")
         < ci_workflow.index("migrations/0010_atomic_telemetry_lease_admission.sql")
         < ci_workflow.index("migrations/0011_persist_lease_approval_reference.sql")
+        < ci_workflow.index("migrations/0012_lease_audit_evidence_view.sql")
+        < ci_workflow.index("migrations/0013_revoke_leases_on_owner_consent_change.sql")
         < ci_workflow.index("scripts/test_atomic_telemetry_lease_admission.sql")
     ):
-        raise SystemExit("atomic telemetry-plus-lease test must run after migrations 0009, 0010 and 0011")
+        raise SystemExit("atomic telemetry-plus-lease test must run after migrations 0009-0013")
 
     print("Customer-hosted, task-contract, Self-Evolution approval replay, v1/v2 monotonic telemetry, atomic device admission and atomic telemetry-plus-lease checks passed.")
 
