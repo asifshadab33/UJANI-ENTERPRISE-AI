@@ -404,13 +404,14 @@ def main() -> None:
     if "SECURITY DEFINER" in lease_audit_view_sql:
         raise SystemExit("lease audit evidence function must preserve caller RLS")
     owner_consent_revocation_sql = OWNER_CONSENT_REVOCATION_SQL_PATH.read_text(encoding="utf-8")
+    if "SECURITY INVOKER" not in owner_consent_revocation_sql or "SECURITY DEFINER" in owner_consent_revocation_sql:
+        raise SystemExit("owner-consent lease revocation must preserve caller privilege checks")
     for required in (
         "CREATE OR REPLACE FUNCTION ujani_control.apply_owner_consent_revision()",
         "IF NEW.state <> 'granted' THEN",
         "SET state = 'revoked', revision = revision + 1",
         "'device.lease.revoked'",
         "'owner_consent_' || NEW.state",
-        "GRANT UPDATE (state, revision) ON ujani_control.leases TO ujani_runtime",
     ):
         if required not in owner_consent_revocation_sql:
             raise SystemExit("owner-consent lease revocation migration is missing invariant: " + required)
