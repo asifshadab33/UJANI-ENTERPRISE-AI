@@ -60,6 +60,7 @@ def validate_self_evolution_schema() -> None:
 
 
 EXPECTED_SHARED_ARTIFACTS = {
+    "catalogs/local-model-catalog-v1.json": "8f97eeb59d5c6cdf6c07df027eaf587a64184ba6",
     "schemas/model-runtime-inventory-v1.schema.json": "8ff1a1db4700214ba687cd806c449bc1ea7dfdb4",
     "schemas/personal-enterprise-task-contract-v1.schema.json": "566a0d72babd58636a3ef40e55b5c44168776522",
     "schemas/test-vectors/consent-binding-v1.json": "dcd7021560212504810e8438e14efd591e5e657d",
@@ -89,6 +90,10 @@ def validate_shared_contract_manifest() -> None:
             f"shared contract drift in {relative_path}: "
             f"expected {expected_sha}, got {actual_sha}"
         )
+    mirror = ROOT / "apps/operator-console/model-catalog.json"
+    assert _git_blob_sha1(mirror) == EXPECTED_SHARED_ARTIFACTS["catalogs/local-model-catalog-v1.json"], (
+        f"local model catalogue mirror drift: {mirror.relative_to(ROOT)}"
+    )
 
 
 def main() -> None:
