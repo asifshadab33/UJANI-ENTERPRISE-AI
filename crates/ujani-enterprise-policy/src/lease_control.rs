@@ -678,9 +678,15 @@ mod tests {
         // The server's expected tenant is authoritative, not the signed claim alone.
         assert_eq!(
             authenticate_and_renew_device_lease(
-                &fixture.registry, &fixture.ledger, &request, body,
-                "another-tenant", WORKLOAD_ID, &fixture.manifest_sha256,
-                &fixture.lease_token, 1_500,
+                &fixture.registry,
+                &fixture.ledger,
+                &request,
+                body,
+                "another-tenant",
+                WORKLOAD_ID,
+                &fixture.manifest_sha256,
+                &fixture.lease_token,
+                1_500,
             ),
             Err(LeaseControlError::RequestBindingMismatch)
         );
@@ -688,9 +694,15 @@ mod tests {
         // A workload identifier supplied by the caller cannot override trusted server state.
         assert_eq!(
             authenticate_and_renew_device_lease(
-                &fixture.registry, &fixture.ledger, &request, body,
-                TENANT_ID, "another-workload", &fixture.manifest_sha256,
-                &fixture.lease_token, 1_500,
+                &fixture.registry,
+                &fixture.ledger,
+                &request,
+                body,
+                TENANT_ID,
+                "another-workload",
+                &fixture.manifest_sha256,
+                &fixture.lease_token,
+                1_500,
             ),
             Err(LeaseControlError::RequestBindingMismatch)
         );
@@ -699,9 +711,15 @@ mod tests {
         let different_manifest = test_key_bytes("different-trusted-manifest");
         assert_eq!(
             authenticate_and_renew_device_lease(
-                &fixture.registry, &fixture.ledger, &request, body,
-                TENANT_ID, WORKLOAD_ID, &different_manifest,
-                &fixture.lease_token, 1_500,
+                &fixture.registry,
+                &fixture.ledger,
+                &request,
+                body,
+                TENANT_ID,
+                WORKLOAD_ID,
+                &different_manifest,
+                &fixture.lease_token,
+                1_500,
             ),
             Err(LeaseControlError::RequestBindingMismatch)
         );
@@ -711,7 +729,10 @@ mod tests {
         assert_eq!(after.reserved_cpu_millis, baseline.reserved_cpu_millis);
         assert_eq!(after.reserved_memory_mb, baseline.reserved_memory_mb);
         assert_eq!(
-            fixture.ledger.reservation_revision(DEVICE_ID, 1_501).unwrap(),
+            fixture
+                .ledger
+                .reservation_revision(DEVICE_ID, 1_501)
+                .unwrap(),
             1,
             "rejected binding attempts must not renew or revise the lease"
         );
