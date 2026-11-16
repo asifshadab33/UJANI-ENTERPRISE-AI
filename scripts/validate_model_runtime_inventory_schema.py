@@ -63,11 +63,11 @@ def validate_self_evolution_schema() -> None:
 EXPECTED_SHARED_ARTIFACTS = {
     "catalogs/local-model-catalog-v1.json": "8f97eeb59d5c6cdf6c07df027eaf587a64184ba6",
     "schemas/model-runtime-inventory-v1.schema.json": "8ff1a1db4700214ba687cd806c449bc1ea7dfdb4",
-    "schemas/model-runtime-inventory-v2.schema.json": "48bc9bec1e7ee92c78fbdf52c974ea3ec90b8981",
+    "schemas/model-runtime-inventory-v2.schema.json": "737b16538f63124bcb184311cf1884c809c3ea57",
     "schemas/personal-enterprise-task-contract-v1.schema.json": "566a0d72babd58636a3ef40e55b5c44168776522",
     "schemas/test-vectors/consent-binding-v1.json": "dcd7021560212504810e8438e14efd591e5e657d",
     "schemas/test-vectors/model-runtime-inventory-v1.json": "543d645d0154c9263ff7784ba4e203f54e498c3c",
-    "schemas/test-vectors/model-runtime-inventory-v2.json": "d1e583a64f7e00fd6c62aa59a872ed2a5e5226c5",
+    "schemas/test-vectors/model-runtime-inventory-v2.json": "cad9d1fb8963298c4ba56a4124948a268d15f08f",
 }
 
 
@@ -226,6 +226,8 @@ def _v2_model_fits(
 
     platform = inventory["platform"]
     compatibility = model["compatibility"]
+    if not _v2_evidence_claim_usable(platform["evidence"], now_unix_ms, max_age_ms):
+        return False
     if compatibility["supported_os"] and platform["os"] not in compatibility["supported_os"]:
         return False
     if (
@@ -249,6 +251,18 @@ def _v2_model_fits(
 
     hardware = inventory["hardware"]
     estimates = model["resource_estimates"]
+    has_host_resource_requirement = any(
+        estimates[field] is not None
+        for field in (
+            "minimum_memory_mb",
+            "minimum_storage_bytes",
+            "recommended_cpu_threads",
+        )
+    )
+    if has_host_resource_requirement and not _v2_evidence_claim_usable(
+        hardware["evidence"], now_unix_ms, max_age_ms
+    ):
+        return False
     has_estimate = any(
         estimates[field] is not None
         for field in (
@@ -386,6 +400,18 @@ def validate_model_runtime_inventory_v2() -> None:
     stale_evidence["runtimes"][0]["evidence"]["observed_at_unix_ms"] = now - 5_001
     assert _v2_select_explicit_model(
         stale_evidence, "example/model:1.0", "chat", now, 5_000
+    ) is None
+    stale_platform = copy.deepcopy(fixture)
+    stale_platform["platform"]["evidence"]["observed_at_unix_ms"] = now - 5_001
+    validator.validate(stale_platform)
+    assert _v2_select_explicit_model(
+        stale_platform, "example/model:1.0", "chat", now, 5_000
+    ) is None
+    stale_hardware = copy.deepcopy(fixture)
+    stale_hardware["hardware"]["evidence"]["observed_at_unix_ms"] = now - 5_001
+    validator.validate(stale_hardware)
+    assert _v2_select_explicit_model(
+        stale_hardware, "example/model:1.0", "chat", now, 5_000
     ) is None
     unknown_estimate = copy.deepcopy(fixture)
     unknown_estimate["models"][0]["resource_estimates"]["evidence"] = {
