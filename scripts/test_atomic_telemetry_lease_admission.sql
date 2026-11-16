@@ -270,3 +270,72 @@ BEGIN
  END IF;
 END;
 $block$;
+
+
+-- Owner consent withdrawal revokes outstanding leases and records one audit
+-- event per lease in the same transaction as the monotonic consent revision.
+INSERT INTO ujani_control.owner_consents
+ (tenant_id,device_id,consent_generation,state,actor_ref,evidence_digest)
+VALUES ('admission-test','admission-atomic-device',2,'withdrawn','admission-owner',
+ decode(repeat('b1',32),'hex'));
+
+DO $block$
+DECLARE
+ device_consent_generation bigint;
+ device_consent_state text;
+ lease_state text;
+ lease_revision bigint;
+ revocation_events integer;
+ evidence_rows integer;
+BEGIN
+ SELECT consent_generation,owner_consent_state
+ INTO device_consent_generation,device_consent_state
+ FROM ujani_control.devices
+ WHERE tenant_id='admission-test' AND device_id='admission-atomic-device';
+ SELECT state,revision INTO lease_state,lease_revision
+ FROM ujani_control.leases
+ WHERE tenant_id='admission-test' AND lease_id='admission-atomic-lease';
+ SELECT count(*) INTO revocation_events FROM ujani_control.audit_events
+ WHERE tenant_id='admission-test'
+   AND event_type='device.lease.revoked'
+   AND outcome='owner_consent_withdrawn'
+   AND object_ref='admission-atomic-lease';
+ SELECT count(*) INTO evidence_rows
+ FROM ujani_control.list_device_lease_audit_evidence(NULL,10)
+ WHERE lease_id='admission-atomic-lease'
+   AND event_type='device.lease.revoked'
+   AND outcome='owner_consent_withdrawn';
+ IF device_consent_generation <> 2 OR device_consent_state <> 'withdrawn'
+    OR lease_state <> 'revoked' OR lease_revision <> 2
+    OR revocation_events <> 1 OR evidence_rows <> 1
+    OR EXISTS (SELECT 1 FROM ujani_control.leases
+               WHERE tenant_id='admission-test' AND device_id='admission-atomic-device'
+                 AND state IN ('reserved','active')) THEN
+  RAISE EXCEPTION 'owner consent withdrawal did not atomically revoke outstanding leases';
+ END IF;
+END;
+$block$;
+
+DO $block$
+DECLARE admitted boolean;
+BEGIN
+ admitted := ujani_control.admit_device_lease_with_telemetry(
+  'admission-test','admission-atomic-device',
+  1,2,2,2,2,
+  decode(repeat('b2',16),'hex'),clock_timestamp(),decode(repeat('b3',32),'hex'),
+  4000,8192,'cool','ac','idle',
+  'admission-workload','admission-approval','admission-after-withdrawal-lease',
+  decode(repeat('b4',16),'hex'),decode(repeat('b5',32),'hex'),
+  decode(repeat('44',32),'hex'),500,512,decode(repeat('b6',32),'hex'),
+  clock_timestamp()+interval '4 minutes',
+  '00000000-0000-4000-8000-000000000204');
+ IF admitted IS DISTINCT FROM false THEN
+  RAISE EXCEPTION 'withdrawn owner consent must block new lease admission';
+ END IF;
+ IF EXISTS (SELECT 1 FROM ujani_control.request_replays
+            WHERE tenant_id='admission-test' AND device_id='admission-atomic-device'
+              AND request_id IN (decode(repeat('b2',16),'hex'),decode(repeat('b4',16),'hex'))) THEN
+  RAISE EXCEPTION 'withdrawn owner consent consumed telemetry or lease replay identifiers';
+ END IF;
+END;
+$block$;
