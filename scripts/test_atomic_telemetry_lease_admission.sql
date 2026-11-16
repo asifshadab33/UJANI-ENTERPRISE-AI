@@ -66,9 +66,8 @@ DECLARE
  sample_count integer;
  lease_count integer;
  approval_ref text;
- request_digest bytea;
+ stored_request_digest bytea;
  audit_count integer;
- view_count integer;
 BEGIN
  SELECT d.telemetry_generation,d.telemetry_sequence,d.reservation_revision
  INTO telemetry_generation,telemetry_sequence,reservation_revision
@@ -85,8 +84,9 @@ BEGIN
    AND generation=1 AND sequence=1;
  SELECT count(*) INTO lease_count FROM ujani_control.leases
  WHERE tenant_id='admission-test' AND lease_id='admission-atomic-lease';
- SELECT approval_id,request_digest INTO approval_ref,request_digest FROM ujani_control.leases
- WHERE tenant_id='admission-test' AND lease_id='admission-atomic-lease';
+ SELECT l.approval_id,l.request_digest INTO approval_ref,stored_request_digest
+ FROM ujani_control.leases l
+ WHERE l.tenant_id='admission-test' AND l.lease_id='admission-atomic-lease';
  SELECT count(*) INTO audit_count FROM ujani_control.audit_events
  WHERE tenant_id='admission-test'
    AND event_id='00000000-0000-4000-8000-000000000201';
@@ -94,7 +94,7 @@ BEGIN
     OR telemetry_replays <> 1 OR lease_replays <> 1
     OR sample_count <> 1 OR lease_count <> 1
     OR approval_ref IS DISTINCT FROM 'admission-approval'
-    OR request_digest IS DISTINCT FROM decode(repeat('d4',32),'hex')
+    OR stored_request_digest IS DISTINCT FROM decode(repeat('d4',32),'hex')
     OR audit_count <> 1 THEN
   RAISE EXCEPTION 'atomic success was incomplete: telemetry %, sequence %, revision %, replay %, %, sample %, lease %, audit %',
    telemetry_generation,telemetry_sequence,reservation_revision,
