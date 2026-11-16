@@ -73,13 +73,5 @@ BEGIN
 END;
 $function$;
 
-DO $block$
-BEGIN
- IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'ujani_runtime') THEN
-  GRANT UPDATE (state, revision) ON ujani_control.leases TO ujani_runtime;
- END IF;
-END;
-$block$;
-
 COMMENT ON FUNCTION ujani_control.apply_owner_consent_revision() IS
  'Applies monotonic owner-consent revisions under the device row lock. A paused or withdrawn consent also revokes every reserved/active lease and appends a per-lease audit event in the same transaction. A later grant never reactivates old leases; a fresh admission is required.';
