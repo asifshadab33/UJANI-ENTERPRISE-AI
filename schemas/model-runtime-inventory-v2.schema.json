@@ -1,0 +1,772 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ujani:model-runtime-inventory:v2",
+  "title": "UJANI Model and Runtime Capability Inventory",
+  "description": "Privacy-minimised, evidence-qualified model/runtime capability and compatibility metadata. This descriptor is not a consent grant, task authorisation, model installation request, or execution instruction.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "generated_at_unix_ms",
+    "collection_context",
+    "platform",
+    "hardware",
+    "runtimes",
+    "models",
+    "privacy"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 2
+    },
+    "generated_at_unix_ms": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "device_ref": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "collection_context": {
+      "$ref": "#/$defs/collection_context"
+    },
+    "platform": {
+      "$ref": "#/$defs/platform"
+    },
+    "hardware": {
+      "$ref": "#/$defs/hardware"
+    },
+    "runtimes": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "$ref": "#/$defs/runtime"
+      }
+    },
+    "models": {
+      "type": "array",
+      "maxItems": 512,
+      "items": {
+        "$ref": "#/$defs/model"
+      }
+    },
+    "privacy": {
+      "$ref": "#/$defs/privacy"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "collection_context": {
+            "properties": {
+              "scope": {
+                "const": "personal_local_only"
+              }
+            }
+          }
+        },
+        "required": [
+          "collection_context"
+        ]
+      },
+      "then": {
+        "properties": {
+          "collection_context": {
+            "properties": {
+              "owner_consent": {
+                "const": "not_required_local_only"
+              },
+              "organisation_authorisation": {
+                "const": "not_applicable"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "collection_context": {
+            "properties": {
+              "scope": {
+                "const": "organisation_enrolled"
+              }
+            }
+          }
+        },
+        "required": [
+          "collection_context"
+        ]
+      },
+      "then": {
+        "properties": {
+          "collection_context": {
+            "properties": {
+              "owner_consent": {
+                "enum": [
+                  "granted",
+                  "revoked",
+                  "unknown"
+                ]
+              },
+              "organisation_authorisation": {
+                "enum": [
+                  "authorised",
+                  "revoked",
+                  "unknown"
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "confidence",
+        "observed_at_unix_ms"
+      ],
+      "properties": {
+        "source": {
+          "enum": [
+            "runtime_api",
+            "os_api",
+            "runtime_metadata",
+            "signed_catalogue",
+            "published_catalogue",
+            "estimate",
+            "unknown"
+          ]
+        },
+        "confidence": {
+          "enum": [
+            "verified",
+            "reported",
+            "estimated",
+            "unknown"
+          ]
+        },
+        "observed_at_unix_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      }
+    },
+    "collection_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scope",
+        "owner_consent",
+        "organisation_authorisation",
+        "policy_version"
+      ],
+      "properties": {
+        "scope": {
+          "enum": [
+            "personal_local_only",
+            "organisation_enrolled"
+          ]
+        },
+        "owner_consent": {
+          "enum": [
+            "not_required_local_only",
+            "granted",
+            "revoked",
+            "unknown"
+          ]
+        },
+        "organisation_authorisation": {
+          "enum": [
+            "not_applicable",
+            "authorised",
+            "revoked",
+            "unknown"
+          ]
+        },
+        "policy_version": {
+          "$ref": "#/$defs/identifier"
+        }
+      }
+    },
+    "platform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "os",
+        "architecture"
+      ],
+      "properties": {
+        "os": {
+          "enum": [
+            "windows",
+            "linux",
+            "macos",
+            "other",
+            "unknown"
+          ]
+        },
+        "os_version": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64
+        },
+        "architecture": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        }
+      }
+    },
+    "accelerator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "vendor",
+        "evidence"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "gpu",
+            "npu",
+            "other"
+          ]
+        },
+        "vendor": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64
+        },
+        "device_family": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 96
+        },
+        "memory_mb": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "runtime_api": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidence"
+        }
+      }
+    },
+    "hardware": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cpu_logical_cores",
+        "memory_total_mb",
+        "memory_available_mb",
+        "accelerators"
+      ],
+      "properties": {
+        "cpu_logical_cores": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "memory_total_mb": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "memory_available_mb": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "storage_free_mb": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "accelerators": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "$ref": "#/$defs/accelerator"
+          }
+        }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runtime_id",
+        "provider",
+        "version",
+        "availability",
+        "network_scope",
+        "evidence"
+      ],
+      "properties": {
+        "runtime_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 96,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "provider": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64
+        },
+        "availability": {
+          "enum": [
+            "available",
+            "unavailable",
+            "unknown"
+          ]
+        },
+        "network_scope": {
+          "enum": [
+            "loopback_only",
+            "local_socket",
+            "enterprise_internal",
+            "not_applicable",
+            "unknown"
+          ]
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidence"
+        }
+      }
+    },
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "status",
+        "evidence"
+      ],
+      "properties": {
+        "name": {
+          "enum": [
+            "chat",
+            "reasoning",
+            "coding",
+            "vision",
+            "embeddings",
+            "tool_use",
+            "streaming",
+            "audio_input",
+            "audio_output"
+          ]
+        },
+        "status": {
+          "enum": [
+            "supported",
+            "unsupported",
+            "unknown"
+          ]
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidence"
+        }
+      }
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_tokens",
+        "evidence"
+      ],
+      "properties": {
+        "max_tokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 10000000
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidence"
+        }
+      }
+    },
+    "tool_use": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "supported",
+        "evidence"
+      ],
+      "properties": {
+        "supported": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidence"
+        }
+      }
+    },
+    "vision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "supported",
+        "max_image_bytes",
+        "supported_mime_types",
+        "evidence"
+      ],
+      "properties": {
+        "supported": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "max_image_bytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 67108864
+        },
+        "supported_mime_types": {
+          "type": "array",
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "maxLength": 64,
+            "pattern": "^[a-z0-9.+-]+/[a-z0-9.+-]+$"
+          }
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidence"
+        }
+      }
+    },
+    "embeddings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "supported",
+        "dimensions",
+        "evidence"
+      ],
+      "properties": {
+        "supported": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "dimensions": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 1048576
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidence"
+        }
+      }
+    },
+    "resource_estimates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "minimum_memory_mb",
+        "minimum_accelerator_memory_mb",
+        "minimum_storage_bytes",
+        "recommended_cpu_threads",
+        "evidence"
+      ],
+      "properties": {
+        "minimum_memory_mb": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 16777216
+        },
+        "minimum_accelerator_memory_mb": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 16777216
+        },
+        "minimum_storage_bytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 1099511627776
+        },
+        "recommended_cpu_threads": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidence"
+        }
+      }
+    },
+    "compatibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "supported_os",
+        "supported_architectures",
+        "required_accelerator_kinds",
+        "required_accelerator_apis",
+        "evidence"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "compatible",
+            "incompatible",
+            "unknown"
+          ]
+        },
+        "supported_os": {
+          "type": "array",
+          "maxItems": 5,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "windows",
+              "linux",
+              "macos",
+              "other",
+              "unknown"
+            ]
+          }
+        },
+        "supported_architectures": {
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 32
+          }
+        },
+        "required_accelerator_kinds": {
+          "type": "array",
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "gpu",
+              "npu",
+              "other"
+            ]
+          }
+        },
+        "required_accelerator_apis": {
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          }
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidence"
+        }
+      }
+    },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "model_ref",
+        "runtime_id",
+        "display_name",
+        "version",
+        "availability",
+        "capabilities",
+        "context",
+        "tool_use",
+        "vision",
+        "embeddings",
+        "resource_estimates",
+        "compatibility",
+        "evidence"
+      ],
+      "properties": {
+        "model_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "runtime_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 96,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "display_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "family": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 96
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64
+        },
+        "availability": {
+          "enum": [
+            "installed",
+            "downloadable",
+            "unavailable",
+            "unknown"
+          ]
+        },
+        "size_bytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1099511627776
+        },
+        "capabilities": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "$ref": "#/$defs/capability"
+          }
+        },
+        "context": {
+          "$ref": "#/$defs/context"
+        },
+        "tool_use": {
+          "$ref": "#/$defs/tool_use"
+        },
+        "vision": {
+          "$ref": "#/$defs/vision"
+        },
+        "embeddings": {
+          "$ref": "#/$defs/embeddings"
+        },
+        "resource_estimates": {
+          "$ref": "#/$defs/resource_estimates"
+        },
+        "compatibility": {
+          "$ref": "#/$defs/compatibility"
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidence"
+        }
+      }
+    },
+    "privacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contains_prompts",
+        "contains_user_files",
+        "contains_local_paths",
+        "contains_credentials"
+      ],
+      "properties": {
+        "contains_prompts": {
+          "const": false
+        },
+        "contains_user_files": {
+          "const": false
+        },
+        "contains_local_paths": {
+          "const": false
+        },
+        "contains_credentials": {
+          "const": false
+        }
+      }
+    }
+  }
+}
