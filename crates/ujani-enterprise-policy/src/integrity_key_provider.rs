@@ -492,7 +492,12 @@ mod tests {
             digest.update(nonce);
             digest.update((index as u64).to_be_bytes());
             let stream = digest.finalize();
-            output.extend(chunk.iter().zip(stream.iter()).map(|(left, right)| *left ^ *right));
+            output.extend(
+                chunk
+                    .iter()
+                    .zip(stream.iter())
+                    .map(|(left, right)| *left ^ *right),
+            );
         }
         output
     }
@@ -544,9 +549,16 @@ mod tests {
         provider.activate_key(purpose, "ledger-v1").unwrap();
         let original = b"synthetic reservation snapshot";
         let sealed = seal_snapshot(
-            &provider, purpose, "UJANI-TEST-ENCRYPTED-V1", b"test-context", original,
-        ).unwrap();
-        assert!(!sealed.windows(original.len()).any(|window| window == original));
+            &provider,
+            purpose,
+            "UJANI-TEST-ENCRYPTED-V1",
+            b"test-context",
+            original,
+        )
+        .unwrap();
+        assert!(!sealed
+            .windows(original.len())
+            .any(|window| window == original));
         assert_eq!(
             open_snapshot(
                 &provider,
