@@ -2717,6 +2717,42 @@ mod tests {
         cleanup(&path);
     }
 
+    #[test]
+    fn provider_rotation_between_mac_and_envelope_sealing_retries_consistent_snapshot() {
+        use crate::integrity_key_provider::{IntegrityKeyPurpose, TestIntegrityKeyProvider};
+
+        let path = temp_path("provider-rotation-between-sign-and-seal");
+        let provider = Arc::new(TestIntegrityKeyProvider::default());
+        let purpose = IntegrityKeyPurpose::ReservationLedger;
+        provider.provision_key(purpose, "ledger-v1").unwrap();
+        provider.provision_key(purpose, "ledger-v2").unwrap();
+        provider.activate_key(purpose, "ledger-v1").unwrap();
+        provider
+            .rotate_after_next_sign(purpose, "ledger-v2")
+            .unwrap();
+
+        let ledger = DurableLedger::open_with_key_provider(&path, provider.clone()).unwrap();
+        let bytes = fs::read(&path).unwrap();
+        let envelope_key_id =
+            encrypted_snapshot_key_id(ENCRYPTED_LEDGER_HEADER, &bytes).unwrap();
+        let plaintext = open_snapshot(
+            provider.as_ref(),
+            purpose,
+            ENCRYPTED_LEDGER_HEADER,
+            ENCRYPTED_LEDGER_AAD,
+            &bytes,
+        )
+        .unwrap();
+        let text = std::str::from_utf8(&plaintext).unwrap();
+        let mac_line = &text[text.rfind("M\\t").unwrap()..];
+        let mac_key_id = mac_line.split('\\t').nth(1).unwrap();
+
+        assert_eq!(envelope_key_id, "ledger-v2");
+        assert_eq!(mac_key_id, "ledger-v2");
+        drop(ledger);
+        cleanup(&path);
+    }
+
     #[cfg(unix)]
     #[test]
     fn protected_key_provider_verifies_anchored_backup_recovery() {
