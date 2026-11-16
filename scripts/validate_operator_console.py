@@ -71,7 +71,7 @@ def main():
     demo_renderer = js[demo_start:demo_end]
     assert "fetch(" not in demo_renderer and "invoke(" not in demo_renderer, "Synthetic demo rendering must not contact a service."
     assert "Refresh live data" in html and "refreshButton.addEventListener(\"click\", refreshOverview)" in js, "Live refresh must remain a separate explicit action."
-    assert "DEMO DATA" in readme and "synthetic devices" in readme, "Demo/live separation must be documented."
+    assert "Load demo data" in readme and "synthetic devices" in readme, "Demo/live separation must be documented."
     assert ".demo-banner" in css and "[hidden]" in css, "Demo warning and hidden initial state must be styled."
     assert "frame-ancestors" not in html, "Frame denial must be delivered as a server response header, not a meta policy."
     assert "schedulable_devices" in js and "remaining_memory_mb" in js, "Capacity fields missing."
