@@ -10,9 +10,9 @@ model-runtime-inventory-v2 is a language-neutral, read-only descriptor for local
 
 ## Descriptor semantics
 
-schema_version is exactly 2. Runtime IDs and provider names are open strings within strict bounds; this permits future runtimes without vendor-specific assumptions. Unknown providers and unknown capabilities may be represented, but they are never treated as supported or usable.
+schema_version is exactly 2. Runtime IDs and provider names are open strings within strict bounds; this permits future runtimes without vendor-specific assumptions. Unknown providers and unknown capabilities may be represented, but they are never treated as supported or usable. Provider strings are not a generic execution promise: the current reference selector accepts only registered adapters (Ollama today), and a future runtime must add an explicit adapter and tests before it can be selected.
 
-Platform and aggregate host-hardware measurements, every capability and metadata group, and each accelerator carry an evidence record with source, confidence and observation time. Host platform and resource facts are accepted only with fresh OS evidence; model resource estimates remain separately identified as estimates. Preserve the distinction between OS-observed facts, runtime-reported facts, signed/published catalogue claims, estimates and unknown values. Estimates must not be promoted to verified facts. Consumers apply a local freshness window to generated_at_unix_ms and each evidence timestamp; stale or future-dated evidence is not usable for placement or model selection.
+Platform and aggregate host-hardware measurements, every capability and metadata group, and each accelerator carry an evidence record with source, confidence and observation time. Host platform and aggregate resource facts are accepted only with fresh, verified `os_api` evidence; model resource estimates remain separately identified as estimates. Preserve the distinction between OS-observed facts, runtime-reported facts, signed/published catalogue claims, estimates and unknown values. Estimates must not be promoted to verified facts. Consumers apply a local freshness window to generated_at_unix_ms and each evidence timestamp; stale or future-dated evidence is not usable for placement or model selection.
 
 Model metadata explicitly separates context length, tool use, vision and embeddings. Platform/accelerator compatibility is an evidence-qualified per-model claim. Missing compatibility remains unknown; hardware presence or model naming must not be used to infer support.
 
@@ -20,7 +20,7 @@ Resource estimates are advisory. Consumers compare them with current available r
 
 ## Collection and consent boundary
 
-collection_context.scope is personal_local_only for Public AI's local inventory and organisation_enrolled for Enterprise inventory. The schema requires not_required_local_only plus not_applicable for the personal local-only case. Enterprise records must explicitly carry owner-consent and organisation-authorisation states. Only granted + authorised permits an Enterprise inventory to be exposed to operator planning. revoked, unknown, missing evidence, or conflicting states fail closed. The descriptor reports these states; it does not authenticate them. The service must bind them to enrolled device identity and current server-side consent/policy generations.
+collection_context.scope is personal_local_only for Public AI's local inventory and organisation_enrolled for Enterprise inventory. The schema requires not_required_local_only plus not_applicable for the personal local-only case. Enterprise records must carry a non-empty pseudonymous `device_ref` as well as explicit owner-consent and organisation-authorisation states. Only granted + authorised permits an Enterprise inventory to be exposed to operator planning. revoked, unknown, missing evidence, or conflicting states fail closed. The descriptor reports these states; it does not authenticate them. The service must bind them to enrolled device identity and current server-side consent/policy generations.
 
 ## Selection and future runtime support
 
