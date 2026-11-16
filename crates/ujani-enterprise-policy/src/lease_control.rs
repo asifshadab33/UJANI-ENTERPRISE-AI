@@ -738,4 +738,64 @@ mod tests {
         );
         cleanup(fixture);
     }
+    #[test]
+    fn replayed_authenticated_renewal_cannot_mutate_the_lease_twice() {
+        let fixture = setup();
+        let body = b"renew lease exactly once";
+        let request = signed_request(
+            &fixture.device,
+            fixture.manifest_sha256,
+            "lease.renew",
+            12,
+            1_500,
+            body,
+        );
+
+        assert_eq!(
+            authenticate_and_renew_device_lease(
+                &fixture.registry,
+                &fixture.ledger,
+                &request,
+                body,
+                TENANT_ID,
+                WORKLOAD_ID,
+                &fixture.manifest_sha256,
+                &fixture.lease_token,
+                1_500,
+            ),
+            Ok(())
+        );
+        let after_first = fixture.ledger.snapshot().unwrap();
+        let revision_after_first = fixture
+            .ledger
+            .reservation_revision(DEVICE_ID, 1_501)
+            .unwrap();
+
+        assert_eq!(
+            authenticate_and_renew_device_lease(
+                &fixture.registry,
+                &fixture.ledger,
+                &request,
+                body,
+                TENANT_ID,
+                WORKLOAD_ID,
+                &fixture.manifest_sha256,
+                &fixture.lease_token,
+                1_501,
+            ),
+            Err(LeaseControlError::DeviceAuthenticationFailed)
+        );
+
+        let after_replay = fixture.ledger.snapshot().unwrap();
+        assert_eq!(after_replay.active_jobs, after_first.active_jobs);
+        assert_eq!(after_replay.reserved_cpu_millis, after_first.reserved_cpu_millis);
+        assert_eq!(after_replay.reserved_memory_mb, after_first.reserved_memory_mb);
+        assert_eq!(
+            fixture.ledger.reservation_revision(DEVICE_ID, 1_502).unwrap(),
+            revision_after_first,
+            "replayed device request must not renew or revise the reservation"
+        );
+        cleanup(fixture);
+    }
+
 }
