@@ -47,7 +47,7 @@ impl fmt::Display for IntegrityKeyProviderError {
             Self::UnknownKey => "integrity key is unavailable",
             Self::ActiveKeyCannotBeRetired => "active integrity key cannot be retired",
             Self::VerificationFailed => "integrity authentication failed",
-            Self::EncryptionUnavailable => "authenticated encryption is not supported by this key provider",
+            Self::EncryptionUnavailable => "AEAD is not supported by this key provider",
             Self::EncryptionFailed => "authenticated encryption or decryption failed",
             Self::Unavailable => "integrity key provider is unavailable",
             Self::LockPoisoned => "integrity key provider state is unavailable",
