@@ -20,7 +20,7 @@ Resource estimates are advisory. Consumers compare them with current available r
 
 ## Collection and consent boundary
 
-collection_context.scope is personal_local_only for Public AI's local inventory and organisation_enrolled for Enterprise inventory. The schema requires not_required_local_only plus not_applicable for the personal local-only case. Enterprise records must explicitly carry owner-consent and organisation-authorisation states. Only granted + authorised permits an Enterprise inventory to be exposed to operator planning. revoked, unknown, missing evidence, or conflicting states fail closed. The descriptor reports these states; it does not authenticate them. The service must bind them to enrolled device identity and current server-side consent/policy generations.
+collection_context.scope is personal_local_only for Public AI's local inventory and organisation_enrolled for Enterprise inventory. The schema requires not_required_local_only plus not_applicable for the personal local-only case. Enterprise records must carry a non-null pseudonymous device_ref plus explicit owner-consent and organisation-authorisation states; the authenticated service must bind that reference to the enrolled device and current server-side consent/policy generations. Only granted + authorised permits an Enterprise inventory to be exposed to operator planning. revoked, unknown, missing evidence, or conflicting states fail closed. The descriptor reports these states; it does not authenticate them. The service must bind them to enrolled device identity and current server-side consent/policy generations.
 
 ## Selection and future runtime support
 
