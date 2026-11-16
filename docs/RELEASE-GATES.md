@@ -41,6 +41,7 @@ This file defines minimum gates before enabling remote work on enrolled devices.
 - [ ] Data retention and deletion verified.
 - [ ] Audit events are attributable and protected from ordinary workload modification.
 - [ ] Failure injection covers worker loss, controller loss, timeouts and partial output.
+- [ ] Trusted service time, clock-step detection, database/service clock agreement and monotonic lease/task deadlines are verified; see [Time and Clock Reliability](TIME-AND-CLOCK-RELIABILITY.md).
 - [ ] Independent security review completed for the intended workload class.
 - [ ] Energy and cost claims use reproducible workload-normalised measurements.
 
