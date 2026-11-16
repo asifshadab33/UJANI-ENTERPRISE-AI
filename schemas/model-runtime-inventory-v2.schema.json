@@ -632,7 +632,8 @@
               "npu",
               "other"
             ]
-          }
+          },
+          "description": "Alternatives: when non-empty, at least one listed kind is required. If runtime APIs are also listed, the same evidence-qualified accelerator must satisfy both constraints."
         },
         "required_accelerator_apis": {
           "type": "array",
@@ -642,7 +643,8 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 64
-          }
+          },
+          "description": "Alternatives: when non-empty, at least one listed runtime API is required. If accelerator kinds are also listed, the same evidence-qualified accelerator must satisfy both constraints."
         },
         "evidence": {
           "$ref": "#/$defs/evidence"
