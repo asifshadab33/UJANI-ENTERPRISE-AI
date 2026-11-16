@@ -339,3 +339,83 @@ BEGIN
  END IF;
 END;
 $block$;
+ 
+-- A fresh grant permits a new reservation; pausing that consent must revoke
+-- the reservation, and a later grant must not silently reactivate the old lease.
+INSERT INTO ujani_control.owner_consents
+ (tenant_id,device_id,consent_generation,state,actor_ref,evidence_digest)
+VALUES ('admission-test','admission-atomic-device',3,'granted','admission-owner',
+ decode(repeat('c1',32),'hex'));
+
+DO $block$
+DECLARE admitted boolean;
+BEGIN
+ admitted := ujani_control.admit_device_lease_with_telemetry(
+  'admission-test','admission-atomic-device',
+  1,3,2,2,1,
+  decode(repeat('c2',16),'hex'),clock_timestamp(),decode(repeat('c3',32),'hex'),
+  4000,8192,'cool','ac','idle',
+  'admission-workload','admission-approval','admission-after-grant-lease',
+  decode(repeat('c4',16),'hex'),decode(repeat('c5',32),'hex'),
+  decode(repeat('44',32),'hex'),500,512,decode(repeat('c6',32),'hex'),
+  clock_timestamp()+interval '4 minutes',
+  '00000000-0000-4000-8000-000000000205');
+ IF admitted IS DISTINCT FROM true THEN
+  RAISE EXCEPTION 'fresh owner consent grant did not permit a new lease';
+ END IF;
+END;
+$block$;
+
+INSERT INTO ujani_control.owner_consents
+ (tenant_id,device_id,consent_generation,state,actor_ref,evidence_digest)
+VALUES ('admission-test','admission-atomic-device',4,'paused','admission-owner',
+ decode(repeat('c7',32),'hex'));
+
+DO $block$
+DECLARE
+ device_consent_generation bigint;
+ device_consent_state text;
+ lease_state text;
+ lease_revision bigint;
+ pause_events integer;
+BEGIN
+ SELECT consent_generation,owner_consent_state
+ INTO device_consent_generation,device_consent_state
+ FROM ujani_control.devices
+ WHERE tenant_id='admission-test' AND device_id='admission-atomic-device';
+ SELECT state,revision INTO lease_state,lease_revision
+ FROM ujani_control.leases
+ WHERE tenant_id='admission-test' AND lease_id='admission-after-grant-lease';
+ SELECT count(*) INTO pause_events FROM ujani_control.audit_events
+ WHERE tenant_id='admission-test'
+   AND event_type='device.lease.revoked'
+   AND outcome='owner_consent_paused'
+   AND object_ref='admission-after-grant-lease';
+ IF device_consent_generation <> 4 OR device_consent_state <> 'paused'
+    OR lease_state <> 'revoked' OR lease_revision <> 3 OR pause_events <> 1 THEN
+  RAISE EXCEPTION 'owner consent pause did not atomically revoke the active reservation';
+ END IF;
+END;
+$block$;
+
+INSERT INTO ujani_control.owner_consents
+ (tenant_id,device_id,consent_generation,state,actor_ref,evidence_digest)
+VALUES ('admission-test','admission-atomic-device',5,'granted','admission-owner',
+ decode(repeat('c8',32),'hex'));
+
+DO $block$
+BEGIN
+ IF NOT EXISTS (
+   SELECT 1 FROM ujani_control.leases
+   WHERE tenant_id='admission-test' AND lease_id='admission-after-grant-lease'
+     AND state='revoked' AND revision=3
+ ) OR EXISTS (
+   SELECT 1 FROM ujani_control.leases
+   WHERE tenant_id='admission-test' AND device_id='admission-atomic-device'
+     AND state IN ('reserved','active')
+ ) THEN
+  RAISE EXCEPTION 'a later owner consent grant reactivated a revoked lease';
+ END IF;
+END;
+$block$;
+
