@@ -1,4 +1,4 @@
--- Run after migrations 0001-0010 and scripts/test_atomic_device_lease_admission.sql.
+-- Run after migrations 0001-0013 and scripts/test_atomic_device_lease_admission.sql.
 -- Cryptographic device/admin signature verification remains the trusted
 -- adapter's responsibility. This verifies SQL transaction composition/rollback.
 SELECT pg_catalog.set_config('ujani.tenant_id','admission-test',false);
@@ -339,7 +339,7 @@ BEGIN
  END IF;
 END;
 $block$;
- 
+
 -- A fresh grant permits a new reservation; pausing that consent must revoke
 -- the reservation, and a later grant must not silently reactivate the old lease.
 INSERT INTO ujani_control.owner_consents
