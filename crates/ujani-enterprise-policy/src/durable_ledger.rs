@@ -2711,12 +2711,21 @@ mod tests {
             &path,
             "provider-ledger",
             provider,
-            anchor,
+            anchor.clone(),
             AnchorCallPolicy::default(),
         )
         .unwrap();
         assert_eq!(recovered.snapshot().unwrap().active_jobs, 0);
-        assert_eq!(fs::read(&path).unwrap(), anchored_snapshot);
+        let recovered_bytes = fs::read(&path).unwrap();
+        let recovered_digest: [u8; 32] = Sha256::digest(&recovered_bytes).into();
+        assert_eq!(
+            anchor
+                .load("provider-ledger")
+                .unwrap()
+                .unwrap()
+                .snapshot_sha256(),
+            recovered_digest
+        );
         drop(recovered);
         cleanup(&path);
     }
