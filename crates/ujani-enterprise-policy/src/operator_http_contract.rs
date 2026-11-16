@@ -13,6 +13,7 @@ pub const MAX_OPERATOR_ACTION_BODY_BYTES: usize = 16 * 1024;
 pub const MAX_DEVICE_ENROLLMENT_BODY_BYTES: usize = 64 * 1024;
 pub const MAX_DEVICE_INGEST_BODY_BYTES: usize = 1024 * 1024;
 pub const MAX_OWNER_CONSENT_BODY_BYTES: usize = 16 * 1024;
+pub const MAX_DEVICE_MODEL_RUNTIME_INVENTORY_BODY_BYTES: usize = 512 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HttpMethod {
@@ -33,6 +34,7 @@ pub enum OperatorHttpRoute {
     OperatorOverview,
     DeviceEnrollment,
     DeviceTelemetry,
+    DeviceModelRuntimeInventory,
     DeviceOwnerConsent,
     LeaseAcquire,
     LeaseRenew,
@@ -130,6 +132,19 @@ pub fn resolve_route(method: HttpMethod, path: &str) -> Option<RouteContract> {
             route: OperatorHttpRoute::DeviceTelemetry,
             principal: RoutePrincipal::EnrolledDeviceSignature,
             max_body_bytes: MAX_DEVICE_INGEST_BODY_BYTES,
+        });
+    }
+    if parts.len() == 5
+        && parts[1] == "v1"
+        && parts[2] == "devices"
+        && valid_path_segment(parts[3])
+        && parts[4] == "model-runtime-inventory"
+        && method == HttpMethod::Post
+    {
+        return Some(RouteContract {
+            route: OperatorHttpRoute::DeviceModelRuntimeInventory,
+            principal: RoutePrincipal::EnrolledDeviceSignature,
+            max_body_bytes: MAX_DEVICE_MODEL_RUNTIME_INVENTORY_BODY_BYTES,
         });
     }
     if parts.len() == 5
@@ -256,6 +271,10 @@ mod tests {
                 "/v1/devices/device-1/telemetry",
                 OperatorHttpRoute::DeviceTelemetry,
             ),
+            (
+                "/v1/devices/device-1/model-runtime-inventory",
+                OperatorHttpRoute::DeviceModelRuntimeInventory,
+            ),
             ("/v1/leases/acquire", OperatorHttpRoute::LeaseAcquire),
             ("/v1/leases/lease-1/renew", OperatorHttpRoute::LeaseRenew),
             (
@@ -267,6 +286,24 @@ mod tests {
             assert_eq!(route.route, expected);
             assert_eq!(route.principal, RoutePrincipal::EnrolledDeviceSignature);
         }
+    }
+
+    #[test]
+    fn model_runtime_inventory_requires_device_signature_and_has_a_bounded_body() {
+        let route = resolve_route(
+            HttpMethod::Post,
+            "/v1/devices/device-1/model-runtime-inventory",
+        )
+        .unwrap();
+        assert_eq!(route.route, OperatorHttpRoute::DeviceModelRuntimeInventory);
+        assert_eq!(route.principal, RoutePrincipal::EnrolledDeviceSignature);
+        assert!(route.permits_body_size(MAX_DEVICE_MODEL_RUNTIME_INVENTORY_BODY_BYTES));
+        assert!(!route.permits_body_size(MAX_DEVICE_MODEL_RUNTIME_INVENTORY_BODY_BYTES + 1));
+        assert!(resolve_route(
+            HttpMethod::Get,
+            "/v1/devices/device-1/model-runtime-inventory"
+        )
+        .is_none());
     }
 
     #[test]
