@@ -231,6 +231,11 @@ jobs:
           PGPASSWORD: postgres
         run: |
           "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < migrations/0010_atomic_telemetry_lease_admission.sql
+      - name: Persist lease approval references
+        env:
+          PGPASSWORD: postgres
+        run: |
+          "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < migrations/0011_persist_lease_approval_reference.sql
       - name: Verify atomic telemetry-plus-lease admission and rollback
         env:
           PGPASSWORD: postgres
