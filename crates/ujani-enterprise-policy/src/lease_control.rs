@@ -788,14 +788,22 @@ mod tests {
 
         let after_replay = fixture.ledger.snapshot().unwrap();
         assert_eq!(after_replay.active_jobs, after_first.active_jobs);
-        assert_eq!(after_replay.reserved_cpu_millis, after_first.reserved_cpu_millis);
-        assert_eq!(after_replay.reserved_memory_mb, after_first.reserved_memory_mb);
         assert_eq!(
-            fixture.ledger.reservation_revision(DEVICE_ID, 1_502).unwrap(),
+            after_replay.reserved_cpu_millis,
+            after_first.reserved_cpu_millis
+        );
+        assert_eq!(
+            after_replay.reserved_memory_mb,
+            after_first.reserved_memory_mb
+        );
+        assert_eq!(
+            fixture
+                .ledger
+                .reservation_revision(DEVICE_ID, 1_502)
+                .unwrap(),
             revision_after_first,
             "replayed device request must not renew or revise the reservation"
         );
         cleanup(fixture);
     }
-
 }
