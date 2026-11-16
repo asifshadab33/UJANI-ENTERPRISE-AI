@@ -17,6 +17,8 @@ ATOMIC_ADMISSION_TEST_PATH = ROOT / "scripts" / "test_atomic_device_lease_admiss
 ATOMIC_ADMISSION_CONCURRENCY_PATH = ROOT / "scripts" / "test_atomic_device_lease_admission_concurrency.sh"
 TELEMETRY_V2_TEST_PATH = ROOT / "scripts" / "test_monotonic_device_telemetry_v2.sql"
 TELEMETRY_V2_CONCURRENCY_PATH = ROOT / "scripts" / "test_monotonic_device_telemetry_v2_concurrency.sh"
+ATOMIC_TELEMETRY_LEASE_SQL_PATH = ROOT / "migrations" / "0010_atomic_telemetry_lease_admission.sql"
+ATOMIC_TELEMETRY_LEASE_TEST_PATH = ROOT / "scripts" / "test_atomic_telemetry_lease_admission.sql"
 TENANT_TEST_SQL_PATH = ROOT / "scripts" / "test_customer_hosted_migration.sql"
 
 
@@ -342,6 +344,36 @@ def main() -> None:
     for required in ("accept_device_telemetry_v2", "pg_stat_activity", "UJANI_TELEMETRY_RELEASE_FILE", "idle in transaction", "wait_event_type='Lock'", "pg_blocking_pids", "blocker.application_name", "1:1:1:0", "--quiet"):
         if required not in telemetry_v2_concurrency:
             raise SystemExit("telemetry v2 concurrency regression missing: " + required)
+    atomic_telemetry_lease_sql = ATOMIC_TELEMETRY_LEASE_SQL_PATH.read_text(encoding="utf-8")
+    for required in (
+        "CREATE OR REPLACE FUNCTION ujani_control.admit_device_lease_with_telemetry",
+        "SECURITY INVOKER",
+        "p_device_key_generation",
+        "p_consent_generation",
+        "FOR UPDATE",
+        "v_key_generation IS DISTINCT FROM p_device_key_generation",
+        "v_consent_generation IS DISTINCT FROM p_consent_generation",
+        "ujani_control.accept_device_telemetry_v2(",
+        "ujani_control.admit_device_lease(",
+        "ERRCODE = 'UJ001'",
+        "EXCEPTION WHEN SQLSTATE 'UJ001'",
+        "REVOKE ALL ON FUNCTION",
+    ):
+        if required not in atomic_telemetry_lease_sql:
+            raise SystemExit("atomic telemetry-plus-lease migration is missing invariant: " + required)
+    if "SECURITY DEFINER" in atomic_telemetry_lease_sql:
+        raise SystemExit("atomic telemetry-plus-lease wrapper must preserve caller RLS and privileges")
+    atomic_telemetry_lease_test = ATOMIC_TELEMETRY_LEASE_TEST_PATH.read_text(encoding="utf-8")
+    for required in (
+        "atomic telemetry-plus-lease admission was rejected",
+        "interactive telemetry must deny lease admission",
+        "expected denial left partial telemetry or lease state",
+        "duplicate audit event did not abort atomic admission",
+        "late audit failure left partial telemetry or lease state",
+        "stale device key generation was accepted",
+    ):
+        if required not in atomic_telemetry_lease_test:
+            raise SystemExit("atomic telemetry-plus-lease regression is missing: " + required)
     ci_workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     if "UJANI_ADMISSION_RELEASE_FILE=${UJANI_ADMISSION_RELEASE_FILE:-}" not in ci_workflow:
         raise SystemExit("CI PostgreSQL adapter must pass the bounded admission release-marker path")
@@ -354,7 +386,14 @@ def main() -> None:
     ):
         raise SystemExit("telemetry v2 regression tests must run after migration 0008 and before migration 0009")
 
-    print("Customer-hosted, task-contract, Self-Evolution approval replay, v1/v2 monotonic telemetry, atomic device admission and lock-order static checks passed.")
+    if not (
+        ci_workflow.index("migrations/0009_task_contract_replay_functions.sql")
+        < ci_workflow.index("migrations/0010_atomic_telemetry_lease_admission.sql")
+        < ci_workflow.index("scripts/test_atomic_telemetry_lease_admission.sql")
+    ):
+        raise SystemExit("atomic telemetry-plus-lease test must run after migrations 0009 and 0010")
+
+    print("Customer-hosted, task-contract, Self-Evolution approval replay, v1/v2 monotonic telemetry, atomic device admission and atomic telemetry-plus-lease checks passed.")
 
 
 if __name__ == "__main__":
