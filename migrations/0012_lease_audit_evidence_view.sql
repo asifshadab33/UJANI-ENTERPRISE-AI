@@ -268,7 +268,10 @@ REVOKE ALL ON FUNCTION ujani_control.reject_lease_admission_evidence_mutation() 
 COMMENT ON FUNCTION ujani_control.reject_lease_admission_evidence_mutation() IS
  'Prevents mutation of the immutable evidence fields that bind an admitted lease to its tenant, device, workload, approval, request digest, manifest, capability and key/consent generations. Lease lifecycle state, expiry and revision remain mutable.';
 
-CREATE OR REPLACE FUNCTION ujani_control.list_device_lease_audit_evidence()
+CREATE OR REPLACE FUNCTION ujani_control.list_device_lease_audit_evidence(
+ p_before_sequence bigint DEFAULT NULL,
+ p_limit integer DEFAULT 100
+)
 RETURNS TABLE (
  tenant_id text,
  audit_sequence bigint,
@@ -339,9 +342,12 @@ AS $function$
  LEFT JOIN ujani_control.approvals a
   ON a.tenant_id = l.tenant_id AND a.approval_id = l.approval_id
  WHERE ae.event_type = 'device.lease.admitted'
-   AND ae.tenant_id = pg_catalog.current_setting('ujani.tenant_id', true);
+   AND ae.tenant_id = pg_catalog.current_setting('ujani.tenant_id', true)
+   AND (p_before_sequence IS NULL OR ae.sequence_id < p_before_sequence)
+ ORDER BY ae.sequence_id DESC
+ LIMIT GREATEST(1, LEAST(COALESCE(p_limit, 100), 200));
 $function$;
 
-REVOKE ALL ON FUNCTION ujani_control.list_device_lease_audit_evidence() FROM PUBLIC;
-COMMENT ON FUNCTION ujani_control.list_device_lease_audit_evidence() IS
+REVOKE ALL ON FUNCTION ujani_control.list_device_lease_audit_evidence(bigint,integer) FROM PUBLIC;
+COMMENT ON FUNCTION ujani_control.list_device_lease_audit_evidence(bigint,integer) IS
  'Read-only SECURITY INVOKER function joining append-only lease admission audit events to durable lease, request-digest and current approval evidence. Caller privileges and tenant RLS are preserved. Legacy leases may have NULL approval_id/request_digest.';
