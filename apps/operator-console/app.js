@@ -490,8 +490,8 @@ const MAX_INVENTORY_EVIDENCE_SKEW_MS = 30 * 1000;
 const MAX_MODEL_MEMORY_ESTIMATE_MB = 16_777_216;
 const MAX_TOTAL_MODEL_ROWS = 100_000;
 
-function snapshotIsFresh(generatedAtUnixMs, now = Date.now()) {
-  if (!Number.isSafeInteger(generatedAtUnixMs) || generatedAtUnixMs <= 0) return false;
+function snapshotIsFresh(generatedAtUnixMs, now = trustedDisplayNow()) {
+  if (!Number.isSafeInteger(generatedAtUnixMs) || generatedAtUnixMs <= 0 || !Number.isFinite(now)) return false;
   const age = now - generatedAtUnixMs;
   return age >= -MAX_OVERVIEW_CLOCK_SKEW_MS && age <= MAX_OVERVIEW_SNAPSHOT_AGE_MS;
 }
