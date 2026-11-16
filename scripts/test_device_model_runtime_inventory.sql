@@ -121,7 +121,13 @@ BEGIN
  IF ujani_control.accept_device_model_runtime_inventory(
    'admission-test','admission-atomic-device',1,v_other_request,
    decode(repeat('a3',32),'hex'),v_generated_at - interval '1 second',
-   jsonb_set(v_inventory,'{generated_at_unix_ms}',to_jsonb(v_generated_at_ms - 1000))
+   jsonb_set(
+    jsonb_set(
+     jsonb_set(v_inventory,'{generated_at_unix_ms}',to_jsonb(v_generated_at_ms - 1000)),
+     '{runtimes,0,evidence,observed_at_unix_ms}',to_jsonb(v_generated_at_ms - 1000)
+    ),
+    '{models,0,evidence,observed_at_unix_ms}',to_jsonb(v_generated_at_ms - 1000)
+   )
  ) IS NOT NULL THEN
   RAISE EXCEPTION 'older inventory timestamp replaced a newer snapshot';
  END IF;
@@ -175,10 +181,21 @@ BEGIN
   RAISE EXCEPTION 'owner pause did not purge previously shared model inventory';
  END IF;
 
+ v_generated_at := clock_timestamp();
+ v_generated_at_ms := floor(extract(epoch FROM v_generated_at) * 1000)::bigint;
+ v_generated_at := to_timestamp(v_generated_at_ms::double precision / 1000.0);
+ v_inventory := jsonb_set(v_inventory,'{generated_at_unix_ms}',to_jsonb(v_generated_at_ms));
+ v_inventory := jsonb_set(
+  v_inventory,'{runtimes,0,evidence,observed_at_unix_ms}',to_jsonb(v_generated_at_ms)
+ );
+ v_inventory := jsonb_set(
+  v_inventory,'{models,0,evidence,observed_at_unix_ms}',to_jsonb(v_generated_at_ms)
+ );
+
  v_other_request := decode(repeat('b5',16),'hex');
  IF ujani_control.accept_device_model_runtime_inventory(
    'admission-test','admission-atomic-device',1,v_other_request,
-   decode(repeat('a7',32),'hex'),clock_timestamp(),v_inventory
+   decode(repeat('a7',32),'hex'),v_generated_at,v_inventory
  ) IS NOT NULL THEN
   RAISE EXCEPTION 'inventory upload was accepted after owner pause';
  END IF;
