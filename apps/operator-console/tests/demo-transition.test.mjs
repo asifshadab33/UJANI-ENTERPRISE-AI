@@ -71,11 +71,14 @@ test("live refresh clears synthetic demo data before the API request resolves", 
   const context = vm.createContext({
     document: {
       getElementById: getElement,
-      createElement: () => new FakeElement()
+      createElement: () => new FakeElement(),
+      addEventListener: () => {},
+      hidden: false
     },
     window: {
       setTimeout: () => 1,
-      clearTimeout: () => {}
+      clearTimeout: () => {},
+      addEventListener: () => {}
     },
     fetch: fetchMock,
     AbortController,
@@ -127,8 +130,8 @@ test("live snapshot freshness uses server time plus a monotonic clock, not the l
     static now() { return localWallNow; }
   }
   const context = vm.createContext({
-    document: { getElementById: getElement, createElement: () => new FakeElement() },
-    window: { setTimeout: () => 1, clearTimeout: () => {} },
+    document: { getElementById: getElement, createElement: () => new FakeElement(), addEventListener: () => {}, hidden: false },
+    window: { setTimeout: () => 1, clearTimeout: () => {}, addEventListener: () => {} },
     fetch: async () => ({ ok: false, status: 404 }),
     AbortController,
     Date: TestDate,
@@ -147,7 +150,66 @@ test("live snapshot freshness uses server time plus a monotonic clock, not the l
   monotonicNow += 120_000;
   assert.equal(vm.runInContext("snapshotIsFresh(1_880_000)", context), true);
   assert.equal(vm.runInContext("formatAge(1_880_000)", context), "4 min ago");
+  assert.match(getElement("clock-warning").textContent, /clock is 6880 seconds ahead/);
 
   monotonicNow += 200_001;
   assert.equal(vm.runInContext("snapshotIsFresh(1_880_000)", context), false);
+});
+
+
+test("console refreshes live data after resume but preserves explicitly selected demo mode", async () => {
+  const source = await readFile(new URL("../app.js", import.meta.url), "utf8");
+  const elements = new Map();
+  const getElement = (id) => {
+    if (!elements.has(id)) elements.set(id, new FakeElement());
+    return elements.get(id);
+  };
+  const documentListeners = {};
+  const windowListeners = {};
+  let liveRequests = 0;
+  const heading = new FakeElement();
+  const message = new FakeElement();
+  getElement("notice").querySelector = (selector) => selector === "strong" ? heading : message;
+
+  const context = vm.createContext({
+    document: {
+      hidden: false,
+      getElementById: getElement,
+      createElement: () => new FakeElement(),
+      addEventListener: (name, callback) => { documentListeners[name] = callback; }
+    },
+    window: {
+      setTimeout: () => 1,
+      clearTimeout: () => {},
+      addEventListener: (name, callback) => { windowListeners[name] = callback; }
+    },
+    fetch: async (url) => {
+      if (url === "./model-catalog.json") throw new Error("catalogue not loaded");
+      if (url === "/api/v1/operator/overview") {
+        liveRequests += 1;
+        return { status: 404, ok: false };
+      }
+      throw new Error("Unexpected network request: " + url);
+    },
+    AbortController,
+    console
+  });
+
+  vm.runInContext(source, context);
+  await new Promise((resolve) => setImmediate(resolve));
+  vm.runInContext("showDemoData()", context);
+
+  windowListeners.focus();
+  documentListeners.visibilitychange();
+  assert.equal(liveRequests, 0, "explicit demo mode must not be cleared by focus/resume");
+
+  vm.runInContext("clearOverview()", context);
+  windowListeners.focus();
+  assert.equal(liveRequests, 1, "returning to a live console refreshes the server snapshot");
+  documentListeners.visibilitychange();
+  assert.equal(liveRequests, 1, "focus and visibility events must not start overlapping requests");
+
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(getElement("demo-banner").hidden, true);
+  assert.match(message.textContent, /API is not deployed yet/);
 });
