@@ -12,6 +12,11 @@ SELF_EVOLUTION_REPLAY_TEST_PATH = ROOT / "scripts" / "test_self_evolution_approv
 SELF_EVOLUTION_CONSUMPTION_SQL_PATH = ROOT / "migrations" / "0007_self_evolution_approval_consumption_function.sql"
 SELF_EVOLUTION_CONSUMPTION_TEST_PATH = ROOT / "scripts" / "test_self_evolution_approval_consumption_function.sql"
 SELF_EVOLUTION_CONCURRENCY_TEST_PATH = ROOT / "scripts" / "test_self_evolution_approval_consumption_concurrency.sh"
+ATOMIC_ADMISSION_SQL_PATH = ROOT / "migrations" / "0008_atomic_device_lease_admission.sql"
+ATOMIC_ADMISSION_TEST_PATH = ROOT / "scripts" / "test_atomic_device_lease_admission.sql"
+ATOMIC_ADMISSION_CONCURRENCY_PATH = ROOT / "scripts" / "test_atomic_device_lease_admission_concurrency.sh"
+TELEMETRY_V2_TEST_PATH = ROOT / "scripts" / "test_monotonic_device_telemetry_v2.sql"
+TELEMETRY_V2_CONCURRENCY_PATH = ROOT / "scripts" / "test_monotonic_device_telemetry_v2_concurrency.sh"
 TENANT_TEST_SQL_PATH = ROOT / "scripts" / "test_customer_hosted_migration.sql"
 
 
@@ -195,7 +200,9 @@ def main() -> None:
     if "verify the signed device request" not in telemetry_sql:
         raise SystemExit("telemetry migration must document upstream signature verification boundary")
     concurrency_test = (ROOT / "scripts" / "test_monotonic_device_telemetry_concurrency.sh").read_text(encoding="utf-8")
-    for required in ("pg_stat_activity", "pg_sleep(1)", "1:2:2", "--quiet"):
+    if "pg_sleep(1)" in concurrency_test:
+        raise SystemExit("telemetry concurrency test must use an observed lock-wait handshake, not a fixed sleep")
+    for required in ("pg_stat_activity", "UJANI_TELEMETRY_RELEASE_FILE", "idle in transaction", "wait_event_type='Lock'", "pg_blocking_pids", "blocker.application_name", "1:2:2", "--quiet"):
         if required not in concurrency_test:
             raise SystemExit(f"telemetry concurrency regression test missing: {required}")
     tenant_test = TENANT_TEST_SQL_PATH.read_text(encoding="utf-8")
@@ -212,7 +219,142 @@ def main() -> None:
     concurrency_test = (ROOT / "scripts" / "test_monotonic_device_telemetry_concurrency.sh").read_text(encoding="utf-8")
     if 'PSQL_BIN="${PSQL_BIN:-psql}"' not in concurrency_test:
         raise SystemExit("telemetry concurrency test must use the configured PostgreSQL client adapter")
-    print("Customer-hosted, task-contract, Self-Evolution approval replay and monotonic telemetry migration static checks passed.")
+    atomic_sql = ATOMIC_ADMISSION_SQL_PATH.read_text(encoding="utf-8")
+    for required in (
+        "CREATE OR REPLACE FUNCTION ujani_control.admit_device_lease",
+        "SECURITY INVOKER",
+        "current_setting('ujani.tenant_id', true)",
+        "FOR UPDATE",
+        "consent_generation = p_consent_generation",
+        "device_key_generation",
+        "valid_from <= v_now AND revoked_at IS NULL",
+        "owner_consents",
+        "state = 'approved'",
+        "s.enabled IS TRUE AND s.role = 'administrator'",
+        "received_at DESC",
+        "participation_state <> 'idle'",
+        "ON CONFLICT (tenant_id, device_id, request_id) DO NOTHING",
+        "requested_cpu_millis",
+        "requested_memory_mb",
+        "reservation_revision",
+        "device.lease.admitted",
+        "owner_consent_state = 'unknown'",
+        "v_approval_expires_at",
+        "admission_lock_marker",
+        "reject_admission_lock_marker_mutation",
+        "FOR SHARE OF a, s",
+        "REVOKE ALL ON FUNCTION",
+    ):
+        if required not in atomic_sql:
+            raise SystemExit(f"atomic device admission migration is missing invariant: {required}")
+    if "SECURITY DEFINER" in atomic_sql:
+        raise SystemExit("atomic device admission must preserve caller RLS and privileges")
+    atomic_test = ATOMIC_ADMISSION_TEST_PATH.read_text(encoding="utf-8")
+    if "GRANT SELECT,INSERT,UPDATE ON" in atomic_test or "UPDATE ujani_control.devices SET owner_consent_state" in atomic_test:
+        raise SystemExit("atomic admission test must not grant broad runtime mutation privileges or let runtime change owner consent")
+    for required in (
+        "REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA ujani_control FROM ujani_runtime",
+        "REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA ujani_control FROM ujani_runtime",
+        "REVOKE ALL ON SCHEMA ujani_control FROM ujani_runtime",
+        "REVOKE ALL ON FUNCTION ujani_control.admit_device_lease(",
+        "GRANT UPDATE (reservation_revision, updated_at)",
+        "GRANT UPDATE (admission_lock_marker)",
+        "runtime role is missing the narrow row-lock-only column privileges",
+        "runtime role can update protected column",
+        "pg_catalog.pg_attribute",
+        "runtime role changed immutable admission lock marker",
+        "GRANT INSERT ON ujani_control.leases,ujani_control.request_replays",
+        "runtime role can mutate device trust or consent state",
+        "ujani_control.device_keys','INSERT",
+        "ujani_control.device_keys','UPDATE",
+        "runtime role can rewrite lease, replay or audit history",
+        "runtime role does not have only the required reservation update columns",
+        "valid admission was not committed",
+        "replayed request was admitted",
+        "over-capacity request was admitted",
+        "admission-device-paused",
+        "owner binding change did not invalidate prior consent",
+        "paused owner consent admitted work",
+        "approval from a disabled administrator was accepted",
+        "approval from a non-administrator was accepted",
+        "future-dated active device key was accepted",
+        "revoked active device key was accepted",
+        "admission writes were not atomic",
+        "late failure left partial admission state",
+    ):
+        if required not in atomic_test:
+            raise SystemExit(f"atomic device admission regression test missing: {required}")
+    atomic_concurrency = ATOMIC_ADMISSION_CONCURRENCY_PATH.read_text(encoding="utf-8")
+    for required in (
+        "UJANI_ADMISSION_RELEASE_FILE",
+        'release_dir="$(mktemp -d)"',
+        "\\! for i in $(seq 1 300)",
+        "state='idle in transaction'",
+        "FOR UPDATE;",
+        "PGAPPNAME=ujani-admission-first",
+        "application_name='ujani-admission-first'",
+        "application_name='ujani-admission-second'",
+        "wait_event_type='Lock'",
+        "second admission was not observed waiting on the device row lock",
+        "second admission should be rejected",
+        "1:2500",
+    ):
+        if required not in atomic_concurrency:
+            raise SystemExit(f"atomic admission concurrency regression missing: {required}")
+    # Lock ordering is part of the concurrency contract: audit writers serialize
+    # per tenant before taking device locks; telemetry locks its device before
+    # inserting the replay row that has a device foreign key.
+    for function_name in (
+        "ujani_control.apply_owner_consent_revision",
+        "ujani_control.admit_device_lease",
+    ):
+        function_start = atomic_sql.index("CREATE OR REPLACE FUNCTION " + function_name)
+        function_end = atomic_sql.index("$function$;", function_start)
+        function_body = atomic_sql[function_start:function_end]
+        if function_body.index("pg_advisory_xact_lock") > function_body.index("FOR UPDATE"):
+            raise SystemExit(function_name + " must acquire the tenant audit lock before the device lock")
+    if "lock_device_owner_binding_audit_chain" not in atomic_sql or "FOR EACH STATEMENT EXECUTE FUNCTION ujani_control.lock_device_owner_binding_audit_chain()" not in atomic_sql:
+        raise SystemExit("owner-binding writes must acquire the tenant audit lock before row locks")
+    telemetry_v2_start = atomic_sql.index("CREATE OR REPLACE FUNCTION ujani_control.accept_device_telemetry_v2")
+    telemetry_v2_end = atomic_sql.index("$function$;", telemetry_v2_start)
+    telemetry_v2_body = atomic_sql[telemetry_v2_start:telemetry_v2_end]
+    if telemetry_v2_body.index("FOR UPDATE") > telemetry_v2_body.index("INSERT INTO ujani_control.request_replays"):
+        raise SystemExit("telemetry v2 must lock the device before claiming a replay identifier")
+    if "DO $\\n" in atomic_test or "END $;" in atomic_test:
+        raise SystemExit("atomic admission PostgreSQL test contains a malformed dollar-quoted block")
+    telemetry_v2_test = TELEMETRY_V2_TEST_PATH.read_text(encoding="utf-8")
+    for required in (
+        "accept_device_telemetry_v2(text,text,bigint,bigint,bigint,bytea",
+        "duplicate generation/sequence should be rejected",
+        "older observation timestamp must not roll back last_seen",
+        "stale telemetry timestamp should be rejected",
+        "future telemetry timestamp should be rejected",
+        "owner opt-out should reject admission",
+        "organization denial should reject admission",
+        "revoked device should reject admission",
+        "caller rollback did not atomically restore telemetry state",
+    ):
+        if required not in telemetry_v2_test:
+            raise SystemExit("telemetry v2 PostgreSQL regression test missing: " + required)
+    telemetry_v2_concurrency = TELEMETRY_V2_CONCURRENCY_PATH.read_text(encoding="utf-8")
+    if "pg_sleep(1)" in telemetry_v2_concurrency:
+        raise SystemExit("telemetry v2 concurrency test must use an observed lock-wait handshake, not a fixed sleep")
+    for required in ("accept_device_telemetry_v2", "pg_stat_activity", "UJANI_TELEMETRY_RELEASE_FILE", "idle in transaction", "wait_event_type='Lock'", "pg_blocking_pids", "blocker.application_name", "1:1:1:0", "--quiet"):
+        if required not in telemetry_v2_concurrency:
+            raise SystemExit("telemetry v2 concurrency regression missing: " + required)
+    ci_workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    if "UJANI_ADMISSION_RELEASE_FILE=${UJANI_ADMISSION_RELEASE_FILE:-}" not in ci_workflow:
+        raise SystemExit("CI PostgreSQL adapter must pass the bounded admission release-marker path")
+    if "UJANI_TELEMETRY_RELEASE_FILE=${UJANI_TELEMETRY_RELEASE_FILE:-}" not in ci_workflow:
+        raise SystemExit("CI PostgreSQL adapter must pass the bounded telemetry release-marker path")
+    if not (
+        ci_workflow.index("migrations/0008_atomic_device_lease_admission.sql")
+        < ci_workflow.index("scripts/test_monotonic_device_telemetry_v2.sql")
+        < ci_workflow.index("migrations/0009_task_contract_replay_functions.sql")
+    ):
+        raise SystemExit("telemetry v2 regression tests must run after migration 0008 and before migration 0009")
+
+    print("Customer-hosted, task-contract, Self-Evolution approval replay, v1/v2 monotonic telemetry, atomic device admission and lock-order static checks passed.")
 
 
 if __name__ == "__main__":
