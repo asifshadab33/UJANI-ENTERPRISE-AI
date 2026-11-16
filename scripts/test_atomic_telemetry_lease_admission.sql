@@ -141,6 +141,29 @@ $block$;
 RESET ROLE;
 SELECT pg_catalog.set_config('ujani.tenant_id','admission-test',false);
 
+-- Lease evidence fields are immutable even though lifecycle state/expiry/revision
+-- remain mutable for future renewal/release workflows.
+DO $block$
+BEGIN
+ BEGIN
+  UPDATE ujani_control.leases
+  SET request_digest=decode(repeat('aa',32),'hex')
+  WHERE tenant_id='admission-test' AND lease_id='admission-atomic-lease';
+  RAISE EXCEPTION 'lease request digest mutation was not rejected';
+ EXCEPTION WHEN SQLSTATE '42501' THEN
+  NULL;
+ END;
+ BEGIN
+  UPDATE ujani_control.leases
+  SET approval_id='different-approval'
+  WHERE tenant_id='admission-test' AND lease_id='admission-atomic-lease';
+  RAISE EXCEPTION 'lease approval reference mutation was not rejected';
+ EXCEPTION WHEN SQLSTATE '42501' THEN
+  NULL;
+ END;
+END;
+$block$;
+
 -- A policy denial after telemetry validation must roll back the sample,
 -- telemetry replay claim and watermarks rather than leave an unpaired sample.
 DO $block$
