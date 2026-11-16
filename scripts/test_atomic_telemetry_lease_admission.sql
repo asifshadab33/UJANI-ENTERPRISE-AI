@@ -66,7 +66,9 @@ DECLARE
  sample_count integer;
  lease_count integer;
  approval_ref text;
+ request_digest bytea;
  audit_count integer;
+ view_count integer;
 BEGIN
  SELECT d.telemetry_generation,d.telemetry_sequence,d.reservation_revision
  INTO telemetry_generation,telemetry_sequence,reservation_revision
@@ -83,7 +85,7 @@ BEGIN
    AND generation=1 AND sequence=1;
  SELECT count(*) INTO lease_count FROM ujani_control.leases
  WHERE tenant_id='admission-test' AND lease_id='admission-atomic-lease';
- SELECT approval_id INTO approval_ref FROM ujani_control.leases
+ SELECT approval_id,request_digest INTO approval_ref,request_digest FROM ujani_control.leases
  WHERE tenant_id='admission-test' AND lease_id='admission-atomic-lease';
  SELECT count(*) INTO audit_count FROM ujani_control.audit_events
  WHERE tenant_id='admission-test'
@@ -92,6 +94,7 @@ BEGIN
     OR telemetry_replays <> 1 OR lease_replays <> 1
     OR sample_count <> 1 OR lease_count <> 1
     OR approval_ref IS DISTINCT FROM 'admission-approval'
+    OR request_digest IS DISTINCT FROM decode(repeat('d4',32),'hex')
     OR audit_count <> 1 THEN
   RAISE EXCEPTION 'atomic success was incomplete: telemetry %, sequence %, revision %, replay %, %, sample %, lease %, audit %',
    telemetry_generation,telemetry_sequence,reservation_revision,
@@ -99,6 +102,44 @@ BEGIN
  END IF;
 END;
 $block$;
+
+-- The operator evidence view must expose the durable request digest and
+-- approval reference while still evaluating tenant RLS as the caller.
+GRANT USAGE ON SCHEMA ujani_control TO ujani_runtime;
+GRANT SELECT ON ujani_control.audit_events,ujani_control.leases,ujani_control.approvals,
+ ujani_control.device_lease_audit_evidence TO ujani_runtime;
+DO $block$
+BEGIN
+ IF (SELECT rolbypassrls FROM pg_catalog.pg_roles WHERE rolname='ujani_runtime') IS DISTINCT FROM false THEN
+  RAISE EXCEPTION 'runtime role must not bypass row-level security';
+ END IF;
+END;
+$block$;
+SET ROLE ujani_runtime;
+SELECT pg_catalog.set_config('ujani.tenant_id','admission-test',false);
+DO $block$
+DECLARE evidence_count integer;
+BEGIN
+ SELECT count(*) INTO evidence_count FROM ujani_control.device_lease_audit_evidence
+ WHERE lease_id='admission-atomic-lease'
+   AND approval_id='admission-approval'
+   AND request_digest=decode(repeat('d4',32),'hex');
+ IF evidence_count <> 1 THEN
+  RAISE EXCEPTION 'tenant-scoped audit evidence view omitted the admitted lease';
+ END IF;
+END;
+$block$;
+SELECT pg_catalog.set_config('ujani.tenant_id','another-tenant',false);
+DO $block$
+BEGIN
+ IF EXISTS (SELECT 1 FROM ujani_control.device_lease_audit_evidence
+            WHERE lease_id='admission-atomic-lease') THEN
+  RAISE EXCEPTION 'audit evidence view leaked a lease across tenant context';
+ END IF;
+END;
+$block$;
+RESET ROLE;
+SELECT pg_catalog.set_config('ujani.tenant_id','admission-test',false);
 
 -- A policy denial after telemetry validation must roll back the sample,
 -- telemetry replay claim and watermarks rather than leave an unpaired sample.
