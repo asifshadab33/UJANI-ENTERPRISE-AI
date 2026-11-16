@@ -945,7 +945,7 @@ mod tests {
             device_id: "device-1".into(),
             key_id: "device-key-v1".into(),
             key_generation: 1,
-            request_id: test_request_id(b"zero-id-rejection"),
+            request_id: [0; 16],
             issued_at_unix_ms: 200,
             expires_at_unix_ms: 500,
             method: "POST".into(),
