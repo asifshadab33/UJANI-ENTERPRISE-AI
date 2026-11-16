@@ -442,7 +442,7 @@ mod tests {
 
     #[test]
     fn authenticated_intake_rejects_request_identity_binding_mismatch() {
-        let (registry, device, directory) = signed_registry(true);
+        let (registry, device, directory, unique_id) = signed_registry(true);
         let raw = body(250);
         let signed = signed_telemetry_request(&device, &raw, "device-2", unique_id);
         assert_eq!(
@@ -464,7 +464,7 @@ mod tests {
     fn authenticated_intake_requires_current_owner_opt_in() {
         let (registry, device, directory, unique_id) = signed_registry(false);
         let raw = body(250);
-        let signed = signed_telemetry_request(&device, &raw, "device-1");
+        let signed = signed_telemetry_request(&device, &raw, "device-1", unique_id);
         assert_eq!(
             authenticate_device_telemetry_request(
                 &registry,
@@ -482,9 +482,9 @@ mod tests {
 
     #[test]
     fn authenticated_intake_maps_unavailable_durable_trust_store_to_http_503() {
-        let (registry, device, directory) = signed_registry(true);
+        let (registry, device, directory, unique_id) = signed_registry(true);
         let raw = body(250);
-        let signed = signed_telemetry_request(&device, &raw, "device-1");
+        let signed = signed_telemetry_request(&device, &raw, "device-1", unique_id);
         std::fs::remove_dir_all(&directory).unwrap();
         let error = authenticate_device_telemetry_request(
             &registry,
