@@ -10,6 +10,7 @@ This roadmap is a statement of intended work, not a claim that these capabilitie
 - [x] Add initial Rust policy types and admission tests.
 - [x] Add a pure CPU-capacity admission helper with configurable OS headroom, memory reserve, authenticated/fresh telemetry, owner opt-in, interactive-use, power/thermal and isolation gates (no live sensor or scheduler yet).
 - [x] Publish matching draft v1 task-envelope/status/receipt and model-runtime-inventory schemas, test vectors and hash-pinned shared manifests with UJANI Public AI.
+- [x] Publish the shared descriptive model catalogue v1 with UJANI Public AI; artifact provenance, exact quantized sizes and installation policy remain pending.
 - [ ] Agree and approve the production task/capability protocol semantics and end-to-end interoperability with UJANI Public AI.
 
 ## Phase 1 — trusted lab prototype
