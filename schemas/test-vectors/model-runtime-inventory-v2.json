@@ -11,14 +11,24 @@
   "platform": {
     "os": "linux",
     "os_version": "6.8",
-    "architecture": "x86_64"
+    "architecture": "x86_64",
+    "evidence": {
+      "source": "os_api",
+      "confidence": "verified",
+      "observed_at_unix_ms": 1000000
+    }
   },
   "hardware": {
     "cpu_logical_cores": 8,
     "memory_total_mb": 16384,
     "memory_available_mb": 8192,
     "storage_free_mb": 250000,
-    "accelerators": []
+    "accelerators": [],
+    "evidence": {
+      "source": "os_api",
+      "confidence": "verified",
+      "observed_at_unix_ms": 1000000
+    }
   },
   "runtimes": [
     {
