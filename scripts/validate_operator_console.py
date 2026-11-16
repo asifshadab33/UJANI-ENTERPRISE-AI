@@ -66,7 +66,9 @@ def main():
     assert "Synthetic / unverified" in js and "not pinned" in js, "Demo model records must not imply verified or approved artifacts."
     assert "demoButton.addEventListener(\"click\", showDemoData)" in js, "Demo mode must require an explicit user action."
     assert "demoBanner.hidden = true" in js and "clearOverview();" in js, "Leaving demo mode must clear synthetic records before a live request."
-    demo_renderer = js.split("function showDemoData()", 1)[1].split("\\nfunction renderList", 1)[0]
+    demo_start = js.index("function showDemoData()")
+    demo_end = js.index("function renderList", demo_start)
+    demo_renderer = js[demo_start:demo_end]
     assert "fetch(" not in demo_renderer and "invoke(" not in demo_renderer, "Synthetic demo rendering must not contact a service."
     assert "Refresh live data" in html and "refreshButton.addEventListener(\"click\", refreshOverview)" in js, "Live refresh must remain a separate explicit action."
     assert "DEMO DATA" in readme and "synthetic devices" in readme, "Demo/live separation must be documented."
