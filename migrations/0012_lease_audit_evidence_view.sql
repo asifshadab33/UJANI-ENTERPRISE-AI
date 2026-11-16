@@ -350,4 +350,4 @@ $function$;
 
 REVOKE ALL ON FUNCTION ujani_control.list_device_lease_audit_evidence(bigint,integer) FROM PUBLIC;
 COMMENT ON FUNCTION ujani_control.list_device_lease_audit_evidence(bigint,integer) IS
- 'Read-only SECURITY INVOKER function joining append-only lease admission audit events to durable lease, request-digest and current approval evidence. Caller privileges and tenant RLS are preserved. Legacy leases may have NULL approval_id/request_digest.';
+ 'Read-only SECURITY INVOKER function joining append-only lease lifecycle audit events to durable lease, request-digest and current approval evidence. Caller privileges and tenant RLS are preserved. Legacy leases may have NULL approval_id/request_digest.';
