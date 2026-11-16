@@ -1,6 +1,6 @@
 //! Protected integrity-key provider boundary for durable Enterprise state.
 //!
-//! This module defines operations over non-exportable integrity and encryption keys.
+//! This module defines operations over protected integrity and encryption keys.
 //! It deliberately does not provide a production key store: hosts must supply an
 //! OS-protected provider or an organisation-managed KMS/HSM adapter.
 
