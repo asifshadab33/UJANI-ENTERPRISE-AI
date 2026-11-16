@@ -1,0 +1,160 @@
+{
+  "schema_version": 2,
+  "generated_at_unix_ms": 1000000,
+  "device_ref": "org-device-01",
+  "collection_context": {
+    "scope": "organisation_enrolled",
+    "owner_consent": "granted",
+    "organisation_authorisation": "authorised",
+    "policy_version": "inventory-policy-v2"
+  },
+  "platform": {
+    "os": "linux",
+    "os_version": "6.8",
+    "architecture": "x86_64",
+    "evidence": {
+      "source": "os_api",
+      "confidence": "verified",
+      "observed_at_unix_ms": 1000000
+    }
+  },
+  "hardware": {
+    "cpu_logical_cores": 8,
+    "memory_total_mb": 16384,
+    "memory_available_mb": 8192,
+    "storage_free_mb": 250000,
+    "accelerators": [],
+    "evidence": {
+      "source": "os_api",
+      "confidence": "verified",
+      "observed_at_unix_ms": 1000000
+    }
+  },
+  "runtimes": [
+    {
+      "runtime_id": "future-runtime.local",
+      "provider": "example.runtime",
+      "version": "1.2.3",
+      "availability": "available",
+      "network_scope": "loopback_only",
+      "evidence": {
+        "source": "runtime_api",
+        "confidence": "reported",
+        "observed_at_unix_ms": 1000000
+      }
+    }
+  ],
+  "models": [
+    {
+      "model_ref": "example/model:1.0",
+      "runtime_id": "future-runtime.local",
+      "display_name": "Example Local Model",
+      "family": "example",
+      "version": "1.0",
+      "availability": "installed",
+      "size_bytes": 1500000000,
+      "capabilities": [
+        {
+          "name": "chat",
+          "status": "supported",
+          "evidence": {
+            "source": "runtime_metadata",
+            "confidence": "reported",
+            "observed_at_unix_ms": 1000000
+          }
+        },
+        {
+          "name": "coding",
+          "status": "unknown",
+          "evidence": {
+            "source": "unknown",
+            "confidence": "unknown",
+            "observed_at_unix_ms": null
+          }
+        },
+        {
+          "name": "vision",
+          "status": "unsupported",
+          "evidence": {
+            "source": "signed_catalogue",
+            "confidence": "verified",
+            "observed_at_unix_ms": 1000000
+          }
+        }
+      ],
+      "context": {
+        "max_tokens": 8192,
+        "evidence": {
+          "source": "runtime_metadata",
+          "confidence": "reported",
+          "observed_at_unix_ms": 1000000
+        }
+      },
+      "tool_use": {
+        "supported": false,
+        "evidence": {
+          "source": "signed_catalogue",
+          "confidence": "verified",
+          "observed_at_unix_ms": 1000000
+        }
+      },
+      "vision": {
+        "supported": false,
+        "max_image_bytes": null,
+        "supported_mime_types": [],
+        "evidence": {
+          "source": "signed_catalogue",
+          "confidence": "verified",
+          "observed_at_unix_ms": 1000000
+        }
+      },
+      "embeddings": {
+        "supported": true,
+        "dimensions": 768,
+        "evidence": {
+          "source": "runtime_metadata",
+          "confidence": "reported",
+          "observed_at_unix_ms": 1000000
+        }
+      },
+      "resource_estimates": {
+        "minimum_memory_mb": 4096,
+        "minimum_accelerator_memory_mb": null,
+        "minimum_storage_bytes": 1000000,
+        "recommended_cpu_threads": 4,
+        "evidence": {
+          "source": "estimate",
+          "confidence": "estimated",
+          "observed_at_unix_ms": 1000000
+        }
+      },
+      "compatibility": {
+        "status": "compatible",
+        "supported_os": [
+          "linux"
+        ],
+        "supported_architectures": [
+          "x86_64"
+        ],
+        "required_accelerator_kinds": [],
+        "required_accelerator_apis": [],
+        "evidence": {
+          "source": "signed_catalogue",
+          "confidence": "verified",
+          "observed_at_unix_ms": 1000000
+        }
+      },
+      "evidence": {
+        "source": "runtime_metadata",
+        "confidence": "reported",
+        "observed_at_unix_ms": 1000000
+      }
+    }
+  ],
+  "privacy": {
+    "contains_prompts": false,
+    "contains_user_files": false,
+    "contains_local_paths": false,
+    "contains_credentials": false
+  }
+}
