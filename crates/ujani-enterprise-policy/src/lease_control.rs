@@ -886,4 +886,152 @@ mod tests {
         );
         cleanup(fixture);
     }
+    #[test]
+    fn replayed_authenticated_renewal_cannot_mutate_the_lease_twice() {
+        let fixture = setup();
+        let body = b"renew lease exactly once";
+        let request = signed_request(
+            &fixture.device,
+            fixture.manifest_sha256,
+            "lease.renew",
+            12,
+            1_500,
+            body,
+        );
+
+        assert_eq!(
+            authenticate_and_renew_device_lease(
+                &fixture.registry,
+                &fixture.ledger,
+                &request,
+                body,
+                TENANT_ID,
+                WORKLOAD_ID,
+                &fixture.manifest_sha256,
+                &fixture.lease_token,
+                1_500,
+            ),
+            Ok(())
+        );
+        let after_first = fixture.ledger.snapshot().unwrap();
+        let revision_after_first = fixture
+            .ledger
+            .reservation_revision(DEVICE_ID, 1_501)
+            .unwrap();
+
+        assert_eq!(
+            authenticate_and_renew_device_lease(
+                &fixture.registry,
+                &fixture.ledger,
+                &request,
+                body,
+                TENANT_ID,
+                WORKLOAD_ID,
+                &fixture.manifest_sha256,
+                &fixture.lease_token,
+                1_501,
+            ),
+            Err(LeaseControlError::DeviceAuthenticationFailed)
+        );
+
+        let after_replay = fixture.ledger.snapshot().unwrap();
+        assert_eq!(after_replay.active_jobs, after_first.active_jobs);
+        assert_eq!(
+            after_replay.reserved_cpu_millis,
+            after_first.reserved_cpu_millis
+        );
+        assert_eq!(
+            after_replay.reserved_memory_mb,
+            after_first.reserved_memory_mb
+        );
+        assert_eq!(
+            fixture
+                .ledger
+                .reservation_revision(DEVICE_ID, 1_502)
+                .unwrap(),
+            revision_after_first,
+            "replayed device request must not renew or revise the reservation"
+        );
+        cleanup(fixture);
+    }
+    #[test]
+    fn concurrent_replayed_authenticated_renewal_is_consumed_once_across_store_handles() {
+        let fixture = setup();
+        let body = b"renew lease exactly once concurrently";
+        let request = signed_request(
+            &fixture.device,
+            fixture.manifest_sha256,
+            "lease.renew",
+            44,
+            1_500,
+            body,
+        );
+        let before = fixture.ledger.snapshot().unwrap();
+        let barrier = Arc::new(Barrier::new(3));
+        let mut handles = Vec::new();
+
+        for _ in 0..2 {
+            let registry_path = fixture.registry_path.clone();
+            let ledger_path = fixture.ledger_path.clone();
+            let manifest_sha256 = fixture.manifest_sha256;
+            let lease_token = fixture.lease_token;
+            let signed_request = request.clone();
+            let body = body.to_vec();
+            let barrier = Arc::clone(&barrier);
+            handles.push(thread::spawn(move || {
+                let admin =
+                    SigningKey::from_bytes(&test_key_bytes("ujani-lease-control-admin-test-v1"));
+                let registry = open_registry(&registry_path, &admin);
+                let ledger = open_ledger(&ledger_path);
+                barrier.wait();
+                authenticate_and_renew_device_lease(
+                    &registry,
+                    &ledger,
+                    &signed_request,
+                    &body,
+                    TENANT_ID,
+                    WORKLOAD_ID,
+                    &manifest_sha256,
+                    &lease_token,
+                    1_500,
+                )
+            }));
+        }
+
+        barrier.wait();
+        let results: Vec<_> = handles
+            .into_iter()
+            .map(|handle| handle.join().expect("renewal worker must not panic"))
+            .collect();
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        assert_eq!(
+            results
+                .iter()
+                .filter(|result| **result == Err(LeaseControlError::DeviceAuthenticationFailed))
+                .count(),
+            1
+        );
+
+        let after = fixture.ledger.snapshot().unwrap();
+        assert_eq!(after.active_jobs, before.active_jobs);
+        assert_eq!(after.reserved_cpu_millis, before.reserved_cpu_millis);
+        assert_eq!(after.reserved_memory_mb, before.reserved_memory_mb);
+        assert_eq!(
+            fixture
+                .ledger
+                .reservation_revision(DEVICE_ID, 1_501)
+                .unwrap(),
+            2,
+            "the shared nonce must be consumed once and create exactly one renewal revision"
+        );
+        assert_eq!(
+            fixture
+                .ledger
+                .reservation_revision(DEVICE_ID, 1_502)
+                .unwrap(),
+            2,
+            "the losing replay must not create a second renewal revision"
+        );
+        cleanup(fixture);
+    }
 }
