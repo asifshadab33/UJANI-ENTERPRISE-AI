@@ -382,6 +382,13 @@ BEGIN
   RETURN false;
  END IF;
 
+ -- Recheck observation freshness after waiting for the device-row lock.
+ -- A sample that was fresh before the wait must not become accepted stale data.
+ IF p_observed_at < pg_catalog.clock_timestamp() - interval '5 minutes'
+    OR p_observed_at > pg_catalog.clock_timestamp() + interval '60 seconds' THEN
+  RETURN false;
+ END IF;
+
  INSERT INTO ujani_control.request_replays
   (tenant_id, device_id, request_id, expires_at, operation_digest)
  VALUES
@@ -644,6 +651,7 @@ BEGIN
   RETURN false;
  END IF;
  IF NOT FOUND
+    OR v_sample.observed_at < v_now - interval '2 minutes'
     OR v_sample.received_at < v_now - interval '2 minutes'
     OR v_sample.reservation_revision IS NULL
     OR v_sample.reservation_revision > v_device.reservation_revision
@@ -707,6 +715,7 @@ BEGIN
  -- or telemetry expires while the audit receipt is being recorded.
  v_now := pg_catalog.clock_timestamp();
  IF p_expires_at <= v_now OR v_approval_expires_at <= v_now
+    OR v_sample.observed_at < v_now - interval '2 minutes'
     OR v_sample.received_at < v_now - interval '2 minutes' THEN
   RAISE EXCEPTION 'device admission authorization or telemetry expired while recording the audit receipt'
    USING ERRCODE = '40001';
