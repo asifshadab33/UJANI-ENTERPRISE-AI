@@ -42,6 +42,8 @@ Example response shape (contract only; not fixture data):
 }
 ```
 
+The `server_time_unix_ms` value is the control-plane's current UTC time captured for this response; it is distinct from `generated_at_unix_ms`, which is when the fleet snapshot was assembled. The console uses server time plus the browser's monotonic clock for snapshot freshness, so an incorrect operator-PC wall clock cannot make fresh data appear stale or stale data appear fresh. It compares the local wall clock only to display a warning; UJANI never changes the operator's OS clock. The API must supply a trusted, monitored service-time value and must not copy the snapshot timestamp into this field.
+
 The counts are distinct: registered is not trusted; trusted is not necessarily online; online/fresh is not necessarily schedulable. Schedulable must be computed only from authenticated, non-revoked, owner-opted-in and administrator-approved devices with fresh telemetry, safe power/thermal state, user not paused/active, and capacity after OS reserves and active leases. Do not aggregate fleet RAM as if it were one model-sized memory pool.
 
 The server must not expose secrets, prompts, local paths, employee activity details or raw telemetry in this overview. Return only the minimum operator-visible inventory and admission reason needed to administer the fleet.
