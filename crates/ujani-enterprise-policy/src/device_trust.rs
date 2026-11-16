@@ -861,8 +861,11 @@ mod tests {
     #[test]
     fn verification_does_not_consume_nonce_before_downstream_transaction() {
         let (mut r, admin, device) = registry();
-        r.apply_admin_command(&enrollment(&admin, &device, test_request_id(b"admin-enrollment")), 200)
-            .unwrap();
+        r.apply_admin_command(
+            &enrollment(&admin, &device, test_request_id(b"admin-enrollment")),
+            200,
+        )
+        .unwrap();
         let claims = DeviceRequestClaims {
             tenant_id: "tenant-a".into(),
             device_id: "device-1".into(),
@@ -938,8 +941,11 @@ mod tests {
     #[test]
     fn all_zero_request_nonce_is_rejected_before_persistence() {
         let (mut r, admin, device) = registry();
-        r.apply_admin_command(&enrollment(&admin, &device, test_request_id(b"admin-enrollment")), 200)
-            .unwrap();
+        r.apply_admin_command(
+            &enrollment(&admin, &device, test_request_id(b"admin-enrollment")),
+            200,
+        )
+        .unwrap();
         let claims = DeviceRequestClaims {
             tenant_id: "tenant-a".into(),
             device_id: "device-1".into(),
@@ -967,8 +973,11 @@ mod tests {
     #[test]
     fn request_body_must_match_the_signed_digest() {
         let (mut r, admin, device) = registry();
-        r.apply_admin_command(&enrollment(&admin, &device, test_request_id(b"admin-enrollment")), 200)
-            .unwrap();
+        r.apply_admin_command(
+            &enrollment(&admin, &device, test_request_id(b"admin-enrollment")),
+            200,
+        )
+        .unwrap();
         let body = b"tenant-scoped lease request";
         let manifest = crate::WorkloadManifest {
             schema_version: 1,
@@ -1064,8 +1073,11 @@ mod tests {
     #[test]
     fn oversized_request_body_is_rejected_before_nonce_consumption() {
         let (mut r, admin, device) = registry();
-        r.apply_admin_command(&enrollment(&admin, &device, test_request_id(b"admin-enrollment")), 200)
-            .unwrap();
+        r.apply_admin_command(
+            &enrollment(&admin, &device, test_request_id(b"admin-enrollment")),
+            200,
+        )
+        .unwrap();
         let body = vec![b'x'; MAX_DEVICE_REQUEST_BODY_BYTES + 1];
         let request_digest = sha2::Sha256::digest(&body);
         let request_id: [u8; 16] = request_digest[..16].try_into().unwrap();
