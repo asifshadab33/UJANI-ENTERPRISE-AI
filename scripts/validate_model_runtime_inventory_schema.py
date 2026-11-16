@@ -63,7 +63,7 @@ def validate_self_evolution_schema() -> None:
 EXPECTED_SHARED_ARTIFACTS = {
     "catalogs/local-model-catalog-v1.json": "8f97eeb59d5c6cdf6c07df027eaf587a64184ba6",
     "schemas/model-runtime-inventory-v1.schema.json": "8ff1a1db4700214ba687cd806c449bc1ea7dfdb4",
-    "schemas/model-runtime-inventory-v2.schema.json": "737b16538f63124bcb184311cf1884c809c3ea57",
+    "schemas/model-runtime-inventory-v2.schema.json": "6f1d5a6dd3b70a4b5e78203a20a67b71ed35a489",
     "schemas/personal-enterprise-task-contract-v1.schema.json": "566a0d72babd58636a3ef40e55b5c44168776522",
     "schemas/test-vectors/consent-binding-v1.json": "dcd7021560212504810e8438e14efd591e5e657d",
     "schemas/test-vectors/model-runtime-inventory-v1.json": "543d645d0154c9263ff7784ba4e203f54e498c3c",
@@ -145,8 +145,11 @@ def _v2_inventory_fresh(inventory: dict, now_unix_ms: int, max_age_ms: int) -> b
 
 def _v2_enterprise_inventory_authorized(inventory: dict) -> bool:
     context = inventory.get("collection_context", {})
+    device_ref = inventory.get("device_ref")
     return (
         context.get("scope") == "organisation_enrolled"
+        and isinstance(device_ref, str)
+        and bool(device_ref.strip())
         and context.get("owner_consent") == "granted"
         and context.get("organisation_authorisation") == "authorised"
     )
@@ -348,6 +351,14 @@ def validate_model_runtime_inventory_v2() -> None:
     assert _v2_references_valid(fixture)
     assert _v2_enterprise_inventory_authorized(fixture)
 
+    anonymous_inventory = copy.deepcopy(fixture)
+    anonymous_inventory.pop("device_ref")
+    assert list(validator.iter_errors(anonymous_inventory))
+    assert not _v2_enterprise_inventory_authorized(anonymous_inventory)
+    null_device = copy.deepcopy(fixture)
+    null_device["device_ref"] = None
+    assert list(validator.iter_errors(null_device))
+
     now = fixture["generated_at_unix_ms"]
     selected = _v2_select_explicit_model(fixture, "example/model:1.0", "chat", now, 5_000)
     assert selected is not None and selected["model_ref"] == "example/model:1.0"
@@ -544,6 +555,7 @@ def validate_model_runtime_inventory_v2() -> None:
         assert not _v2_enterprise_inventory_authorized(denied)
 
     personal = copy.deepcopy(fixture)
+    personal["device_ref"] = None
     personal["collection_context"] = {
         "scope": "personal_local_only",
         "owner_consent": "not_required_local_only",
