@@ -1,17 +1,22 @@
 //! Authenticated, bounded device telemetry intake boundary.
 //!
-//! This module validates the privacy-minimised telemetry body before consuming
-//! the signed request nonce, then authenticates the exact raw bytes against the
-//! enrolled device key and rechecks current owner consent. The caller must pass
+//! This module validates the privacy-minimised telemetry body, verifies the
+//! exact raw bytes against the enrolled device key without consuming replay
+//! state, and rechecks current owner consent. The caller must pass
 //! the returned tenant/device identity and sample fields to the tenant-scoped
 //! database transaction; this module does not persist samples or consume replay
 //! state. The database transaction must atomically claim the authenticated
 //! request ID and enforce monotonic generation/sequence, trust and dual-consent
 //! checks with the sample write, so a failed database commit does not burn a nonce.
 
-use crate::device_trust::durable::{DurableDeviceRegistry, DurableDeviceTrustError};
+use crate::device_trust::durable::{
+    DeviceTrustIntegrityKey, DurableDeviceRegistry, DurableDeviceTrustError,
+};
 use crate::device_trust::{
-    AuthenticatedDeviceRequest, SignedDeviceRequest, MAX_DEVICE_REQUEST_BODY_BYTES,
+    admin_command_bytes, canonical_device_request_bytes, enrollment_proof_bytes,
+    owner_consent_bytes, AuthenticatedDeviceRequest, DeviceCommandAction, DeviceRequestClaims,
+    SignedDeviceAdminCommand, SignedDeviceRequest, SignedOwnerConsentCommand,
+    MAX_DEVICE_REQUEST_BODY_BYTES,
 };
 use crate::operator_http_contract::{resolve_route, HttpMethod, OperatorHttpRoute};
 use serde::Deserialize;
@@ -294,6 +299,158 @@ mod tests {
             DeviceTelemetryIntakeError::DeviceAuthenticationFailed.http_status(),
             401
         );
+    }
+
+
+    fn signed_registry(owner_opted_in: bool) -> (DurableDeviceRegistry, ed25519_dalek::SigningKey, std::path::PathBuf) {
+        use ed25519_dalek::{Signer, SigningKey};
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let admin = SigningKey::from_bytes(&[31; 32]);
+        let device = SigningKey::from_bytes(&[41; 32]);
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ujani-telemetry-ingest-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("registry.db");
+        let registry = DurableDeviceRegistry::open(
+            &path,
+            vec![("admin-v1".into(), admin.verifying_key())],
+            DeviceTrustIntegrityKey::new(
+                "integrity-v1",
+                Sha256::digest(b"telemetry-ingest-test-integrity-key").into(),
+            ),
+        )
+        .unwrap();
+
+        let mut enrollment = SignedDeviceAdminCommand {
+            action: DeviceCommandAction::Enroll,
+            tenant_id: "tenant-a".into(),
+            device_id: "device-1".into(),
+            admin_key_id: "admin-v1".into(),
+            target_key_id: "device-key-v1".into(),
+            target_public_key: Some(device.verifying_key().to_bytes()),
+            issued_at_unix_ms: 100,
+            expires_at_unix_ms: 1_000,
+            nonce: [51; 16],
+            signature: [0; 64],
+            old_device_signature: None,
+            new_device_signature: None,
+        };
+        enrollment.new_device_signature =
+            Some(device.sign(&enrollment_proof_bytes(&enrollment)).to_bytes());
+        enrollment.signature = admin.sign(&admin_command_bytes(&enrollment)).to_bytes();
+        registry.apply_admin_command(&enrollment, 200).unwrap();
+
+        if owner_opted_in {
+            let mut consent = SignedOwnerConsentCommand {
+                tenant_id: "tenant-a".into(),
+                device_id: "device-1".into(),
+                key_id: "device-key-v1".into(),
+                key_generation: 1,
+                revision: 1,
+                opted_in: true,
+                issued_at_unix_ms: 210,
+                expires_at_unix_ms: 1_000,
+                nonce: [61; 16],
+                signature: [0; 64],
+            };
+            consent.signature = device.sign(&owner_consent_bytes(&consent)).to_bytes();
+            registry.apply_owner_consent(&consent, 220).unwrap();
+        }
+        (registry, device, directory)
+    }
+
+    fn signed_telemetry_request(
+        device: &ed25519_dalek::SigningKey,
+        raw_body: &[u8],
+        request_device_id: &str,
+    ) -> SignedDeviceRequest {
+        use ed25519_dalek::Signer;
+        let claims = DeviceRequestClaims {
+            tenant_id: "tenant-a".into(),
+            device_id: request_device_id.into(),
+            key_id: "device-key-v1".into(),
+            key_generation: 1,
+            request_id: [71; 16],
+            issued_at_unix_ms: 230,
+            expires_at_unix_ms: 1_000,
+            method: DEVICE_TELEMETRY_REQUEST_METHOD.into(),
+            resource_id: DEVICE_TELEMETRY_REQUEST_RESOURCE.into(),
+            workload_id: DEVICE_TELEMETRY_REQUEST_WORKLOAD.into(),
+            manifest_sha256: device_telemetry_request_manifest_digest(),
+            body_sha256: Sha256::digest(raw_body).into(),
+        };
+        SignedDeviceRequest {
+            signature: device.sign(&canonical_device_request_bytes(&claims)).to_bytes(),
+            claims,
+        }
+    }
+
+    #[test]
+    fn authenticated_intake_accepts_signed_owner_consented_request_without_consuming_replay_state() {
+        let (registry, device, directory) = signed_registry(true);
+        let raw = body(250);
+        let signed = signed_telemetry_request(&device, &raw, "device-1");
+        let path = "/v1/devices/device-1/telemetry";
+        let first = authenticate_device_telemetry_request(
+            &registry, HttpMethod::Post, path, &signed, &raw, 250,
+        );
+        assert!(first.is_ok());
+        let second = authenticate_device_telemetry_request(
+            &registry, HttpMethod::Post, path, &signed, &raw, 250,
+        );
+        assert!(second.is_ok(), "verification must not consume the database-owned replay claim");
+        drop(registry);
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn authenticated_intake_rejects_request_identity_binding_mismatch() {
+        let (registry, device, directory) = signed_registry(true);
+        let raw = body(250);
+        let signed = signed_telemetry_request(&device, &raw, "device-2");
+        assert_eq!(
+            authenticate_device_telemetry_request(
+                &registry, HttpMethod::Post, "/v1/devices/device-1/telemetry", &signed, &raw, 250,
+            ),
+            Err(DeviceTelemetryIntakeError::RequestBindingMismatch)
+        );
+        drop(registry);
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn authenticated_intake_requires_current_owner_opt_in() {
+        let (registry, device, directory) = signed_registry(false);
+        let raw = body(250);
+        let signed = signed_telemetry_request(&device, &raw, "device-1");
+        assert_eq!(
+            authenticate_device_telemetry_request(
+                &registry, HttpMethod::Post, "/v1/devices/device-1/telemetry", &signed, &raw, 250,
+            ),
+            Err(DeviceTelemetryIntakeError::OwnerConsentMissing)
+        );
+        drop(registry);
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn authenticated_intake_maps_unavailable_durable_trust_store_to_http_503() {
+        let (registry, device, directory) = signed_registry(true);
+        let raw = body(250);
+        let signed = signed_telemetry_request(&device, &raw, "device-1");
+        std::fs::remove_dir_all(&directory).unwrap();
+        let error = authenticate_device_telemetry_request(
+            &registry, HttpMethod::Post, "/v1/devices/device-1/telemetry", &signed, &raw, 250,
+        ).unwrap_err();
+        assert_eq!(error, DeviceTelemetryIntakeError::TrustStoreUnavailable);
+        assert_eq!(error.http_status(), 503);
     }
 
     #[test]
