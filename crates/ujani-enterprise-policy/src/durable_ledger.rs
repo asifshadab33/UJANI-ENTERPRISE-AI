@@ -692,7 +692,14 @@ impl DurableLedger {
         } else {
             self.load_unanchored_ledger()?
         };
+        // Compare the canonical plaintext state before producing randomized AEAD
+        // ciphertext. A read-only operation must not rotate the nonce, rewrite the
+        // snapshot or advance the independent monotonic anchor.
+        let original_state = serialize_snapshot_body(&ledger);
         let result = operation(&mut ledger)?;
+        if self.path.exists() && original_state == serialize_snapshot_body(&ledger) {
+            return Ok(result);
+        }
         let bytes = self.encode_ledger_snapshot(&ledger)?;
         if bytes.len() as u64 > MAX_LEDGER_BYTES {
             return Err(DurableLedgerError::CapacityExceeded);
