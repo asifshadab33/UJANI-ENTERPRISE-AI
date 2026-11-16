@@ -8,8 +8,8 @@ use crate::device_trust::durable::{
     AnchorCallPolicy, MonotonicSnapshotAnchor, SnapshotAnchorRecord,
 };
 use crate::integrity_key_provider::{
-    open_snapshot, seal_snapshot, IntegrityKeyProvider, IntegrityKeyProviderError,
-    IntegrityKeyPurpose,
+    encrypted_snapshot_key_id, open_snapshot, seal_snapshot, IntegrityKeyProvider,
+    IntegrityKeyProviderError, IntegrityKeyPurpose,
 };
 #[cfg(test)]
 use crate::{Admission, ClassPolicy, Device, SchedulingContext, VerifiedAdminApproval, Workload};
@@ -697,8 +697,24 @@ impl DurableLedger {
         // snapshot or advance the independent monotonic anchor.
         let original_state = serialize_snapshot_body(&ledger);
         let result = operation(&mut ledger)?;
-        if self.path.exists() && original_state == serialize_snapshot_body(&ledger) {
-            return Ok(result);
+        if self.integrity_key_provider.is_some()
+            && self.path.exists()
+            && original_state == serialize_snapshot_body(&ledger)
+        {
+            let provider = self
+                .integrity_key_provider
+                .as_ref()
+                .ok_or(DurableLedgerError::InvalidRecord)?;
+            let current = read_snapshot(&self.path)?;
+            let stored_key_id =
+                encrypted_snapshot_key_id(ENCRYPTED_LEDGER_HEADER, &current)
+                    .map_err(DurableLedgerError::KeyProvider)?;
+            let (active_key_id, _) = provider
+                .sign_active(IntegrityKeyPurpose::ReservationLedger, &[])
+                .map_err(DurableLedgerError::KeyProvider)?;
+            if stored_key_id == active_key_id {
+                return Ok(result);
+            }
         }
         let bytes = self.encode_ledger_snapshot(&ledger)?;
         if bytes.len() as u64 > MAX_LEDGER_BYTES {
