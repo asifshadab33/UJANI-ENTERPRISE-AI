@@ -469,15 +469,31 @@ impl DeviceRegistry {
         self.authenticate_request(signed, body, now)
     }
 
-    /// Authenticate one short-lived device request and consume its replay nonce.
-    /// Tenant, enrolled key ID and monotonic key generation are checked here;
-    /// downstream APIs must still authorize the authenticated tenant/principal.
-    /// Authenticates a signed device request against the exact raw body bytes.
+    /// Verify a signed device request without consuming replay state.
     ///
-    /// The body digest is checked before the request nonce is consumed, so a
-    /// transport/body mismatch can be rejected without burning a valid request.
-    pub fn authenticate_request(
-        &mut self,
+    /// Use only when a downstream transaction atomically claims request_id with
+    /// the protected state mutation. This separation prevents a database failure
+    /// after authentication from burning a request that must be retried.
+    pub fn verify_request_for(
+        &self,
+        signed: &SignedDeviceRequest,
+        expected_method: &str,
+        expected_resource_id: &str,
+        body: &[u8],
+        now: u64,
+    ) -> Result<AuthenticatedDeviceRequest, DeviceTrustError> {
+        if signed.claims.method != expected_method
+            || signed.claims.resource_id != expected_resource_id
+        {
+            return Err(DeviceTrustError::RequestTargetMismatch);
+        }
+        self.verify_request(signed, body, now)
+    }
+
+    /// Verify identity, key generation, signature, expiry and exact body bytes
+    /// without changing the durable replay window.
+    pub fn verify_request(
+        &self,
         signed: &SignedDeviceRequest,
         body: &[u8],
         now: u64,
@@ -510,7 +526,6 @@ impl DeviceRegistry {
         {
             return Err(DeviceTrustError::InvalidRequestWindow);
         }
-        self.request_nonces.retain(|_, expiry| *expiry > now);
         let record = self
             .devices
             .get(&c.device_id)
@@ -520,12 +535,6 @@ impl DeviceRegistry {
         }
         if record.tenant_id != c.tenant_id {
             return Err(DeviceTrustError::TenantMismatch);
-        }
-        if self.request_nonces.contains_key(&c.request_id) {
-            return Err(DeviceTrustError::ReplayDetected);
-        }
-        if self.request_nonces.len() >= MAX_REPLAY_ENTRIES {
-            return Err(DeviceTrustError::ReplayDetected);
         }
         if record.key_id != c.key_id || record.generation != c.key_generation {
             return Err(DeviceTrustError::StaleKeyGeneration);
@@ -537,8 +546,6 @@ impl DeviceRegistry {
                 &Signature::from_bytes(&signed.signature),
             )
             .map_err(|_| DeviceTrustError::InvalidDeviceSignature)?;
-        self.request_nonces
-            .insert(c.request_id, c.expires_at_unix_ms);
         Ok(AuthenticatedDeviceRequest {
             device: AuthenticatedDevice {
                 tenant_id: c.tenant_id.clone(),
@@ -553,6 +560,28 @@ impl DeviceRegistry {
             resource_id: c.resource_id.clone(),
             expires_at_unix_ms: c.expires_at_unix_ms,
         })
+    }
+
+    /// Authenticate one short-lived device request and consume its replay nonce.
+    /// Tenant, enrolled key ID and monotonic key generation are checked here;
+    /// downstream APIs must still authorize the authenticated tenant/principal.
+    pub fn authenticate_request(
+        &mut self,
+        signed: &SignedDeviceRequest,
+        body: &[u8],
+        now: u64,
+    ) -> Result<AuthenticatedDeviceRequest, DeviceTrustError> {
+        let authenticated = self.verify_request(signed, body, now)?;
+        let request_id = signed.claims.request_id;
+        self.request_nonces.retain(|_, expiry| *expiry > now);
+        if self.request_nonces.contains_key(&request_id)
+            || self.request_nonces.len() >= MAX_REPLAY_ENTRIES
+        {
+            return Err(DeviceTrustError::ReplayDetected);
+        }
+        self.request_nonces
+            .insert(request_id, signed.claims.expires_at_unix_ms);
+        Ok(authenticated)
     }
 
     /// List non-secret device identity and explicit owner-consent status for one tenant.
@@ -732,6 +761,13 @@ pub(crate) fn owner_consent_bytes(command: &SignedOwnerConsentCommand) -> Vec<u8
     out
 }
 
+/// Return the exact domain-separated bytes that an enrolled device must sign
+/// for a request. Exposing this existing canonical encoder lets native agents
+/// construct protocol-compatible signatures without reimplementing field order.
+pub fn canonical_device_request_bytes(c: &DeviceRequestClaims) -> Vec<u8> {
+    device_request_bytes(c)
+}
+
 pub(crate) fn device_request_bytes(c: &DeviceRequestClaims) -> Vec<u8> {
     let mut out = DEVICE_DOMAIN.to_vec();
     for v in [
@@ -759,6 +795,12 @@ mod tests {
     use ed25519_dalek::{Signer, SigningKey};
     use sha2::Digest;
 
+    // Stable, distinct test identifiers; never used as production cryptographic nonces.
+    fn test_request_id(label: &[u8]) -> [u8; 16] {
+        let digest = sha2::Sha256::digest(label);
+        digest[..16].try_into().unwrap()
+    }
+
     fn registry() -> (DeviceRegistry, SigningKey, SigningKey) {
         let admin = SigningKey::from_bytes(&[7u8; 32]);
         let device = SigningKey::from_bytes(&[9u8; 32]);
@@ -766,7 +808,11 @@ mod tests {
             DeviceRegistry::new(vec![("admin-v1".into(), admin.verifying_key())]).unwrap();
         (registry, admin, device)
     }
-    fn enrollment(admin: &SigningKey, device: &SigningKey, nonce: u8) -> SignedDeviceAdminCommand {
+    fn enrollment(
+        admin: &SigningKey,
+        device: &SigningKey,
+        nonce: [u8; 16],
+    ) -> SignedDeviceAdminCommand {
         let mut c = SignedDeviceAdminCommand {
             action: DeviceCommandAction::Enroll,
             tenant_id: "tenant-a".into(),
@@ -776,7 +822,7 @@ mod tests {
             target_public_key: Some(device.verifying_key().to_bytes()),
             issued_at_unix_ms: 100,
             expires_at_unix_ms: 1000,
-            nonce: [nonce; 16],
+            nonce,
             signature: [0; 64],
             old_device_signature: None,
             new_device_signature: None,
@@ -788,14 +834,14 @@ mod tests {
     #[test]
     fn enrollment_requires_admin_and_device_proof_and_binds_tenant() {
         let (mut r, admin, device) = registry();
-        let c = enrollment(&admin, &device, 1);
+        let c = enrollment(&admin, &device, test_request_id(b"admin-enrollment"));
         assert_eq!(r.apply_admin_command(&c, 200), Ok(1));
         let claims = DeviceRequestClaims {
             tenant_id: "tenant-a".into(),
             device_id: "device-1".into(),
             key_id: "device-key-v1".into(),
             key_generation: 1,
-            request_id: [2; 16],
+            request_id: test_request_id(b"enrollment-proof-binding"),
             issued_at_unix_ms: 200,
             expires_at_unix_ms: 500,
             method: "POST".into(),
@@ -813,16 +859,57 @@ mod tests {
         assert_eq!(auth.device_id(), "device-1");
     }
     #[test]
+    fn verification_does_not_consume_nonce_before_downstream_transaction() {
+        let (mut r, admin, device) = registry();
+        r.apply_admin_command(
+            &enrollment(&admin, &device, test_request_id(b"admin-enrollment")),
+            200,
+        )
+        .unwrap();
+        let claims = DeviceRequestClaims {
+            tenant_id: "tenant-a".into(),
+            device_id: "device-1".into(),
+            key_id: "device-key-v1".into(),
+            key_generation: 1,
+            request_id: test_request_id(b"telemetry-transaction-retry"),
+            issued_at_unix_ms: 200,
+            expires_at_unix_ms: 500,
+            method: "POST".into(),
+            resource_id: "device-telemetry:ingest".into(),
+            workload_id: "device-telemetry".into(),
+            manifest_sha256: sha2::Sha256::digest(b"telemetry-manifest").into(),
+            body_sha256: sha2::Sha256::digest([]).into(),
+        };
+        let signed = SignedDeviceRequest {
+            signature: device.sign(&device_request_bytes(&claims)).to_bytes(),
+            claims,
+        };
+        assert!(r
+            .verify_request_for(&signed, "POST", "device-telemetry:ingest", b"", 250)
+            .is_ok());
+        assert!(r
+            .verify_request_for(&signed, "POST", "device-telemetry:ingest", b"", 251)
+            .is_ok());
+        assert!(r
+            .authenticate_request_for(&signed, "POST", "device-telemetry:ingest", b"", 252)
+            .is_ok());
+        assert_eq!(
+            r.authenticate_request_for(&signed, "POST", "device-telemetry:ingest", b"", 253),
+            Err(DeviceTrustError::ReplayDetected)
+        );
+    }
+
+    #[test]
     fn request_replay_revoked_device_and_cross_tenant_are_rejected() {
         let (mut r, admin, device) = registry();
-        let c = enrollment(&admin, &device, 1);
+        let c = enrollment(&admin, &device, test_request_id(b"admin-enrollment"));
         r.apply_admin_command(&c, 200).unwrap();
         let claims = DeviceRequestClaims {
             tenant_id: "tenant-a".into(),
             device_id: "device-1".into(),
             key_id: "device-key-v1".into(),
             key_generation: 1,
-            request_id: [3; 16],
+            request_id: test_request_id(b"request-authentication"),
             issued_at_unix_ms: 200,
             expires_at_unix_ms: 500,
             method: "POST".into(),
@@ -854,8 +941,11 @@ mod tests {
     #[test]
     fn all_zero_request_nonce_is_rejected_before_persistence() {
         let (mut r, admin, device) = registry();
-        r.apply_admin_command(&enrollment(&admin, &device, 1), 200)
-            .unwrap();
+        r.apply_admin_command(
+            &enrollment(&admin, &device, test_request_id(b"admin-enrollment")),
+            200,
+        )
+        .unwrap();
         let claims = DeviceRequestClaims {
             tenant_id: "tenant-a".into(),
             device_id: "device-1".into(),
@@ -883,8 +973,11 @@ mod tests {
     #[test]
     fn request_body_must_match_the_signed_digest() {
         let (mut r, admin, device) = registry();
-        r.apply_admin_command(&enrollment(&admin, &device, 1), 200)
-            .unwrap();
+        r.apply_admin_command(
+            &enrollment(&admin, &device, test_request_id(b"admin-enrollment")),
+            200,
+        )
+        .unwrap();
         let body = b"tenant-scoped lease request";
         let manifest = crate::WorkloadManifest {
             schema_version: 1,
@@ -903,7 +996,7 @@ mod tests {
             device_id: "device-1".into(),
             key_id: "device-key-v1".into(),
             key_generation: 1,
-            request_id: [12; 16],
+            request_id: test_request_id(b"request-replay-window"),
             issued_at_unix_ms: 200,
             expires_at_unix_ms: 500,
             method: "POST".into(),
@@ -980,8 +1073,11 @@ mod tests {
     #[test]
     fn oversized_request_body_is_rejected_before_nonce_consumption() {
         let (mut r, admin, device) = registry();
-        r.apply_admin_command(&enrollment(&admin, &device, 1), 200)
-            .unwrap();
+        r.apply_admin_command(
+            &enrollment(&admin, &device, test_request_id(b"admin-enrollment")),
+            200,
+        )
+        .unwrap();
         let body = vec![b'x'; MAX_DEVICE_REQUEST_BODY_BYTES + 1];
         let request_digest = sha2::Sha256::digest(&body);
         let request_id: [u8; 16] = request_digest[..16].try_into().unwrap();
@@ -1013,7 +1109,7 @@ mod tests {
     #[test]
     fn signed_revocation_invalidates_the_enrolled_device() {
         let (mut r, admin, device) = registry();
-        let enroll = enrollment(&admin, &device, 1);
+        let enroll = enrollment(&admin, &device, test_request_id(b"admin-enrollment"));
         r.apply_admin_command(&enroll, 200).unwrap();
         let mut revoke = SignedDeviceAdminCommand {
             action: DeviceCommandAction::Revoke,
@@ -1024,7 +1120,7 @@ mod tests {
             target_public_key: None,
             issued_at_unix_ms: 300,
             expires_at_unix_ms: 1000,
-            nonce: [8; 16],
+            nonce: test_request_id(b"owner-consent-opt-in"),
             signature: [0; 64],
             old_device_signature: None,
             new_device_signature: None,
@@ -1036,7 +1132,7 @@ mod tests {
             device_id: "device-1".into(),
             key_id: "device-key-v1".into(),
             key_generation: 1,
-            request_id: [9; 16],
+            request_id: test_request_id(b"owner-consent-request"),
             issued_at_unix_ms: 350,
             expires_at_unix_ms: 500,
             method: "POST".into(),
@@ -1058,7 +1154,7 @@ mod tests {
     #[test]
     fn tenant_device_summaries_are_scoped_and_do_not_expose_keys() {
         let (mut registry, admin, device) = registry();
-        let enroll = enrollment(&admin, &device, 1);
+        let enroll = enrollment(&admin, &device, test_request_id(b"admin-enrollment"));
         registry.apply_admin_command(&enroll, 200).unwrap();
         let summaries = registry.tenant_device_summaries("tenant-a").unwrap();
         assert_eq!(summaries.len(), 1);
@@ -1074,7 +1170,7 @@ mod tests {
     #[test]
     fn stale_key_generation_is_rejected_after_rotation() {
         let (mut r, admin, device) = registry();
-        let c = enrollment(&admin, &device, 1);
+        let c = enrollment(&admin, &device, test_request_id(b"admin-enrollment"));
         r.apply_admin_command(&c, 200).unwrap();
         let new_device = SigningKey::from_bytes(&[11u8; 32]);
         let mut rotate = SignedDeviceAdminCommand {
@@ -1086,7 +1182,7 @@ mod tests {
             target_public_key: Some(new_device.verifying_key().to_bytes()),
             issued_at_unix_ms: 300,
             expires_at_unix_ms: 1000,
-            nonce: [4; 16],
+            nonce: test_request_id(b"key-rotation-proof"),
             signature: [0; 64],
             old_device_signature: None,
             new_device_signature: None,
@@ -1101,7 +1197,7 @@ mod tests {
             device_id: "device-1".into(),
             key_id: "device-key-v1".into(),
             key_generation: 1,
-            request_id: [5; 16],
+            request_id: test_request_id(b"key-rotation-request"),
             issued_at_unix_ms: 350,
             expires_at_unix_ms: 500,
             method: "POST".into(),
