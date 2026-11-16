@@ -738,5 +738,4 @@ mod tests {
         );
         cleanup(fixture);
     }
-
 }
