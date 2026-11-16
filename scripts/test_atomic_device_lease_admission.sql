@@ -334,6 +334,33 @@ GRANT EXECUTE ON FUNCTION ujani_control.admit_device_lease(
  text,text,text,text,text,bytea,bytea,bytea,bigint,bigint,integer,bigint,bytea,timestamptz,uuid
 ) TO ujani_runtime;
 
+-- A recent receipt timestamp must not make an old device observation eligible.
+-- received_at defaults to the current database time; only observed_at is made stale.
+UPDATE ujani_control.device_telemetry_samples
+SET observed_at=clock_timestamp()-interval '3 minutes'
+WHERE tenant_id='admission-test' AND device_id='admission-device-capacity' AND sequence=1;
+SET ROLE ujani_runtime;
+BEGIN;
+SET LOCAL ujani.tenant_id='admission-test';
+DO $block$
+DECLARE admitted boolean;
+BEGIN
+ admitted := ujani_control.admit_device_lease(
+  'admission-test','admission-device-capacity','admission-workload','admission-approval',
+  'admission-stale-observation-lease',decode(repeat('a0',16),'hex'),decode(repeat('a0',32),'hex'),
+  decode(repeat('44',32),'hex'),1,1,500,512,decode(repeat('a0',32),'hex'),
+  clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000100');
+ IF admitted IS DISTINCT FROM false THEN
+  RAISE EXCEPTION 'stale observed_at must be rejected even when received_at is recent';
+ END IF;
+END;
+$block$;
+COMMIT;
+RESET ROLE;
+UPDATE ujani_control.device_telemetry_samples
+SET observed_at=clock_timestamp()
+WHERE tenant_id='admission-test' AND device_id='admission-device-capacity' AND sequence=1;
+
 -- The first sample is taken before lease A and reports 4,000 CPU millis.
 -- After lease A consumes 2,500, a fresh sample reports the residual 1,500.
 -- Lease A is already reflected in that sample and must not be subtracted again.
