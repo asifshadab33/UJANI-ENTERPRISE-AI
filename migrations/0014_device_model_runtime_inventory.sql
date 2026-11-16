@@ -171,8 +171,11 @@ BEGIN
     OR NOT ((p_inventory->'hardware') ?& ARRAY[
       'cpu_logical_cores','memory_total_mb','memory_available_mb','accelerators'
     ])
-    OR jsonb_typeof(p_inventory->'hardware'->'accelerators') IS DISTINCT FROM 'array'
-    OR jsonb_array_length(p_inventory->'hardware'->'accelerators') > 32
+    OR jsonb_typeof(p_inventory->'hardware'->'accelerators') IS DISTINCT FROM 'array' THEN
+  RETURN NULL;
+ END IF;
+
+ IF jsonb_array_length(p_inventory->'hardware'->'accelerators') > 32
     OR jsonb_array_length(p_inventory->'runtimes') > 16
     OR jsonb_array_length(p_inventory->'models') > 512 THEN
   RETURN NULL;
@@ -180,6 +183,7 @@ BEGIN
 
  v_generated_at_ms := (p_inventory->>'generated_at_unix_ms')::numeric;
  IF v_generated_at_ms <= 0
+    OR v_generated_at_ms > 253402300799999
     OR v_generated_at_ms <> trunc(v_generated_at_ms)
     OR abs(extract(epoch FROM (
       p_generated_at - to_timestamp(v_generated_at_ms::double precision / 1000.0)
@@ -194,15 +198,17 @@ BEGIN
  END IF;
 
  IF p_inventory ? 'privacy' THEN
-  IF jsonb_typeof(p_inventory->'privacy') IS DISTINCT FROM 'object'
-     OR EXISTS (
-       SELECT 1
-       FROM jsonb_each(p_inventory->'privacy') AS privacy_item
-       WHERE privacy_item.key NOT IN (
-         'contains_prompts','contains_user_files','contains_local_paths','contains_credentials'
-       )
-       OR privacy_item.value IS DISTINCT FROM 'false'::jsonb
-     ) THEN
+  IF jsonb_typeof(p_inventory->'privacy') IS DISTINCT FROM 'object' THEN
+   RETURN NULL;
+  END IF;
+  IF EXISTS (
+    SELECT 1
+    FROM jsonb_each(p_inventory->'privacy') AS privacy_item
+    WHERE privacy_item.key NOT IN (
+      'contains_prompts','contains_user_files','contains_local_paths','contains_credentials'
+    )
+    OR privacy_item.value IS DISTINCT FROM 'false'::jsonb
+  ) THEN
    RETURN NULL;
   END IF;
  END IF;
@@ -234,8 +240,11 @@ BEGIN
       OR NOT (model.value ?& ARRAY[
         'model_ref','runtime_id','display_name','availability','size_bytes','capabilities','evidence'
       ])
-      OR jsonb_typeof(model.value->'capabilities') IS DISTINCT FROM 'array'
-      OR jsonb_array_length(model.value->'capabilities') > 16
+      OR CASE
+           WHEN jsonb_typeof(model.value->'capabilities') = 'array'
+           THEN jsonb_array_length(model.value->'capabilities') > 16
+           ELSE true
+         END
       OR jsonb_typeof(model.value->'evidence') IS DISTINCT FROM 'object'
       OR NOT ((model.value->'evidence') ?& ARRAY[
         'source','confidence','observed_at_unix_ms'
