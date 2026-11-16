@@ -63,7 +63,7 @@ def validate_self_evolution_schema() -> None:
 EXPECTED_SHARED_ARTIFACTS = {
     "catalogs/local-model-catalog-v1.json": "8f97eeb59d5c6cdf6c07df027eaf587a64184ba6",
     "schemas/model-runtime-inventory-v1.schema.json": "8ff1a1db4700214ba687cd806c449bc1ea7dfdb4",
-    "schemas/model-runtime-inventory-v2.schema.json": "87fb02d41ea3eeb58fc63807ee7adada8c7ca0b6",
+    "schemas/model-runtime-inventory-v2.schema.json": "48bc9bec1e7ee92c78fbdf52c974ea3ec90b8981",
     "schemas/personal-enterprise-task-contract-v1.schema.json": "566a0d72babd58636a3ef40e55b5c44168776522",
     "schemas/test-vectors/consent-binding-v1.json": "dcd7021560212504810e8438e14efd591e5e657d",
     "schemas/test-vectors/model-runtime-inventory-v1.json": "543d645d0154c9263ff7784ba4e203f54e498c3c",
@@ -104,16 +104,30 @@ def _v2_evidence_recent(evidence: dict, now_unix_ms: int, max_age_ms: int) -> bo
     observed = evidence.get("observed_at_unix_ms")
     return (
         isinstance(observed, int)
+        and not isinstance(observed, bool)
         and observed > 0
-        and observed <= now_unix_ms + 30_000
+        and observed <= now_unix_ms
         and now_unix_ms - observed <= max_age_ms
     )
 
 
 def _v2_evidence_claim_usable(evidence: dict, now_unix_ms: int, max_age_ms: int) -> bool:
     return (
-        evidence.get("source") not in ("unknown", "estimate")
-        and evidence.get("confidence") in ("verified", "reported")
+        evidence.get("source")
+        in {"runtime_api", "os_api", "runtime_metadata", "signed_catalogue", "published_catalogue"}
+        and evidence.get("confidence") in {"verified", "reported"}
+        and _v2_evidence_recent(evidence, now_unix_ms, max_age_ms)
+    )
+
+
+def _v2_evidence_estimate_usable(evidence: dict, now_unix_ms: int, max_age_ms: int) -> bool:
+    source = evidence.get("source")
+    confidence = evidence.get("confidence")
+    return (
+        source
+        in {"runtime_api", "os_api", "runtime_metadata", "signed_catalogue", "published_catalogue", "estimate"}
+        and confidence in {"verified", "reported", "estimated"}
+        and (source != "estimate" or confidence == "estimated")
         and _v2_evidence_recent(evidence, now_unix_ms, max_age_ms)
     )
 
@@ -122,8 +136,9 @@ def _v2_inventory_fresh(inventory: dict, now_unix_ms: int, max_age_ms: int) -> b
     generated = inventory.get("generated_at_unix_ms")
     return (
         isinstance(generated, int)
+        and not isinstance(generated, bool)
         and generated > 0
-        and generated <= now_unix_ms + 30_000
+        and generated <= now_unix_ms
         and now_unix_ms - generated <= max_age_ms
     )
 
@@ -135,6 +150,60 @@ def _v2_enterprise_inventory_authorized(inventory: dict) -> bool:
         and context.get("owner_consent") == "granted"
         and context.get("organisation_authorisation") == "authorised"
     )
+
+
+def _v2_metadata_capability_usable(
+    model: dict, capability_name: str, now_unix_ms: int, max_age_ms: int
+) -> bool:
+    group_name = {
+        "tool_use": "tool_use",
+        "vision": "vision",
+        "embeddings": "embeddings",
+    }.get(capability_name)
+    if group_name is None:
+        return True
+
+    metadata = model.get(group_name, {})
+    if (
+        metadata.get("supported") is not True
+        or not _v2_evidence_claim_usable(metadata.get("evidence", {}), now_unix_ms, max_age_ms)
+    ):
+        return False
+    if capability_name == "vision":
+        max_image_bytes = metadata.get("max_image_bytes")
+        return (
+            isinstance(max_image_bytes, int)
+            and not isinstance(max_image_bytes, bool)
+            and max_image_bytes > 0
+            and bool(metadata.get("supported_mime_types"))
+        )
+    if capability_name == "embeddings":
+        dimensions = metadata.get("dimensions")
+        return (
+            isinstance(dimensions, int)
+            and not isinstance(dimensions, bool)
+            and dimensions > 0
+        )
+    return True
+
+
+def _v2_eligible_accelerators(
+    hardware: dict, compatibility: dict, now_unix_ms: int, max_age_ms: int
+) -> list[dict]:
+    required_kinds = set(compatibility["required_accelerator_kinds"])
+    required_apis = set(compatibility["required_accelerator_apis"])
+    eligible = []
+    for accelerator in hardware["accelerators"]:
+        if not _v2_evidence_claim_usable(
+            accelerator["evidence"], now_unix_ms, max_age_ms
+        ):
+            continue
+        if required_kinds and accelerator["kind"] not in required_kinds:
+            continue
+        if required_apis and accelerator.get("runtime_api") not in required_apis:
+            continue
+        eligible.append(accelerator)
+    return eligible
 
 
 def _v2_model_fits(
@@ -149,7 +218,9 @@ def _v2_model_fits(
         or model["availability"] != "installed"
         or model["compatibility"]["status"] != "compatible"
         or not _v2_evidence_claim_usable(model["evidence"], now_unix_ms, max_age_ms)
-        or not _v2_evidence_claim_usable(model["compatibility"]["evidence"], now_unix_ms, max_age_ms)
+        or not _v2_evidence_claim_usable(
+            model["compatibility"]["evidence"], now_unix_ms, max_age_ms
+        )
     ):
         return False
 
@@ -157,7 +228,10 @@ def _v2_model_fits(
     compatibility = model["compatibility"]
     if compatibility["supported_os"] and platform["os"] not in compatibility["supported_os"]:
         return False
-    if compatibility["supported_architectures"] and platform["architecture"] not in compatibility["supported_architectures"]:
+    if (
+        compatibility["supported_architectures"]
+        and platform["architecture"] not in compatibility["supported_architectures"]
+    ):
         return False
 
     capability = next(
@@ -167,12 +241,14 @@ def _v2_model_fits(
         capability is None
         or capability["status"] != "supported"
         or not _v2_evidence_claim_usable(capability["evidence"], now_unix_ms, max_age_ms)
+        or not _v2_metadata_capability_usable(
+            model, capability_name, now_unix_ms, max_age_ms
+        )
     ):
         return False
 
     hardware = inventory["hardware"]
     estimates = model["resource_estimates"]
-    estimate_evidence = estimates["evidence"]
     has_estimate = any(
         estimates[field] is not None
         for field in (
@@ -182,8 +258,11 @@ def _v2_model_fits(
             "recommended_cpu_threads",
         )
     )
-    if has_estimate and not _v2_evidence_recent(estimate_evidence, now_unix_ms, max_age_ms):
+    if has_estimate and not _v2_evidence_estimate_usable(
+        estimates["evidence"], now_unix_ms, max_age_ms
+    ):
         return False
+
     if estimates["minimum_memory_mb"] is not None:
         available = hardware["memory_available_mb"]
         if available is None or estimates["minimum_memory_mb"] > available:
@@ -196,25 +275,25 @@ def _v2_model_fits(
         cores = hardware["cpu_logical_cores"]
         if cores is None or estimates["recommended_cpu_threads"] > cores:
             return False
+
+    eligible_accelerators = _v2_eligible_accelerators(
+        hardware, compatibility, now_unix_ms, max_age_ms
+    )
+    has_accelerator_requirement = bool(
+        compatibility["required_accelerator_kinds"]
+        or compatibility["required_accelerator_apis"]
+    )
+    if has_accelerator_requirement and not eligible_accelerators:
+        return False
     if estimates["minimum_accelerator_memory_mb"] is not None:
         memories = [
-            accelerator.get("memory_mb")
-            for accelerator in hardware["accelerators"]
-            if accelerator.get("memory_mb") is not None
-            and _v2_evidence_recent(accelerator["evidence"], now_unix_ms, max_age_ms)
+            item.get("memory_mb")
+            for item in eligible_accelerators
+            if item.get("memory_mb") is not None
         ]
         if not memories or max(memories) < estimates["minimum_accelerator_memory_mb"]:
             return False
-    for kind in compatibility["required_accelerator_kinds"]:
-        if not any(item["kind"] == kind for item in hardware["accelerators"]):
-            return False
-    required_apis = set(compatibility["required_accelerator_apis"])
-    if required_apis and not any(
-        item.get("runtime_api") in required_apis for item in hardware["accelerators"]
-    ):
-        return False
     return True
-
 
 def _v2_select_explicit_model(
     inventory: dict, selected_model_ref: str, capability_name: str, now_unix_ms: int, max_age_ms: int
@@ -245,6 +324,9 @@ def validate_model_runtime_inventory_v2() -> None:
     jsonschema.Draft202012Validator.check_schema(schema)
     assert schema["$id"] == "urn:ujani:model-runtime-inventory:v2"
     assert schema["properties"]["schema_version"]["const"] == 2
+    compatibility_schema = schema["$defs"]["compatibility"]["properties"]
+    assert "Alternatives" in compatibility_schema["required_accelerator_kinds"]["description"]
+    assert "Alternatives" in compatibility_schema["required_accelerator_apis"]["description"]
     validator = jsonschema.Draft202012Validator(schema)
     fixture_path = V2_SCHEMA_PATH.parent / "test-vectors/model-runtime-inventory-v2.json"
     fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
@@ -257,6 +339,21 @@ def validate_model_runtime_inventory_v2() -> None:
     assert selected is not None and selected["model_ref"] == "example/model:1.0"
     assert _v2_select_explicit_model(fixture, "not-installed", "chat", now, 5_000) is None
     assert _v2_select_explicit_model(fixture, "example/model:1.0", "coding", now, 5_000) is None
+
+    # Freshness is strict: the observation at now is usable, any future timestamp is not.
+    fresh_evidence = copy.deepcopy(fixture["models"][0]["evidence"])
+    assert _v2_evidence_recent(fresh_evidence, now, 5_000)
+    future_evidence = copy.deepcopy(fresh_evidence)
+    future_evidence["observed_at_unix_ms"] = now + 1
+    assert not _v2_evidence_recent(future_evidence, now, 5_000)
+    assert _v2_inventory_fresh(fixture, now, 5_000)
+    future_inventory = copy.deepcopy(fixture)
+    future_inventory["generated_at_unix_ms"] = now + 1
+    validator.validate(future_inventory)
+    assert not _v2_inventory_fresh(future_inventory, now, 5_000)
+    assert _v2_select_explicit_model(
+        future_inventory, "example/model:1.0", "chat", now, 5_000
+    ) is None
 
     # Empty reports and future runtime vendors are valid descriptors, not proof of availability.
     empty_inventory = copy.deepcopy(fixture)
@@ -272,27 +369,149 @@ def validate_model_runtime_inventory_v2() -> None:
     unknown_runtime = copy.deepcopy(fixture)
     unknown_runtime["runtimes"][0]["availability"] = "unknown"
     validator.validate(unknown_runtime)
-    assert _v2_select_explicit_model(unknown_runtime, "example/model:1.0", "chat", now, 5_000) is None
+    assert _v2_select_explicit_model(
+        unknown_runtime, "example/model:1.0", "chat", now, 5_000
+    ) is None
     dangling_runtime = copy.deepcopy(fixture)
     dangling_runtime["models"][0]["runtime_id"] = "missing-runtime"
     assert not _v2_references_valid(dangling_runtime)
     downloadable = copy.deepcopy(fixture)
     downloadable["models"][0]["availability"] = "downloadable"
-    assert _v2_select_explicit_model(downloadable, "example/model:1.0", "chat", now, 5_000) is None
+    assert _v2_select_explicit_model(
+        downloadable, "example/model:1.0", "chat", now, 5_000
+    ) is None
 
-    # Stale inventory/evidence and resource mismatch are fail-closed.
-    assert not _v2_inventory_fresh(fixture, now + 5_001, 5_000)
+    # Unknown, stale and future evidence cannot establish a capability or resource fit.
     stale_evidence = copy.deepcopy(fixture)
     stale_evidence["runtimes"][0]["evidence"]["observed_at_unix_ms"] = now - 5_001
-    assert _v2_select_explicit_model(stale_evidence, "example/model:1.0", "chat", now, 5_000) is None
+    assert _v2_select_explicit_model(
+        stale_evidence, "example/model:1.0", "chat", now, 5_000
+    ) is None
+    unknown_estimate = copy.deepcopy(fixture)
+    unknown_estimate["models"][0]["resource_estimates"]["evidence"] = {
+        "source": "unknown",
+        "confidence": "unknown",
+        "observed_at_unix_ms": now,
+    }
+    validator.validate(unknown_estimate)
+    assert _v2_select_explicit_model(
+        unknown_estimate, "example/model:1.0", "chat", now, 5_000
+    ) is None
     insufficient_memory = copy.deepcopy(fixture)
     insufficient_memory["hardware"]["memory_available_mb"] = 1_024
-    assert _v2_select_explicit_model(insufficient_memory, "example/model:1.0", "chat", now, 5_000) is None
+    assert _v2_select_explicit_model(
+        insufficient_memory, "example/model:1.0", "chat", now, 5_000
+    ) is None
+    assert _v2_evidence_estimate_usable(
+        fixture["models"][0]["resource_estimates"]["evidence"], now, 5_000
+    )
+
+    # Capability list claims must agree with their detailed metadata and its own evidence.
+    vision_supported = copy.deepcopy(fixture)
+    vision_model = vision_supported["models"][0]
+    vision_claim = next(item for item in vision_model["capabilities"] if item["name"] == "vision")
+    vision_claim["status"] = "supported"
+    vision_model["vision"]["supported"] = True
+    vision_model["vision"]["max_image_bytes"] = 1_048_576
+    vision_model["vision"]["supported_mime_types"] = ["image/png"]
+    assert _v2_select_explicit_model(
+        vision_supported, "example/model:1.0", "vision", now, 5_000
+    ) is not None
+    stale_vision = copy.deepcopy(vision_supported)
+    stale_vision["models"][0]["vision"]["evidence"]["observed_at_unix_ms"] = now - 5_001
+    assert _v2_select_explicit_model(
+        stale_vision, "example/model:1.0", "vision", now, 5_000
+    ) is None
+    tool_use_conflict = copy.deepcopy(fixture)
+    tool_use_conflict["models"][0]["capabilities"].append({
+        "name": "tool_use",
+        "status": "supported",
+        "evidence": copy.deepcopy(fresh_evidence),
+    })
+    assert _v2_select_explicit_model(
+        tool_use_conflict, "example/model:1.0", "tool_use", now, 5_000
+    ) is None
+    tool_use_supported = copy.deepcopy(tool_use_conflict)
+    tool_use_supported["models"][0]["tool_use"]["supported"] = True
+    assert _v2_select_explicit_model(
+        tool_use_supported, "example/model:1.0", "tool_use", now, 5_000
+    ) is not None
+    embeddings_supported = copy.deepcopy(fixture)
+    embeddings_supported["models"][0]["capabilities"].append({
+        "name": "embeddings",
+        "status": "supported",
+        "evidence": copy.deepcopy(fresh_evidence),
+    })
+    assert _v2_select_explicit_model(
+        embeddings_supported, "example/model:1.0", "embeddings", now, 5_000
+    ) is not None
+    stale_embeddings = copy.deepcopy(embeddings_supported)
+    stale_embeddings["models"][0]["embeddings"]["evidence"]["observed_at_unix_ms"] = now - 5_001
+    assert _v2_select_explicit_model(
+        stale_embeddings, "example/model:1.0", "embeddings", now, 5_000
+    ) is None
+
+    # Accelerator kind/API alternatives must be satisfied by the same fresh device.
+    accelerator_inventory = copy.deepcopy(fixture)
+    accelerator_model = accelerator_inventory["models"][0]
+    accelerator_model["resource_estimates"]["minimum_accelerator_memory_mb"] = 8_192
+    accelerator_model["compatibility"]["required_accelerator_kinds"] = ["gpu", "npu"]
+    accelerator_model["compatibility"]["required_accelerator_apis"] = ["cuda"]
+    accelerator_evidence = copy.deepcopy(accelerator_model["compatibility"]["evidence"])
+    accelerator_inventory["hardware"]["accelerators"] = [
+        {
+            "kind": "gpu",
+            "vendor": "nvidia",
+            "memory_mb": 4_096,
+            "runtime_api": "cuda",
+            "evidence": copy.deepcopy(accelerator_evidence),
+        },
+        {
+            "kind": "gpu",
+            "vendor": "other",
+            "memory_mb": 16_384,
+            "runtime_api": "vulkan",
+            "evidence": copy.deepcopy(accelerator_evidence),
+        },
+    ]
+    assert _v2_select_explicit_model(
+        accelerator_inventory, "example/model:1.0", "chat", now, 5_000
+    ) is None
+    accelerator_model["compatibility"]["required_accelerator_apis"] = ["cuda", "vulkan"]
+    assert _v2_select_explicit_model(
+        accelerator_inventory, "example/model:1.0", "chat", now, 5_000
+    ) is not None
+    accelerator_model["compatibility"]["required_accelerator_apis"] = ["cuda"]
+    accelerator_inventory["hardware"]["accelerators"][0]["memory_mb"] = 8_192
+    assert _v2_select_explicit_model(
+        accelerator_inventory, "example/model:1.0", "chat", now, 5_000
+    ) is not None
+    stale_accelerator = copy.deepcopy(fixture)
+    stale_accelerator["models"][0]["compatibility"]["required_accelerator_kinds"] = ["gpu"]
+    stale_accelerator["models"][0]["compatibility"]["required_accelerator_apis"] = ["cuda"]
+    stale_accelerator["hardware"]["accelerators"] = [{
+        "kind": "gpu",
+        "vendor": "nvidia",
+        "memory_mb": 16_384,
+        "runtime_api": "cuda",
+        "evidence": {
+            "source": "os_api",
+            "confidence": "reported",
+            "observed_at_unix_ms": now - 5_001,
+        },
+    }]
+    validator.validate(stale_accelerator)
+    assert _v2_select_explicit_model(
+        stale_accelerator, "example/model:1.0", "chat", now, 5_000
+    ) is None
 
     # Enterprise inventory is unavailable on owner-consent or administrator-policy conflict/revocation.
-    for field, value in (("owner_consent", "revoked"), ("owner_consent", "unknown"),
-                         ("organisation_authorisation", "revoked"),
-                         ("organisation_authorisation", "unknown")):
+    for field, value in (
+        ("owner_consent", "revoked"),
+        ("owner_consent", "unknown"),
+        ("organisation_authorisation", "revoked"),
+        ("organisation_authorisation", "unknown"),
+    ):
         denied = copy.deepcopy(fixture)
         denied["collection_context"][field] = value
         validator.validate(denied)
@@ -308,7 +527,7 @@ def validate_model_runtime_inventory_v2() -> None:
     validator.validate(personal)
     assert not _v2_enterprise_inventory_authorized(personal)
 
-    # Strict versioning rejects unknown fields; capability unknown is not a positive claim.
+    # Strict versioning rejects unknown fields; no prompt or local file data is allowed.
     unknown_top_level = copy.deepcopy(fixture)
     unknown_top_level["unrecognised"] = True
     assert list(validator.iter_errors(unknown_top_level))
@@ -321,7 +540,6 @@ def validate_model_runtime_inventory_v2() -> None:
     )
     assert not _v2_references_valid(duplicate_capability)
     print("Model/runtime inventory v2 schema, policy-boundary and selection checks passed.")
-
 
 def main() -> None:
     validate_shared_contract_manifest()
