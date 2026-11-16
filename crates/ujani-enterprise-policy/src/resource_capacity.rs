@@ -598,7 +598,9 @@ mod tests {
         });
         assert_eq!(
             evaluate_extended_resource_placement(&value, ask, NOW, 5_000),
-            Err(ExtendedResourceRejection::StaleMeasurement(ResourceKind::Gpu))
+            Err(ExtendedResourceRejection::StaleMeasurement(
+                ResourceKind::Gpu
+            ))
         );
 
         value = snapshot();
@@ -622,7 +624,9 @@ mod tests {
         });
         assert_eq!(
             evaluate_extended_resource_placement(&value, ask, NOW, 5_000),
-            Err(ExtendedResourceRejection::StaleMeasurement(ResourceKind::Npu))
+            Err(ExtendedResourceRejection::StaleMeasurement(
+                ResourceKind::Npu
+            ))
         );
 
         value = snapshot();
@@ -643,7 +647,9 @@ mod tests {
         });
         assert_eq!(
             evaluate_extended_resource_placement(&value, ask, NOW, 5_000),
-            Err(ExtendedResourceRejection::StaleMeasurement(ResourceKind::Storage))
+            Err(ExtendedResourceRejection::StaleMeasurement(
+                ResourceKind::Storage
+            ))
         );
 
         value = snapshot();
@@ -667,8 +673,9 @@ mod tests {
         });
         assert_eq!(
             evaluate_extended_resource_placement(&value, ask, NOW, 5_000),
-            Err(ExtendedResourceRejection::StaleMeasurement(ResourceKind::Network))
+            Err(ExtendedResourceRejection::StaleMeasurement(
+                ResourceKind::Network
+            ))
         );
     }
-
 }
