@@ -35,6 +35,7 @@ def main():
     html = (APP / "index.html").read_text(encoding="utf-8")
     js = (APP / "app.js").read_text(encoding="utf-8")
     css = (APP / "styles.css").read_text(encoding="utf-8")
+    readme = (APP / "README.md").read_text(encoding="utf-8")
     parser = ConsoleParser()
     parser.feed(html)
     assert parser.inline_scripts == 0, "Console must not use inline scripts."
@@ -56,7 +57,23 @@ def main():
     assert "counts.schedulable_devices <= counts.online_fresh_devices" in js, "Fleet counts must be internally consistent."
     assert "MAX_OVERVIEW_SNAPSHOT_AGE_MS = 5 * 60 * 1000" in js, "Fleet snapshots must have a bounded freshness window."
     assert "MAX_OVERVIEW_CLOCK_SKEW_MS = 60 * 1000" in js and "snapshotIsFresh(data.generated_at_unix_ms)" in js, "Future or stale snapshots must not appear live."
-    assert "No sample data is shown" in js and "No live device inventory" in html, "Missing no-demo-data fallback."
+    assert "No sample data is shown" in js and "No live device inventory" in html, "Missing no-live-data fallback."
+    assert 'id="demo"' in html and 'id="demo-banner"' in html, "Explicit demo controls and banner are required."
+    assert 'id="demo-banner" class="demo-banner" role="status"' in html and 'id="demo-banner" class="demo-banner" role="status" hidden' in html, "Demo banner must start hidden and be announced accessibly."
+    assert "function showDemoData()" in js and "function renderDemoModelInventory()" in js, "Synthetic demo rendering must be explicit and separate."
+    assert "DEMO DATA · not live" in js and "DEMO DATA — synthetic examples only" in html, "Demo mode must carry an unmistakable non-live label."
+    assert "DEMO · Office workstation" in js and "DEMO · GPU workstation" in js and "DEMO · Internal server" in js, "Every synthetic device must be visibly labelled."
+    assert "Synthetic / unverified" in js and "not pinned" in js, "Demo model records must not imply verified or approved artifacts."
+    assert "demoButton.addEventListener(\"click\", showDemoData)" in js, "Demo mode must require an explicit user action."
+    assert "demoBanner.hidden = true" in js and "clearOverview();" in js, "Leaving demo mode must clear synthetic records before a live request."
+    demo_start = js.index("function showDemoData()")
+    demo_end = js.index("function renderList", demo_start)
+    demo_renderer = js[demo_start:demo_end]
+    assert "fetch(" not in demo_renderer and "invoke(" not in demo_renderer, "Synthetic demo rendering must not contact a service."
+    assert "Refresh live data" in html and "refreshButton.addEventListener(\"click\", refreshOverview)" in js, "Live refresh must remain a separate explicit action."
+    assert "Load demo data" in readme and "synthetic devices" in readme, "Demo/live separation must be documented."
+    assert "unavailable state by default" in readme, "The initial console state must not imply live fleet connectivity."
+    assert ".demo-banner" in css and "[hidden]" in css, "Demo warning and hidden initial state must be styled."
     assert "frame-ancestors" not in html, "Frame denial must be delivered as a server response header, not a meta policy."
     assert "schedulable_devices" in js and "remaining_memory_mb" in js, "Capacity fields missing."
     assert 'id="model-inventory"' in html and 'id="model-count"' in html, "Model inventory table and count must be present."

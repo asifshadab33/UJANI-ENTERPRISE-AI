@@ -6,7 +6,7 @@ This is the first browser application surface for the Enterprise control plane. 
 
 - The static console is implemented in plain HTML, CSS and JavaScript; it has no third-party runtime dependencies.
 - It reads one same-origin endpoint: `GET /api/v1/operator/overview`.
-- The Enterprise repository currently provides policy, trust and persistence libraries, not the authenticated HTTP control-plane service. Until that service is implemented and deployed, the console correctly displays an unavailable state and never invents/demo-populates fleet data.
+- The Enterprise repository currently provides policy, trust and persistence libraries, not the authenticated HTTP control-plane service. Until that service is implemented and deployed, the console displays an unavailable state by default; only the explicit demo action loads synthetic records clearly labelled as non-live.
 - This is not a production-ready Enterprise deployment. Authentication, tenant-scoped authorization, durable API service, key management, audit transactions, service monitoring and deployment hardening remain release gates.
 
 ## API contract v1
@@ -56,4 +56,9 @@ The server must not expose secrets, prompts, local paths, employee activity deta
 
 ## Local static preview
 
-Serve this directory with any static file server and open `index.html`. The overview will remain unavailable until the authenticated API is deployed. This behavior is intentional.
+Serve this directory with any static file server and open `index.html`.
+
+- The page starts with no fleet records and does not invent live data.
+- Select **Load demo data** to explore the read-only layout. The **DEMO DATA** view uses synthetic devices, model inventory, workloads and approvals only; every record is visibly labelled synthetic and cannot trigger a control-plane action.
+- Select **Refresh live data** to leave demo mode and request the authenticated same-origin API. If the service is unavailable, the console clears the demo records and returns to the unavailable state.
+- The model catalogue remains descriptive only; demo data never installs, approves or dispatches a model.

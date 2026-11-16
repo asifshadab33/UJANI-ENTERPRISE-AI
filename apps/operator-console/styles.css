@@ -19,3 +19,10 @@
 .feature-risk-card summary:focus-visible{outline:2px solid #3567c8;outline-offset:3px;border-radius:3px}
 .feature-risk-card ul{padding-left:18px;margin:9px 0 2px;color:#566176;font-size:11px;line-height:1.6}
 @media(max-width:700px){.feature-risk-grid{grid-template-columns:1fr}.feature-risk-card-heading{flex-direction:column;align-items:flex-start}}
+
+.button-secondary{background:#e9eef6;color:#23334d;border:1px solid #d6deea}
+.button:focus-visible{outline:3px solid #4d78c8;outline-offset:3px}
+.demo-banner{padding:17px 19px;border:2px solid #a96d12;background:#fff3d7;border-radius:12px;margin:0 0 22px;color:#67420c}
+.demo-banner p{font-size:13px;margin:5px 0 0;line-height:1.5}
+[hidden]{display:none!important}
+@media(max-width:520px){.top-actions{flex-wrap:wrap;justify-content:flex-end}.button{padding:9px 11px;font-size:12px}}
