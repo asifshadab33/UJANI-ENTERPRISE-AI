@@ -421,14 +421,7 @@ mod tests {
                 .map_err(|_| IntegrityKeyProviderError::EncryptionFailed)?;
             let mut encryption_key = test_encryption_key(&key, purpose);
             let encrypted = test_stream_xor(&encryption_key, &nonce, plaintext);
-            let tag = test_sealed_tag(
-                &encryption_key,
-                purpose,
-                &key_id,
-                aad,
-                &nonce,
-                &encrypted,
-            );
+            let tag = test_sealed_tag(&encryption_key, purpose, &key_id, aad, &nonce, &encrypted);
             let mut sealed = Vec::with_capacity(16 + encrypted.len() + 32);
             sealed.extend_from_slice(&nonce);
             sealed.extend_from_slice(&encrypted);
