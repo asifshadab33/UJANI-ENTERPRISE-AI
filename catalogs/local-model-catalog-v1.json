@@ -1,10 +1,12 @@
 {
   "schema_version": 1,
   "catalogue_id": "ujani-local-models-v1",
-  "status": "curated-candidates-not-installable-until-runtime-verification",
+  "status": "curated-candidates-for-manual-ollama-setup-only",
   "policy": {
     "optional_install": true,
-    "explicit_confirmation_required": true,
+    "managed_downloads_enabled": false,
+    "manual_ollama_installation_user_directed": true,
+    "explicit_confirmation_required_for_future_managed_downloads": true,
     "silent_downloads_allowed": false,
     "silent_model_switching_allowed": false,
     "model_output_is_untrusted": true,
@@ -306,7 +308,7 @@
       "desktop": "Ollama is the recommended supported desktop runtime where installed and validated; it is optional and is not bundled with UJANI.",
       "mobile": "Do not recommend Ollama; mobile runtime/model support must be separately validated."
     },
-    "installation_policy": "No model is preselected for automatic download. The default setup keeps model installation optional and continues to provide non-model OS-powered features.",
+    "installation_policy": "UJANI-managed downloads are disabled until exact artifact provenance and the Ollama daemon's actual model-store path/free space can be verified. Users may install manually through their trusted Ollama interface after checking source, licence and storage; UJANI then refreshes installed-model inventory.",
     "public_profiles": [
       {
         "total_ram_gib_max": 4,
