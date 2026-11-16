@@ -7,7 +7,7 @@
 
 ALTER TABLE ujani_control.devices
  ADD COLUMN IF NOT EXISTS model_inventory_revision bigint NOT NULL DEFAULT 0
- CHECK (model_inventory_revision >= 0);
+ CHECK (model_inventory_revision BETWEEN 0 AND 9007199254740991);
 
 CREATE TABLE IF NOT EXISTS ujani_control.device_model_runtime_inventories (
  tenant_id text NOT NULL,
@@ -24,7 +24,6 @@ CREATE TABLE IF NOT EXISTS ujani_control.device_model_runtime_inventories (
   AND octet_length(inventory::text) <= 1048576
  ),
  PRIMARY KEY (tenant_id, device_id),
- UNIQUE (tenant_id, device_id, request_id),
  FOREIGN KEY (tenant_id, device_id)
   REFERENCES ujani_control.devices(tenant_id, device_id)
 );
@@ -49,7 +48,8 @@ BEGIN
  IF NEW.trust_state IS DISTINCT FROM 'enrolled'
     OR NEW.owner_consent_state IS DISTINCT FROM 'granted'
     OR NEW.admin_approval_state IS DISTINCT FROM 'approved'
-    OR NEW.key_generation IS DISTINCT FROM OLD.key_generation THEN
+    OR NEW.key_generation IS DISTINCT FROM OLD.key_generation
+    OR NEW.consent_generation IS DISTINCT FROM OLD.consent_generation THEN
   DELETE FROM ujani_control.device_model_runtime_inventories
    WHERE tenant_id = NEW.tenant_id AND device_id = NEW.device_id;
  END IF;
@@ -59,7 +59,7 @@ $function$;
 
 DROP TRIGGER IF EXISTS devices_purge_model_runtime_inventory ON ujani_control.devices;
 CREATE TRIGGER devices_purge_model_runtime_inventory
- AFTER UPDATE OF trust_state, owner_consent_state, admin_approval_state, key_generation
+ AFTER UPDATE OF trust_state, owner_consent_state, admin_approval_state, key_generation, consent_generation
  ON ujani_control.devices
  FOR EACH ROW
  EXECUTE FUNCTION ujani_control.purge_device_model_runtime_inventory_on_device_change();
@@ -79,15 +79,14 @@ BEGIN
  IF TG_OP = 'DELETE' THEN
   v_tenant_id := OLD.tenant_id;
   v_device_id := OLD.device_id;
- ELSE
-  v_tenant_id := NEW.tenant_id;
-  v_device_id := NEW.device_id;
- END IF;
- DELETE FROM ujani_control.device_model_runtime_inventories
-  WHERE tenant_id = v_tenant_id AND device_id = v_device_id;
- IF TG_OP = 'DELETE' THEN
+  DELETE FROM ujani_control.device_model_runtime_inventories
+   WHERE tenant_id = v_tenant_id AND device_id = v_device_id;
   RETURN OLD;
  END IF;
+ DELETE FROM ujani_control.device_model_runtime_inventories
+  WHERE tenant_id = OLD.tenant_id AND device_id = OLD.device_id;
+ DELETE FROM ujani_control.device_model_runtime_inventories
+  WHERE tenant_id = NEW.tenant_id AND device_id = NEW.device_id;
  RETURN NEW;
 END;
 $function$;
