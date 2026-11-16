@@ -658,4 +658,84 @@ mod tests {
         );
         cleanup(fixture);
     }
+
+    #[test]
+    fn lease_mutations_reject_server_side_tenant_workload_and_manifest_mismatches() {
+        let fixture = setup();
+        let body = b"attempt lease renewal with mismatched server binding";
+        let baseline = fixture.ledger.snapshot().unwrap();
+        assert_eq!(baseline.active_jobs, 1);
+
+        let request = signed_request(
+            &fixture.device,
+            fixture.manifest_sha256,
+            "lease.renew",
+            31,
+            1_500,
+            body,
+        );
+
+        // The server's expected tenant is authoritative, not the signed claim alone.
+        assert_eq!(
+            authenticate_and_renew_device_lease(
+                &fixture.registry,
+                &fixture.ledger,
+                &request,
+                body,
+                "another-tenant",
+                WORKLOAD_ID,
+                &fixture.manifest_sha256,
+                &fixture.lease_token,
+                1_500,
+            ),
+            Err(LeaseControlError::RequestBindingMismatch)
+        );
+
+        // A workload identifier supplied by the caller cannot override trusted server state.
+        assert_eq!(
+            authenticate_and_renew_device_lease(
+                &fixture.registry,
+                &fixture.ledger,
+                &request,
+                body,
+                TENANT_ID,
+                "another-workload",
+                &fixture.manifest_sha256,
+                &fixture.lease_token,
+                1_500,
+            ),
+            Err(LeaseControlError::RequestBindingMismatch)
+        );
+
+        // Nor can a caller substitute a different manifest digest for the admitted workload.
+        let different_manifest = test_key_bytes("different-trusted-manifest");
+        assert_eq!(
+            authenticate_and_renew_device_lease(
+                &fixture.registry,
+                &fixture.ledger,
+                &request,
+                body,
+                TENANT_ID,
+                WORKLOAD_ID,
+                &different_manifest,
+                &fixture.lease_token,
+                1_500,
+            ),
+            Err(LeaseControlError::RequestBindingMismatch)
+        );
+
+        let after = fixture.ledger.snapshot().unwrap();
+        assert_eq!(after.active_jobs, baseline.active_jobs);
+        assert_eq!(after.reserved_cpu_millis, baseline.reserved_cpu_millis);
+        assert_eq!(after.reserved_memory_mb, baseline.reserved_memory_mb);
+        assert_eq!(
+            fixture
+                .ledger
+                .reservation_revision(DEVICE_ID, 1_501)
+                .unwrap(),
+            1,
+            "rejected binding attempts must not renew or revise the lease"
+        );
+        cleanup(fixture);
+    }
 }
