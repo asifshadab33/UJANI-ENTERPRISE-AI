@@ -230,6 +230,44 @@ REVOKE ALL ON FUNCTION ujani_control.admit_device_lease(
 COMMENT ON COLUMN ujani_control.leases.request_digest IS
  'Domain-separated digest of the exact admitted lease request; NULL only for legacy leases predating migration 0012.';
 
+-- Admission evidence is immutable after the reservation is created. Lease
+-- lifecycle fields (state, expiry and revision) remain updateable.
+CREATE OR REPLACE FUNCTION ujani_control.reject_lease_admission_evidence_mutation()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = pg_catalog, ujani_control
+AS $function$
+BEGIN
+ IF OLD.tenant_id IS DISTINCT FROM NEW.tenant_id
+    OR OLD.lease_id IS DISTINCT FROM NEW.lease_id
+    OR OLD.device_id IS DISTINCT FROM NEW.device_id
+    OR OLD.workload_id IS DISTINCT FROM NEW.workload_id
+    OR OLD.approval_id IS DISTINCT FROM NEW.approval_id
+    OR OLD.manifest_digest IS DISTINCT FROM NEW.manifest_digest
+    OR OLD.device_key_generation IS DISTINCT FROM NEW.device_key_generation
+    OR OLD.requested_cpu_millis IS DISTINCT FROM NEW.requested_cpu_millis
+    OR OLD.requested_memory_mb IS DISTINCT FROM NEW.requested_memory_mb
+    OR OLD.capability_digest IS DISTINCT FROM NEW.capability_digest
+    OR OLD.consent_generation IS DISTINCT FROM NEW.consent_generation
+    OR OLD.request_id IS DISTINCT FROM NEW.request_id
+    OR OLD.request_digest IS DISTINCT FROM NEW.request_digest
+    OR OLD.created_at IS DISTINCT FROM NEW.created_at THEN
+  RAISE EXCEPTION 'lease admission evidence is immutable' USING ERRCODE = '42501';
+ END IF;
+ RETURN NEW;
+END;
+$function$;
+
+DROP TRIGGER IF EXISTS leases_admission_evidence_immutable ON ujani_control.leases;
+CREATE TRIGGER leases_admission_evidence_immutable
+ BEFORE UPDATE ON ujani_control.leases
+ FOR EACH ROW EXECUTE FUNCTION ujani_control.reject_lease_admission_evidence_mutation();
+
+REVOKE ALL ON FUNCTION ujani_control.reject_lease_admission_evidence_mutation() FROM PUBLIC;
+COMMENT ON FUNCTION ujani_control.reject_lease_admission_evidence_mutation() IS
+ 'Prevents mutation of the immutable evidence fields that bind an admitted lease to its tenant, device, workload, approval, request digest, manifest, capability and key/consent generations. Lease lifecycle state, expiry and revision remain mutable.';
+
 CREATE OR REPLACE FUNCTION ujani_control.list_device_lease_audit_evidence()
 RETURNS TABLE (
  tenant_id text,
