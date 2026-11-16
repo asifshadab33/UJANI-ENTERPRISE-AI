@@ -6,7 +6,7 @@ This is the first browser application surface for the Enterprise control plane. 
 
 - The static console is implemented in plain HTML, CSS and JavaScript; it has no third-party runtime dependencies.
 - It reads one same-origin endpoint: `GET /api/v1/operator/overview`.
-- The Enterprise repository currently provides policy, trust and persistence libraries, not the authenticated HTTP control-plane service. Until that service is implemented and deployed, the console correctly displays an unavailable state and never invents/demo-populates fleet data.
+- The Enterprise repository currently provides policy, trust and persistence libraries, not the authenticated HTTP control-plane service. Until that service is implemented and deployed, the console displays an unavailable state by default; only the explicit demo action loads synthetic records clearly labelled as non-live.
 - This is not a production-ready Enterprise deployment. Authentication, tenant-scoped authorization, durable API service, key management, audit transactions, service monitoring and deployment hardening remain release gates.
 
 ## API contract v1
