@@ -480,6 +480,8 @@ BEGIN
 END;
 $block$;
 
+RESET ROLE;
+
 -- Rebinding a device to another owner must hide the previous owner's inventory.
 -- The replacement owner must provide a fresh, generation-bound opt-in.
 INSERT INTO ujani_control.owner_consents
