@@ -291,7 +291,8 @@ mod tests {
 
     #[test]
     fn model_inventory_requires_device_signature_and_has_a_bounded_body() {
-        let route = resolve_route(HttpMethod::Post, "/v1/devices/device-1/model-inventory").unwrap();
+        let route =
+            resolve_route(HttpMethod::Post, "/v1/devices/device-1/model-inventory").unwrap();
         assert_eq!(route.route, OperatorHttpRoute::DeviceModelInventory);
         assert_eq!(route.principal, RoutePrincipal::EnrolledDeviceSignature);
         assert!(route.permits_body_size(MAX_MODEL_INVENTORY_BODY_BYTES));
