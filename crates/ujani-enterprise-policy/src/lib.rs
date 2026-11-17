@@ -26,12 +26,12 @@ pub use resource_capacity::{
 };
 /// Authenticated, bounded service-boundary intake for privacy-minimised device telemetry.
 pub mod device_telemetry_ingest;
-/// Enterprise-only v2 inventory consent/privacy preflight; not a full schema validator or persistence grant.
-pub mod model_inventory_v2_preflight;
 pub mod device_trust;
 pub mod energy;
 pub mod fleet_capacity;
 pub mod integrity_key_provider;
+/// Enterprise-only v2 inventory consent/privacy preflight; not a full schema validator or persistence grant.
+pub mod model_inventory_v2_preflight;
 pub use fleet_capacity::{
     summarize_fleet_capacity, DeviceCapacity, FleetCapacityError, FleetCapacitySummary,
 };
