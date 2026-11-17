@@ -174,7 +174,7 @@ BEGIN
 
  -- The descriptor's own policy claim is not authority; it must match current admin policy.
  v_payload := pg_catalog.jsonb_set(v_payload,'{generated_at_unix_ms}',pg_catalog.to_jsonb(v_now_ms+1000));
- v_payload := pg_catalog.jsonb_set(v_payload,'{collection_context,policy_version}',pg_catalog.to_jsonb('inventory-policy-v2'));
+ v_payload := pg_catalog.jsonb_set(v_payload,'{collection_context,policy_version}',pg_catalog.to_jsonb('inventory-policy-v2'::text));
  v_revision := ujani_control.accept_model_runtime_inventory_v2(
   'inventory-test','inventory-device','inventory-key',1,1,
   decode(repeat('ba',16),'hex'),pg_catalog.clock_timestamp()+interval '20 seconds',
@@ -183,7 +183,7 @@ BEGIN
  );
  IF v_revision IS NOT NULL THEN RAISE EXCEPTION 'unapproved policy version was accepted'; END IF;
 
- v_payload := pg_catalog.jsonb_set(v_payload,'{collection_context,policy_version}',pg_catalog.to_jsonb('inventory-policy-v1'));
+ v_payload := pg_catalog.jsonb_set(v_payload,'{collection_context,policy_version}',pg_catalog.to_jsonb('inventory-policy-v1'::text));
  v_payload := pg_catalog.jsonb_set(v_payload,'{privacy,contains_prompts}',pg_catalog.to_jsonb(true));
  v_revision := ujani_control.accept_model_runtime_inventory_v2(
   'inventory-test','inventory-device','inventory-key',1,1,
@@ -194,7 +194,7 @@ BEGIN
  IF v_revision IS NOT NULL THEN RAISE EXCEPTION 'inventory claiming prompt collection was accepted'; END IF;
 
  v_payload := pg_catalog.jsonb_set(v_payload,'{privacy,contains_prompts}',pg_catalog.to_jsonb(false));
- v_payload := pg_catalog.jsonb_set(v_payload,'{device_ref}',pg_catalog.to_jsonb('spoofed-device'));
+ v_payload := pg_catalog.jsonb_set(v_payload,'{device_ref}',pg_catalog.to_jsonb('spoofed-device'::text));
  v_revision := ujani_control.accept_model_runtime_inventory_v2(
   'inventory-test','inventory-device','inventory-key',1,1,
   decode(repeat('be',16),'hex'),pg_catalog.clock_timestamp()+interval '20 seconds',
@@ -203,7 +203,7 @@ BEGIN
  );
  IF v_revision IS NOT NULL THEN RAISE EXCEPTION 'spoofed inventory device reference was accepted'; END IF;
 
- v_payload := pg_catalog.jsonb_set(v_payload,'{device_ref}',pg_catalog.to_jsonb('inventory-device'));
+ v_payload := pg_catalog.jsonb_set(v_payload,'{device_ref}',pg_catalog.to_jsonb('inventory-device'::text));
  v_payload := pg_catalog.jsonb_set(v_payload,'{generated_at_unix_ms}',pg_catalog.to_jsonb(v_now_ms+1000));
  v_revision := ujani_control.accept_model_runtime_inventory_v2(
   'inventory-test','inventory-device','inventory-key',2,1,
