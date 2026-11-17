@@ -281,6 +281,7 @@ async function loadModelCatalogue() {
       : error instanceof Error ? "Model catalogue unavailable: " + error.message : "Model catalogue unavailable.";
     root.classList.add("empty");
   } finally {
+    controller.abort();
     window.clearTimeout(requestTimeout);
   }
 }

@@ -63,6 +63,7 @@ def main():
     assert "redirect: \"error\"" in catalogue_loader and "credentials: \"same-origin\"" in catalogue_loader, "The catalogue request must remain same-origin and reject redirects."
     assert "readBoundedJson(response, MAX_MODEL_CATALOGUE_BYTES, \"model catalogue\")" in catalogue_loader, "Catalogue JSON must be streamed and byte-bounded."
     assert "window.clearTimeout(requestTimeout)" in catalogue_loader, "Catalogue timeout must always be cleared."
+    assert catalogue_loader.index("controller.abort();") < catalogue_loader.index("window.clearTimeout(requestTimeout)"), "Catalogue cleanup must abort unread response bodies before clearing the timeout."
     assert "content-length" in js and "reader.read()" in js and "reader.cancel()" in js, "Response stream must enforce declared and observed byte limits."
     assert "data.devices.length <= 10000" in js and "data.workloads.length <= 1000" in js and "data.approvals.length <= 1000" in js, "Overview collections must match backend bounds."
     assert "counts.schedulable_devices <= counts.online_fresh_devices" in js, "Fleet counts must be internally consistent."
