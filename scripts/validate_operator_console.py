@@ -52,6 +52,14 @@ def main():
     assert "new AbortController()" in js and "controller.abort(), 10_000" in js and "signal: controller.signal" in js, "Overview requests must have a finite timeout."
     assert "window.clearTimeout(requestTimeout)" in js, "Overview request timeout must always be cleared."
     assert "await readBoundedJson(response)" in js, "Overview JSON must be parsed only after bounded streaming."
+    assert "MAX_MODEL_CATALOGUE_BYTES = 256 * 1024" in js, "The model catalogue must have a small independent response ceiling."
+    catalogue_start = js.index("async function loadModelCatalogue()")
+    catalogue_end = js.index("function boundedString", catalogue_start)
+    catalogue_loader = js[catalogue_start:catalogue_end]
+    assert "new AbortController()" in catalogue_loader and "controller.abort(), 5_000" in catalogue_loader, "The model catalogue request must have a finite timeout."
+    assert "redirect: \"error\"" in catalogue_loader and "credentials: \"same-origin\"" in catalogue_loader, "The catalogue request must remain same-origin and reject redirects."
+    assert "readBoundedJson(response, MAX_MODEL_CATALOGUE_BYTES, \"model catalogue\")" in catalogue_loader, "Catalogue JSON must be streamed and byte-bounded."
+    assert "window.clearTimeout(requestTimeout)" in catalogue_loader, "Catalogue timeout must always be cleared."
     assert "content-length" in js and "reader.read()" in js and "reader.cancel()" in js, "Response stream must enforce declared and observed byte limits."
     assert "data.devices.length <= 10000" in js and "data.workloads.length <= 1000" in js and "data.approvals.length <= 1000" in js, "Overview collections must match backend bounds."
     assert "counts.schedulable_devices <= counts.online_fresh_devices" in js, "Fleet counts must be internally consistent."

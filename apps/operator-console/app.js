@@ -262,17 +262,24 @@ function renderModelCatalogue(catalogue) {
 }
 async function loadModelCatalogue() {
   const root = byId("model-catalogue");
+  const controller = new AbortController();
+  const requestTimeout = window.setTimeout(() => controller.abort(), 5_000);
   try {
     const response = await fetch("./model-catalog.json", {
       method: "GET", credentials: "same-origin", cache: "no-store", redirect: "error",
+      signal: controller.signal,
       headers: { "Accept": "application/json" }
     });
     if (!response.ok) throw new Error("Catalogue request returned HTTP " + response.status + ".");
-    const catalogue = await response.json();
+    const catalogue = await readBoundedJson(response, MAX_MODEL_CATALOGUE_BYTES, "model catalogue");
     renderModelCatalogue(catalogue);
   } catch (error) {
-    root.textContent = error instanceof Error ? "Model catalogue unavailable: " + error.message : "Model catalogue unavailable.";
+    root.textContent = error instanceof Error && error.name === "AbortError"
+      ? "Model catalogue unavailable: the request exceeded the 5-second time limit."
+      : error instanceof Error ? "Model catalogue unavailable: " + error.message : "Model catalogue unavailable.";
     root.classList.add("empty");
+  } finally {
+    window.clearTimeout(requestTimeout);
   }
 }
 
@@ -490,7 +497,7 @@ function renderModelInventory(inventories, overview) {
   }
 }
 const MAX_OVERVIEW_RESPONSE_BYTES = 8 * 1024 * 1024;
-const OVERVIEW_RESPONSE_LIMIT_LABEL = `${MAX_OVERVIEW_RESPONSE_BYTES / (1024 * 1024)} MiB`;
+const MAX_MODEL_CATALOGUE_BYTES = 256 * 1024;
 const MAX_OVERVIEW_SNAPSHOT_AGE_MS = 5 * 60 * 1000;
 const MAX_OVERVIEW_CLOCK_SKEW_MS = 60 * 1000;
 const MAX_INVENTORY_EVIDENCE_SKEW_MS = 30 * 1000;
@@ -503,17 +510,17 @@ function snapshotIsFresh(generatedAtUnixMs, now = trustedDisplayNow()) {
   return age >= -MAX_OVERVIEW_CLOCK_SKEW_MS && age <= MAX_OVERVIEW_SNAPSHOT_AGE_MS;
 }
 
-async function readBoundedJson(response) {
+async function readBoundedJson(response, maxBytes = MAX_OVERVIEW_RESPONSE_BYTES, resourceLabel = "control-plane overview") {
   const contentType = response.headers.get("content-type") || "";
   if (!/^application\/(?:[a-z0-9.+-]*\+)?json(?:\s*;|$)/i.test(contentType)) {
-    throw new Error("The control plane did not return a JSON overview.");
+    throw new Error("The response did not contain a valid JSON media type.");
   }
   const declaredLength = Number(response.headers.get("content-length"));
-  if (Number.isFinite(declaredLength) && declaredLength > MAX_OVERVIEW_RESPONSE_BYTES) {
-    throw new Error(`The control-plane overview exceeds the ${OVERVIEW_RESPONSE_LIMIT_LABEL} response limit.`);
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+    throw new Error(`The ${resourceLabel} exceeds its ${Math.ceil(maxBytes / 1024)} KiB response limit.`);
   }
   if (!response.body || typeof response.body.getReader !== "function") {
-    throw new Error("This browser cannot safely stream the bounded control-plane response.");
+    throw new Error("This browser cannot safely stream a bounded JSON response.");
   }
 
   const reader = response.body.getReader();
@@ -524,9 +531,9 @@ async function readBoundedJson(response) {
       const { done, value } = await reader.read();
       if (done) break;
       totalBytes += value.byteLength;
-      if (totalBytes > MAX_OVERVIEW_RESPONSE_BYTES) {
+      if (totalBytes > maxBytes) {
         await reader.cancel();
-        throw new Error(`The control-plane overview exceeds the ${OVERVIEW_RESPONSE_LIMIT_LABEL} response limit.`);
+        throw new Error(`The ${resourceLabel} exceeds its ${Math.ceil(maxBytes / 1024)} KiB response limit.`);
       }
       chunks.push(value);
     }
