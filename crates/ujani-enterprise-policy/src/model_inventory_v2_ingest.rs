@@ -150,14 +150,11 @@ mod tests {
 
     #[test]
     fn request_binding_digest_is_stable_and_domain_separated() {
-        assert_eq!(
-            model_inventory_v2_request_manifest_digest(),
-            Sha256::digest(MODEL_INVENTORY_BINDING_DOMAIN).into()
-        );
-        assert_ne!(
-            model_inventory_v2_request_manifest_digest(),
-            Sha256::digest(b"UJANI-ENTERPRISE-DEVICE-TELEMETRY-REQUEST-V1\0").into()
-        );
+        let expected: [u8; 32] = Sha256::digest(MODEL_INVENTORY_BINDING_DOMAIN).into();
+        let telemetry: [u8; 32] =
+            Sha256::digest(b"UJANI-ENTERPRISE-DEVICE-TELEMETRY-REQUEST-V1\\0").into();
+        assert_eq!(model_inventory_v2_request_manifest_digest(), expected);
+        assert_ne!(model_inventory_v2_request_manifest_digest(), telemetry);
     }
 
     #[test]
