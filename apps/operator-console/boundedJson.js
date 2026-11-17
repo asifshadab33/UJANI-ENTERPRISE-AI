@@ -4,7 +4,7 @@
  */
 export async function readBoundedJson(
   response,
-  maxBytes,
+  maxBytes = 8 * 1024 * 1024,
   resourceLabel = "JSON response",
 ) {
   if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
