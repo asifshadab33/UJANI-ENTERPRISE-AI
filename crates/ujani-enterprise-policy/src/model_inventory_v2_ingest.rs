@@ -9,7 +9,9 @@
 //! the inventory and its audit receipt. No workload or execution rights result.
 
 use crate::device_trust::durable::{DurableDeviceRegistry, DurableDeviceTrustError};
-use crate::device_trust::{AuthenticatedDeviceRequest, SignedDeviceRequest, MAX_DEVICE_REQUEST_BODY_BYTES};
+use crate::device_trust::{
+    AuthenticatedDeviceRequest, SignedDeviceRequest, MAX_DEVICE_REQUEST_BODY_BYTES,
+};
 use crate::model_inventory_v2_preflight::{
     validate_enterprise_inventory_v2_preflight, InventoryV2PreflightError,
 };
@@ -70,13 +72,15 @@ pub fn authenticate_model_inventory_v2_request(
         || raw_body.len() > MAX_DEVICE_REQUEST_BODY_BYTES
         || !route.permits_body_size(raw_body.len())
     {
-        return Err(if raw_body.len() > MAX_DEVICE_REQUEST_BODY_BYTES
-            || raw_body.len() > route.max_body_bytes
-        {
-            ModelInventoryV2IntakeError::BodyTooLarge
-        } else {
-            ModelInventoryV2IntakeError::InvalidRoute
-        });
+        return Err(
+            if raw_body.len() > MAX_DEVICE_REQUEST_BODY_BYTES
+                || raw_body.len() > route.max_body_bytes
+            {
+                ModelInventoryV2IntakeError::BodyTooLarge
+            } else {
+                ModelInventoryV2IntakeError::InvalidRoute
+            },
+        );
     }
 
     let payload: Value =
@@ -142,9 +146,18 @@ mod tests {
     #[test]
     fn intake_errors_have_generic_non_leaky_statuses() {
         assert_eq!(ModelInventoryV2IntakeError::InvalidRoute.http_status(), 404);
-        assert_eq!(ModelInventoryV2IntakeError::DeviceAuthenticationFailed.http_status(), 401);
-        assert_eq!(ModelInventoryV2IntakeError::OwnerConsentMissing.http_status(), 403);
-        assert_eq!(ModelInventoryV2IntakeError::TrustStoreUnavailable.http_status(), 503);
+        assert_eq!(
+            ModelInventoryV2IntakeError::DeviceAuthenticationFailed.http_status(),
+            401
+        );
+        assert_eq!(
+            ModelInventoryV2IntakeError::OwnerConsentMissing.http_status(),
+            403
+        );
+        assert_eq!(
+            ModelInventoryV2IntakeError::TrustStoreUnavailable.http_status(),
+            503
+        );
         assert_eq!(ModelInventoryV2IntakeError::BodyTooLarge.http_status(), 413);
     }
 
@@ -159,6 +172,9 @@ mod tests {
 
     #[test]
     fn inventory_route_body_limit_matches_the_shared_device_request_ceiling() {
-        assert_eq!(MAX_MODEL_INVENTORY_BODY_BYTES, MAX_DEVICE_REQUEST_BODY_BYTES);
+        assert_eq!(
+            MAX_MODEL_INVENTORY_BODY_BYTES,
+            MAX_DEVICE_REQUEST_BODY_BYTES
+        );
     }
 }
