@@ -6,7 +6,7 @@ test("parses a bounded JSON response including a vendor JSON media type", async 
   const response = new Response(JSON.stringify({ schema_version: 1, devices: [] }), {
     headers: { "content-type": "application/vnd.ujani.overview+json; charset=utf-8" },
   });
-  assert.deepEqual(await readBoundedJson(response, 1024, "overview"), {
+  assert.deepEqual(await readBoundedJson(response), {
     schema_version: 1,
     devices: [],
   });

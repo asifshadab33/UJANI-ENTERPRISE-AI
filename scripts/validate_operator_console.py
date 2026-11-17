@@ -45,6 +45,7 @@ def main():
     assert parser.script_sources == ["./app.js"], "Only the local application module may be loaded."
     assert 'import { readBoundedJson } from "./boundedJson.js";' in js, "The console must use the independently tested bounded JSON parser."
     assert "export async function readBoundedJson" in bounded_json and "reader.cancel()" in bounded_json, "The bounded JSON parser must stream and cancel oversized responses."
+    assert "maxBytes = 8 * 1024 * 1024" in bounded_json, "The default overview response budget must remain eight MiB."
     assert "default-src 'self'" in html and "connect-src 'self'" in html, "Same-origin CSP is required."
     assert 'const API_PATH = "/api/v1/operator/overview";' in js, "Expected fixed same-origin API path."
     assert 'credentials: "same-origin"' in js and 'cache: "no-store"' in js, "Session and cache controls are required."
