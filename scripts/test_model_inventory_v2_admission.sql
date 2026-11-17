@@ -642,6 +642,7 @@ RESET ROLE;
 
 -- Tenant context is mandatory for reads and writes.
 SELECT pg_catalog.set_config('ujani.tenant_id','tenant-b',true);
+SET LOCAL ROLE ujani_runtime;
 DO $block$
 DECLARE visible_rows integer;
  v_revision bigint;
