@@ -251,3 +251,13 @@ jobs:
           PGPASSWORD: postgres
         run: |
           "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < scripts/test_atomic_telemetry_lease_admission.sql
+      - name: Apply atomic model inventory v2 admission migration
+        env:
+          PGPASSWORD: postgres
+        run: |
+          "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < migrations/0014_atomic_model_inventory_v2_admission.sql
+      - name: Verify model inventory v2 consent, replay, freshness and rollback
+        env:
+          PGPASSWORD: postgres
+        run: |
+          "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < scripts/test_model_inventory_v2_admission.sql
