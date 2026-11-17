@@ -21,6 +21,8 @@ Migration `0014_atomic_model_inventory_v2_admission.sql` adds:
 
 The inventory envelope is independently bounded in SQL: exact top-level and consent/privacy envelope keys, current device reference, policy version, maximum 16 runtimes and 512 models, and explicit false values for prompt, user-file, local-path and credential collection. The complete Draft 2020-12 schema validation and exact raw-body device signature verification remain responsibilities of the hosting adapter; the SQL function is not a substitute for either.
 
+The policy's `max_age_ms` currently bounds the overall snapshot `generated_at_unix_ms`; it does not independently declare every nested runtime/model evidence item fresh. Per-field `observed_at_unix_ms`, source and confidence are preserved as evidence. Until the operator API and capability matcher are implemented, consumers must classify each item as fresh, stale or unknown; stale/unknown or merely reported/estimated evidence must never satisfy a verified scheduling requirement. The future matcher must apply explicit per-evidence age and confidence rules rather than treating a fresh top-level snapshot as proof that every nested field is fresh.
+
 A revoked row retains the pseudonymous tenant/device reference, inventory revision and timestamps, key/consent/policy generation references, request ID and payload digest; it no longer retains runtime/model metadata. The database does not claim external anti-rollback protection: PostgreSQL transaction atomicity and local HMAC/checksums are not a substitute for a separately protected monotonic checkpoint.
 
 ## Verification added
