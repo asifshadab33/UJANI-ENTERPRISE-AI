@@ -100,6 +100,13 @@ SECURITY INVOKER
 SET search_path = pg_catalog, ujani_control
 AS $function$
 BEGIN
+ -- A new policy revision invalidates every previously collected descriptor.
+ -- Owners/devices must report again under the current administrator policy.
+ IF TG_OP = 'UPDATE' THEN
+  UPDATE ujani_control.device_model_inventory
+  SET visibility_state = 'revoked', inventory = NULL, revoked_at = pg_catalog.clock_timestamp()
+  WHERE tenant_id = NEW.tenant_id AND visibility_state = 'visible';
+ END IF;
  INSERT INTO ujani_control.audit_events
   (tenant_id,event_id,actor_ref,actor_role,event_type,outcome,object_ref)
  VALUES
@@ -147,9 +154,15 @@ CREATE TABLE IF NOT EXISTS ujani_control.device_model_inventory (
  policy_revision bigint NOT NULL CHECK (policy_revision > 0),
  request_id bytea NOT NULL CHECK (pg_catalog.octet_length(request_id) = 16),
  payload_digest bytea NOT NULL CHECK (pg_catalog.octet_length(payload_digest) = 32),
- inventory jsonb NOT NULL CHECK (
-  pg_catalog.jsonb_typeof(inventory) = 'object'
-  AND pg_catalog.pg_column_size(inventory) <= 2097152
+ visibility_state text NOT NULL DEFAULT 'visible' CHECK (visibility_state IN ('visible','revoked')),
+ revoked_at timestamptz,
+ inventory jsonb,
+ CHECK (
+  (visibility_state = 'visible' AND inventory IS NOT NULL AND revoked_at IS NULL
+   AND pg_catalog.jsonb_typeof(inventory) = 'object'
+   AND pg_catalog.pg_column_size(inventory) <= 2097152)
+  OR
+  (visibility_state = 'revoked' AND inventory IS NULL AND revoked_at IS NOT NULL)
  ),
  PRIMARY KEY (tenant_id, device_id),
  UNIQUE (tenant_id, device_id, request_id),
@@ -180,6 +193,25 @@ BEGIN
  IF NEW.tenant_id IS DISTINCT FROM pg_catalog.current_setting('ujani.tenant_id', true) THEN
   RAISE EXCEPTION 'authenticated tenant context mismatch' USING ERRCODE = '42501';
  END IF;
+
+ -- Consent, trust, key, administrator-policy or owner-binding changes may
+ -- clear the current descriptor without advancing its evidence revision.
+ IF TG_OP = 'UPDATE'
+    AND OLD.visibility_state = 'visible'
+    AND NEW.visibility_state = 'revoked'
+    AND NEW.inventory IS NULL
+    AND NEW.inventory_revision = OLD.inventory_revision
+    AND NEW.generated_at_unix_ms = OLD.generated_at_unix_ms
+    AND NEW.device_key_id = OLD.device_key_id
+    AND NEW.device_key_generation = OLD.device_key_generation
+    AND NEW.consent_generation = OLD.consent_generation
+    AND NEW.policy_revision = OLD.policy_revision
+    AND NEW.request_id = OLD.request_id
+    AND NEW.payload_digest = OLD.payload_digest THEN
+  NEW.revoked_at := pg_catalog.clock_timestamp();
+  RETURN NEW;
+ END IF;
+
  SELECT model_inventory_revision INTO v_device_revision
  FROM ujani_control.devices
  WHERE tenant_id = NEW.tenant_id AND device_id = NEW.device_id;
@@ -192,9 +224,14 @@ BEGIN
      OR NEW.inventory_revision <> OLD.inventory_revision + 1
      OR NEW.generated_at_unix_ms <= OLD.generated_at_unix_ms
      OR NEW.request_id = OLD.request_id
-     OR NEW.payload_digest = OLD.payload_digest THEN
+     OR NEW.payload_digest = OLD.payload_digest
+     OR NEW.visibility_state <> 'visible'
+     OR NEW.revoked_at IS NOT NULL THEN
    RAISE EXCEPTION 'model inventory snapshot must advance monotonically' USING ERRCODE = '23514';
   END IF;
+ END IF;
+ IF NEW.visibility_state <> 'visible' OR NEW.revoked_at IS NOT NULL OR NEW.inventory IS NULL THEN
+  RAISE EXCEPTION 'new model inventory revisions must be visible complete snapshots' USING ERRCODE = '23514';
  END IF;
  NEW.received_at := pg_catalog.clock_timestamp();
  RETURN NEW;
@@ -222,6 +259,37 @@ DROP TRIGGER IF EXISTS device_model_inventory_no_delete ON ujani_control.device_
 CREATE TRIGGER device_model_inventory_no_delete
  BEFORE DELETE ON ujani_control.device_model_inventory
  FOR EACH ROW EXECUTE FUNCTION ujani_control.reject_device_model_inventory_delete();
+
+-- Remove the stored descriptor immediately when any current authority binding
+-- changes. The audit event for the underlying trust/consent/admin operation
+-- remains authoritative; a revoked snapshot retains only its digest and revision.
+CREATE OR REPLACE FUNCTION ujani_control.invalidate_device_model_inventory_on_authority_change()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = pg_catalog, ujani_control
+AS $function$
+BEGIN
+ IF NEW.trust_state IS DISTINCT FROM OLD.trust_state
+    OR NEW.owner_consent_state IS DISTINCT FROM OLD.owner_consent_state
+    OR NEW.admin_approval_state IS DISTINCT FROM OLD.admin_approval_state
+    OR NEW.active_key_id IS DISTINCT FROM OLD.active_key_id
+    OR NEW.key_generation IS DISTINCT FROM OLD.key_generation
+    OR NEW.consent_generation IS DISTINCT FROM OLD.consent_generation THEN
+  UPDATE ujani_control.device_model_inventory
+  SET visibility_state = 'revoked', inventory = NULL, revoked_at = pg_catalog.clock_timestamp()
+  WHERE tenant_id = NEW.tenant_id AND device_id = NEW.device_id
+    AND visibility_state = 'visible';
+ END IF;
+ RETURN NEW;
+END;
+$function$;
+
+DROP TRIGGER IF EXISTS device_model_inventory_authority_invalidate ON ujani_control.devices;
+CREATE TRIGGER device_model_inventory_authority_invalidate
+ AFTER UPDATE OF trust_state,owner_consent_state,admin_approval_state,active_key_id,key_generation,consent_generation
+ ON ujani_control.devices
+ FOR EACH ROW EXECUTE FUNCTION ujani_control.invalidate_device_model_inventory_on_authority_change();
 
 CREATE OR REPLACE FUNCTION ujani_control.accept_model_runtime_inventory_v2(
  p_tenant_id text,
@@ -254,6 +322,7 @@ DECLARE
  v_generated_at timestamptz;
  v_revision bigint;
  v_saved_revision bigint;
+ v_key_count integer;
 BEGIN
  IF p_tenant_id IS NULL OR p_tenant_id = ''
     OR p_tenant_id IS DISTINCT FROM pg_catalog.current_setting('ujani.tenant_id', true) THEN
@@ -276,32 +345,44 @@ BEGIN
 
  -- The full nested schema is validated by the trusted adapter before this call.
  -- This SQL guard independently binds the privacy/consent envelope and hard caps.
- IF pg_catalog.jsonb_typeof(p_inventory) <> 'object'
-    OR pg_catalog.jsonb_object_length(p_inventory) <> 9
+ -- Keep type checks separate so malformed JSON cannot make a length helper raise.
+ IF pg_catalog.jsonb_typeof(p_inventory) IS DISTINCT FROM 'object' THEN
+  RETURN NULL;
+ END IF;
+ SELECT count(*) INTO v_key_count FROM pg_catalog.jsonb_object_keys(p_inventory);
+ IF v_key_count <> 9
     OR NOT (p_inventory ?& ARRAY[
      'schema_version','generated_at_unix_ms','device_ref','collection_context',
      'platform','hardware','runtimes','models','privacy'
     ])
-    OR p_inventory->>'schema_version' <> '2'
-    OR p_inventory->>'generated_at_unix_ms' <> p_generated_at_unix_ms::text
-    OR p_inventory->>'device_ref' <> p_device_id
-    OR pg_catalog.jsonb_typeof(p_inventory->'platform') <> 'object'
-    OR pg_catalog.jsonb_typeof(p_inventory->'hardware') <> 'object'
-    OR pg_catalog.jsonb_typeof(p_inventory->'collection_context') <> 'object'
-    OR pg_catalog.jsonb_typeof(p_inventory->'privacy') <> 'object'
-    OR pg_catalog.jsonb_typeof(p_inventory->'runtimes') <> 'array'
-    OR pg_catalog.jsonb_typeof(p_inventory->'models') <> 'array' THEN
+    OR p_inventory->>'schema_version' IS DISTINCT FROM '2'
+    OR p_inventory->>'generated_at_unix_ms' IS DISTINCT FROM p_generated_at_unix_ms::text
+    OR p_inventory->>'device_ref' IS DISTINCT FROM p_device_id THEN
   RETURN NULL;
  END IF;
- IF pg_catalog.jsonb_object_length(p_inventory->'collection_context') <> 4
+ IF pg_catalog.jsonb_typeof(p_inventory->'platform') IS DISTINCT FROM 'object'
+    OR pg_catalog.jsonb_typeof(p_inventory->'hardware') IS DISTINCT FROM 'object'
+    OR pg_catalog.jsonb_typeof(p_inventory->'collection_context') IS DISTINCT FROM 'object'
+    OR pg_catalog.jsonb_typeof(p_inventory->'privacy') IS DISTINCT FROM 'object'
+    OR pg_catalog.jsonb_typeof(p_inventory->'runtimes') IS DISTINCT FROM 'array'
+    OR pg_catalog.jsonb_typeof(p_inventory->'models') IS DISTINCT FROM 'array' THEN
+  RETURN NULL;
+ END IF;
+ SELECT count(*) INTO v_key_count
+ FROM pg_catalog.jsonb_object_keys(p_inventory->'collection_context');
+ IF v_key_count <> 4
     OR NOT ((p_inventory->'collection_context') ?& ARRAY[
      'scope','owner_consent','organisation_authorisation','policy_version'
     ])
-    OR p_inventory #>> '{collection_context,scope}' <> 'organisation_enrolled'
-    OR p_inventory #>> '{collection_context,owner_consent}' <> 'granted'
-    OR p_inventory #>> '{collection_context,organisation_authorisation}' <> 'authorised'
-    OR p_inventory #>> '{collection_context,policy_version}' <> p_policy_version
-    OR pg_catalog.jsonb_object_length(p_inventory->'privacy') <> 4
+    OR p_inventory #>> '{collection_context,scope}' IS DISTINCT FROM 'organisation_enrolled'
+    OR p_inventory #>> '{collection_context,owner_consent}' IS DISTINCT FROM 'granted'
+    OR p_inventory #>> '{collection_context,organisation_authorisation}' IS DISTINCT FROM 'authorised'
+    OR p_inventory #>> '{collection_context,policy_version}' IS DISTINCT FROM p_policy_version THEN
+  RETURN NULL;
+ END IF;
+ SELECT count(*) INTO v_key_count
+ FROM pg_catalog.jsonb_object_keys(p_inventory->'privacy');
+ IF v_key_count <> 4
     OR NOT ((p_inventory->'privacy') ?& ARRAY[
      'contains_prompts','contains_user_files','contains_local_paths','contains_credentials'
     ])
@@ -423,11 +504,11 @@ BEGIN
  INSERT INTO ujani_control.device_model_inventory
   (tenant_id,device_id,inventory_revision,generated_at_unix_ms,received_at,
    device_key_id,device_key_generation,consent_generation,policy_revision,
-   request_id,payload_digest,inventory)
+   request_id,payload_digest,visibility_state,revoked_at,inventory)
  VALUES
   (p_tenant_id,p_device_id,v_revision,p_generated_at_unix_ms,v_now,
    p_device_key_id,p_device_key_generation,p_consent_generation,v_policy.revision,
-   p_request_id,p_payload_digest,p_inventory)
+   p_request_id,p_payload_digest,'visible',NULL,p_inventory)
  ON CONFLICT (tenant_id,device_id) DO UPDATE SET
   inventory_revision = EXCLUDED.inventory_revision,
   generated_at_unix_ms = EXCLUDED.generated_at_unix_ms,
@@ -438,6 +519,8 @@ BEGIN
   policy_revision = EXCLUDED.policy_revision,
   request_id = EXCLUDED.request_id,
   payload_digest = EXCLUDED.payload_digest,
+  visibility_state = 'visible',
+  revoked_at = NULL,
   inventory = EXCLUDED.inventory
  RETURNING inventory_revision INTO v_saved_revision;
  IF v_saved_revision IS DISTINCT FROM v_revision THEN

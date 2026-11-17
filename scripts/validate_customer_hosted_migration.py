@@ -505,6 +505,9 @@ def main() -> None:
         "disabled organisation inventory policy was accepted",
         "organisation device approval denial was accepted",
         "paused owner consent was accepted",
+        "policy update did not invalidate",
+        "organisation denial did not hide stored model inventory",
+        "owner consent pause did not clear the stored model inventory",
         "model inventory leaked across tenant RLS",
     ):
         if required not in model_inventory_v2_test:

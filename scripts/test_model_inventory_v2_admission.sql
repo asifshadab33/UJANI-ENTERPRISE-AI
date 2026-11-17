@@ -300,8 +300,53 @@ RESET ROLE;
 UPDATE ujani_control.model_inventory_policies
  SET enabled=true,revision=revision+1,updated_by_subject_id='inventory-admin'
  WHERE tenant_id='inventory-test';
+
+-- A fresh report under the new policy revision restores visibility.
+SET LOCAL ROLE ujani_runtime;
+DO $block$
+DECLARE
+ v_now_ms bigint := floor(extract(epoch FROM pg_catalog.clock_timestamp()) * 1000)::bigint;
+ v_payload jsonb;
+ v_revision bigint;
+BEGIN
+ v_payload := pg_catalog.jsonb_build_object(
+  'schema_version',2,'generated_at_unix_ms',v_now_ms,'device_ref','inventory-device',
+  'collection_context',pg_catalog.jsonb_build_object(
+   'scope','organisation_enrolled','owner_consent','granted',
+   'organisation_authorisation','authorised','policy_version','inventory-policy-v1'
+  ),
+  'platform',pg_catalog.jsonb_build_object(),'hardware',pg_catalog.jsonb_build_object(),
+  'runtimes',pg_catalog.jsonb_build_array(),'models',pg_catalog.jsonb_build_array(),
+  'privacy',pg_catalog.jsonb_build_object(
+   'contains_prompts',false,'contains_user_files',false,
+   'contains_local_paths',false,'contains_credentials',false
+  )
+ );
+ v_revision := ujani_control.accept_model_runtime_inventory_v2(
+  'inventory-test','inventory-device','inventory-key',1,1,
+  decode(repeat('da',16),'hex'),pg_catalog.clock_timestamp()+interval '20 seconds',
+  v_now_ms,'inventory-policy-v1',decode(repeat('db',32),'hex'),v_payload,
+  '00000000-0000-4000-8000-000000000316'
+ );
+ IF v_revision IS DISTINCT FROM 2 THEN
+  RAISE EXCEPTION 'fresh inventory under the new policy was not accepted';
+ END IF;
+END;
+$block$;
+RESET ROLE;
+
 UPDATE ujani_control.devices SET admin_approval_state='rejected'
  WHERE tenant_id='inventory-test' AND device_id='inventory-device';
+DO $block$
+BEGIN
+ IF (SELECT visibility_state FROM ujani_control.device_model_inventory
+     WHERE tenant_id='inventory-test' AND device_id='inventory-device') IS DISTINCT FROM 'revoked'
+    OR (SELECT inventory FROM ujani_control.device_model_inventory
+        WHERE tenant_id='inventory-test' AND device_id='inventory-device') IS NOT NULL THEN
+  RAISE EXCEPTION 'organisation denial did not hide stored model inventory';
+ END IF;
+END;
+$block$;
 SET LOCAL ROLE ujani_runtime;
 DO $block$
 DECLARE
@@ -334,6 +379,8 @@ $block$;
 RESET ROLE;
 
 -- A signed owner pause advances consent generation and blocks subsequent intake.
+UPDATE ujani_control.devices SET admin_approval_state='approved'
+ WHERE tenant_id='inventory-test' AND device_id='inventory-device';
 INSERT INTO ujani_control.owner_consents
  (tenant_id,device_id,consent_generation,state,actor_ref,evidence_digest)
 VALUES
@@ -365,6 +412,12 @@ BEGIN
   '00000000-0000-4000-8000-000000000314'
  );
  IF v_revision IS NOT NULL THEN RAISE EXCEPTION 'paused owner consent was accepted'; END IF;
+ IF (SELECT visibility_state FROM ujani_control.device_model_inventory
+     WHERE tenant_id='inventory-test' AND device_id='inventory-device') IS DISTINCT FROM 'revoked'
+    OR (SELECT inventory FROM ujani_control.device_model_inventory
+        WHERE tenant_id='inventory-test' AND device_id='inventory-device') IS NOT NULL THEN
+  RAISE EXCEPTION 'owner consent pause did not clear the stored model inventory';
+ END IF;
 END;
 $block$;
 
