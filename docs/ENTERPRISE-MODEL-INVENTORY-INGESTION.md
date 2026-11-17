@@ -36,7 +36,7 @@ The CI pipeline applies migration 0014 after migrations 0001–0013 and runs `te
 - Rollback of replay claim, snapshot and device revision when the caller aborts
 - Rollback after a late audit uniqueness failure
 - Snapshot clearing after policy, administrator approval and owner-consent changes
-- Revoked-row identity immutability across devices
+- Visible-to-revoked identity immutability across devices, with a matching destination key to exercise the trigger rather than a foreign-key failure
 - Fresh-clock future-skew rejection and strictly increasing restoration timestamps
 - Tenant RLS and narrow runtime database privileges
 
