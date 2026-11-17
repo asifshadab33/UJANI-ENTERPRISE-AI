@@ -22,6 +22,8 @@ ATOMIC_TELEMETRY_LEASE_TEST_PATH = ROOT / "scripts" / "test_atomic_telemetry_lea
 LEASE_APPROVAL_SQL_PATH = ROOT / "migrations" / "0011_persist_lease_approval_reference.sql"
 LEASE_AUDIT_VIEW_SQL_PATH = ROOT / "migrations" / "0012_lease_audit_evidence_view.sql"
 OWNER_CONSENT_REVOCATION_SQL_PATH = ROOT / "migrations" / "0013_revoke_leases_on_owner_consent_change.sql"
+MODEL_INVENTORY_V2_ADMISSION_SQL_PATH = ROOT / "migrations" / "0014_atomic_model_inventory_v2_admission.sql"
+MODEL_INVENTORY_V2_ADMISSION_TEST_PATH = ROOT / "scripts" / "test_model_inventory_v2_admission.sql"
 TENANT_TEST_SQL_PATH = ROOT / "scripts" / "test_customer_hosted_migration.sql"
 
 
@@ -459,7 +461,62 @@ def main() -> None:
     ):
         raise SystemExit("atomic telemetry-plus-lease test must run after migrations 0009-0013")
 
-    print("Customer-hosted, task-contract, Self-Evolution approval replay, v1/v2 monotonic telemetry, atomic device admission and atomic telemetry-plus-lease checks passed.")
+    model_inventory_v2_sql = MODEL_INVENTORY_V2_ADMISSION_SQL_PATH.read_text(encoding="utf-8")
+    for required in (
+        "CREATE TABLE IF NOT EXISTS ujani_control.model_inventory_policies",
+        "CREATE TABLE IF NOT EXISTS ujani_control.device_model_inventory",
+        "ENABLE ROW LEVEL SECURITY",
+        "FORCE ROW LEVEL SECURITY",
+        "CREATE OR REPLACE FUNCTION ujani_control.accept_model_runtime_inventory_v2",
+        "SECURITY INVOKER",
+        "pg_advisory_xact_lock",
+        "FOR UPDATE",
+        "key_generation IS DISTINCT FROM p_device_key_generation",
+        "consent_generation IS DISTINCT FROM p_consent_generation",
+        "admin_approval_state <> 'approved'",
+        "organisation_authorisation",
+        "request_replays",
+        "ON CONFLICT (tenant_id,device_id,request_id) DO NOTHING",
+        "generated_at_unix_ms",
+        "max_age_ms",
+        "jsonb_array_length",
+        "contains_prompts",
+        "device.model_inventory.accepted",
+        "REVOKE ALL ON FUNCTION",
+    ):
+        if required not in model_inventory_v2_sql:
+            raise SystemExit("model inventory v2 admission migration is missing invariant: " + required)
+    if "SECURITY DEFINER" in model_inventory_v2_sql:
+        raise SystemExit("model inventory v2 admission must preserve caller RLS and privileges")
+    model_inventory_v2_test = MODEL_INVENTORY_V2_ADMISSION_TEST_PATH.read_text(encoding="utf-8")
+    for required in (
+        "valid dual-consented model inventory was not committed",
+        "replayed model inventory request was accepted",
+        "non-monotonic inventory timestamp was accepted",
+        "future-dated model inventory was accepted",
+        "stale model inventory was accepted",
+        "unapproved policy version was accepted",
+        "inventory claiming prompt collection was accepted",
+        "spoofed inventory device reference was accepted",
+        "stale device key generation was accepted",
+        "cross-tenant model inventory was accepted",
+        "caller rollback did not restore inventory revision",
+        "late audit failure left an inventory replay claim",
+        "disabled organisation inventory policy was accepted",
+        "organisation device approval denial was accepted",
+        "paused owner consent was accepted",
+        "model inventory leaked across tenant RLS",
+    ):
+        if required not in model_inventory_v2_test:
+            raise SystemExit("model inventory v2 admission regression is missing: " + required)
+    if not (
+        ci_workflow.index("migrations/0013_revoke_leases_on_owner_consent_change.sql")
+        < ci_workflow.index("migrations/0014_atomic_model_inventory_v2_admission.sql")
+        < ci_workflow.index("scripts/test_model_inventory_v2_admission.sql")
+    ):
+        raise SystemExit("model inventory v2 admission test must run after migration 0013")
+
+    print("Customer-hosted, task-contract, Self-Evolution approval replay, monotonic telemetry, atomic lease admission and model inventory v2 transaction checks passed.")
 
 
 if __name__ == "__main__":
