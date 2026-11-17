@@ -261,6 +261,35 @@ CREATE TRIGGER device_model_inventory_no_delete
  BEFORE DELETE ON ujani_control.device_model_inventory
  FOR EACH ROW EXECUTE FUNCTION ujani_control.reject_device_model_inventory_delete();
 
+-- Device authority writers must take the same tenant audit lock before
+-- PostgreSQL obtains device row locks. This preserves the global audit -> device
+-- -> inventory order even when an approval/key/trust writer does not append its
+-- audit event until later in the transaction.
+CREATE OR REPLACE FUNCTION ujani_control.lock_device_model_inventory_authority_audit_chain()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = pg_catalog, ujani_control
+AS $function$
+DECLARE
+ v_tenant_id text;
+BEGIN
+ v_tenant_id := pg_catalog.current_setting('ujani.tenant_id', true);
+ IF v_tenant_id IS NULL OR v_tenant_id = '' THEN
+  RAISE EXCEPTION 'authenticated tenant context is required for device authority changes'
+   USING ERRCODE = '42501';
+ END IF;
+ PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(v_tenant_id, 0));
+ RETURN NULL;
+END;
+$function$;
+
+DROP TRIGGER IF EXISTS device_model_inventory_authority_audit_lock ON ujani_control.devices;
+CREATE TRIGGER device_model_inventory_authority_audit_lock
+ BEFORE UPDATE OF trust_state,owner_consent_state,admin_approval_state,active_key_id,key_generation,consent_generation
+ ON ujani_control.devices
+ FOR EACH STATEMENT EXECUTE FUNCTION ujani_control.lock_device_model_inventory_authority_audit_chain();
+
 -- Remove the stored descriptor immediately when any current authority binding
 -- changes. The audit event for the underlying trust/consent/admin operation
 -- remains authoritative; a revoked snapshot retains only its digest and revision.

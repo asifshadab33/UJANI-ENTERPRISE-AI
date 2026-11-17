@@ -470,6 +470,7 @@ def main() -> None:
         "CREATE OR REPLACE FUNCTION ujani_control.accept_model_runtime_inventory_v2",
         "SECURITY INVOKER",
         "pg_advisory_xact_lock",
+        "device_model_inventory_authority_audit_lock",
         "FOR UPDATE",
         "key_generation IS DISTINCT FROM p_device_key_generation",
         "consent_generation IS DISTINCT FROM p_consent_generation",
