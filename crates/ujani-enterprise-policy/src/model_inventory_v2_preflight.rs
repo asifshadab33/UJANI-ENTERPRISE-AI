@@ -25,7 +25,9 @@ pub enum InventoryV2PreflightError {
 }
 
 fn has_exact_keys(value: &Value, expected: &[&str]) -> bool {
-    let Some(object) = value.as_object() else { return false };
+    let Some(object) = value.as_object() else {
+        return false;
+    };
     object.len() == expected.len() && expected.iter().all(|key| object.contains_key(*key))
 }
 
@@ -139,8 +141,12 @@ pub fn validate_enterprise_inventory_v2_preflight(
         || !payload.get("hardware").is_some_and(Value::is_object)
         || !payload.get("runtimes").is_some_and(Value::is_array)
         || !payload.get("models").is_some_and(Value::is_array)
-        || payload["runtimes"].as_array().is_some_and(|items| items.len() > 16)
-        || payload["models"].as_array().is_some_and(|items| items.len() > 512)
+        || payload["runtimes"]
+            .as_array()
+            .is_some_and(|items| items.len() > 16)
+        || payload["models"]
+            .as_array()
+            .is_some_and(|items| items.len() > 512)
     {
         return Err(InventoryV2PreflightError::InvalidInventoryCollections);
     }
