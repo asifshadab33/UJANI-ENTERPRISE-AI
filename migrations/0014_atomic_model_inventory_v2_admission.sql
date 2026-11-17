@@ -202,6 +202,7 @@ BEGIN
     AND NEW.inventory IS NULL
     AND NEW.inventory_revision = OLD.inventory_revision
     AND NEW.generated_at_unix_ms = OLD.generated_at_unix_ms
+    AND NEW.received_at = OLD.received_at
     AND NEW.device_key_id = OLD.device_key_id
     AND NEW.device_key_generation = OLD.device_key_generation
     AND NEW.consent_generation = OLD.consent_generation

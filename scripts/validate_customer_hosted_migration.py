@@ -508,6 +508,8 @@ def main() -> None:
         "policy update did not invalidate",
         "organisation denial did not hide stored model inventory",
         "owner consent pause did not clear the stored model inventory",
+        "fresh inventory under the new policy was not accepted",
+        "policy update did not invalidate the stored model inventory",
         "model inventory leaked across tenant RLS",
     ):
         if required not in model_inventory_v2_test:

@@ -297,6 +297,17 @@ END;
 $block$;
 RESET ROLE;
 
+DO $block$
+BEGIN
+ IF (SELECT visibility_state FROM ujani_control.device_model_inventory
+     WHERE tenant_id='inventory-test' AND device_id='inventory-device') IS DISTINCT FROM 'revoked'
+    OR (SELECT inventory FROM ujani_control.device_model_inventory
+        WHERE tenant_id='inventory-test' AND device_id='inventory-device') IS NOT NULL THEN
+  RAISE EXCEPTION 'policy update did not invalidate the stored model inventory';
+ END IF;
+END;
+$block$;
+
 UPDATE ujani_control.model_inventory_policies
  SET enabled=true,revision=revision+1,updated_by_subject_id='inventory-admin'
  WHERE tenant_id='inventory-test';
