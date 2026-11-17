@@ -22,8 +22,7 @@ use sha2::{Digest, Sha256};
 pub const MODEL_INVENTORY_REQUEST_METHOD: &str = "POST";
 pub const MODEL_INVENTORY_REQUEST_RESOURCE: &str = "model-inventory:ingest";
 pub const MODEL_INVENTORY_REQUEST_WORKLOAD: &str = "model-inventory";
-const MODEL_INVENTORY_BINDING_DOMAIN: &[u8] =
-    b"UJANI-ENTERPRISE-MODEL-INVENTORY-V2-REQUEST\0";
+const MODEL_INVENTORY_BINDING_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-MODEL-INVENTORY-V2-REQUEST\\0";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModelInventoryV2IntakeError {
