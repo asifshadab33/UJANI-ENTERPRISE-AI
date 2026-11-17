@@ -34,9 +34,9 @@ fn has_exact_keys(value: &Value, expected: &[&str]) -> bool {
 fn valid_identifier(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 128
-        && value.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'-')
-        })
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'-'))
 }
 
 /// Check the Enterprise-only v2 trust and privacy envelope after device
