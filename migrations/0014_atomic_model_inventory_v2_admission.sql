@@ -200,6 +200,8 @@ BEGIN
     AND OLD.visibility_state = 'visible'
     AND NEW.visibility_state = 'revoked'
     AND NEW.inventory IS NULL
+    AND NEW.tenant_id IS NOT DISTINCT FROM OLD.tenant_id
+    AND NEW.device_id IS NOT DISTINCT FROM OLD.device_id
     AND NEW.inventory_revision = OLD.inventory_revision
     AND NEW.generated_at_unix_ms = OLD.generated_at_unix_ms
     AND NEW.received_at = OLD.received_at
