@@ -493,6 +493,15 @@ DECLARE
  v_payload jsonb;
  v_revision bigint;
 BEGIN
+ SELECT GREATEST(
+  v_now_ms,
+  COALESCE(
+   (SELECT generated_at_unix_ms + 1
+    FROM ujani_control.device_model_inventory
+    WHERE tenant_id='inventory-test' AND device_id='inventory-device'),
+   1
+  )
+ ) INTO v_now_ms;
  v_payload := pg_catalog.jsonb_build_object(
   'schema_version',2,'generated_at_unix_ms',v_now_ms,'device_ref','inventory-device',
   'collection_context',pg_catalog.jsonb_build_object(
@@ -547,6 +556,15 @@ DECLARE
  v_payload jsonb;
  v_revision bigint;
 BEGIN
+ SELECT GREATEST(
+  v_now_ms,
+  COALESCE(
+   (SELECT generated_at_unix_ms + 1
+    FROM ujani_control.device_model_inventory
+    WHERE tenant_id='inventory-test' AND device_id='inventory-device'),
+   1
+  )
+ ) INTO v_now_ms;
  v_payload := pg_catalog.jsonb_build_object(
   'schema_version',2,'generated_at_unix_ms',v_now_ms,'device_ref','inventory-device',
   'collection_context',pg_catalog.jsonb_build_object(
@@ -585,6 +603,15 @@ DECLARE
  v_payload jsonb;
  v_revision bigint;
 BEGIN
+ SELECT GREATEST(
+  v_now_ms,
+  COALESCE(
+   (SELECT generated_at_unix_ms + 1
+    FROM ujani_control.device_model_inventory
+    WHERE tenant_id='inventory-test' AND device_id='inventory-device'),
+   1
+  )
+ ) INTO v_now_ms;
  v_payload := pg_catalog.jsonb_build_object(
   'schema_version',2,'generated_at_unix_ms',v_now_ms,'device_ref','inventory-device',
   'collection_context',pg_catalog.jsonb_build_object(
