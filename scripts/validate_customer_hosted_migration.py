@@ -509,6 +509,7 @@ def main() -> None:
         "organisation denial did not hide stored model inventory",
         "owner consent pause did not clear the stored model inventory",
         "fresh inventory under the new policy was not accepted",
+        "fresh inventory before owner pause was not accepted",
         "policy update did not invalidate the stored model inventory",
         "model inventory leaked across tenant RLS",
     ):
