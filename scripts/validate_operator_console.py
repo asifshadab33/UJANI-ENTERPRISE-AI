@@ -34,6 +34,7 @@ def main():
     """Validate the operator console's static security and API contract."""
     html = (APP / "index.html").read_text(encoding="utf-8")
     js = (APP / "app.js").read_text(encoding="utf-8")
+    bounded_json = (APP / "boundedJson.js").read_text(encoding="utf-8")
     css = (APP / "styles.css").read_text(encoding="utf-8")
     readme = (APP / "README.md").read_text(encoding="utf-8")
     parser = ConsoleParser()
@@ -42,6 +43,8 @@ def main():
     assert parser.inline_styles == 0, "Console must not use inline style blocks."
     assert not parser.inline_handlers, f"Inline event handlers found: {parser.inline_handlers}"
     assert parser.script_sources == ["./app.js"], "Only the local application module may be loaded."
+    assert 'import { readBoundedJson } from "./boundedJson.js";' in js, "The console must use the independently tested bounded JSON parser."
+    assert "export async function readBoundedJson" in bounded_json and "reader.cancel()" in bounded_json, "The bounded JSON parser must stream and cancel oversized responses."
     assert "default-src 'self'" in html and "connect-src 'self'" in html, "Same-origin CSP is required."
     assert 'const API_PATH = "/api/v1/operator/overview";' in js, "Expected fixed same-origin API path."
     assert 'credentials: "same-origin"' in js and 'cache: "no-store"' in js, "Session and cache controls are required."

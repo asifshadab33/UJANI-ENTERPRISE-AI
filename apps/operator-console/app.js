@@ -1,3 +1,5 @@
+import { readBoundedJson } from "./boundedJson.js";
+
 const API_PATH = "/api/v1/operator/overview";
 const byId = (id) => document.getElementById(id);
 const connection = byId("connection");
@@ -510,49 +512,6 @@ function snapshotIsFresh(generatedAtUnixMs, now = trustedDisplayNow()) {
   return age >= -MAX_OVERVIEW_CLOCK_SKEW_MS && age <= MAX_OVERVIEW_SNAPSHOT_AGE_MS;
 }
 
-async function readBoundedJson(response, maxBytes = MAX_OVERVIEW_RESPONSE_BYTES, resourceLabel = "control-plane overview") {
-  const contentType = response.headers.get("content-type") || "";
-  if (!/^application\/(?:[a-z0-9.+-]*\+)?json(?:\s*;|$)/i.test(contentType)) {
-    throw new Error("The response did not contain a valid JSON media type.");
-  }
-  const declaredLength = Number(response.headers.get("content-length"));
-  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
-    throw new Error(`The ${resourceLabel} exceeds its ${Math.ceil(maxBytes / 1024)} KiB response limit.`);
-  }
-  if (!response.body || typeof response.body.getReader !== "function") {
-    throw new Error("This browser cannot safely stream a bounded JSON response.");
-  }
-
-  const reader = response.body.getReader();
-  const chunks = [];
-  let totalBytes = 0;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      totalBytes += value.byteLength;
-      if (totalBytes > maxBytes) {
-        await reader.cancel();
-        throw new Error(`The ${resourceLabel} exceeds its ${Math.ceil(maxBytes / 1024)} KiB response limit.`);
-      }
-      chunks.push(value);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-
-  const bytes = new Uint8Array(totalBytes);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  try {
-    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
-  } catch {
-    throw new Error("The control plane returned malformed UTF-8 or JSON.");
-  }
-}
 
 function validOverview(data) {
   const counts = data && data.fleet;
