@@ -30,7 +30,8 @@ ON CONFLICT (tenant_id,device_id) DO UPDATE SET
 INSERT INTO ujani_control.device_keys
  (tenant_id,device_id,key_id,public_key,generation,state)
 VALUES
- ('inventory-test','inventory-device','inventory-key',decode(repeat('a1',32),'hex'),1,'active')
+ ('inventory-test','inventory-device','inventory-key',decode(repeat('a1',32),'hex'),1,'active'),
+ ('inventory-test','inventory-device-other','inventory-key',decode(repeat('a1',32),'hex'),1,'active')
 ON CONFLICT (tenant_id,device_id,key_id) DO UPDATE SET state='active',revoked_at=NULL;
 INSERT INTO ujani_control.device_owner_bindings
  (tenant_id,device_id,owner_subject_id,bound_by_subject_id,binding_revision,active,binding_digest)
@@ -373,6 +374,24 @@ END;
 $block$;
 RESET ROLE;
 
+-- The revocation fast path must not move a still-visible snapshot to another device.
+-- Both devices deliberately have the same key ID so the foreign key cannot mask
+-- the trigger's tenant/device identity check.
+SET LOCAL ROLE ujani_runtime;
+DO $block$
+BEGIN
+ BEGIN
+  UPDATE ujani_control.device_model_inventory
+  SET device_id='inventory-device-other',visibility_state='revoked',inventory=NULL
+  WHERE tenant_id='inventory-test' AND device_id='inventory-device';
+  RAISE EXCEPTION 'visible inventory revocation changed device identity';
+ EXCEPTION WHEN check_violation THEN
+  NULL;
+ END;
+END;
+$block$;
+RESET ROLE;
+
 UPDATE ujani_control.devices SET admin_approval_state='rejected'
  WHERE tenant_id='inventory-test' AND device_id='inventory-device';
 DO $block$
@@ -501,16 +520,6 @@ BEGIN
   RAISE EXCEPTION 'owner consent pause did not clear the stored model inventory';
  END IF;
 
- -- Revocation may clear metadata but must never transfer the retained row to
- -- another device identity, even when the destination device exists.
- BEGIN
-  UPDATE ujani_control.device_model_inventory
-  SET device_id='inventory-device-other'
-  WHERE tenant_id='inventory-test' AND device_id='inventory-device';
-  RAISE EXCEPTION 'revoked inventory row changed device identity';
- EXCEPTION WHEN check_violation THEN
-  NULL;
- END;
 END;
 $block$;
 
