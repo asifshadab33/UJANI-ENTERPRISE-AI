@@ -58,7 +58,7 @@ test("rejects malformed UTF-8 and malformed JSON", async () => {
 
 test("rejects invalid response limits and malformed content lengths", async () => {
   const response = new Response("{}", {
-    headers: { "content-type": "application/json", "content-length": "unknown" },
+    headers: { "content-type": "application/json", "content-length": "" },
   });
   await assert.rejects(readBoundedJson(response, 0), /positive safe-integer/);
   await assert.rejects(readBoundedJson(response, 32), /invalid Content-Length/);

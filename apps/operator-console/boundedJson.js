@@ -20,8 +20,11 @@ export async function readBoundedJson(
   }
   const declaredLengthHeader = response.headers.get("content-length");
   if (declaredLengthHeader !== null) {
+    if (!/^(?:0|[1-9][0-9]*)$/.test(declaredLengthHeader)) {
+      throw new Error(`The ${resourceLabel} has an invalid Content-Length.`);
+    }
     const declaredLength = Number(declaredLengthHeader);
-    if (!Number.isSafeInteger(declaredLength) || declaredLength < 0 || declaredLength > maxBytes) {
+    if (!Number.isSafeInteger(declaredLength) || declaredLength > maxBytes) {
       throw new Error(`The ${resourceLabel} exceeds its ${Math.ceil(maxBytes / 1024)} KiB response limit or has an invalid Content-Length.`);
     }
   }
@@ -40,11 +43,11 @@ export async function readBoundedJson(
         await reader.cancel().catch(() => {});
         throw new Error("The response stream did not provide byte chunks.");
       }
-      totalBytes += value.byteLength;
-      if (totalBytes > maxBytes) {
+      if (value.byteLength > maxBytes - totalBytes) {
         await reader.cancel().catch(() => {});
         throw new Error(`The ${resourceLabel} exceeds its ${Math.ceil(maxBytes / 1024)} KiB response limit.`);
       }
+      totalBytes += value.byteLength;
       chunks.push(value);
     }
   } finally {
