@@ -52,15 +52,27 @@ ON CONFLICT (tenant_id) DO UPDATE SET
  enabled=true,max_age_ms=EXCLUDED.max_age_ms,
  updated_by_subject_id=EXCLUDED.updated_by_subject_id;
 
+-- Earlier integration tests temporarily broaden ujani_runtime. Reset it before
+-- proving this inventory transaction works with a narrowly scoped service role.
+REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA ujani_control FROM ujani_runtime;
+REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA ujani_control FROM ujani_runtime;
+REVOKE ALL ON SCHEMA ujani_control FROM ujani_runtime;
+REVOKE ALL ON FUNCTION ujani_control.accept_model_runtime_inventory_v2(
+ text,text,text,bigint,bigint,bytea,timestamptz,bigint,text,bytea,jsonb,uuid
+) FROM PUBLIC,ujani_runtime;
+GRANT USAGE ON SCHEMA ujani_control TO ujani_runtime;
 GRANT SELECT ON ujani_control.devices,ujani_control.device_keys,
  ujani_control.device_owner_bindings,ujani_control.owner_consents,
  ujani_control.operator_subjects,ujani_control.model_inventory_policies,
  ujani_control.device_model_inventory,ujani_control.request_replays,
  ujani_control.audit_events TO ujani_runtime;
+GRANT UPDATE (admission_lock_marker) ON ujani_control.device_keys,
+ ujani_control.owner_consents,ujani_control.operator_subjects,
+ ujani_control.device_owner_bindings TO ujani_runtime;
+GRANT UPDATE (model_inventory_revision,updated_at) ON ujani_control.devices TO ujani_runtime;
 GRANT INSERT,SELECT ON ujani_control.request_replays TO ujani_runtime;
 GRANT INSERT,SELECT ON ujani_control.audit_events TO ujani_runtime;
 GRANT INSERT,UPDATE ON ujani_control.device_model_inventory TO ujani_runtime;
-GRANT UPDATE (model_inventory_revision,updated_at) ON ujani_control.devices TO ujani_runtime;
 GRANT EXECUTE ON FUNCTION ujani_control.accept_model_runtime_inventory_v2(
  text,text,text,bigint,bigint,bytea,timestamptz,bigint,text,bytea,jsonb,uuid
 ) TO ujani_runtime;
