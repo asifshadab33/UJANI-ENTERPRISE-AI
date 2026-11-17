@@ -11,7 +11,8 @@ INSERT INTO ujani_control.operator_subjects
  (tenant_id,subject_id,role,enabled,idp_issuer,idp_subject)
 VALUES
  ('inventory-test','inventory-admin','administrator',true,'ci','inventory-admin'),
- ('inventory-test','inventory-owner','operator',true,'ci','inventory-owner')
+ ('inventory-test','inventory-owner','operator',true,'ci','inventory-owner'),
+ ('inventory-test','inventory-owner-2','operator',true,'ci','inventory-owner-2')
 ON CONFLICT (tenant_id,subject_id) DO UPDATE
  SET role=EXCLUDED.role,enabled=true;
 INSERT INTO ujani_control.devices
@@ -478,6 +479,137 @@ BEGIN
  END IF;
 END;
 $block$;
+
+-- Rebinding a device to another owner must hide the previous owner's inventory.
+-- The replacement owner must provide a fresh, generation-bound opt-in.
+INSERT INTO ujani_control.owner_consents
+ (tenant_id,device_id,consent_generation,state,actor_ref,evidence_digest)
+VALUES
+ ('inventory-test','inventory-device',3,'granted','inventory-owner',decode(repeat('e1',32),'hex'));
+SET LOCAL ROLE ujani_runtime;
+DO $block$
+DECLARE
+ v_now_ms bigint := floor(extract(epoch FROM pg_catalog.clock_timestamp()) * 1000)::bigint;
+ v_payload jsonb;
+ v_revision bigint;
+BEGIN
+ v_payload := pg_catalog.jsonb_build_object(
+  'schema_version',2,'generated_at_unix_ms',v_now_ms,'device_ref','inventory-device',
+  'collection_context',pg_catalog.jsonb_build_object(
+   'scope','organisation_enrolled','owner_consent','granted',
+   'organisation_authorisation','authorised','policy_version','inventory-policy-v1'
+  ),
+  'platform',pg_catalog.jsonb_build_object(),'hardware',pg_catalog.jsonb_build_object(),
+  'runtimes',pg_catalog.jsonb_build_array(),'models',pg_catalog.jsonb_build_array(),
+  'privacy',pg_catalog.jsonb_build_object(
+   'contains_prompts',false,'contains_user_files',false,
+   'contains_local_paths',false,'contains_credentials',false
+  )
+ );
+ v_revision := ujani_control.accept_model_runtime_inventory_v2(
+  'inventory-test','inventory-device','inventory-key',1,3,
+  decode(repeat('e2',16),'hex'),pg_catalog.clock_timestamp()+interval '20 seconds',
+  v_now_ms,'inventory-policy-v1',decode(repeat('e3',32),'hex'),v_payload,
+  '00000000-0000-4000-8000-000000000318'
+ );
+ IF v_revision IS DISTINCT FROM 4 THEN
+  RAISE EXCEPTION 'fresh inventory before owner rebinding was not accepted';
+ END IF;
+END;
+$block$;
+RESET ROLE;
+
+UPDATE ujani_control.device_owner_bindings
+ SET owner_subject_id='inventory-owner-2',
+     binding_revision=binding_revision+1,
+     binding_digest=decode(repeat('e4',32),'hex')
+ WHERE tenant_id='inventory-test' AND device_id='inventory-device';
+DO $block$
+BEGIN
+ IF (SELECT owner_consent_state FROM ujani_control.devices
+     WHERE tenant_id='inventory-test' AND device_id='inventory-device') IS DISTINCT FROM 'unknown' THEN
+  RAISE EXCEPTION 'owner binding replacement did not clear the device consent state';
+ END IF;
+ IF (SELECT visibility_state FROM ujani_control.device_model_inventory
+     WHERE tenant_id='inventory-test' AND device_id='inventory-device') IS DISTINCT FROM 'revoked'
+    OR (SELECT inventory FROM ujani_control.device_model_inventory
+        WHERE tenant_id='inventory-test' AND device_id='inventory-device') IS NOT NULL THEN
+  RAISE EXCEPTION 'owner binding replacement must invalidate the previous owner inventory';
+ END IF;
+END;
+$block$;
+
+-- The old owner's consent generation cannot be reused after the owner changes.
+SET LOCAL ROLE ujani_runtime;
+DO $block$
+DECLARE
+ v_now_ms bigint := floor(extract(epoch FROM pg_catalog.clock_timestamp()) * 1000)::bigint;
+ v_payload jsonb;
+ v_revision bigint;
+BEGIN
+ v_payload := pg_catalog.jsonb_build_object(
+  'schema_version',2,'generated_at_unix_ms',v_now_ms,'device_ref','inventory-device',
+  'collection_context',pg_catalog.jsonb_build_object(
+   'scope','organisation_enrolled','owner_consent','granted',
+   'organisation_authorisation','authorised','policy_version','inventory-policy-v1'
+  ),
+  'platform',pg_catalog.jsonb_build_object(),'hardware',pg_catalog.jsonb_build_object(),
+  'runtimes',pg_catalog.jsonb_build_array(),'models',pg_catalog.jsonb_build_array(),
+  'privacy',pg_catalog.jsonb_build_object(
+   'contains_prompts',false,'contains_user_files',false,
+   'contains_local_paths',false,'contains_credentials',false
+  )
+ );
+ v_revision := ujani_control.accept_model_runtime_inventory_v2(
+  'inventory-test','inventory-device','inventory-key',1,3,
+  decode(repeat('e5',16),'hex'),pg_catalog.clock_timestamp()+interval '20 seconds',
+  v_now_ms,'inventory-policy-v1',decode(repeat('e6',32),'hex'),v_payload,
+  '00000000-0000-4000-8000-000000000319'
+ );
+ IF v_revision IS NOT NULL THEN
+  RAISE EXCEPTION 'previous owner consent was reused after owner binding replacement';
+ END IF;
+END;
+$block$;
+RESET ROLE;
+
+-- A fresh opt-in by the newly bound owner restores visibility only after a new report.
+INSERT INTO ujani_control.owner_consents
+ (tenant_id,device_id,consent_generation,state,actor_ref,evidence_digest)
+VALUES
+ ('inventory-test','inventory-device',4,'granted','inventory-owner-2',decode(repeat('e7',32),'hex'));
+SET LOCAL ROLE ujani_runtime;
+DO $block$
+DECLARE
+ v_now_ms bigint := floor(extract(epoch FROM pg_catalog.clock_timestamp()) * 1000)::bigint;
+ v_payload jsonb;
+ v_revision bigint;
+BEGIN
+ v_payload := pg_catalog.jsonb_build_object(
+  'schema_version',2,'generated_at_unix_ms',v_now_ms,'device_ref','inventory-device',
+  'collection_context',pg_catalog.jsonb_build_object(
+   'scope','organisation_enrolled','owner_consent','granted',
+   'organisation_authorisation','authorised','policy_version','inventory-policy-v1'
+  ),
+  'platform',pg_catalog.jsonb_build_object(),'hardware',pg_catalog.jsonb_build_object(),
+  'runtimes',pg_catalog.jsonb_build_array(),'models',pg_catalog.jsonb_build_array(),
+  'privacy',pg_catalog.jsonb_build_object(
+   'contains_prompts',false,'contains_user_files',false,
+   'contains_local_paths',false,'contains_credentials',false
+  )
+ );
+ v_revision := ujani_control.accept_model_runtime_inventory_v2(
+  'inventory-test','inventory-device','inventory-key',1,4,
+  decode(repeat('e8',16),'hex'),pg_catalog.clock_timestamp()+interval '20 seconds',
+  v_now_ms,'inventory-policy-v1',decode(repeat('e9',32),'hex'),v_payload,
+  '00000000-0000-4000-8000-000000000320'
+ );
+ IF v_revision IS DISTINCT FROM 5 THEN
+  RAISE EXCEPTION 'new owner fresh opt-in did not restore inventory visibility';
+ END IF;
+END;
+$block$;
+RESET ROLE;
 
 -- Tenant context is mandatory for reads and writes.
 SELECT pg_catalog.set_config('ujani.tenant_id','tenant-b',true);
