@@ -69,10 +69,12 @@ pub fn validate_enterprise_inventory_v2_preflight(
     if payload.get("schema_version").and_then(Value::as_u64) != Some(2) {
         return Err(InventoryV2PreflightError::UnsupportedSchemaVersion);
     }
+    // Match the shared JSON Schema's interoperable integer ceiling.
+    // Full freshness/future-skew validation remains a separate service check.
     if payload
         .get("generated_at_unix_ms")
         .and_then(Value::as_u64)
-        .filter(|timestamp| *timestamp > 0)
+        .filter(|timestamp| *timestamp > 0 && *timestamp <= 9_007_199_254_740_991)
         .is_none()
     {
         return Err(InventoryV2PreflightError::InvalidTimestamp);
@@ -218,6 +220,16 @@ mod tests {
         assert_eq!(
             validate_enterprise_inventory_v2_preflight(&payload, "device-1"),
             Err(InventoryV2PreflightError::OrganisationNotAuthorised)
+        );
+    }
+
+    #[test]
+    fn rejects_timestamps_above_the_shared_schema_safe_integer_limit() {
+        let mut payload = valid_payload();
+        payload["generated_at_unix_ms"] = json!(9_007_199_254_740_992u64);
+        assert_eq!(
+            validate_enterprise_inventory_v2_preflight(&payload, "device-1"),
+            Err(InventoryV2PreflightError::InvalidTimestamp)
         );
     }
 
