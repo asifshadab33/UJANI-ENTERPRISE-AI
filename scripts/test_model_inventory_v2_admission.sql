@@ -20,7 +20,9 @@ INSERT INTO ujani_control.devices
   admin_approval_state,active_key_id,key_generation,consent_generation)
 VALUES
  ('inventory-test','inventory-device','Inventory Device','linux','enrolled','unknown',
-  'approved','inventory-key',1,0)
+  'approved','inventory-key',1,0),
+ ('inventory-test','inventory-device-other','Inventory Device Other','linux','enrolled','unknown',
+  'approved','inventory-key-other',1,0)
 ON CONFLICT (tenant_id,device_id) DO UPDATE SET
  trust_state='enrolled',owner_consent_state='unknown',admin_approval_state='approved',
  active_key_id='inventory-key',key_generation=1,consent_generation=0,
@@ -83,6 +85,7 @@ SET LOCAL ROLE ujani_runtime;
 DO $block$
 DECLARE
  v_now_ms bigint;
+ v_future_now_ms bigint;
  v_payload jsonb;
  v_revision bigint;
  v_count integer;
@@ -154,12 +157,14 @@ BEGIN
  );
  IF v_revision IS NOT NULL THEN RAISE EXCEPTION 'non-monotonic inventory timestamp was accepted'; END IF;
 
- -- Future and stale observations are rejected even when the body is otherwise valid.
- v_payload := pg_catalog.jsonb_set(v_payload,'{generated_at_unix_ms}',pg_catalog.to_jsonb(v_now_ms+61000));
+ -- Future observations use a fresh clock sample and remain well beyond the
+ -- admission function's 60-second future-skew allowance.
+ v_future_now_ms := floor(extract(epoch FROM pg_catalog.clock_timestamp()) * 1000)::bigint + 120000;
+ v_payload := pg_catalog.jsonb_set(v_payload,'{generated_at_unix_ms}',pg_catalog.to_jsonb(v_future_now_ms));
  v_revision := ujani_control.accept_model_runtime_inventory_v2(
   'inventory-test','inventory-device','inventory-key',1,1,
   decode(repeat('b6',16),'hex'),pg_catalog.clock_timestamp()+interval '20 seconds',
-  v_now_ms+61000,'inventory-policy-v1',decode(repeat('b7',32),'hex'),v_payload,
+  v_future_now_ms,'inventory-policy-v1',decode(repeat('b7',32),'hex'),v_payload,
   '00000000-0000-4000-8000-000000000304'
  );
  IF v_revision IS NOT NULL THEN RAISE EXCEPTION 'future-dated model inventory was accepted'; END IF;
@@ -329,10 +334,19 @@ UPDATE ujani_control.model_inventory_policies
 SET LOCAL ROLE ujani_runtime;
 DO $block$
 DECLARE
- v_now_ms bigint := floor(extract(epoch FROM pg_catalog.clock_timestamp()) * 1000)::bigint;
+ v_now_ms bigint;
  v_payload jsonb;
  v_revision bigint;
 BEGIN
+ SELECT GREATEST(
+  floor(extract(epoch FROM pg_catalog.clock_timestamp()) * 1000)::bigint,
+  COALESCE(
+   (SELECT generated_at_unix_ms + 1
+    FROM ujani_control.device_model_inventory
+    WHERE tenant_id='inventory-test' AND device_id='inventory-device'),
+   1
+  )
+ ) INTO v_now_ms;
  v_payload := pg_catalog.jsonb_build_object(
   'schema_version',2,'generated_at_unix_ms',v_now_ms,'device_ref','inventory-device',
   'collection_context',pg_catalog.jsonb_build_object(
@@ -410,10 +424,19 @@ UPDATE ujani_control.devices SET admin_approval_state='approved'
 SET LOCAL ROLE ujani_runtime;
 DO $block$
 DECLARE
- v_now_ms bigint := floor(extract(epoch FROM pg_catalog.clock_timestamp()) * 1000)::bigint;
+ v_now_ms bigint;
  v_payload jsonb;
  v_revision bigint;
 BEGIN
+ SELECT GREATEST(
+  floor(extract(epoch FROM pg_catalog.clock_timestamp()) * 1000)::bigint,
+  COALESCE(
+   (SELECT generated_at_unix_ms + 1
+    FROM ujani_control.device_model_inventory
+    WHERE tenant_id='inventory-test' AND device_id='inventory-device'),
+   1
+  )
+ ) INTO v_now_ms;
  v_payload := pg_catalog.jsonb_build_object(
   'schema_version',2,'generated_at_unix_ms',v_now_ms,'device_ref','inventory-device',
   'collection_context',pg_catalog.jsonb_build_object(
@@ -477,6 +500,17 @@ BEGIN
         WHERE tenant_id='inventory-test' AND device_id='inventory-device') IS NOT NULL THEN
   RAISE EXCEPTION 'owner consent pause did not clear the stored model inventory';
  END IF;
+
+ -- Revocation may clear metadata but must never transfer the retained row to
+ -- another device identity, even when the destination device exists.
+ BEGIN
+  UPDATE ujani_control.device_model_inventory
+  SET device_id='inventory-device-other'
+  WHERE tenant_id='inventory-test' AND device_id='inventory-device';
+  RAISE EXCEPTION 'revoked inventory row changed device identity';
+ EXCEPTION WHEN check_violation THEN
+  NULL;
+ END;
 END;
 $block$;
 
