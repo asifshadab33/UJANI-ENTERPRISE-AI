@@ -2167,6 +2167,22 @@ mod tests {
     }
 
     #[test]
+    fn connector_page_mapping_rejects_update_check_after_observation() {
+        let page = sample_security_evidence_page(
+            80_000,
+            "current",
+            Some("120000"),
+            DataClassification::Internal,
+        );
+        assert_eq!(
+            map_security_provider_evidence_page(
+                &page, "tenant-a", "device-1", "microsoft.defender", 10, 100_000, 60_000,
+            ),
+            Err(ConnectorError::MalformedEvidence)
+        );
+    }
+
+    #[test]
     fn connector_page_mapping_rejects_cross_tenant_and_restricted_evidence() {
         let mut page = sample_security_evidence_page(
             100_000, "unknown", None, DataClassification::Internal,
