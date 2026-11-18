@@ -213,3 +213,124 @@ test("console refreshes live data after resume but preserves explicitly selected
   assert.equal(getElement("demo-banner").hidden, true);
   assert.match(message.textContent, /API is not deployed yet/);
 });
+
+test("security-provider inventory enforces device binding and conservative freshness", async () => {
+  const source = await readFile(new URL("../app.js", import.meta.url), "utf8");
+  const elements = new Map();
+  const getElement = (id) => {
+    if (!elements.has(id)) elements.set(id, new FakeElement());
+    return elements.get(id);
+  };
+  class TestDate extends Date {
+    static now() { return 1_000_000; }
+  }
+  const context = vm.createContext({
+    document: {
+      getElementById: getElement,
+      createElement: () => new FakeElement(),
+      addEventListener: () => {},
+      hidden: false
+    },
+    window: { setTimeout: () => 1, clearTimeout: () => {}, addEventListener: () => {} },
+    fetch: async (url) => url === "./model-catalog.json"
+      ? Promise.reject(new Error("test fixture: catalogue unavailable"))
+      : ({ ok: false, status: 404 }),
+    AbortController,
+    Date: TestDate,
+    performance: { now: () => 0 },
+    console
+  });
+  vm.runInContext(source, context);
+  await new Promise((resolve) => setImmediate(resolve));
+  vm.runInContext("setServerTimeAnchor(1000000)", context);
+
+  const validProvider = {
+    device_id: "device-1",
+    provider_id: "vendor.edr",
+    display_name: "Existing Endpoint Protection",
+    category: "malware_protection",
+    status: "healthy",
+    evidence_source: "ReadOnlyConnector",
+    evidence_freshness: "fresh",
+    evidence_max_age_ms: 60_000,
+    observed_at_unix_ms: 999_000,
+    product_identity_known: true,
+    capabilities: ["malware_protection"],
+    update_posture: "out_of_date",
+    update_checked_at_unix_ms: 999_000,
+    update_channel: "security_intelligence",
+    update_recommendation: "Update through the existing vendor workflow."
+  };
+  context.inventory = {
+    schema_version: 1,
+    generated_at_unix_ms: 1_000_000,
+    providers: [validProvider]
+  };
+  context.devices = [{ device_id: "device-1" }];
+  assert.equal(
+    vm.runInContext("validSecurityProviderInventory(inventory, 1000000, devices)", context),
+    true
+  );
+
+  context.inventory.providers[0] = { ...validProvider, device_id: "untrusted-device" };
+  assert.equal(
+    vm.runInContext("validSecurityProviderInventory(inventory, 1000000, devices)", context),
+    false
+  );
+
+  context.inventory.providers[0] = { ...validProvider, observed_at_unix_ms: 1 };
+  assert.equal(
+    vm.runInContext("validSecurityProviderInventory(inventory, 1000000, devices)", context),
+    false
+  );
+
+  context.inventory.providers[0] = {
+    ...validProvider,
+    evidence_max_age_ms: 24 * 60 * 60 * 1000,
+    observed_at_unix_ms: 100_000,
+    update_checked_at_unix_ms: 100_000
+  };
+  assert.equal(
+    vm.runInContext("validSecurityProviderInventory(inventory, 1000000, devices)", context),
+    true,
+    "freshness must use the provider's configured age, not a universal five-minute window"
+  );
+
+  context.inventory.providers[0] = {
+    ...validProvider,
+    evidence_max_age_ms: 200_000,
+    observed_at_unix_ms: 900_000,
+    update_checked_at_unix_ms: 950_000
+  };
+  assert.equal(
+    vm.runInContext("validSecurityProviderInventory(inventory, 1000000, devices)", context),
+    false,
+    "an update check must not post-date its source observation beyond clock skew"
+  );
+
+  context.inventory.providers[0] = {
+    ...validProvider,
+    update_posture: "current",
+    update_checked_at_unix_ms: 1
+  };
+  assert.equal(
+    vm.runInContext("validSecurityProviderInventory(inventory, 1000000, devices)", context),
+    false
+  );
+
+  context.inventory.providers[0] = {
+    ...validProvider,
+    evidence_freshness: "stale",
+    observed_at_unix_ms: 1,
+    update_posture: "unverified",
+    update_checked_at_unix_ms: null
+  };
+  assert.equal(
+    vm.runInContext("validSecurityProviderInventory(inventory, 1000000, devices)", context),
+    true
+  );
+  vm.runInContext("renderSecurityProviderInventory(inventory)", context);
+  assert.match(collectText(getElement("security-provider-inventory")), /stale/);
+  assert.match(collectText(getElement("security-provider-inventory")), /not treated as current/);
+});
+

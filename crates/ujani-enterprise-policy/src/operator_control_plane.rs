@@ -7,6 +7,10 @@
 //! the upstream identity-provider response before minting a session, provide a
 //! durable tenant-isolated repository and append-only audit sink, and expose
 //! this service only behind HTTPS with secure session cookies and CSRF controls.
+use crate::connector_contract::{
+    validate_evidence_page, ConnectorError, EvidenceFreshness, EvidencePage,
+};
+use crate::DataClassification;
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 use std::collections::{HashMap, HashSet};
@@ -26,6 +30,7 @@ const MAX_WORKLOADS: usize = 1_000;
 const MAX_APPROVALS: usize = 1_000;
 const MAX_TOTAL_MODEL_ROWS: usize = 100_000;
 const MAX_OVERVIEW_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
+const MAX_SECURITY_EVIDENCE_AGE_MS: u64 = 30 * 24 * 60 * 60 * 1000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OperatorRole {
@@ -610,6 +615,224 @@ pub struct OperatorModelInventoryView {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OperatorSecurityProviderView {
+    pub device_id: String,
+    pub provider_id: String,
+    pub display_name: Option<String>,
+    pub category: String,
+    pub status: String,
+    pub evidence_source: String,
+    pub evidence_freshness: String,
+    pub evidence_max_age_ms: u64,
+    pub observed_at_unix_ms: u64,
+    pub product_identity_known: bool,
+    pub capabilities: Vec<String>,
+    pub update_posture: String,
+    pub update_checked_at_unix_ms: Option<u64>,
+    pub update_channel: Option<String>,
+    pub update_recommendation: String,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OperatorSecurityProviderInventoryView {
+    pub schema_version: u8,
+    pub generated_at_unix_ms: u64,
+    pub providers: Vec<OperatorSecurityProviderView>,
+}
+
+/// Map one validated connector page into the tenant's operator inventory contract.
+///
+/// Device identity is supplied only by trusted enrollment context; provider-controlled
+/// fields cannot select a device. Raw summaries/source references are intentionally
+/// omitted from the operator payload.
+pub fn map_security_provider_evidence_page(
+    page: &EvidencePage,
+    authenticated_tenant_id: &str,
+    enrolled_device_id: &str,
+    expected_provider_id: &str,
+    requested_page_size: u16,
+    now_unix_ms: u64,
+    max_age_ms: u64,
+) -> Result<OperatorSecurityProviderInventoryView, ConnectorError> {
+    if !valid_identifier(enrolled_device_id, 128) {
+        return Err(ConnectorError::InvalidIdentifier);
+    }
+    if max_age_ms == 0 || max_age_ms > MAX_SECURITY_EVIDENCE_AGE_MS {
+        return Err(ConnectorError::MalformedEvidence);
+    }
+    let freshness = validate_evidence_page(
+        page,
+        authenticated_tenant_id,
+        expected_provider_id,
+        requested_page_size,
+        now_unix_ms,
+        max_age_ms,
+    )?;
+    let mut providers = Vec::with_capacity(page.records.len());
+    let mut keys = HashSet::with_capacity(page.records.len());
+    for (record, evidence_freshness) in page.records.iter().zip(freshness) {
+        if record.data_classification != DataClassification::Internal {
+            return Err(ConnectorError::MalformedEvidence);
+        }
+        let category = record
+            .fields
+            .get("category")
+            .map(String::as_str)
+            .filter(|value| {
+                [
+                    "malware_protection",
+                    "firewall",
+                    "endpoint_detection_response",
+                    "quarantine",
+                    "device_isolation",
+                    "security_updates",
+                ]
+                .contains(value)
+            })
+            .ok_or(ConnectorError::MalformedEvidence)?;
+        let status = record
+            .fields
+            .get("status")
+            .map(String::as_str)
+            .filter(|value| {
+                [
+                    "healthy",
+                    "attention",
+                    "alert",
+                    "not_monitored",
+                    "unavailable",
+                    "unknown",
+                ]
+                .contains(value)
+            })
+            .ok_or(ConnectorError::MalformedEvidence)?;
+        let product_identity_known = match record
+            .fields
+            .get("product_identity_known")
+            .map(String::as_str)
+        {
+            Some("true") => true,
+            Some("false") | None => false,
+            _ => return Err(ConnectorError::MalformedEvidence),
+        };
+        let capabilities = match record.fields.get("capabilities") {
+            Some(raw) => serde_json::from_str::<Vec<String>>(raw)
+                .map_err(|_| ConnectorError::MalformedEvidence)?,
+            None => Vec::new(),
+        };
+        if capabilities.len() > 32
+            || capabilities
+                .iter()
+                .any(|value| !valid_identifier(value, 96))
+            || capabilities.iter().collect::<HashSet<_>>().len() != capabilities.len()
+        {
+            return Err(ConnectorError::MalformedEvidence);
+        }
+        let update_status = record
+            .fields
+            .get("update_status")
+            .map(String::as_str)
+            .unwrap_or("unknown");
+        if !["current", "out_of_date", "unknown"].contains(&update_status) {
+            return Err(ConnectorError::MalformedEvidence);
+        }
+        let raw_checked = record.fields.get("update_checked_at_unix_ms");
+        let checked = raw_checked
+            .map(|value| {
+                value
+                    .parse::<u64>()
+                    .map_err(|_| ConnectorError::MalformedEvidence)
+            })
+            .transpose()?;
+        if checked.is_some_and(|value| {
+            value == 0
+                || value > now_unix_ms.saturating_add(CLOCK_SKEW_TOLERANCE_MS)
+                || value
+                    > record
+                        .observed_at_unix_ms
+                        .saturating_add(CLOCK_SKEW_TOLERANCE_MS)
+        }) {
+            return Err(ConnectorError::MalformedEvidence);
+        }
+        let update_channel = record.fields.get("update_channel").cloned();
+        let display_name = record.fields.get("display_name").cloned();
+        if update_channel
+            .as_ref()
+            .is_some_and(|value| !valid_bounded_text(value, 160))
+            || display_name
+                .as_ref()
+                .is_some_and(|value| !valid_bounded_text(value, 160))
+        {
+            return Err(ConnectorError::MalformedEvidence);
+        }
+
+        let checked_fresh =
+            checked.is_some_and(|value| now_unix_ms.saturating_sub(value) <= max_age_ms);
+        let (update_posture, update_recommendation, update_checked_at_unix_ms) =
+            if evidence_freshness == EvidenceFreshness::Stale {
+                (
+                    "unverified",
+                    "Provider evidence is stale. Refresh the existing OS/vendor connector before relying on its health or update status.",
+                    None,
+                )
+            } else if update_status == "out_of_date" && (checked.is_none() || checked_fresh) {
+                (
+                    "out_of_date",
+                    "Security product updates are reported out of date. Ask the device owner or administrator to update antivirus intelligence/engine or firewall software and rule/signature feeds through the existing vendor or OS workflow.",
+                    checked,
+                )
+            } else if update_status == "current" && checked_fresh {
+                (
+                    "current",
+                    "The configured provider reports its checked security updates are current; continue normal update monitoring.",
+                    checked,
+                )
+            } else if update_status == "unknown" && checked.is_none() {
+                (
+                    "not_reported",
+                    "UJANI cannot verify whether antivirus definitions, engine/platform or firewall updates are current. Check the existing product or operating-system security console.",
+                    None,
+                )
+            } else {
+                (
+                    "unverified",
+                    "Update evidence is stale or incomplete. Ask the device owner or administrator to check the product's latest security intelligence, engine/platform and firewall updates.",
+                    None,
+                )
+            };
+        let key = format!("{enrolled_device_id}:{expected_provider_id}:{category}");
+        if !keys.insert(key) {
+            return Err(ConnectorError::MalformedEvidence);
+        }
+        providers.push(OperatorSecurityProviderView {
+            device_id: enrolled_device_id.to_string(),
+            provider_id: expected_provider_id.to_string(),
+            display_name,
+            category: category.to_string(),
+            status: status.to_string(),
+            evidence_source: "ReadOnlyConnector".into(),
+            evidence_freshness: match evidence_freshness {
+                EvidenceFreshness::Fresh => "fresh",
+                EvidenceFreshness::Stale => "stale",
+            }
+            .into(),
+            evidence_max_age_ms: max_age_ms,
+            observed_at_unix_ms: record.observed_at_unix_ms,
+            product_identity_known,
+            capabilities,
+            update_posture: update_posture.into(),
+            update_checked_at_unix_ms,
+            update_channel,
+            update_recommendation: update_recommendation.into(),
+        });
+    }
+    Ok(OperatorSecurityProviderInventoryView {
+        schema_version: 1,
+        generated_at_unix_ms: now_unix_ms,
+        providers,
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OperatorOverview {
     pub schema_version: u16,
     pub tenant_id: String,
@@ -620,6 +843,8 @@ pub struct OperatorOverview {
     pub approvals: Vec<OperatorApprovalView>,
     /// Optional, privacy-minimised inventory from authenticated device telemetry.
     pub model_inventory: Vec<OperatorModelInventoryView>,
+    /// Optional tenant/device-scoped evidence from authenticated read-only OS/vendor connectors.
+    pub security_provider_inventory: Option<OperatorSecurityProviderInventoryView>,
 }
 
 impl OperatorOverview {
@@ -714,13 +939,23 @@ impl OperatorOverview {
         };
         let _ = write!(
             &mut out,
-            ",\"model_inventory_status\":{},\"model_inventory_total_devices\":{},\"model_inventory_returned_devices\":{},\"model_inventory_total_models\":{},\"model_inventory_returned_models\":{}}}",
+            ",\"model_inventory_status\":{},\"model_inventory_total_devices\":{},\"model_inventory_returned_devices\":{},\"model_inventory_total_models\":{},\"model_inventory_returned_models\":{}",
             json_string(inventory_status),
             self.model_inventory.len(),
             returned_device_count,
             total_model_count,
             returned_model_count
         );
+        if let Some(inventory) = &self.security_provider_inventory {
+            let available =
+                MAX_OVERVIEW_RESPONSE_BYTES.saturating_sub(out.len().saturating_add(32));
+            let Some(entry) = json_security_provider_inventory(inventory, available) else {
+                return "{\"error\":\"overview_exceeds_response_budget\"}".into();
+            };
+            out.push_str(",\"security_provider_inventory\":");
+            out.push_str(&entry);
+        }
+        out.push('}');
         if out.len() > MAX_OVERVIEW_RESPONSE_BYTES {
             return "{\"error\":\"overview_exceeds_response_budget\"}".into();
         }
@@ -838,6 +1073,56 @@ fn json_model_inventory(inventory: &OperatorModelInventoryView) -> String {
     out.push_str("}}");
     out
 }
+fn json_security_provider_inventory(
+    inventory: &OperatorSecurityProviderInventoryView,
+    max_bytes: usize,
+) -> Option<String> {
+    let mut out = String::with_capacity(256.min(max_bytes));
+    let _ = write!(
+        &mut out,
+        "{{\"schema_version\":{},\"generated_at_unix_ms\":{},\"providers\":[",
+        inventory.schema_version, inventory.generated_at_unix_ms
+    );
+    if out.len() > max_bytes {
+        return None;
+    }
+    for (index, provider) in inventory.providers.iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        let capabilities = provider
+            .capabilities
+            .iter()
+            .map(|value| json_string(value))
+            .collect::<Vec<_>>()
+            .join(",");
+        let _ = write!(
+            &mut out,
+            "{{\"device_id\":{},\"provider_id\":{},\"display_name\":{},\"category\":{},\"status\":{},\"evidence_source\":{},\"evidence_freshness\":{},\"evidence_max_age_ms\":{},\"observed_at_unix_ms\":{},\"product_identity_known\":{},\"capabilities\":[{}],\"update_posture\":{},\"update_checked_at_unix_ms\":{},\"update_channel\":{},\"update_recommendation\":{}}}",
+            json_string(&provider.device_id),
+            json_string(&provider.provider_id),
+            json_optional_string(provider.display_name.as_deref()),
+            json_string(&provider.category),
+            json_string(&provider.status),
+            json_string(&provider.evidence_source),
+            json_string(&provider.evidence_freshness),
+            provider.evidence_max_age_ms,
+            provider.observed_at_unix_ms,
+            provider.product_identity_known,
+            capabilities,
+            json_string(&provider.update_posture),
+            json_optional_number(provider.update_checked_at_unix_ms),
+            json_optional_string(provider.update_channel.as_deref()),
+            json_string(&provider.update_recommendation)
+        );
+        if out.len() > max_bytes {
+            return None;
+        }
+    }
+    out.push_str("]}");
+    (out.len() <= max_bytes).then_some(out)
+}
+
 fn valid_bounded_text(value: &str, max: usize) -> bool {
     !value.trim().is_empty() && value.len() <= max && !value.chars().any(char::is_control)
 }
@@ -1267,6 +1552,121 @@ fn validate_overview(overview: &OperatorOverview, now: u64) -> Result<(), ()> {
         }
     }
 
+    if let Some(inventory) = &overview.security_provider_inventory {
+        if inventory.schema_version != 1
+            || inventory.generated_at_unix_ms == 0
+            || inventory.generated_at_unix_ms > now.saturating_add(CLOCK_SKEW_TOLERANCE_MS)
+            || inventory.generated_at_unix_ms
+                > overview
+                    .generated_at_unix_ms
+                    .saturating_add(CLOCK_SKEW_TOLERANCE_MS)
+            || now.saturating_sub(inventory.generated_at_unix_ms) > MAX_OVERVIEW_AGE_MS
+            || inventory.providers.len() > 10_000
+        {
+            return Err(());
+        }
+        let mut provider_keys = HashSet::with_capacity(inventory.providers.len());
+        for provider in &inventory.providers {
+            let category_valid = [
+                "malware_protection",
+                "firewall",
+                "endpoint_detection_response",
+                "quarantine",
+                "device_isolation",
+                "security_updates",
+            ]
+            .contains(&provider.category.as_str());
+            let status_valid = [
+                "healthy",
+                "attention",
+                "alert",
+                "not_monitored",
+                "unavailable",
+                "unknown",
+            ]
+            .contains(&provider.status.as_str());
+            let freshness_valid =
+                ["fresh", "stale", "unknown"].contains(&provider.evidence_freshness.as_str());
+            let update_valid = ["current", "out_of_date", "unverified", "not_reported"]
+                .contains(&provider.update_posture.as_str());
+            let identity_valid = valid_identifier(&provider.device_id, 128)
+                && ids.contains(provider.device_id.as_str())
+                && valid_identifier(&provider.provider_id, 96);
+            let evidence_age_policy_valid = provider.evidence_max_age_ms > 0
+                && provider.evidence_max_age_ms <= MAX_SECURITY_EVIDENCE_AGE_MS;
+            let observed_valid = evidence_age_policy_valid
+                && provider.observed_at_unix_ms > 0
+                && provider.observed_at_unix_ms <= now.saturating_add(CLOCK_SKEW_TOLERANCE_MS)
+                && provider.observed_at_unix_ms
+                    <= inventory
+                        .generated_at_unix_ms
+                        .saturating_add(CLOCK_SKEW_TOLERANCE_MS)
+                && match provider.evidence_freshness.as_str() {
+                    "fresh" => {
+                        now.saturating_sub(provider.observed_at_unix_ms)
+                            <= provider.evidence_max_age_ms
+                    }
+                    "stale" => {
+                        now.saturating_sub(provider.observed_at_unix_ms)
+                            > provider.evidence_max_age_ms
+                    }
+                    _ => true,
+                };
+            let update_checked_valid = provider.update_checked_at_unix_ms.is_none_or(|checked| {
+                checked > 0
+                    && checked <= now.saturating_add(CLOCK_SKEW_TOLERANCE_MS)
+                    && checked
+                        <= inventory
+                            .generated_at_unix_ms
+                            .saturating_add(CLOCK_SKEW_TOLERANCE_MS)
+                    && checked
+                        <= provider
+                            .observed_at_unix_ms
+                            .saturating_add(CLOCK_SKEW_TOLERANCE_MS)
+                    && now.saturating_sub(checked) <= provider.evidence_max_age_ms
+            }) && (provider.update_posture != "current"
+                || provider.update_checked_at_unix_ms.is_some())
+                && (provider.evidence_freshness == "fresh"
+                    || !["current", "out_of_date"].contains(&provider.update_posture.as_str()))
+                && (provider.update_posture != "not_reported"
+                    || provider.update_checked_at_unix_ms.is_none());
+            let capabilities_valid = provider.capabilities.len() <= 32
+                && provider
+                    .capabilities
+                    .iter()
+                    .all(|value| valid_identifier(value, 96))
+                && provider.capabilities.iter().collect::<HashSet<_>>().len()
+                    == provider.capabilities.len();
+            let key = format!(
+                "{}:{}:{}",
+                provider.device_id, provider.provider_id, provider.category
+            );
+            if !identity_valid
+                || !category_valid
+                || !status_valid
+                || !freshness_valid
+                || !evidence_age_policy_valid
+                || !update_valid
+                || !valid_bounded_text(&provider.evidence_source, 128)
+                || !observed_valid
+                || !capabilities_valid
+                || !update_checked_valid
+                || !valid_bounded_text(&provider.update_recommendation, 512)
+                || provider
+                    .display_name
+                    .as_ref()
+                    .is_some_and(|value| !valid_bounded_text(value, 160))
+                || provider
+                    .update_channel
+                    .as_ref()
+                    .is_some_and(|value| !valid_bounded_text(value, 160))
+                || !provider_keys.insert(key)
+            {
+                return Err(());
+            }
+        }
+    }
+
     for workload in &overview.workloads {
         if !valid_identifier(&workload.workload_id, 128)
             || workload.title.len() > 256
@@ -1294,7 +1694,7 @@ fn validate_overview(overview: &OperatorOverview, now: u64) -> Result<(), ()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+    use std::collections::{BTreeMap, HashMap};
     use std::sync::Mutex;
 
     fn claims(tenant: &str) -> OperatorSessionClaims {
@@ -1322,6 +1722,77 @@ mod tests {
             workloads: vec![],
             approvals: vec![],
             model_inventory: vec![],
+            security_provider_inventory: None,
+        }
+    }
+
+    fn sample_security_evidence_page(
+        observed_at_unix_ms: u64,
+        update_status: &str,
+        update_checked_at: Option<&str>,
+        classification: DataClassification,
+    ) -> EvidencePage {
+        let mut fields = BTreeMap::from([
+            ("category".to_string(), "malware_protection".to_string()),
+            ("status".to_string(), "healthy".to_string()),
+            ("product_identity_known".to_string(), "true".to_string()),
+            (
+                "capabilities".to_string(),
+                "[\"malware_protection\"]".to_string(),
+            ),
+            ("update_status".to_string(), update_status.to_string()),
+            ("display_name".to_string(), "Microsoft Defender".to_string()),
+            (
+                "device_id".to_string(),
+                "untrusted-device-field".to_string(),
+            ),
+        ]);
+        if let Some(checked) = update_checked_at {
+            fields.insert("update_checked_at_unix_ms".into(), checked.into());
+            fields.insert("update_channel".into(), "security_intelligence".into());
+        }
+        EvidencePage {
+            contract_version: crate::connector_contract::CONNECTOR_CONTRACT_VERSION,
+            tenant_id: "tenant-a".into(),
+            provider_id: "microsoft.defender".into(),
+            records: vec![crate::connector_contract::EvidenceRecord {
+                tenant_id: "tenant-a".into(),
+                provider_id: "microsoft.defender".into(),
+                record_id: "record-001".into(),
+                source_ref: "provider-record-001".into(),
+                observed_at_unix_ms,
+                data_classification: classification,
+                summary: "Provider posture observation".into(),
+                fields,
+            }],
+            next_cursor: None,
+        }
+    }
+
+    fn sample_security_provider_inventory(
+        generated_at_unix_ms: u64,
+    ) -> OperatorSecurityProviderInventoryView {
+        OperatorSecurityProviderInventoryView {
+            schema_version: 1,
+            generated_at_unix_ms,
+            providers: vec![OperatorSecurityProviderView {
+                device_id: "device-1".into(),
+                provider_id: "microsoft.defender".into(),
+                display_name: Some("Microsoft Defender".into()),
+                category: "malware_protection".into(),
+                status: "healthy".into(),
+                evidence_source: "ReadOnlyConnector".into(),
+                evidence_freshness: "fresh".into(),
+                evidence_max_age_ms: 60_000,
+                observed_at_unix_ms: generated_at_unix_ms,
+                product_identity_known: true,
+                capabilities: vec!["malware_protection".into()],
+                update_posture: "out_of_date".into(),
+                update_checked_at_unix_ms: Some(generated_at_unix_ms),
+                update_channel: Some("security_intelligence".into()),
+                update_recommendation: "Update security intelligence through Windows Security."
+                    .into(),
+            }],
         }
     }
 
@@ -1597,6 +2068,387 @@ mod tests {
             OperatorAuditOutcome::InvalidOverview
         );
     }
+    #[test]
+    fn validated_connector_page_maps_to_tenant_bound_provider_inventory() {
+        let page = sample_security_evidence_page(
+            100_000,
+            "out_of_date",
+            Some("99000"),
+            DataClassification::Internal,
+        );
+        let inventory = map_security_provider_evidence_page(
+            &page,
+            "tenant-a",
+            "device-1",
+            "microsoft.defender",
+            10,
+            100_000,
+            60_000,
+        )
+        .unwrap();
+        assert_eq!(inventory.schema_version, 1);
+        assert_eq!(inventory.providers.len(), 1);
+        let provider = &inventory.providers[0];
+        assert_eq!(provider.device_id, "device-1");
+        assert_eq!(provider.provider_id, "microsoft.defender");
+        assert_eq!(provider.evidence_freshness, "fresh");
+        assert_eq!(provider.update_posture, "out_of_date");
+        assert_eq!(provider.update_checked_at_unix_ms, Some(99_000));
+        assert_eq!(provider.capabilities, vec!["malware_protection"]);
+    }
+
+    #[test]
+    fn fresh_outdated_provider_evidence_warns_even_without_separate_update_check_time() {
+        let page = sample_security_evidence_page(
+            100_000,
+            "out_of_date",
+            None,
+            DataClassification::Internal,
+        );
+        let inventory = map_security_provider_evidence_page(
+            &page,
+            "tenant-a",
+            "device-1",
+            "microsoft.defender",
+            10,
+            100_000,
+            60_000,
+        )
+        .unwrap();
+        assert_eq!(inventory.providers[0].evidence_freshness, "fresh");
+        assert_eq!(inventory.providers[0].update_posture, "out_of_date");
+        assert_eq!(inventory.providers[0].update_checked_at_unix_ms, None);
+        assert!(inventory.providers[0]
+            .update_recommendation
+            .contains("out of date"));
+    }
+
+    #[test]
+    fn provider_freshness_uses_configured_policy_not_overview_snapshot_age() {
+        let page = sample_security_evidence_page(
+            10_000,
+            "current",
+            Some("10000"),
+            DataClassification::Internal,
+        );
+        let inventory = map_security_provider_evidence_page(
+            &page,
+            "tenant-a",
+            "device-1",
+            "microsoft.defender",
+            10,
+            100_000,
+            86_400_000,
+        )
+        .unwrap();
+        assert_eq!(inventory.providers[0].evidence_max_age_ms, 86_400_000);
+        assert_eq!(inventory.providers[0].evidence_freshness, "fresh");
+        assert_eq!(inventory.providers[0].update_posture, "current");
+
+        let mut overview = empty_overview("tenant-a");
+        overview.generated_at_unix_ms = 100_000;
+        overview.devices.push(OperatorDeviceView {
+            device_id: "device-1".into(),
+            display_name: "Device 1".into(),
+            platform: "Windows".into(),
+            trust_state: "trusted".into(),
+            availability: "online".into(),
+            remaining_cpu_millis: None,
+            remaining_memory_mb: None,
+            last_seen_unix_ms: 100_000,
+        });
+        overview.fleet.registered_devices = 1;
+        overview.fleet.trusted_consented_devices = 1;
+        overview.fleet.online_fresh_devices = 1;
+        overview.security_provider_inventory = Some(inventory);
+        assert!(validate_overview(&overview, 100_000).is_ok());
+    }
+
+    #[test]
+    fn provider_freshness_policy_is_bounded() {
+        let page = sample_security_evidence_page(
+            100_000,
+            "current",
+            Some("100000"),
+            DataClassification::Internal,
+        );
+        assert_eq!(
+            map_security_provider_evidence_page(
+                &page,
+                "tenant-a",
+                "device-1",
+                "microsoft.defender",
+                10,
+                100_000,
+                0,
+            ),
+            Err(ConnectorError::MalformedEvidence)
+        );
+        assert_eq!(
+            map_security_provider_evidence_page(
+                &page,
+                "tenant-a",
+                "device-1",
+                "microsoft.defender",
+                10,
+                100_000,
+                MAX_SECURITY_EVIDENCE_AGE_MS + 1,
+            ),
+            Err(ConnectorError::MalformedEvidence)
+        );
+    }
+
+    #[test]
+    fn stale_update_check_does_not_support_an_outdated_finding() {
+        let page = sample_security_evidence_page(
+            100_000,
+            "out_of_date",
+            Some("1"),
+            DataClassification::Internal,
+        );
+        let inventory = map_security_provider_evidence_page(
+            &page,
+            "tenant-a",
+            "device-1",
+            "microsoft.defender",
+            10,
+            100_000,
+            60_000,
+        )
+        .unwrap();
+        assert_eq!(inventory.providers[0].evidence_freshness, "fresh");
+        assert_eq!(inventory.providers[0].update_posture, "unverified");
+        assert_eq!(inventory.providers[0].update_checked_at_unix_ms, None);
+    }
+
+    #[test]
+    fn current_update_claim_requires_a_fresh_check_timestamp() {
+        let page =
+            sample_security_evidence_page(100_000, "current", None, DataClassification::Internal);
+        let inventory = map_security_provider_evidence_page(
+            &page,
+            "tenant-a",
+            "device-1",
+            "microsoft.defender",
+            10,
+            100_000,
+            60_000,
+        )
+        .unwrap();
+        assert_eq!(inventory.providers[0].update_posture, "unverified");
+        assert_eq!(inventory.providers[0].update_checked_at_unix_ms, None);
+    }
+
+    #[test]
+    fn explicit_outdated_status_without_fresh_check_time_is_unverified() {
+        let page = sample_security_evidence_page(
+            100_000,
+            "out_of_date",
+            Some("1000"),
+            DataClassification::Internal,
+        );
+        let inventory = map_security_provider_evidence_page(
+            &page,
+            "tenant-a",
+            "device-1",
+            "microsoft.defender",
+            10,
+            100_000,
+            60_000,
+        )
+        .unwrap();
+        assert_eq!(inventory.providers[0].update_posture, "unverified");
+        assert_eq!(inventory.providers[0].update_checked_at_unix_ms, None);
+    }
+
+    #[test]
+    fn stale_connector_page_never_exports_current_update_claims() {
+        let page =
+            sample_security_evidence_page(1, "current", Some("1"), DataClassification::Internal);
+        let inventory = map_security_provider_evidence_page(
+            &page,
+            "tenant-a",
+            "device-1",
+            "microsoft.defender",
+            10,
+            100_000,
+            60_000,
+        )
+        .unwrap();
+        assert_eq!(inventory.providers[0].status, "healthy");
+        assert_eq!(inventory.providers[0].evidence_freshness, "stale");
+        assert_eq!(inventory.providers[0].update_posture, "unverified");
+        assert_eq!(inventory.providers[0].update_checked_at_unix_ms, None);
+    }
+
+    #[test]
+    fn connector_page_mapping_rejects_update_check_after_observation() {
+        let page = sample_security_evidence_page(
+            80_000,
+            "current",
+            Some("120000"),
+            DataClassification::Internal,
+        );
+        assert_eq!(
+            map_security_provider_evidence_page(
+                &page,
+                "tenant-a",
+                "device-1",
+                "microsoft.defender",
+                10,
+                100_000,
+                60_000,
+            ),
+            Err(ConnectorError::MalformedEvidence)
+        );
+    }
+
+    #[test]
+    fn connector_page_mapping_rejects_cross_tenant_and_restricted_evidence() {
+        let mut page =
+            sample_security_evidence_page(100_000, "unknown", None, DataClassification::Internal);
+        page.tenant_id = "tenant-b".into();
+        assert_eq!(
+            map_security_provider_evidence_page(
+                &page,
+                "tenant-a",
+                "device-1",
+                "microsoft.defender",
+                10,
+                100_000,
+                60_000,
+            ),
+            Err(ConnectorError::TenantBoundaryViolation)
+        );
+        let restricted =
+            sample_security_evidence_page(100_000, "unknown", None, DataClassification::Restricted);
+        assert_eq!(
+            map_security_provider_evidence_page(
+                &restricted,
+                "tenant-a",
+                "device-1",
+                "microsoft.defender",
+                10,
+                100_000,
+                60_000,
+            ),
+            Err(ConnectorError::MalformedEvidence)
+        );
+    }
+
+    #[test]
+    fn security_provider_inventory_is_tenant_device_scoped_and_warns_on_old_updates() {
+        let mut overview = empty_overview("tenant-a");
+        overview.devices.push(OperatorDeviceView {
+            device_id: "device-1".into(),
+            display_name: "Lab workstation".into(),
+            platform: "windows".into(),
+            trust_state: "enrolled".into(),
+            availability: "online".into(),
+            remaining_cpu_millis: None,
+            remaining_memory_mb: None,
+            last_seen_unix_ms: 10_100,
+        });
+        overview.fleet.registered_devices = 1;
+        overview.fleet.trusted_consented_devices = 1;
+        overview.fleet.online_fresh_devices = 1;
+        overview.security_provider_inventory = Some(sample_security_provider_inventory(10_100));
+        assert!(validate_overview(&overview, 10_100).is_ok());
+        let json = overview.to_json();
+        assert!(json.contains("\"security_provider_inventory\":{"));
+        assert!(json.contains("\"update_posture\":\"out_of_date\""));
+        assert!(json.contains("\"update_recommendation\":\"Update security intelligence"));
+        assert!(json.contains("\"evidence_freshness\":\"fresh\""));
+
+        overview
+            .security_provider_inventory
+            .as_mut()
+            .unwrap()
+            .providers[0]
+            .device_id = "other-device".into();
+        assert!(validate_overview(&overview, 10_100).is_err());
+
+        let inventory = sample_security_provider_inventory(10_100);
+        assert!(json_security_provider_inventory(&inventory, 8).is_none());
+        let mut duplicate = sample_security_provider_inventory(10_100);
+        duplicate.providers.push(duplicate.providers[0].clone());
+        overview.security_provider_inventory = Some(duplicate);
+        assert!(validate_overview(&overview, 10_100).is_err());
+    }
+
+    #[test]
+    fn fresh_outdated_inventory_without_update_check_time_is_valid_and_visible() {
+        let mut overview = empty_overview("tenant-a");
+        overview.devices.push(OperatorDeviceView {
+            device_id: "device-1".into(),
+            display_name: "Lab workstation".into(),
+            platform: "windows".into(),
+            trust_state: "enrolled".into(),
+            availability: "online".into(),
+            remaining_cpu_millis: None,
+            remaining_memory_mb: None,
+            last_seen_unix_ms: 10_100,
+        });
+        overview.fleet.registered_devices = 1;
+        overview.fleet.trusted_consented_devices = 1;
+        overview.fleet.online_fresh_devices = 1;
+        let mut inventory = sample_security_provider_inventory(10_100);
+        inventory.providers[0].update_checked_at_unix_ms = None;
+        overview.security_provider_inventory = Some(inventory);
+        assert!(validate_overview(&overview, 10_100).is_ok());
+        let json = overview.to_json();
+        assert!(json.contains("\"update_posture\":\"out_of_date\""));
+        assert!(json.contains("\"update_checked_at_unix_ms\":null"));
+    }
+
+    #[test]
+    fn stale_or_unknown_provider_evidence_never_claims_fresh_health() {
+        let mut overview = empty_overview("tenant-a");
+        overview.generated_at_unix_ms = 100_100;
+        overview.devices.push(OperatorDeviceView {
+            device_id: "device-1".into(),
+            display_name: "Lab workstation".into(),
+            platform: "windows".into(),
+            trust_state: "enrolled".into(),
+            availability: "online".into(),
+            remaining_cpu_millis: None,
+            remaining_memory_mb: None,
+            last_seen_unix_ms: 100_100,
+        });
+        overview.fleet.registered_devices = 1;
+        overview.fleet.trusted_consented_devices = 1;
+        overview.fleet.online_fresh_devices = 1;
+        let mut inventory = sample_security_provider_inventory(100_100);
+        inventory.providers[0].evidence_freshness = "stale".into();
+        inventory.providers[0].observed_at_unix_ms = 1;
+        inventory.providers[0].update_posture = "unverified".into();
+        inventory.providers[0].update_checked_at_unix_ms = None;
+        overview.security_provider_inventory = Some(inventory);
+        assert!(validate_overview(&overview, 100_100).is_ok());
+
+        overview
+            .security_provider_inventory
+            .as_mut()
+            .unwrap()
+            .providers[0]
+            .observed_at_unix_ms = 60_100;
+        assert!(validate_overview(&overview, 100_100).is_err());
+
+        overview
+            .security_provider_inventory
+            .as_mut()
+            .unwrap()
+            .providers[0]
+            .evidence_freshness = "fresh".into();
+        overview
+            .security_provider_inventory
+            .as_mut()
+            .unwrap()
+            .providers[0]
+            .observed_at_unix_ms = 1;
+        assert!(validate_overview(&overview, 100_100).is_err());
+    }
+
     #[test]
     fn overview_json_matches_console_contract_and_escapes_untrusted_text() {
         let mut overview = empty_overview("tenant-a");

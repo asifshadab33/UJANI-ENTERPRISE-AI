@@ -70,9 +70,9 @@ function pill(value) {
   node.className = "pill";
   node.textContent = String(value ?? "unknown").replaceAll("_", " ");
   const normalized = String(value ?? "").toLowerCase();
-  if (["trusted", "enrolled", "available", "approved", "schedulable", "online"].includes(normalized)) node.classList.add("pill-good");
-  if (["stale", "busy", "pending", "sleeping", "paused"].includes(normalized)) node.classList.add("pill-warn");
-  if (["revoked", "rejected", "ineligible", "offline"].includes(normalized)) node.classList.add("pill-bad");
+  if (["trusted", "enrolled", "available", "approved", "schedulable", "online", "current"].includes(normalized)) node.classList.add("pill-good");
+  if (["stale", "busy", "pending", "sleeping", "paused", "attention", "unverified", "not_reported", "unknown", "not_monitored"].includes(normalized)) node.classList.add("pill-warn");
+  if (["revoked", "rejected", "ineligible", "offline", "out_of_date", "alert"].includes(normalized)) node.classList.add("pill-bad");
   return node;
 }
 function renderDevices(records) {
@@ -178,6 +178,28 @@ function showDemoData() {
   byId("schedulable").textContent = "1";
   renderDevices(devices);
   byId("device-count").textContent = devices.length + " synthetic records";
+  renderSecurityProviderInventory({
+    schema_version: 1,
+    generated_at_unix_ms: now,
+    providers: [
+      {
+        device_id: "demo-ws-01", provider_id: "microsoft.defender", display_name: "DEMO · Microsoft Defender",
+        category: "malware_protection", status: "healthy", evidence_freshness: "fresh", evidence_source: "Synthetic demo observation",
+        observed_at_unix_ms: now - 30_000, evidence_max_age_ms: 60_000, product_identity_known: true,
+        capabilities: ["malware_protection"], update_posture: "out_of_date",
+        update_checked_at_unix_ms: now - 30_000, update_channel: "security_intelligence",
+        update_recommendation: "DEMO ONLY: update the existing antivirus security intelligence through its vendor or OS workflow."
+      },
+      {
+        device_id: "demo-ws-02", provider_id: "opnsense.firewall", display_name: "DEMO · OPNsense Firewall",
+        category: "firewall", status: "healthy", evidence_freshness: "stale", evidence_source: "Synthetic demo observation",
+        observed_at_unix_ms: now - 60_000, evidence_max_age_ms: 60_000, product_identity_known: true,
+        capabilities: ["firewall"], update_posture: "unverified",
+        update_checked_at_unix_ms: null, update_channel: null,
+        update_recommendation: "DEMO ONLY: firewall update freshness cannot be verified."
+      }
+    ]
+  });
   renderDemoModelInventory();
   renderList("workloads", [
     { title: "DEMO · Internal document summary", state: "queued", class: "internal", reason: "Waiting for a suitable approved worker" }
@@ -547,6 +569,134 @@ async function readBoundedJson(response) {
   }
 }
 
+function validSecurityProviderInventory(inventory, overviewGeneratedAt, devices) {
+  if (inventory === undefined) return true;
+  if (!inventory || inventory.schema_version !== 1
+      || !Number.isSafeInteger(inventory.generated_at_unix_ms) || inventory.generated_at_unix_ms <= 0
+      || inventory.generated_at_unix_ms > overviewGeneratedAt + MAX_INVENTORY_EVIDENCE_SKEW_MS
+      || !snapshotIsFresh(inventory.generated_at_unix_ms)
+      || !Array.isArray(inventory.providers) || inventory.providers.length > 10000) return false;
+  const deviceIds = new Set(devices.map((device) => device.device_id));
+  const ids = new Set();
+  return inventory.providers.every((item) => {
+    if (!item || !boundedString(item.device_id, 128)
+        || !deviceIds.has(item.device_id)
+        || !boundedString(item.provider_id, 96)
+        || !["malware_protection", "firewall", "endpoint_detection_response", "quarantine", "device_isolation", "security_updates"].includes(item.category)
+        || !["healthy", "attention", "alert", "not_monitored", "unavailable", "unknown"].includes(item.status)
+        || !["fresh", "stale", "unknown"].includes(item.evidence_freshness)
+        || !Number.isSafeInteger(item.evidence_max_age_ms) || item.evidence_max_age_ms <= 0 || item.evidence_max_age_ms > 2592000000
+        || (item.evidence_freshness === "fresh"
+          && (inventory.generated_at_unix_ms - item.observed_at_unix_ms < -MAX_INVENTORY_EVIDENCE_SKEW_MS
+            || inventory.generated_at_unix_ms - item.observed_at_unix_ms > item.evidence_max_age_ms))
+        || (item.evidence_freshness === "stale"
+          && inventory.generated_at_unix_ms - item.observed_at_unix_ms <= item.evidence_max_age_ms)
+        || !boundedString(item.evidence_source, 128)
+        || !Number.isSafeInteger(item.observed_at_unix_ms) || item.observed_at_unix_ms <= 0
+        || item.observed_at_unix_ms > inventory.generated_at_unix_ms + MAX_INVENTORY_EVIDENCE_SKEW_MS
+        || typeof item.product_identity_known !== "boolean"
+        || !Array.isArray(item.capabilities) || item.capabilities.length > 32
+        || !item.capabilities.every((capability) => boundedString(capability, 96))
+        || new Set(item.capabilities).size !== item.capabilities.length
+        || !["current", "out_of_date", "unverified", "not_reported"].includes(item.update_posture)
+        || !(item.update_checked_at_unix_ms === null
+          || Number.isSafeInteger(item.update_checked_at_unix_ms) && item.update_checked_at_unix_ms > 0
+            && item.update_checked_at_unix_ms <= inventory.generated_at_unix_ms + MAX_INVENTORY_EVIDENCE_SKEW_MS
+            && item.update_checked_at_unix_ms <= item.observed_at_unix_ms + MAX_INVENTORY_EVIDENCE_SKEW_MS
+            && trustedDisplayNow() - item.update_checked_at_unix_ms >= -MAX_INVENTORY_EVIDENCE_SKEW_MS
+            && trustedDisplayNow() - item.update_checked_at_unix_ms <= item.evidence_max_age_ms)
+        || (item.update_posture === "current"
+          && (item.update_checked_at_unix_ms === null
+            || inventory.generated_at_unix_ms - item.update_checked_at_unix_ms > item.evidence_max_age_ms))
+        || (item.evidence_freshness !== "fresh" && ["current", "out_of_date"].includes(item.update_posture))
+        || (item.update_posture === "not_reported" && item.update_checked_at_unix_ms !== null)
+        || !(item.display_name === null || boundedString(item.display_name, 160))
+        || !(item.update_channel === null || boundedString(item.update_channel, 160))
+        || !boundedString(item.update_recommendation, 512)) return false;
+    const key = JSON.stringify([item.device_id, item.provider_id, item.category]);
+    if (ids.has(key)) return false;
+    ids.add(key);
+    return true;
+  });
+}
+function renderSecurityProviderInventory(inventory) {
+  const body = byId("security-provider-inventory");
+  body.replaceChildren();
+  const providers = inventory && Array.isArray(inventory.providers) ? inventory.providers : [];
+  byId("security-provider-count").textContent = inventory
+    ? providers.length + " provider records"
+    : "Not reported";
+  if (!providers.length) {
+    const row = document.createElement("tr");
+    const cell = textCell("No authenticated security-provider evidence is available. Configure an approved read-only OS/vendor connector; UJANI will not install or change security software.");
+    cell.colSpan = 8;
+    cell.className = "empty";
+    row.append(cell);
+    body.append(row);
+    return;
+  }
+  for (const item of providers) {
+    const row = document.createElement("tr");
+    row.append(textCell(item.device_id));
+    const providerCell = document.createElement("td");
+    const providerName = document.createElement("div");
+    providerName.textContent = item.display_name || item.provider_id;
+    const identityNote = document.createElement("small");
+    identityNote.textContent = item.product_identity_known ? "Product identity reported" : "Product identity not verified";
+    providerCell.append(providerName, identityNote);
+    row.append(providerCell);
+    row.append(textCell(item.category.replaceAll("_", " ")));
+    const health = document.createElement("td");
+    const reportedHealth = item.evidence_freshness === "fresh" ? item.status : item.evidence_freshness;
+    health.append(pill(reportedHealth));
+    if (item.evidence_freshness !== "fresh") {
+      const note = document.createElement("small");
+      note.textContent = "Provider health is not treated as current because this evidence is " + item.evidence_freshness + ".";
+      health.append(note);
+    }
+    if (item.evidence_freshness === "fresh" && (item.status === "alert" || item.status === "attention")) {
+      const note = document.createElement("small");
+      note.textContent = "Review the alert in the existing security product.";
+      health.append(note);
+    }
+    row.append(health);
+    const updates = document.createElement("td");
+    updates.append(pill(item.update_posture));
+    const checked = document.createElement("small");
+    checked.textContent = item.update_checked_at_unix_ms === null
+      ? "Update check not reported"
+      : "Checked " + formatAge(item.update_checked_at_unix_ms)
+        + (item.update_channel ? " · " + item.update_channel : "");
+    updates.append(checked);
+    if (item.update_posture === "out_of_date" || item.update_posture === "unverified" || item.update_posture === "not_reported") {
+      const note = document.createElement("small");
+      note.textContent = item.update_recommendation;
+      updates.append(note);
+    }
+    const updateEvidence = document.createElement("small");
+    const checkedAge = formatAge(item.update_checked_at_unix_ms);
+    const channel = typeof item.update_channel === "string" && item.update_channel.length > 0
+      ? item.update_channel
+      : "channel not reported";
+    updateEvidence.textContent = "Update evidence: " + checkedAge + " · " + channel;
+    updates.append(updateEvidence);
+    row.append(updates);
+    row.append(textCell(item.capabilities.join(", ") || "Not reported"));
+    row.append(textCell(item.evidence_source));
+    const observed = document.createElement("td");
+    const observedAge = document.createElement("div");
+    observedAge.textContent = formatAge(item.observed_at_unix_ms);
+    const freshnessLimit = document.createElement("small");
+    const freshnessLimitLabel = item.evidence_max_age_ms < 3_600_000
+      ? Math.max(1, Math.round(item.evidence_max_age_ms / 60_000)) + "m"
+      : Math.max(1, Math.round(item.evidence_max_age_ms / 3_600_000)) + "h";
+    freshnessLimit.textContent = "Freshness limit: " + freshnessLimitLabel;
+    observed.append(observedAge, freshnessLimit);
+    row.append(observed);
+    body.append(row);
+  }
+}
+
 function validOverview(data) {
   const counts = data && data.fleet;
   const validCount = (value) => Number.isSafeInteger(value) && value >= 0;
@@ -584,7 +734,8 @@ function validOverview(data) {
         || data.model_inventory_total_models > data.model_inventory_returned_models)
     && data.devices.length === counts.registered_devices
     && Number.isSafeInteger(data.generated_at_unix_ms) && data.generated_at_unix_ms > 0
-    && Number.isSafeInteger(data.server_time_unix_ms) && data.server_time_unix_ms > 0;
+    && Number.isSafeInteger(data.server_time_unix_ms) && data.server_time_unix_ms > 0
+    && validSecurityProviderInventory(data.security_provider_inventory, data.generated_at_unix_ms, data.devices);
 }
 function renderOverview(data) {
   if (!data || !Number.isSafeInteger(data.server_time_unix_ms) || data.server_time_unix_ms <= 0) {
@@ -600,6 +751,7 @@ function renderOverview(data) {
   byId("online").textContent = data.fleet.online_fresh_devices.toLocaleString();
   byId("schedulable").textContent = data.fleet.schedulable_devices.toLocaleString();
   renderDevices(data.devices);
+  renderSecurityProviderInventory(data.security_provider_inventory || null);
   renderModelInventory(data.model_inventory || [], data);
   renderList("workloads", data.workloads, "No active workloads.", ["state", "class", "reason"]);
   renderList("approvals", data.approvals, "No pending approvals.", ["requester", "scope", "expires_at"]);
@@ -619,6 +771,7 @@ function clearOverview() {
   }
   byId("updated").textContent = "No current live snapshot";
   renderDevices([]);
+  renderSecurityProviderInventory(null);
   byId("model-count").textContent = "No current inventory";
   const modelBody = byId("model-inventory");
   modelBody.replaceChildren();

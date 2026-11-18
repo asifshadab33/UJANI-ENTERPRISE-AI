@@ -36,6 +36,8 @@ def main():
     js = (APP / "app.js").read_text(encoding="utf-8")
     css = (APP / "styles.css").read_text(encoding="utf-8")
     readme = (APP / "README.md").read_text(encoding="utf-8")
+    control_plane = (ROOT / "crates" / "ujani-enterprise-policy" / "src" / "operator_control_plane.rs").read_text(encoding="utf-8")
+    provider_schema = (ROOT / "schemas" / "security-provider-inventory-v1.schema.json").read_text(encoding="utf-8")
     parser = ConsoleParser()
     parser.feed(html)
     assert parser.inline_scripts == 0, "Console must not use inline scripts."
@@ -94,6 +96,36 @@ def main():
     assert "inventory.hardware.memory_available_mb" in js and "estimate fits" in js and "insufficient" in js, "Model RAM fit must be conservative and explicit."
     assert "<th>Hardware (reported)</th>" in html and "<th>RAM fit (estimate)</th>" in html, "Reported hardware and conservative RAM estimate columns are required."
     assert "renderModelInventory(data.model_inventory || [], data)" in js, "Authenticated model inventory must be rendered."
+    assert 'id="security-provider-inventory"' in html and 'id="security-provider-count"' in html, "Security-provider posture table and count must be present."
+    assert "function validSecurityProviderInventory" in js and "function renderSecurityProviderInventory" in js, "Security-provider evidence must be validated and rendered."
+    assert "validSecurityProviderInventory(data.security_provider_inventory, data.generated_at_unix_ms, data.devices)" in js, "Provider inventory must be checked against the authenticated overview snapshot."
+    assert '["current", "out_of_date", "unverified", "not_reported"]' in js, "Update freshness states must remain distinct."
+    assert '["fresh", "stale", "unknown"].includes(item.evidence_freshness)' in js, "Provider evidence freshness must be explicit."
+    assert "item.evidence_freshness === \"fresh\" ? item.status : item.evidence_freshness" in js, "Stale provider evidence must not be displayed as healthy."
+    assert "!deviceIds.has(item.device_id)" in js, "Provider records must be bound to devices in the same authenticated overview."
+    assert "item.evidence_max_age_ms > 2592000000" in js, "Provider evidence freshness must use a bounded configured age policy."
+    assert "inventory.generated_at_unix_ms - item.observed_at_unix_ms > item.evidence_max_age_ms" in js, "Fresh labels must be checked against the provider's configured age policy."
+    assert 'item.evidence_freshness === "stale"' in js and 'item.evidence_max_age_ms' in js, "Stale labels must be consistent with the configured evidence age."
+    assert 'item.update_posture === "current"' in js and 'item.update_checked_at_unix_ms === null' in js, "Current update claims must have a fresh check timestamp; explicit fresh outdated findings may omit a separate check timestamp."
+    assert "item.update_checked_at_unix_ms <= item.observed_at_unix_ms + MAX_INVENTORY_EVIDENCE_SKEW_MS" in js, "Update check timestamps must be bound to the corresponding provider observation."
+    assert "new Set(item.capabilities).size !== item.capabilities.length" in js, "Duplicate capability claims must be rejected."
+    assert '"out_of_date"' in js and "item.update_recommendation" in js, "Outdated provider evidence must show an explicit warning and recommendation."
+    assert "No authenticated security-provider evidence is available" in js, "Missing provider evidence must never imply healthy protection."
+    assert "Product identity reported" in js and "Product identity not verified" in js, "Aggregate provider health must not imply product identity."
+    assert '"Checked " + formatAge(item.update_checked_at_unix_ms)' in js, "Update freshness must show the provider update-check timestamp."
+    assert "item.evidence_max_age_ms > 2592000000" in js, "Provider freshness must use a bounded configured age policy."
+    assert '["current", "out_of_date"].includes(item.update_posture)' in js, "Current and outdated findings must both require fresh check timestamps."
+    assert "Freshness limit: " in js, "The operator must see the configured provider evidence-age policy."
+    assert 'item.evidence_freshness !== "fresh" && ["current", "out_of_date"].includes(item.update_posture)' in js, "Stale evidence must never claim current or out-of-date verified updates."
+    assert "Update evidence: " in js and "channel not reported" in js, "Provider update evidence age and channel must be visible."
+    assert "renderSecurityProviderInventory(data.security_provider_inventory || null)" in js, "Live provider inventory must render only from the authenticated overview."
+    assert "pub security_provider_inventory: Option<OperatorSecurityProviderInventoryView>" in control_plane, "Provider inventory must be part of the authenticated operator overview contract."
+    assert "json_security_provider_inventory(inventory, available)" in control_plane, "Provider inventory must be serialized within the bounded overview response."
+    assert "pub fn map_security_provider_evidence_page" in control_plane and "validate_evidence_page(" in control_plane, "Provider rows must come through the existing validated read-only connector page contract."
+    assert "enrolled_device_id" in control_plane and 'record.data_classification != DataClassification::Internal' in control_plane, "Device identity must come from enrolled host state and restricted evidence must not be exported."
+    assert "evidence_freshness" in control_plane and '"out_of_date"' in control_plane, "Backend validation must preserve evidence freshness and explicit outdated states."
+    assert '"evidence_freshness": { "enum": ["fresh", "stale", "unknown"] }' in provider_schema, "Versioned schema must distinguish fresh, stale and unknown evidence."
+    assert '"update_posture": { "enum": ["current", "out_of_date", "unverified", "not_reported"] }' in provider_schema, "Versioned schema must distinguish outdated, unverified and unreported updates."
     assert "function hardwareSummary" in js and "Accelerators not reported" in js, "Hardware-only inventory must expose reported CPU/RAM/storage and preserve unknown accelerators."
     assert "function runtimeEvidenceSummary" in js and "validEvidence(runtime.evidence, inventory.generated_at_unix_ms)" in js, "Runtime evidence freshness must be validated and visible."
     assert "No model metadata reported" in js and "renderedDevices" in js, "Devices without model records must remain visible in the hardware/runtime inventory."

@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ujani.example/schemas/security-provider-inventory-v1.schema.json",
+  "title": "UJANI Enterprise Existing Security Provider Inventory",
+  "description": "Tenant/device-scoped, read-only posture evidence from customer-approved OS/vendor connectors. Authentication and tenant/device binding are enforced by the host.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "generated_at_unix_ms", "providers"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "generated_at_unix_ms": { "type": "integer", "minimum": 1 },
+    "providers": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": { "$ref": "#/$defs/provider" }
+    }
+  },
+  "$defs": {
+    "provider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "device_id", "provider_id", "display_name", "category", "status",
+        "evidence_source", "evidence_freshness", "evidence_max_age_ms", "observed_at_unix_ms", "product_identity_known",
+        "capabilities", "update_posture", "update_checked_at_unix_ms",
+        "update_channel", "update_recommendation"
+      ],
+      "properties": {
+        "device_id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9._:-]+$" },
+        "provider_id": { "type": "string", "minLength": 1, "maxLength": 96, "pattern": "^[A-Za-z0-9._:-]+$" },
+        "display_name": { "type": ["string", "null"], "maxLength": 160 },
+        "category": {
+          "enum": ["malware_protection", "firewall", "endpoint_detection_response", "quarantine", "device_isolation", "security_updates"]
+        },
+        "status": { "enum": ["healthy", "attention", "alert", "not_monitored", "unavailable", "unknown"] },
+        "evidence_source": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "evidence_freshness": { "enum": ["fresh", "stale", "unknown"] },
+        "evidence_max_age_ms": { "type": "integer", "minimum": 1, "maximum": 2592000000 },
+        "observed_at_unix_ms": { "type": "integer", "minimum": 1 },
+        "product_identity_known": { "type": "boolean" },
+        "capabilities": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 96, "pattern": "^[A-Za-z0-9._:-]+$" }
+        },
+        "update_posture": { "enum": ["current", "out_of_date", "unverified", "not_reported"] },
+        "update_checked_at_unix_ms": { "type": ["integer", "null"], "minimum": 1 },
+        "update_channel": { "type": ["string", "null"], "maxLength": 160 },
+        "update_recommendation": { "type": "string", "minLength": 1, "maxLength": 512 }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "update_posture": { "enum": ["current"] } },
+            "required": ["update_posture"]
+          },
+          "then": {
+            "properties": {
+              "update_checked_at_unix_ms": { "type": "integer", "minimum": 1 }
+            }
+          }
+        }
+      ]
+    }
+  }
+}
