@@ -37,6 +37,14 @@ class IncidentLifecycleTests(unittest.TestCase):
         with self.assertRaisesRegex(IncidentError, "stale"):
             transition_incident(self.incident, self.command(IncidentAction.TRIAGE, expected_version=9))
 
+    def test_rejects_boolean_and_non_integer_versions(self):
+        for version in (True, 0.0, -1):
+            with self.subTest(version=version):
+                with self.assertRaisesRegex(IncidentError, "version"):
+                    transition_incident(self.incident, self.command(
+                        IncidentAction.TRIAGE, expected_version=version,
+                    ))
+
     def test_suspension_requires_both_opt_ins_and_digest_approval(self):
         incomplete = self.command(IncidentAction.REQUEST_COMPUTE_SUSPENSION, tenant_admin_opt_in=True)
         with self.assertRaisesRegex(IncidentError, "both required"):
