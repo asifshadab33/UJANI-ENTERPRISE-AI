@@ -87,8 +87,13 @@ def main() -> None:
     invalid_cases.append(invalid_age_policy)
 
     missing_verified_update_time = sample()
+    missing_verified_update_time["providers"][0]["update_posture"] = "current"
     missing_verified_update_time["providers"][0]["update_checked_at_unix_ms"] = None
     invalid_cases.append(missing_verified_update_time)
+
+    outdated_without_separate_check_time = sample()
+    outdated_without_separate_check_time["providers"][0]["update_checked_at_unix_ms"] = None
+    validator.validate(outdated_without_separate_check_time)
 
     for candidate in invalid_cases:
         if validator.is_valid(candidate):
