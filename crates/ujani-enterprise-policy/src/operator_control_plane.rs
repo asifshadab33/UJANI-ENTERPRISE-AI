@@ -1790,10 +1790,10 @@ mod tests {
         overview.security_provider_inventory = Some(sample_security_provider_inventory(10_100));
         assert!(validate_overview(&overview, 10_100).is_ok());
         let json = overview.to_json();
-        assert!(json.contains("\\"security_provider_inventory\\":{"));
-        assert!(json.contains("\\"update_posture\\":\\"out_of_date\\""));
-        assert!(json.contains("\\"update_recommendation\\":\\"Update security intelligence"));
-        assert!(json.contains("\\"evidence_freshness\\":\\"fresh\\""));
+        assert!(json.contains("\"security_provider_inventory\":{"));
+        assert!(json.contains("\"update_posture\":\"out_of_date\""));
+        assert!(json.contains("\"update_recommendation\":\"Update security intelligence"));
+        assert!(json.contains("\"evidence_freshness\":\"fresh\""));
 
         overview.security_provider_inventory.as_mut().unwrap().providers[0].device_id = "other-device".into();
         assert!(validate_overview(&overview, 10_100).is_err());
