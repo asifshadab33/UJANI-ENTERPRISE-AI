@@ -1998,7 +1998,7 @@ mod tests {
         assert_eq!(provider.provider_id, "microsoft.defender");
         assert_eq!(provider.evidence_freshness, "fresh");
         assert_eq!(provider.update_posture, "out_of_date");
-        assert_eq!(provider.update_checked_at_unix_ms, Some(99_000));
+        assert_eq!(provider.update_checked_at_unix_ms, None);
         assert_eq!(provider.capabilities, vec!["malware_protection"]);
     }
 
