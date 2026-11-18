@@ -590,7 +590,6 @@ function validSecurityProviderInventory(inventory, overviewGeneratedAt, devices)
         || !boundedString(item.evidence_source, 128)
         || !Number.isSafeInteger(item.observed_at_unix_ms) || item.observed_at_unix_ms <= 0
         || item.observed_at_unix_ms > inventory.generated_at_unix_ms + MAX_INVENTORY_EVIDENCE_SKEW_MS
-        || (item.evidence_freshness === "fresh" && !snapshotIsFresh(item.observed_at_unix_ms))
         || typeof item.product_identity_known !== "boolean"
         || !Array.isArray(item.capabilities) || item.capabilities.length > 32
         || !item.capabilities.every((capability) => boundedString(capability, 96))
@@ -600,7 +599,10 @@ function validSecurityProviderInventory(inventory, overviewGeneratedAt, devices)
           || Number.isSafeInteger(item.update_checked_at_unix_ms) && item.update_checked_at_unix_ms > 0
             && item.update_checked_at_unix_ms <= inventory.generated_at_unix_ms + MAX_INVENTORY_EVIDENCE_SKEW_MS)
         || (["current", "out_of_date"].includes(item.update_posture)
-          && (item.update_checked_at_unix_ms === null || !snapshotIsFresh(item.update_checked_at_unix_ms)))
+          && (item.update_checked_at_unix_ms === null
+            || inventory.generated_at_unix_ms - item.update_checked_at_unix_ms > item.evidence_max_age_ms))
+        || (item.evidence_freshness !== "fresh" && ["current", "out_of_date"].includes(item.update_posture))
+        || (item.update_posture === "not_reported" && item.update_checked_at_unix_ms !== null)
         || !(item.display_name === null || boundedString(item.display_name, 160))
         || !(item.update_channel === null || boundedString(item.update_channel, 160))
         || !boundedString(item.update_recommendation, 512)) return false;
