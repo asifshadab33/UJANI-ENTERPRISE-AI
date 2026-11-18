@@ -158,6 +158,12 @@ class SecurityProviderInventoryTests(unittest.TestCase):
         with self.assertRaisesRegex(InventoryError, "update-check timestamp"):
             self.assess([item])
 
+    def test_direct_observations_reject_untyped_update_state_and_channel(self):
+        with self.assertRaisesRegex(InventoryError, "update status"):
+            self.assess([self.observation(update_status="current")])
+        with self.assertRaisesRegex(InventoryError, "update channel"):
+            self.assess([self.observation(update_channel=object())])
+
     def test_validated_connector_record_maps_to_enrolled_device_posture(self):
         record = {
             "tenant_id": "tenant-a",
