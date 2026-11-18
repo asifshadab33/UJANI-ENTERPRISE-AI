@@ -713,7 +713,9 @@ pub fn map_security_provider_evidence_page(
             value.parse::<u64>().map_err(|_| ConnectorError::MalformedEvidence)
         }).transpose()?;
         if checked.is_some_and(|value| {
-            value == 0 || value > now_unix_ms.saturating_add(CLOCK_SKEW_TOLERANCE_MS)
+            value == 0
+                || value > now_unix_ms.saturating_add(CLOCK_SKEW_TOLERANCE_MS)
+                || value > record.observed_at_unix_ms.saturating_add(CLOCK_SKEW_TOLERANCE_MS)
         }) {
             return Err(ConnectorError::MalformedEvidence);
         }
@@ -1555,6 +1557,7 @@ fn validate_overview(overview: &OperatorOverview, now: u64) -> Result<(), ()> {
                 checked > 0
                     && checked <= now.saturating_add(CLOCK_SKEW_TOLERANCE_MS)
                     && checked <= inventory.generated_at_unix_ms.saturating_add(CLOCK_SKEW_TOLERANCE_MS)
+                    && checked <= provider.observed_at_unix_ms.saturating_add(CLOCK_SKEW_TOLERANCE_MS)
                     && now.saturating_sub(checked) <= provider.evidence_max_age_ms
             }) && (provider.update_posture != "current"
                 || provider.update_checked_at_unix_ms.is_some())
