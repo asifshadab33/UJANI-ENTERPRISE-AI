@@ -12,6 +12,27 @@ The inventory domain layer accepts normalized provider observations already boun
 
 Supported categories are malware protection, firewall, EDR, quarantine, device isolation, and security updates. Capabilities are not inferred from the product name or from an aggregate healthy state.
 
+## Existing connector-framework integration
+
+This inventory is a domain assessment layer, not a second connector framework. Production adapters must implement the existing `ReadOnlyConnector` contract in `crates/ujani-enterprise-policy/src/connector_contract.rs`, advertise their read-only capabilities through the existing `CapabilityRegistry`, and pass every returned `EvidencePage` through `validate_evidence_page` before normalization or display. The host remains responsible for authenticating the tenant, selecting the tenant boundary, applying least-privilege permissions and resource budgets, and recording audit events.
+
+Map the already validated connector evidence into the inventory observation as follows:
+
+| Existing connector evidence | Inventory meaning |
+| --- | --- |
+| `EvidenceRecord.tenant_id` | Must equal the authenticated tenant; never trust a tenant ID supplied by a device payload |
+| `EvidenceRecord.provider_id` | Stable, configured provider identifier |
+| `EvidenceRecord.observed_at_unix_ms` | Provider-health observation time |
+| `EvidenceRecord.fields.category` | Explicit supported security category |
+| `EvidenceRecord.fields.status` | Provider-reported health only |
+| `EvidenceRecord.fields.product_identity_known` | Explicit identity evidence; do not infer from a display label |
+| `EvidenceRecord.fields.capabilities` | Explicit provider-declared capability list |
+| `EvidenceRecord.fields.update_status` | Separate `current`, `out_of_date`, or `unknown` update finding |
+| `EvidenceRecord.fields.update_checked_at_unix_ms` | Timestamp of the update check, distinct from the health observation |
+| `EvidenceRecord.fields.update_channel` | Component checked, such as antivirus intelligence, engine/platform, or firewall rules/signatures |
+
+The connector must provide update fields only when its authenticated source actually reports them. Missing, malformed, stale, or unsupported update evidence maps to **cannot verify**, not current. An explicit out-of-date report remains a warning even when overall provider health is reported healthy. Do not add a parallel transport, credential store, connector registry, or capability registry for this feature.
+
 ## Operator experience
 
 - Show which existing provider is connected, which devices have recent observations, the source and timestamp, and which capabilities are actually exposed by the connector.
