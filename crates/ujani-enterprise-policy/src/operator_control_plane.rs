@@ -1556,7 +1556,7 @@ fn validate_overview(overview: &OperatorOverview, now: u64) -> Result<(), ()> {
                     && checked <= now.saturating_add(CLOCK_SKEW_TOLERANCE_MS)
                     && checked <= inventory.generated_at_unix_ms.saturating_add(CLOCK_SKEW_TOLERANCE_MS)
                     && now.saturating_sub(checked) <= provider.evidence_max_age_ms
-            }) && (provider.update_posture != "current"
+            }) && (!["current", "out_of_date"].contains(&provider.update_posture.as_str())
                 || provider.update_checked_at_unix_ms.is_some())
                 && (provider.evidence_freshness == "fresh"
                     || !["current", "out_of_date"].contains(&provider.update_posture.as_str()))
