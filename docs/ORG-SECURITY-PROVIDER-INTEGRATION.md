@@ -39,7 +39,7 @@ Map the already validated connector evidence into the inventory observation as f
 | `EvidenceRecord.fields.update_checked_at_unix_ms` | Timestamp of the update check, distinct from the health observation |
 | `EvidenceRecord.fields.update_channel` | Component checked, such as antivirus intelligence, engine/platform, or firewall rules/signatures |
 
-The connector must provide update fields only when its authenticated source actually reports them. Missing, malformed, stale, or unsupported update evidence maps to **cannot verify**, not current. An explicit out-of-date report remains a warning even when overall provider health is reported healthy. Do not add a parallel transport, credential store, connector registry, or capability registry for this feature.
+The connector must provide update fields only when its authenticated source actually reports them. Missing, malformed, stale, or unsupported update evidence maps to **cannot verify**, not current. An explicit out-of-date report in a fresh provider observation remains a warning even when the connector omits a separate update-check timestamp; the provider observation timestamp bounds that report. If a separate update-check timestamp is supplied but stale, downgrade the update finding to unverified. A **current** claim always requires its own fresh update-check timestamp. Do not add a parallel transport, credential store, connector registry, or capability registry for this feature.
 
 ## Operator-console inventory contract
 
