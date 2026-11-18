@@ -1546,8 +1546,11 @@ fn validate_overview(overview: &OperatorOverview, now: u64) -> Result<(), ()> {
                 && provider.observed_at_unix_ms > 0
                 && provider.observed_at_unix_ms <= now.saturating_add(CLOCK_SKEW_TOLERANCE_MS)
                 && provider.observed_at_unix_ms <= inventory.generated_at_unix_ms.saturating_add(CLOCK_SKEW_TOLERANCE_MS)
-                && (provider.evidence_freshness != "fresh"
-                    || now.saturating_sub(provider.observed_at_unix_ms) <= provider.evidence_max_age_ms);
+                && match provider.evidence_freshness.as_str() {
+                    "fresh" => now.saturating_sub(provider.observed_at_unix_ms) <= provider.evidence_max_age_ms,
+                    "stale" => now.saturating_sub(provider.observed_at_unix_ms) > provider.evidence_max_age_ms,
+                    _ => true,
+                };
             let update_checked_valid = provider.update_checked_at_unix_ms.is_none_or(|checked| {
                 checked > 0
                     && checked <= now.saturating_add(CLOCK_SKEW_TOLERANCE_MS)
