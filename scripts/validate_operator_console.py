@@ -113,6 +113,7 @@ def main():
     assert "Product identity reported" in js and "Product identity not verified" in js, "Aggregate provider health must not imply product identity."
     assert '"Checked " + formatAge(item.update_checked_at_unix_ms)' in js, "Update freshness must show the provider update-check timestamp."
     assert "item.evidence_max_age_ms > 2592000000" in js, "Provider freshness must use a bounded configured age policy."
+    assert '["current", "out_of_date"].includes(item.update_posture)' in js, "Current and outdated findings must both require fresh check timestamps."
     assert "Freshness limit: " in js, "The operator must see the configured provider evidence-age policy."
     assert 'item.evidence_freshness !== "fresh" && ["current", "out_of_date"].includes(item.update_posture)' in js, "Stale evidence must never claim current or out-of-date verified updates."
     assert "Update evidence: " in js and "channel not reported" in js, "Provider update evidence age and channel must be visible."
