@@ -398,7 +398,8 @@ pub fn validate_model_runtime_inventory(
     Ok(())
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ModelTaskRequirements {
     pub required_capabilities: Vec<ModelCapability>,
     pub minimum_context_length_tokens: Option<u64>,
@@ -867,6 +868,30 @@ mod tests {
             match_model_to_task(&value, "qwen2.5:7b", &requirements(), 1_100, 10_000).unwrap();
         assert_eq!(result.status, ModelFitStatus::Incompatible);
         assert!(result.reasons.contains(&ModelFitReason::ModelNotInstalled));
+    }
+
+    #[test]
+    fn task_requirements_deserialization_rejects_unknown_fields() {
+        let valid = br#"{
+            "required_capabilities": ["chat", "vision"],
+            "minimum_context_length_tokens": 8192,
+            "minimum_memory_mb": 4096
+        }"#;
+        let parsed: ModelTaskRequirements = serde_json::from_slice(valid).unwrap();
+        assert_eq!(
+            parsed.required_capabilities,
+            vec![ModelCapability::Chat, ModelCapability::Vision]
+        );
+        assert_eq!(parsed.minimum_context_length_tokens, Some(8192));
+        assert_eq!(parsed.minimum_memory_mb, Some(4096));
+
+        let unknown = br#"{
+            "required_capabilities": ["chat"],
+            "minimum_context_length_tokens": null,
+            "minimum_memory_mb": null,
+            "tenant_id": "other-tenant"
+        }"#;
+        assert!(serde_json::from_slice::<ModelTaskRequirements>(unknown).is_err());
     }
 
     #[test]
