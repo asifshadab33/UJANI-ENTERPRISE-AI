@@ -272,8 +272,7 @@ mod tests {
 
     #[test]
     fn model_task_match_is_read_only_operator_route_with_bounded_request() {
-        let route =
-            resolve_route(HttpMethod::Post, "/v1/operator/model-task-match").unwrap();
+        let route = resolve_route(HttpMethod::Post, "/v1/operator/model-task-match").unwrap();
         assert_eq!(route.route, OperatorHttpRoute::OperatorModelTaskMatch);
         assert!(route.permits_operator_role(OperatorRole::Viewer));
         assert!(route.permits_operator_role(OperatorRole::Administrator));
