@@ -728,8 +728,7 @@ mod tests {
         let mut task = requirements();
         task.minimum_context_length_tokens = Some(16_000);
 
-        let result =
-            match_model_to_task(&value, "qwen2.5:7b", &task, 10_100, 10_000).unwrap();
+        let result = match_model_to_task(&value, "qwen2.5:7b", &task, 10_100, 10_000).unwrap();
 
         assert_eq!(result.status, ModelFitStatus::Unknown);
         assert!(result
@@ -747,8 +746,7 @@ mod tests {
         let mut task = requirements();
         task.minimum_context_length_tokens = Some(16_000);
 
-        let result =
-            match_model_to_task(&value, "qwen2.5:7b", &task, 1_100, 10_000).unwrap();
+        let result = match_model_to_task(&value, "qwen2.5:7b", &task, 1_100, 10_000).unwrap();
 
         assert_eq!(result.status, ModelFitStatus::Incompatible);
         assert!(result
