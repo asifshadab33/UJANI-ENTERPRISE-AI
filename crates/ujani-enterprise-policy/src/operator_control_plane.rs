@@ -1537,8 +1537,23 @@ where
             .iter()
             .find(|inventory| inventory.device_id == device_id)
             .ok_or(OperatorServiceError::ModelInventoryUnavailable)?;
-        let inventory = model_inventory_for_matching(inventory_view)
+        let mut inventory = model_inventory_for_matching(inventory_view)
             .map_err(|_| OperatorServiceError::InvalidOverview)?;
+        // The inventory is an OS/runtime free-memory snapshot; the operator view is
+        // the current remaining fleet budget after reservations. A fit must satisfy
+        // both. If one source is unknown, retain a known insufficiency but never
+        // promote a known-sufficient value into a compatibility claim.
+        if let Some(required_memory) = requirements.minimum_memory_mb {
+            inventory.hardware.memory_available_mb = match (
+                inventory.hardware.memory_available_mb,
+                device.remaining_memory_mb,
+            ) {
+                (Some(snapshot), Some(remaining)) => Some(snapshot.min(remaining)),
+                (Some(snapshot), None) if snapshot < required_memory => Some(snapshot),
+                (None, Some(remaining)) if remaining < required_memory => Some(remaining),
+                _ => None,
+            };
+        }
         let result = match_model_to_task(
             &inventory,
             model_ref,
@@ -3333,6 +3348,81 @@ mod tests {
             audit.events.lock().unwrap()[0].outcome,
             OperatorAuditOutcome::ReadSucceeded
         );
+    }
+
+    #[test]
+    fn model_task_match_uses_snapshot_and_current_remaining_memory_budget() {
+        for (snapshot_memory, remaining_memory, expected_status) in [
+            (
+                8_192,
+                Some(1_024),
+                crate::model_inventory::ModelFitStatus::Incompatible,
+            ),
+            (
+                1_024,
+                Some(8_192),
+                crate::model_inventory::ModelFitStatus::Incompatible,
+            ),
+            (8_192, None, crate::model_inventory::ModelFitStatus::Unknown),
+        ] {
+            let auth = auth();
+            let token = auth
+                .mint_after_identity_verification(&claims("tenant-a"), 10_000)
+                .unwrap();
+            let mut overview = empty_overview("tenant-a");
+            overview.generated_at_unix_ms = 10_100;
+            overview.devices.push(OperatorDeviceView {
+                device_id: "device-1".into(),
+                display_name: "Lab workstation".into(),
+                platform: "linux".into(),
+                trust_state: "enrolled".into(),
+                availability: "schedulable".into(),
+                remaining_cpu_millis: Some(1500),
+                remaining_memory_mb: remaining_memory,
+                last_seen_unix_ms: 10_100,
+            });
+            overview.fleet = OperatorFleetCounts {
+                registered_devices: 1,
+                trusted_consented_devices: 1,
+                online_fresh_devices: 1,
+                schedulable_devices: 1,
+            };
+            let mut inventory = sample_model_inventory("device-1", 10_100);
+            inventory.hardware.memory_available_mb = Some(snapshot_memory);
+            overview.model_inventory.push(inventory);
+
+            let repo = Arc::new(TestRepo {
+                values: Mutex::new(HashMap::from([("tenant-a".into(), overview)])),
+            });
+            let service = OperatorControlPlane::new(auth, repo, Arc::new(TestAudit::default()));
+            let requirements = ModelTaskRequirements {
+                required_capabilities: vec![ModelCapability::Chat],
+                minimum_context_length_tokens: Some(4096),
+                minimum_memory_mb: Some(4096),
+            };
+            let result = service
+                .match_model_for_task(
+                    &token,
+                    "device-1",
+                    "llama3.2:latest",
+                    &requirements,
+                    10_100,
+                )
+                .unwrap();
+
+            assert_eq!(result.result.status, expected_status);
+            if expected_status == crate::model_inventory::ModelFitStatus::Incompatible {
+                assert!(result
+                    .result
+                    .reasons
+                    .contains(&crate::model_inventory::ModelFitReason::HardwareMemoryBelowRequirement));
+            } else {
+                assert!(result
+                    .result
+                    .reasons
+                    .contains(&crate::model_inventory::ModelFitReason::HardwareMemoryUnknown));
+            }
+        }
     }
 
     #[test]
