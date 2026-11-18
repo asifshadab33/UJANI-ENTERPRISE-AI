@@ -115,7 +115,7 @@ def main():
     assert "pub security_provider_inventory: Option<OperatorSecurityProviderInventoryView>" in control_plane, "Provider inventory must be part of the authenticated operator overview contract."
     assert "json_security_provider_inventory(inventory, available)" in control_plane, "Provider inventory must be serialized within the bounded overview response."
     assert "pub fn map_security_provider_evidence_page" in control_plane and "validate_evidence_page(" in control_plane, "Provider rows must come through the existing validated read-only connector page contract."
-    assert "enrolled_device_id" in control_plane and 'DataClassification::Internal | DataClassification::Confidential' in control_plane, "Device identity must come from enrolled host state and restricted evidence must not be exported."
+    assert "enrolled_device_id" in control_plane and 'record.data_classification != DataClassification::Internal' in control_plane, "Device identity must come from enrolled host state and restricted evidence must not be exported."
     assert "evidence_freshness" in control_plane and '"out_of_date"' in control_plane, "Backend validation must preserve evidence freshness and explicit outdated states."
     assert '"evidence_freshness": { "enum": ["fresh", "stale", "unknown"] }' in provider_schema, "Versioned schema must distinguish fresh, stale and unknown evidence."
     assert '"update_posture": { "enum": ["current", "out_of_date", "unverified", "not_reported"] }' in provider_schema, "Versioned schema must distinguish outdated, unverified and unreported updates."
