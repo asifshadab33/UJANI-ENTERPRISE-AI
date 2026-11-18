@@ -525,7 +525,11 @@ pub fn match_model_to_task(
             Some(actual) if actual >= required_context => {}
             Some(_) => {
                 reasons.push(ModelFitReason::ContextLengthTooShort);
-                incompatible = true;
+                if evidence_is_usable(&model.evidence, now_unix_ms, max_age_ms) {
+                    incompatible = true;
+                } else {
+                    unknown = true;
+                }
             }
             None => {
                 reasons.push(ModelFitReason::ContextLengthUnknown);
@@ -712,6 +716,44 @@ mod tests {
             .reasons
             .contains(&ModelFitReason::MemoryEstimateUnknown));
         assert_eq!(result.status, ModelFitStatus::Unknown);
+    }
+
+    #[test]
+    fn stale_model_evidence_does_not_claim_short_context_is_incompatible() {
+        let mut value = inventory();
+        value.generated_at_unix_ms = 10_000;
+        value.runtimes[0].evidence.observed_at_unix_ms = Some(10_000);
+        value.models[0].evidence.observed_at_unix_ms = Some(1);
+        value.models[0].context_length_tokens = Some(8_192);
+        let mut task = requirements();
+        task.minimum_context_length_tokens = Some(16_000);
+
+        let result =
+            match_model_to_task(&value, "qwen2.5:7b", &task, 10_100, 10_000).unwrap();
+
+        assert_eq!(result.status, ModelFitStatus::Unknown);
+        assert!(result
+            .reasons
+            .contains(&ModelFitReason::ModelEvidenceNotFresh));
+        assert!(result
+            .reasons
+            .contains(&ModelFitReason::ContextLengthTooShort));
+    }
+
+    #[test]
+    fn fresh_model_evidence_rejects_short_context() {
+        let mut value = inventory();
+        value.models[0].context_length_tokens = Some(8_192);
+        let mut task = requirements();
+        task.minimum_context_length_tokens = Some(16_000);
+
+        let result =
+            match_model_to_task(&value, "qwen2.5:7b", &task, 1_100, 10_000).unwrap();
+
+        assert_eq!(result.status, ModelFitStatus::Incompatible);
+        assert!(result
+            .reasons
+            .contains(&ModelFitReason::ContextLengthTooShort));
     }
 
     #[test]
