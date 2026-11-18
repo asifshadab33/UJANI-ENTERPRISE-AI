@@ -193,7 +193,7 @@ def assess_device_category(
             "administrator and ask them to update the antivirus security intelligence/engine "
             "or firewall software and rule/signature feeds through the existing vendor or OS workflow."
         )
-    elif update_evidence and all(item.update_status is UpdateStatus.CURRENT for item in update_evidence):
+    elif relevant and len(update_evidence) == len(relevant) and all(item.update_status is UpdateStatus.CURRENT for item in update_evidence):
         update_posture = UpdatePosture.CURRENT
         update_recommendation = "The configured provider reports its checked security updates are current; continue normal update monitoring."
     elif any(item.update_status is not UpdateStatus.UNKNOWN for item in relevant):
