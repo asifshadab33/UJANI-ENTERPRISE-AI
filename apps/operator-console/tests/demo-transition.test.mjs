@@ -6,8 +6,8 @@ import { readBoundedJson } from "../boundedJson.js";
 
 
 async function readAppSource() {
-  const source = await readAppSource();
-  return source.replace(/^import \\{ readBoundedJson \\} from \\"\\.\\/boundedJson\\.js\\";\\s*/u, "");
+  const source = await readFile(new URL("../app.js", import.meta.url), "utf8");
+  return source.replace(/^import \{ readBoundedJson \} from "\.\/boundedJson\.js";\s*/u, "");
 }
 
 class FakeElement {
