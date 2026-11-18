@@ -104,7 +104,7 @@ def main():
     assert "item.evidence_freshness === \"fresh\" ? item.status : item.evidence_freshness" in js, "Stale provider evidence must not be displayed as healthy."
     assert "!deviceIds.has(item.device_id)" in js, "Provider records must be bound to devices in the same authenticated overview."
     assert "item.evidence_max_age_ms > 2592000000" in js, "Provider evidence freshness must use a bounded configured age policy."
-    assert 'item.evidence_freshness === "fresh" && inventory.generated_at_unix_ms - item.observed_at_unix_ms' in js, "Fresh labels must be checked against the provider's configured age policy."
+    assert "inventory.generated_at_unix_ms - item.observed_at_unix_ms > item.evidence_max_age_ms" in js, "Fresh labels must be checked against the provider's configured age policy."
     assert 'item.evidence_freshness === "stale"' in js and 'item.evidence_max_age_ms' in js, "Stale labels must be consistent with the configured evidence age."
     assert 'item.update_posture === "current"' in js and 'item.update_checked_at_unix_ms === null' in js, "Current update claims must have a fresh check timestamp; explicit fresh outdated findings may omit a separate check timestamp."
     assert "new Set(item.capabilities).size !== item.capabilities.length" in js, "Duplicate capability claims must be rejected."
