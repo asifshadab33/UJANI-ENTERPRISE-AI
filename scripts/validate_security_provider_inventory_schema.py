@@ -80,6 +80,10 @@ def main() -> None:
     invalid_freshness["providers"][0]["evidence_freshness"] = "fresh-ish"
     invalid_cases.append(invalid_freshness)
 
+    missing_verified_update_time = sample()
+    missing_verified_update_time["providers"][0]["update_checked_at_unix_ms"] = None
+    invalid_cases.append(missing_verified_update_time)
+
     for candidate in invalid_cases:
         if validator.is_valid(candidate):
             raise SystemExit("security-provider inventory schema accepted an invalid fixture")
