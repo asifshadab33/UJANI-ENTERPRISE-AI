@@ -2461,6 +2461,50 @@ mod tests {
     }
 
     #[test]
+    fn same_provider_can_report_distinct_categories_across_pages() {
+        let page_a = sample_security_evidence_page(
+            100_000,
+            "current",
+            Some("100000"),
+            DataClassification::Internal,
+        );
+        let mut page_b = sample_security_evidence_page(
+            100_000,
+            "out_of_date",
+            None,
+            DataClassification::Internal,
+        );
+        page_b.records[0].record_id = "record-firewall".into();
+        page_b.records[0]
+            .fields
+            .insert("category".into(), "firewall".into());
+        page_b.records[0]
+            .fields
+            .insert("display_name".into(), "Windows Firewall".into());
+        let sources = [
+            SecurityProviderEvidenceSource {
+                page: &page_a,
+                enrolled_device_id: "device-a",
+                expected_provider_id: "microsoft.defender",
+                requested_page_size: 10,
+                max_age_ms: 60_000,
+            },
+            SecurityProviderEvidenceSource {
+                page: &page_b,
+                enrolled_device_id: "device-a",
+                expected_provider_id: "microsoft.defender",
+                requested_page_size: 10,
+                max_age_ms: 60_000,
+            },
+        ];
+        let inventory =
+            map_security_provider_evidence_pages(&sources, "tenant-a", 100_000).unwrap();
+        assert_eq!(inventory.providers.len(), 2);
+        assert_eq!(inventory.providers[0].category, "firewall");
+        assert_eq!(inventory.providers[1].category, "malware_protection");
+    }
+
+    #[test]
     fn aggregate_rejects_duplicate_device_provider_category_tuples() {
         let page = sample_security_evidence_page(
             100_000,
