@@ -591,6 +591,7 @@ function validSecurityProviderInventory(inventory, overviewGeneratedAt) {
         || !(item.update_checked_at_unix_ms === null
           || Number.isSafeInteger(item.update_checked_at_unix_ms) && item.update_checked_at_unix_ms > 0
             && item.update_checked_at_unix_ms <= inventory.generated_at_unix_ms + MAX_INVENTORY_EVIDENCE_SKEW_MS)
+        || (["current", "out_of_date"].includes(item.update_posture) && item.update_checked_at_unix_ms === null)
         || !(item.display_name === null || boundedString(item.display_name, 160))
         || !(item.update_channel === null || boundedString(item.update_channel, 160))
         || !boundedString(item.update_recommendation, 512)) return false;
