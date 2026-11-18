@@ -52,6 +52,8 @@ jobs:
         run: node --check apps/operator-console/app.js
       - name: Test operator console demo-to-live transition
         run: node --test apps/operator-console/tests/demo-transition.test.mjs
+      - name: Test bounded operator console JSON parsing
+        run: node --test apps/operator-console/tests/bounded-json.test.mjs
       - name: Test local read-only network log adapters
         run: python -m unittest discover -s tests -v
       - name: Check formatting

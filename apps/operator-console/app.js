@@ -1,4 +1,7 @@
+import { readBoundedJson as readBoundedCatalogueJson } from "./boundedJson.js";
+
 const API_PATH = "/api/v1/operator/overview";
+const MAX_MODEL_CATALOGUE_BYTES = 256 * 1024;
 const byId = (id) => document.getElementById(id);
 const connection = byId("connection");
 const notice = byId("notice");
@@ -317,17 +320,25 @@ function renderModelCatalogue(catalogue) {
 }
 async function loadModelCatalogue() {
   const root = byId("model-catalogue");
+  const controller = new AbortController();
+  const requestTimeout = window.setTimeout(() => controller.abort(), 5_000);
   try {
     const response = await fetch("./model-catalog.json", {
       method: "GET", credentials: "same-origin", cache: "no-store", redirect: "error",
+      signal: controller.signal,
       headers: { "Accept": "application/json" }
     });
     if (!response.ok) throw new Error("Catalogue request returned HTTP " + response.status + ".");
-    const catalogue = await response.json();
+    const catalogue = await readBoundedCatalogueJson(response, MAX_MODEL_CATALOGUE_BYTES, "model catalogue");
     renderModelCatalogue(catalogue);
   } catch (error) {
-    root.textContent = error instanceof Error ? "Model catalogue unavailable: " + error.message : "Model catalogue unavailable.";
+    root.textContent = error instanceof Error && error.name === "AbortError"
+      ? "Model catalogue unavailable: the request exceeded the 5-second time limit."
+      : error instanceof Error ? "Model catalogue unavailable: " + error.message : "Model catalogue unavailable.";
     root.classList.add("empty");
+  } finally {
+    controller.abort();
+    window.clearTimeout(requestTimeout);
   }
 }
 
