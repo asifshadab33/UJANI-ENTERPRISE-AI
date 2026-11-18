@@ -34,6 +34,7 @@ def main():
     """Validate the operator console's static security and API contract."""
     html = (APP / "index.html").read_text(encoding="utf-8")
     js = (APP / "app.js").read_text(encoding="utf-8")
+    bounded_json = (APP / "boundedJson.js").read_text(encoding="utf-8")
     css = (APP / "styles.css").read_text(encoding="utf-8")
     readme = (APP / "README.md").read_text(encoding="utf-8")
     control_plane = (ROOT / "crates" / "ujani-enterprise-policy" / "src" / "operator_control_plane.rs").read_text(encoding="utf-8")
@@ -54,7 +55,9 @@ def main():
     assert "new AbortController()" in js and "controller.abort(), 10_000" in js and "signal: controller.signal" in js, "Overview requests must have a finite timeout."
     assert "window.clearTimeout(requestTimeout)" in js, "Overview request timeout must always be cleared."
     assert "await readBoundedJson(response)" in js, "Overview JSON must be parsed only after bounded streaming."
-    assert "content-length" in js and "reader.read()" in js and "reader.cancel()" in js, "Response stream must enforce declared and observed byte limits."
+    assert 'await readBoundedJson(response, MAX_MODEL_CATALOGUE_BYTES, "model catalogue")' in js, "Model catalogue JSON must use a dedicated response budget."
+    assert "controller.abort(), 5_000" in js and "window.clearTimeout(requestTimeout)" in js, "Model catalogue fetch must have a finite timeout."
+    assert "export async function readBoundedJson" in bounded_json and "content-length" in bounded_json and "reader.read()" in bounded_json and "reader.cancel()" in bounded_json, "Shared JSON parser must enforce declared and observed byte limits."
     assert "data.devices.length <= 10000" in js and "data.workloads.length <= 1000" in js and "data.approvals.length <= 1000" in js, "Overview collections must match backend bounds."
     assert "counts.schedulable_devices <= counts.online_fresh_devices" in js, "Fleet counts must be internally consistent."
     assert "MAX_OVERVIEW_SNAPSHOT_AGE_MS = 5 * 60 * 1000" in js, "Fleet snapshots must have a bounded freshness window."
