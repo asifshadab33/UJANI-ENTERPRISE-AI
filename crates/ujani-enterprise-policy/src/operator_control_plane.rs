@@ -1412,16 +1412,39 @@ where
 
     /// Authorize a short-lived session, read only that tenant's overview, validate
     /// the response contract, and durably audit the access before returning it.
+    /// Authorize a short-lived session, read only that tenant's overview, validate
+    /// the response contract, and durably audit the access before returning it.
+    /// General operator overview reads remain strict about stale model evidence.
     pub fn get_overview(
         &self,
         session_token: &str,
         now_unix_ms: u64,
     ) -> Result<OperatorOverview, OperatorServiceError> {
+        self.get_overview_internal(session_token, now_unix_ms, false)
+    }
+
+    /// Model matching may downgrade only age-stale runtime/model evidence to Unknown.
+    /// Inventory freshness, tenant identity, device trust, consent-derived scheduling,
+    /// malformed/future evidence, and audit requirements remain enforced.
+    fn get_overview_for_model_match(
+        &self,
+        session_token: &str,
+        now_unix_ms: u64,
+    ) -> Result<OperatorOverview, OperatorServiceError> {
+        self.get_overview_internal(session_token, now_unix_ms, true)
+    }
+
+    fn get_overview_internal(
+        &self,
+        session_token: &str,
+        now_unix_ms: u64,
+        downgrade_stale_model_evidence: bool,
+    ) -> Result<OperatorOverview, OperatorServiceError> {
         let claims = self
             .authenticator
             .verify_session(session_token, now_unix_ms)
             .map_err(|_| OperatorServiceError::Unauthorized)?;
-        let overview = match self
+        let mut overview = match self
             .repository
             .load_tenant_overview(&claims.tenant_id, now_unix_ms)
         {
@@ -1439,6 +1462,9 @@ where
                 return Err(OperatorServiceError::RepositoryUnavailable);
             }
         };
+        if downgrade_stale_model_evidence {
+            downgrade_stale_model_inventory_evidence_to_unknown(&mut overview, now_unix_ms);
+        }
         let outcome = if overview.tenant_id != claims.tenant_id
             || validate_overview(&overview, now_unix_ms).is_err()
             || overview
@@ -1489,7 +1515,7 @@ where
             return Err(OperatorServiceError::InvalidModelMatchRequest);
         }
 
-        let overview = self.get_overview(session_token, now_unix_ms)?;
+        let overview = self.get_overview_for_model_match(session_token, now_unix_ms)?;
         let device = overview
             .devices
             .iter()
@@ -1695,6 +1721,59 @@ fn model_inventory_for_matching(
             contains_credentials: Some(privacy.contains_credentials),
         }),
     })
+}
+
+fn downgrade_stale_model_inventory_evidence_to_unknown(overview: &mut OperatorOverview, now: u64) {
+    fn downgrade(
+        evidence: &mut OperatorInventoryEvidence,
+        inventory_generated_at: u64,
+        now: u64,
+    ) {
+        let valid_source = [
+            "runtime_api",
+            "os_api",
+            "runtime_metadata",
+            "signed_catalogue",
+            "published_catalogue",
+            "estimate",
+            "unknown",
+        ]
+        .contains(&evidence.source.as_str());
+        let valid_confidence = ["verified", "reported", "estimated", "unknown"]
+            .contains(&evidence.confidence.as_str());
+        if !valid_source
+            || !valid_confidence
+            || (evidence.source == "unknown" && evidence.confidence == "verified")
+        {
+            return;
+        }
+        let Some(observed_at) = evidence.observed_at_unix_ms else {
+            return;
+        };
+        // Do not hide zero, future, or post-snapshot timestamps: those remain invalid.
+        if observed_at == 0
+            || observed_at > now.saturating_add(CLOCK_SKEW_TOLERANCE_MS)
+            || observed_at > inventory_generated_at.saturating_add(CLOCK_SKEW_TOLERANCE_MS)
+            || now.saturating_sub(observed_at) <= MAX_OVERVIEW_AGE_MS
+        {
+            return;
+        }
+        evidence.source = "unknown".into();
+        evidence.confidence = "unknown".into();
+        evidence.observed_at_unix_ms = None;
+    }
+
+    for inventory in &mut overview.model_inventory {
+        for accelerator in &mut inventory.hardware.accelerators {
+            downgrade(&mut accelerator.evidence, inventory.generated_at_unix_ms, now);
+        }
+        for runtime in &mut inventory.runtimes {
+            downgrade(&mut runtime.evidence, inventory.generated_at_unix_ms, now);
+        }
+        for model in &mut inventory.models {
+            downgrade(&mut model.evidence, inventory.generated_at_unix_ms, now);
+        }
+    }
 }
 
 fn validate_overview(overview: &OperatorOverview, now: u64) -> Result<(), ()> {
@@ -3254,6 +3333,95 @@ mod tests {
             audit.events.lock().unwrap()[0].outcome,
             OperatorAuditOutcome::ReadSucceeded
         );
+    }
+
+    #[test]
+    fn model_task_match_returns_unknown_for_age_stale_runtime_or_model_evidence() {
+        let requirements = ModelTaskRequirements {
+            required_capabilities: vec![ModelCapability::Chat],
+            minimum_context_length_tokens: Some(4096),
+            minimum_memory_mb: None,
+        };
+
+        for stale_kind in ["runtime", "model"] {
+            let auth = auth();
+            let mut session_claims = claims("tenant-a");
+            session_claims.issued_at_unix_ms = 90_000;
+            session_claims.expires_at_unix_ms = 110_000;
+            let token = auth
+                .mint_after_identity_verification(&session_claims, 100_100)
+                .unwrap();
+
+            let mut overview = empty_overview("tenant-a");
+            overview.generated_at_unix_ms = 100_100;
+            overview.devices.push(OperatorDeviceView {
+                device_id: "device-1".into(),
+                display_name: "Lab workstation".into(),
+                platform: "linux".into(),
+                trust_state: "enrolled".into(),
+                availability: "schedulable".into(),
+                remaining_cpu_millis: Some(1500),
+                remaining_memory_mb: Some(4096),
+                last_seen_unix_ms: 100_100,
+            });
+            overview.fleet = OperatorFleetCounts {
+                registered_devices: 1,
+                trusted_consented_devices: 1,
+                online_fresh_devices: 1,
+                schedulable_devices: 1,
+            };
+            let mut inventory = sample_model_inventory("device-1", 100_100);
+            match stale_kind {
+                "runtime" => {
+                    inventory.runtimes[0].evidence.observed_at_unix_ms = Some(1);
+                }
+                "model" => {
+                    inventory.models[0].evidence.observed_at_unix_ms = Some(1);
+                }
+                _ => unreachable!(),
+            }
+            overview.model_inventory.push(inventory);
+
+            let repo = Arc::new(TestRepo {
+                values: Mutex::new(HashMap::from([("tenant-a".into(), overview)])),
+            });
+            let audit = Arc::new(TestAudit::default());
+            let service = OperatorControlPlane::new(auth, repo, audit.clone());
+
+            let result = service
+                .match_model_for_task(
+                    &token,
+                    "device-1",
+                    "llama3.2:latest",
+                    &requirements,
+                    100_100,
+                )
+                .expect("stale evidence should produce an Unknown match, not an overview error");
+            assert_eq!(
+                result.result.status,
+                crate::model_inventory::ModelFitStatus::Unknown
+            );
+            let expected_reason = if stale_kind == "runtime" {
+                crate::model_inventory::ModelFitReason::RuntimeEvidenceNotFresh
+            } else {
+                crate::model_inventory::ModelFitReason::ModelEvidenceNotFresh
+            };
+            assert!(result.result.reasons.contains(&expected_reason));
+            assert_eq!(
+                audit.events.lock().unwrap()[0].outcome,
+                OperatorAuditOutcome::ReadSucceeded
+            );
+
+            // Ordinary overview reads intentionally retain their strict stale-evidence denial.
+            assert_eq!(
+                service.get_overview(&token, 100_100),
+                Err(OperatorServiceError::InvalidOverview)
+            );
+            assert_eq!(
+                audit.events.lock().unwrap()[1].outcome,
+                OperatorAuditOutcome::InvalidOverview
+            );
+        }
     }
 
     #[test]
