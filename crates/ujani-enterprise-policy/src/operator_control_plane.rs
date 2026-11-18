@@ -730,7 +730,7 @@ pub fn map_security_provider_evidence_page(
                     "Provider evidence is stale. Refresh the existing OS/vendor connector before relying on its health or update status.",
                     None,
                 )
-            } else if update_status == "out_of_date" && checked_fresh {
+            } else if update_status == "out_of_date" && (checked.is_none() || checked_fresh) {
                 (
                     "out_of_date",
                     "Security product updates are reported out of date. Ask the device owner or administrator to update antivirus intelligence/engine or firewall software and rule/signature feeds through the existing vendor or OS workflow.",
@@ -1981,6 +1981,23 @@ mod tests {
         assert_eq!(provider.update_posture, "out_of_date");
         assert_eq!(provider.update_checked_at_unix_ms, Some(99_000));
         assert_eq!(provider.capabilities, vec!["malware_protection"]);
+    }
+
+    #[test]
+    fn fresh_outdated_provider_evidence_warns_even_without_separate_update_check_time() {
+        let page = sample_security_evidence_page(
+            100_000,
+            "out_of_date",
+            None,
+            DataClassification::Internal,
+        );
+        let inventory = map_security_provider_evidence_page(
+            &page, "tenant-a", "device-1", "microsoft.defender", 10, 100_000, 60_000,
+        ).unwrap();
+        assert_eq!(inventory.providers[0].evidence_freshness, "fresh");
+        assert_eq!(inventory.providers[0].update_posture, "out_of_date");
+        assert_eq!(inventory.providers[0].update_checked_at_unix_ms, None);
+        assert!(inventory.providers[0].update_recommendation.contains("out of date"));
     }
 
     #[test]
