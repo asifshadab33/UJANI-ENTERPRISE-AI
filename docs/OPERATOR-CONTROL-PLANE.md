@@ -64,3 +64,8 @@ The policy crate's unit tests exercise token integrity/expiry, tenant-boundary r
 ## Customer-hosted deployment foundation
 
 The recommended customer-owned topology, initial PostgreSQL tenant/RLS migration, audit-event schema and implementation gates are documented in [Customer-hosted Control Plane Deployment](CUSTOMER-HOSTED-CONTROL-PLANE-DEPLOYMENT.md). The migration is a schema foundation, not a live database adapter; the operator console remains unavailable until a real authenticated service is deployed.
+
+
+## Model inventory v2 projection boundary
+
+The authenticated model-inventory v2 preflight and persistence path validates the shared descriptor, owner consent, organisation authorisation, device reference, freshness and privacy flags. The current operator overview and task matcher still consume the bounded v1 `OperatorModelInventoryView` projection. They do not yet preserve v2 per-capability evidence, tool/vision/embedding evidence, platform/accelerator compatibility or all resource estimates. Until a production repository adapter and versioned operator-view projection expose those fields, task matching must use only the v1 facts present in the overview and must not infer v2-only capabilities or placement compatibility. A v2 operator projection and its schema/console tests remain required before v2 metadata can drive placement decisions.
