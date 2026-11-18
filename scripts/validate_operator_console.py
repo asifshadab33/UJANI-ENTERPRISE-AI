@@ -107,6 +107,7 @@ def main():
     assert "inventory.generated_at_unix_ms - item.observed_at_unix_ms > item.evidence_max_age_ms" in js, "Fresh labels must be checked against the provider's configured age policy."
     assert 'item.evidence_freshness === "stale"' in js and 'item.evidence_max_age_ms' in js, "Stale labels must be consistent with the configured evidence age."
     assert 'item.update_posture === "current"' in js and 'item.update_checked_at_unix_ms === null' in js, "Current update claims must have a fresh check timestamp; explicit fresh outdated findings may omit a separate check timestamp."
+    assert "item.update_checked_at_unix_ms <= item.observed_at_unix_ms + MAX_INVENTORY_EVIDENCE_SKEW_MS" in js, "Update check timestamps must be bound to the corresponding provider observation."
     assert "new Set(item.capabilities).size !== item.capabilities.length" in js, "Duplicate capability claims must be rejected."
     assert '"out_of_date"' in js and "item.update_recommendation" in js, "Outdated provider evidence must show an explicit warning and recommendation."
     assert "No authenticated security-provider evidence is available" in js, "Missing provider evidence must never imply healthy protection."
