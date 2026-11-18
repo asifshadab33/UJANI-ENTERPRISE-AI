@@ -36,6 +36,8 @@ def main():
     js = (APP / "app.js").read_text(encoding="utf-8")
     css = (APP / "styles.css").read_text(encoding="utf-8")
     readme = (APP / "README.md").read_text(encoding="utf-8")
+    control_plane = (ROOT / "crates" / "ujani-enterprise-policy" / "src" / "operator_control_plane.rs").read_text(encoding="utf-8")
+    provider_schema = (ROOT / "schemas" / "security-provider-inventory-v1.schema.json").read_text(encoding="utf-8")
     parser = ConsoleParser()
     parser.feed(html)
     assert parser.inline_scripts == 0, "Console must not use inline scripts."
@@ -104,6 +106,11 @@ def main():
     assert "No authenticated security-provider evidence is available" in js, "Missing provider evidence must never imply healthy protection."
     assert "Product identity reported" in js and "Product identity not verified" in js, "Aggregate provider health must not imply product identity."
     assert "renderSecurityProviderInventory(data.security_provider_inventory || null)" in js, "Live provider inventory must render only from the authenticated overview."
+    assert "pub security_provider_inventory: Option<OperatorSecurityProviderInventoryView>" in control_plane, "Provider inventory must be part of the authenticated operator overview contract."
+    assert "json_security_provider_inventory(inventory, available)" in control_plane, "Provider inventory must be serialized within the bounded overview response."
+    assert "evidence_freshness" in control_plane and '"out_of_date"' in control_plane, "Backend validation must preserve evidence freshness and explicit outdated states."
+    assert '"evidence_freshness": { "enum": ["fresh", "stale", "unknown"] }' in provider_schema, "Versioned schema must distinguish fresh, stale and unknown evidence."
+    assert '"update_posture": { "enum": ["current", "out_of_date", "unverified", "not_reported"] }' in provider_schema, "Versioned schema must distinguish outdated, unverified and unreported updates."
     assert "function hardwareSummary" in js and "Accelerators not reported" in js, "Hardware-only inventory must expose reported CPU/RAM/storage and preserve unknown accelerators."
     assert "function runtimeEvidenceSummary" in js and "validEvidence(runtime.evidence, inventory.generated_at_unix_ms)" in js, "Runtime evidence freshness must be validated and visible."
     assert "No model metadata reported" in js and "renderedDevices" in js, "Devices without model records must remain visible in the hardware/runtime inventory."
