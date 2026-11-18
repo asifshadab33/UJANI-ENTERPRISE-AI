@@ -1809,6 +1809,7 @@ mod tests {
     #[test]
     fn stale_or_unknown_provider_evidence_never_claims_fresh_health() {
         let mut overview = empty_overview("tenant-a");
+        overview.generated_at_unix_ms = 100_100;
         overview.devices.push(OperatorDeviceView {
             device_id: "device-1".into(),
             display_name: "Lab workstation".into(),
@@ -1817,18 +1818,18 @@ mod tests {
             availability: "online".into(),
             remaining_cpu_millis: None,
             remaining_memory_mb: None,
-            last_seen_unix_ms: 10_100,
+            last_seen_unix_ms: 100_100,
         });
         overview.fleet.registered_devices = 1;
         overview.fleet.trusted_consented_devices = 1;
         overview.fleet.online_fresh_devices = 1;
-        let mut inventory = sample_security_provider_inventory(10_100);
+        let mut inventory = sample_security_provider_inventory(100_100);
         inventory.providers[0].evidence_freshness = "stale".into();
         inventory.providers[0].observed_at_unix_ms = 1;
         inventory.providers[0].update_posture = "unverified".into();
         inventory.providers[0].update_checked_at_unix_ms = None;
         overview.security_provider_inventory = Some(inventory);
-        assert!(validate_overview(&overview, 10_100).is_ok());
+        assert!(validate_overview(&overview, 100_100).is_ok());
 
         overview.security_provider_inventory.as_mut().unwrap().providers[0].evidence_freshness = "fresh".into();
         assert!(validate_overview(&overview, 10_100).is_err());
