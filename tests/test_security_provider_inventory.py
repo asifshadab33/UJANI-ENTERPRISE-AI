@@ -154,7 +154,7 @@ class SecurityProviderInventoryTests(unittest.TestCase):
                 "product_identity_known": "true",
                 "capabilities": '["malware_protection","quarantine"]',
                 "update_status": "out_of_date",
-                "update_checked_at_unix_ms": "99_000",
+                "update_checked_at_unix_ms": "99000",
                 "update_channel": "security_intelligence",
                 "display_name": "Existing Endpoint Protection",
             },
