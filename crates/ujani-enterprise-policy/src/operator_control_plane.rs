@@ -3263,10 +3263,14 @@ mod tests {
             minimum_context_length_tokens: Some(4096),
             minimum_memory_mb: None,
         };
+        // Aggregate fleet counters may lag a device transition; the selected
+        // device's own trust, consent-derived availability and freshness must gate.
         for (trust_state, availability, last_seen_unix_ms) in [
             ("revoked", "schedulable", 10_100),
             ("enrolled", "paused", 10_100),
+            ("enrolled", "disabled", 10_100),
             ("enrolled", "schedulable", 0),
+            ("enrolled", "schedulable", 100_000),
         ] {
             let auth = auth();
             let token = auth
