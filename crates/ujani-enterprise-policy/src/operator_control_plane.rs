@@ -1640,7 +1640,7 @@ mod tests {
             ("category".to_string(), "malware_protection".to_string()),
             ("status".to_string(), "healthy".to_string()),
             ("product_identity_known".to_string(), "true".to_string()),
-            ("capabilities".to_string(), "[\\"malware_protection\\"]".to_string()),
+            ("capabilities".to_string(), "[\"malware_protection\"]".to_string()),
             ("update_status".to_string(), update_status.to_string()),
             ("display_name".to_string(), "Microsoft Defender".to_string()),
             ("device_id".to_string(), "untrusted-device-field".to_string()),
