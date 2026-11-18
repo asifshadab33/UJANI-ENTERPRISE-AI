@@ -610,6 +610,30 @@ pub struct OperatorModelInventoryView {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OperatorSecurityProviderView {
+    pub device_id: String,
+    pub provider_id: String,
+    pub display_name: Option<String>,
+    pub category: String,
+    pub status: String,
+    pub evidence_source: String,
+    pub evidence_freshness: String,
+    pub observed_at_unix_ms: u64,
+    pub product_identity_known: bool,
+    pub capabilities: Vec<String>,
+    pub update_posture: String,
+    pub update_checked_at_unix_ms: Option<u64>,
+    pub update_channel: Option<String>,
+    pub update_recommendation: String,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OperatorSecurityProviderInventoryView {
+    pub schema_version: u8,
+    pub generated_at_unix_ms: u64,
+    pub providers: Vec<OperatorSecurityProviderView>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OperatorOverview {
     pub schema_version: u16,
     pub tenant_id: String,
@@ -620,6 +644,8 @@ pub struct OperatorOverview {
     pub approvals: Vec<OperatorApprovalView>,
     /// Optional, privacy-minimised inventory from authenticated device telemetry.
     pub model_inventory: Vec<OperatorModelInventoryView>,
+    /// Optional tenant/device-scoped evidence from authenticated read-only OS/vendor connectors.
+    pub security_provider_inventory: Option<OperatorSecurityProviderInventoryView>,
 }
 
 impl OperatorOverview {
@@ -714,13 +740,22 @@ impl OperatorOverview {
         };
         let _ = write!(
             &mut out,
-            ",\"model_inventory_status\":{},\"model_inventory_total_devices\":{},\"model_inventory_returned_devices\":{},\"model_inventory_total_models\":{},\"model_inventory_returned_models\":{}}}",
+            ",\"model_inventory_status\":{},\"model_inventory_total_devices\":{},\"model_inventory_returned_devices\":{},\"model_inventory_total_models\":{},\"model_inventory_returned_models\":{}",
             json_string(inventory_status),
             self.model_inventory.len(),
             returned_device_count,
             total_model_count,
             returned_model_count
         );
+        if let Some(inventory) = &self.security_provider_inventory {
+            let entry = json_security_provider_inventory(inventory);
+            if out.len().saturating_add(entry.len()).saturating_add(1) > MAX_OVERVIEW_RESPONSE_BYTES {
+                return "{\"error\":\"overview_exceeds_response_budget\"}".into();
+            }
+            out.push_str(",\"security_provider_inventory\":");
+            out.push_str(&entry);
+        }
+        out.push('}');
         if out.len() > MAX_OVERVIEW_RESPONSE_BYTES {
             return "{\"error\":\"overview_exceeds_response_budget\"}".into();
         }
@@ -838,6 +873,46 @@ fn json_model_inventory(inventory: &OperatorModelInventoryView) -> String {
     out.push_str("}}");
     out
 }
+fn json_security_provider_inventory(
+    inventory: &OperatorSecurityProviderInventoryView,
+) -> String {
+    let mut out = String::with_capacity(256 + inventory.providers.len() * 320);
+    let _ = write!(
+        &mut out,
+        "{{\"schema_version\":{},\"generated_at_unix_ms\":{},\"providers\":[",
+        inventory.schema_version, inventory.generated_at_unix_ms
+    );
+    for (index, provider) in inventory.providers.iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        let capabilities = provider.capabilities.iter()
+            .map(|value| json_string(value))
+            .collect::<Vec<_>>()
+            .join(",");
+        let _ = write!(
+            &mut out,
+            "{{\"device_id\":{},\"provider_id\":{},\"display_name\":{},\"category\":{},\"status\":{},\"evidence_source\":{},\"evidence_freshness\":{},\"observed_at_unix_ms\":{},\"product_identity_known\":{},\"capabilities\":[{}],\"update_posture\":{},\"update_checked_at_unix_ms\":{},\"update_channel\":{},\"update_recommendation\":{}}}",
+            json_string(&provider.device_id),
+            json_string(&provider.provider_id),
+            json_optional_string(provider.display_name.as_deref()),
+            json_string(&provider.category),
+            json_string(&provider.status),
+            json_string(&provider.evidence_source),
+            json_string(&provider.evidence_freshness),
+            provider.observed_at_unix_ms,
+            provider.product_identity_known,
+            capabilities,
+            json_string(&provider.update_posture),
+            json_optional_number(provider.update_checked_at_unix_ms),
+            json_optional_string(provider.update_channel.as_deref()),
+            json_string(&provider.update_recommendation)
+        );
+    }
+    out.push_str("]}");
+    out
+}
+
 fn valid_bounded_text(value: &str, max: usize) -> bool {
     !value.trim().is_empty() && value.len() <= max && !value.chars().any(char::is_control)
 }
@@ -1322,6 +1397,7 @@ mod tests {
             workloads: vec![],
             approvals: vec![],
             model_inventory: vec![],
+            security_provider_inventory: None,
         }
     }
 
