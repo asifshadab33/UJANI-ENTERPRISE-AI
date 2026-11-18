@@ -30,6 +30,7 @@ const MAX_WORKLOADS: usize = 1_000;
 const MAX_APPROVALS: usize = 1_000;
 const MAX_TOTAL_MODEL_ROWS: usize = 100_000;
 const MAX_OVERVIEW_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
+const MAX_SECURITY_EVIDENCE_AGE_MS: u64 = 30 * 24 * 60 * 60 * 1000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OperatorRole {
@@ -622,6 +623,7 @@ pub struct OperatorSecurityProviderView {
     pub status: String,
     pub evidence_source: String,
     pub evidence_freshness: String,
+    pub evidence_max_age_ms: u64,
     pub observed_at_unix_ms: u64,
     pub product_identity_known: bool,
     pub capabilities: Vec<String>,
@@ -653,6 +655,9 @@ pub fn map_security_provider_evidence_page(
 ) -> Result<OperatorSecurityProviderInventoryView, ConnectorError> {
     if !valid_identifier(enrolled_device_id, 128) {
         return Err(ConnectorError::InvalidIdentifier);
+    }
+    if max_age_ms == 0 || max_age_ms > MAX_SECURITY_EVIDENCE_AGE_MS {
+        return Err(ConnectorError::MalformedEvidence);
     }
     let freshness = validate_evidence_page(
         page,
@@ -770,6 +775,7 @@ pub fn map_security_provider_evidence_page(
                 EvidenceFreshness::Fresh => "fresh",
                 EvidenceFreshness::Stale => "stale",
             }.into(),
+            evidence_max_age_ms: max_age_ms,
             observed_at_unix_ms: record.observed_at_unix_ms,
             product_identity_known,
             capabilities,
@@ -1050,7 +1056,7 @@ fn json_security_provider_inventory(
             .join(",");
         let _ = write!(
             &mut out,
-            "{{\"device_id\":{},\"provider_id\":{},\"display_name\":{},\"category\":{},\"status\":{},\"evidence_source\":{},\"evidence_freshness\":{},\"observed_at_unix_ms\":{},\"product_identity_known\":{},\"capabilities\":[{}],\"update_posture\":{},\"update_checked_at_unix_ms\":{},\"update_channel\":{},\"update_recommendation\":{}}}",
+            "{{\"device_id\":{},\"provider_id\":{},\"display_name\":{},\"category\":{},\"status\":{},\"evidence_source\":{},\"evidence_freshness\":{},\"evidence_max_age_ms\":{},\"observed_at_unix_ms\":{},\"product_identity_known\":{},\"capabilities\":[{}],\"update_posture\":{},\"update_checked_at_unix_ms\":{},\"update_channel\":{},\"update_recommendation\":{}}}",
             json_string(&provider.device_id),
             json_string(&provider.provider_id),
             json_optional_string(provider.display_name.as_deref()),
@@ -1058,6 +1064,7 @@ fn json_security_provider_inventory(
             json_string(&provider.status),
             json_string(&provider.evidence_source),
             json_string(&provider.evidence_freshness),
+            provider.evidence_max_age_ms,
             provider.observed_at_unix_ms,
             provider.product_identity_known,
             capabilities,
@@ -1533,16 +1540,19 @@ fn validate_overview(overview: &OperatorOverview, now: u64) -> Result<(), ()> {
             let identity_valid = valid_identifier(&provider.device_id, 128)
                 && ids.contains(provider.device_id.as_str())
                 && valid_identifier(&provider.provider_id, 96);
-            let observed_valid = provider.observed_at_unix_ms > 0
+            let evidence_age_policy_valid = provider.evidence_max_age_ms > 0
+                && provider.evidence_max_age_ms <= MAX_SECURITY_EVIDENCE_AGE_MS;
+            let observed_valid = evidence_age_policy_valid
+                && provider.observed_at_unix_ms > 0
                 && provider.observed_at_unix_ms <= now.saturating_add(CLOCK_SKEW_TOLERANCE_MS)
                 && provider.observed_at_unix_ms <= inventory.generated_at_unix_ms.saturating_add(CLOCK_SKEW_TOLERANCE_MS)
                 && (provider.evidence_freshness != "fresh"
-                    || now.saturating_sub(provider.observed_at_unix_ms) <= MAX_OVERVIEW_AGE_MS);
+                    || now.saturating_sub(provider.observed_at_unix_ms) <= provider.evidence_max_age_ms);
             let update_checked_valid = provider.update_checked_at_unix_ms.is_none_or(|checked| {
                 checked > 0
                     && checked <= now.saturating_add(CLOCK_SKEW_TOLERANCE_MS)
                     && checked <= inventory.generated_at_unix_ms.saturating_add(CLOCK_SKEW_TOLERANCE_MS)
-                    && now.saturating_sub(checked) <= MAX_OVERVIEW_AGE_MS
+                    && now.saturating_sub(checked) <= provider.evidence_max_age_ms
             }) && (!["current", "out_of_date"].contains(&provider.update_posture.as_str())
                 || provider.update_checked_at_unix_ms.is_some());
             let capabilities_valid = provider.capabilities.len() <= 32
@@ -1678,6 +1688,7 @@ mod tests {
                 status: "healthy".into(),
                 evidence_source: "ReadOnlyConnector".into(),
                 evidence_freshness: "fresh".into(),
+                evidence_max_age_ms: 60_000,
                 observed_at_unix_ms: generated_at_unix_ms,
                 product_identity_known: true,
                 capabilities: vec!["malware_protection".into()],
