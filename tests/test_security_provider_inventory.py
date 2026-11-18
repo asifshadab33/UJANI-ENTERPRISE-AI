@@ -257,6 +257,27 @@ class SecurityProviderInventoryTests(unittest.TestCase):
                 record=record,
             )
 
+    def test_connector_mapping_enforces_evidence_field_count_and_byte_bounds(self):
+        base = {
+            "tenant_id": "tenant-a",
+            "provider_id": "vendor.edr",
+            "record_id": "record-001",
+            "observed_at_unix_ms": 100_000,
+            "fields": {"category": "malware_protection", "status": "healthy"},
+        }
+        too_many = dict(base, fields={f"key-{index}": "value" for index in range(33)})
+        too_long_key = dict(base, fields={"k" * 97: "value"})
+        too_long_value = dict(base, fields={"display_name": "x" * 1025})
+        for record in (too_many, too_long_key, too_long_value):
+            with self.subTest(record=record):
+                with self.assertRaisesRegex(InventoryError, "evidence fields"):
+                    observation_from_validated_connector_record(
+                        authenticated_tenant_id="tenant-a",
+                        enrolled_device_id="device-a",
+                        expected_provider_id="vendor.edr",
+                        record=record,
+                    )
+
     def test_connector_mapping_never_accepts_device_identity_from_payload(self):
         record = {
             "tenant_id": "tenant-a",
