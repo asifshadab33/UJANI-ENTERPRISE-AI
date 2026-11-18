@@ -52,17 +52,17 @@ cargo fmt --all -- --check
 cargo test --workspace --locked
 ```
 
-### 2.4 Validate the operator console
+### 2.4 Preview the operator console
 
-The static operator console lives under `apps/operator-console`. Read its [README](../apps/operator-console/README.md) and inspect its declared scripts before running commands:
+The operator console is plain HTML, CSS and JavaScript with no third-party runtime dependencies. From the repository root, start a static server:
 
 ```sh
-cd apps/operator-console
-npm ci
-npm run
+python3 -m http.server 8000 --directory apps/operator-console
 ```
 
-Run the documented validation/test script(s) for the checked-out revision. Do not assume a local preview is a live service: the console intentionally shows no live tenant/device data until a real authenticated API and repository are deployed.
+Open `http://127.0.0.1:8000/`. Select **Load demo data** only to explore clearly labelled synthetic records. Select **Refresh live data** to test the same-origin API request; without a separately deployed authenticated service, the console should show an unavailable state.
+
+For automated checks, inspect and run the scripts documented in `scripts/validate_operator_console.py` and the existing tests under `tests/` / `apps/operator-console/tests/` as applicable to the checked-out revision. Do not assume a local preview is a live service.
 
 ### 2.5 Database/migration work
 
