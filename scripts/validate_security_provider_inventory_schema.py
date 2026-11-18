@@ -24,7 +24,8 @@ def sample() -> dict:
                 "status": "healthy",
                 "evidence_source": "customer-configured read-only connector",
                 "evidence_freshness": "fresh",
-                "observed_at_unix_ms": 1_999_000,
+                "evidence_max_age_ms": 60_000,
+                "observed_at_unix_ms: 1_999_000,
                 "product_identity_known": True,
                 "capabilities": ["malware_protection", "quarantine"],
                 "update_posture": "out_of_date",
@@ -40,7 +41,8 @@ def sample() -> dict:
                 "status": "unknown",
                 "evidence_source": "customer-configured read-only connector",
                 "evidence_freshness": "stale",
-                "observed_at_unix_ms": 1_999_000,
+                "evidence_max_age_ms": 60_000,
+                "observed_at_unix_ms: 1_999_000,
                 "product_identity_known": False,
                 "capabilities": [],
                 "update_posture": "unverified",
@@ -79,6 +81,10 @@ def main() -> None:
     invalid_freshness = sample()
     invalid_freshness["providers"][0]["evidence_freshness"] = "fresh-ish"
     invalid_cases.append(invalid_freshness)
+
+    invalid_age_policy = sample()
+    invalid_age_policy["providers"][0]["evidence_max_age_ms"] = 31 * 24 * 60 * 60 * 1000
+    invalid_cases.append(invalid_age_policy)
 
     missing_verified_update_time = sample()
     missing_verified_update_time["providers"][0]["update_checked_at_unix_ms"] = None
