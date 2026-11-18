@@ -913,7 +913,6 @@ fn json_security_provider_inventory(
             json_optional_string(provider.update_channel.as_deref()),
             json_string(&provider.update_recommendation)
         );
-    }
         if out.len() > max_bytes {
             return None;
         }
