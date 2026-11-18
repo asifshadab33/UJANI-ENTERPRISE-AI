@@ -184,7 +184,7 @@ function showDemoData() {
     providers: [
       {
         device_id: "demo-ws-01", provider_id: "microsoft.defender", display_name: "DEMO · Microsoft Defender",
-        category: "malware_protection", status: "healthy", evidence_source: "Synthetic demo observation",
+        category: "malware_protection", status: "healthy", evidence_freshness: "fresh", evidence_source: "Synthetic demo observation",
         observed_at_unix_ms: now - 30_000, product_identity_known: true,
         capabilities: ["malware_protection"], update_posture: "out_of_date",
         update_checked_at_unix_ms: now - 30_000, update_channel: "security_intelligence",
@@ -192,7 +192,7 @@ function showDemoData() {
       },
       {
         device_id: "demo-ws-02", provider_id: "opnsense.firewall", display_name: "DEMO · OPNsense Firewall",
-        category: "firewall", status: "healthy", evidence_source: "Synthetic demo observation",
+        category: "firewall", status: "healthy", evidence_freshness: "stale", evidence_source: "Synthetic demo observation",
         observed_at_unix_ms: now - 60_000, product_identity_known: true,
         capabilities: ["firewall"], update_posture: "unverified",
         update_checked_at_unix_ms: null, update_channel: null,
@@ -574,6 +574,7 @@ function validSecurityProviderInventory(inventory, overviewGeneratedAt) {
   if (!inventory || inventory.schema_version !== 1
       || !Number.isSafeInteger(inventory.generated_at_unix_ms) || inventory.generated_at_unix_ms <= 0
       || inventory.generated_at_unix_ms > overviewGeneratedAt + MAX_INVENTORY_EVIDENCE_SKEW_MS
+      || !snapshotIsFresh(inventory.generated_at_unix_ms)
       || !Array.isArray(inventory.providers) || inventory.providers.length > 10000) return false;
   const ids = new Set();
   return inventory.providers.every((item) => {
@@ -581,6 +582,7 @@ function validSecurityProviderInventory(inventory, overviewGeneratedAt) {
         || !boundedString(item.provider_id, 96)
         || !["malware_protection", "firewall", "endpoint_detection_response", "quarantine", "device_isolation", "security_updates"].includes(item.category)
         || !["healthy", "attention", "alert", "not_monitored", "unavailable", "unknown"].includes(item.status)
+        || !["fresh", "stale", "unknown"].includes(item.evidence_freshness)
         || !boundedString(item.evidence_source, 128)
         || !Number.isSafeInteger(item.observed_at_unix_ms) || item.observed_at_unix_ms <= 0
         || item.observed_at_unix_ms > inventory.generated_at_unix_ms + MAX_INVENTORY_EVIDENCE_SKEW_MS
@@ -623,8 +625,14 @@ function renderSecurityProviderInventory(inventory) {
     row.append(textCell(item.display_name || item.provider_id));
     row.append(textCell(item.category.replaceAll("_", " ")));
     const health = document.createElement("td");
-    health.append(pill(item.status));
-    if (item.status === "alert" || item.status === "attention") {
+    const reportedHealth = item.evidence_freshness === "fresh" ? item.status : item.evidence_freshness;
+    health.append(pill(reportedHealth));
+    if (item.evidence_freshness !== "fresh") {
+      const note = document.createElement("small");
+      note.textContent = "Provider health is not treated as current because this evidence is " + item.evidence_freshness + ".";
+      health.append(note);
+    }
+    if (item.evidence_freshness === "fresh" && (item.status === "alert" || item.status === "attention")) {
       const note = document.createElement("small");
       note.textContent = "Review the alert in the existing security product.";
       health.append(note);
