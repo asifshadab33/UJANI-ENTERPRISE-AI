@@ -98,6 +98,8 @@ def main():
     assert "function validSecurityProviderInventory" in js and "function renderSecurityProviderInventory" in js, "Security-provider evidence must be validated and rendered."
     assert "validSecurityProviderInventory(data.security_provider_inventory, data.generated_at_unix_ms)" in js, "Provider inventory must be checked against the authenticated overview snapshot."
     assert '["current", "out_of_date", "unverified", "not_reported"]' in js, "Update freshness states must remain distinct."
+    assert '["fresh", "stale", "unknown"].includes(item.evidence_freshness)' in js, "Provider evidence freshness must be explicit."
+    assert "item.evidence_freshness === \"fresh\" ? item.status : item.evidence_freshness" in js, "Stale provider evidence must not be displayed as healthy."
     assert '"out_of_date"' in js and "item.update_recommendation" in js, "Outdated provider evidence must show an explicit warning and recommendation."
     assert "No authenticated security-provider evidence is available" in js, "Missing provider evidence must never imply healthy protection."
     assert "renderSecurityProviderInventory(data.security_provider_inventory || null)" in js, "Live provider inventory must render only from the authenticated overview."
