@@ -9,7 +9,9 @@ from scripts.security_provider_inventory import (
     UpdatePosture,
     UpdateStatus,
     assess_device_category,
+    build_operator_inventory_payload,
     observation_from_validated_connector_record,
+    to_operator_inventory_record,
 )
 
 
@@ -182,6 +184,54 @@ class SecurityProviderInventoryTests(unittest.TestCase):
         self.assertEqual(item.device_id, "device-a")
         result = self.assess([item])
         self.assertEqual(result.update_posture, UpdatePosture.OUT_OF_DATE)
+
+    def test_operator_payload_preserves_outdated_and_unknown_update_states(self):
+        outdated = self.observation(
+            update_status=UpdateStatus.OUT_OF_DATE,
+            update_checked_at_unix_ms=99_000,
+            update_channel="security_intelligence",
+        )
+        unknown = self.observation(provider_id="vendor.firewall", category=SecurityCategory.FIREWALL)
+        payload = build_operator_inventory_payload(
+            authenticated_tenant_id="tenant-a",
+            observations=[outdated, unknown],
+            now_unix_ms=100_000,
+            max_age_ms=60_000,
+        )
+        self.assertEqual(payload["schema_version"], 1)
+        self.assertEqual(payload["providers"][0]["update_posture"], "out_of_date")
+        self.assertEqual(payload["providers"][0]["evidence_freshness"], "fresh")
+        self.assertEqual(payload["providers"][1]["update_posture"], "not_reported")
+        self.assertIsNone(payload["providers"][1]["update_checked_at_unix_ms"])
+
+    def test_operator_payload_never_exports_stale_health_or_stale_update_as_current(self):
+        stale = self.observation(
+            observed_at_unix_ms=1,
+            update_status=UpdateStatus.CURRENT,
+            update_checked_at_unix_ms=99_000,
+        )
+        record = to_operator_inventory_record(stale, now_unix_ms=100_000, max_age_ms=60_000)
+        self.assertEqual(record["status"], "healthy")
+        self.assertEqual(record["evidence_freshness"], "stale")
+        self.assertEqual(record["update_posture"], "unverified")
+        self.assertIsNone(record["update_checked_at_unix_ms"])
+
+    def test_operator_payload_rejects_cross_tenant_and_duplicate_provider_records(self):
+        with self.assertRaisesRegex(InventoryError, "cross-tenant"):
+            build_operator_inventory_payload(
+                authenticated_tenant_id="tenant-a",
+                observations=[self.observation(tenant_id="tenant-b")],
+                now_unix_ms=100_000,
+                max_age_ms=60_000,
+            )
+        item = self.observation()
+        with self.assertRaisesRegex(InventoryError, "duplicate"):
+            build_operator_inventory_payload(
+                authenticated_tenant_id="tenant-a",
+                observations=[item, item],
+                now_unix_ms=100_000,
+                max_age_ms=60_000,
+            )
 
     def test_connector_mapping_rejects_cross_tenant_and_provider_spoofing(self):
         record = {
