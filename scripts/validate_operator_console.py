@@ -104,7 +104,7 @@ def main():
     assert "item.evidence_freshness === \"fresh\" ? item.status : item.evidence_freshness" in js, "Stale provider evidence must not be displayed as healthy."
     assert "!deviceIds.has(item.device_id)" in js, "Provider records must be bound to devices in the same authenticated overview."
     assert 'item.evidence_freshness === "fresh" && !snapshotIsFresh(item.observed_at_unix_ms)' in js, "Fresh labels must require fresh underlying provider observations."
-    assert 'item.update_checked_at_unix_ms === null || !snapshotIsFresh(item.update_checked_at_unix_ms)' in js, "Current/outdated update claims must have a fresh check timestamp."
+    assert 'item.update_posture === "current"' in js and 'item.update_checked_at_unix_ms === null' in js, "Current update claims must have a fresh check timestamp; explicit fresh outdated findings may omit a separate check timestamp."
     assert "new Set(item.capabilities).size !== item.capabilities.length" in js, "Duplicate capability claims must be rejected."
     assert '"out_of_date"' in js and "item.update_recommendation" in js, "Outdated provider evidence must show an explicit warning and recommendation."
     assert "No authenticated security-provider evidence is available" in js, "Missing provider evidence must never imply healthy protection."
