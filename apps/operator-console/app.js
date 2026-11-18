@@ -622,7 +622,13 @@ function renderSecurityProviderInventory(inventory) {
   for (const item of providers) {
     const row = document.createElement("tr");
     row.append(textCell(item.device_id));
-    row.append(textCell(item.display_name || item.provider_id));
+    const providerCell = document.createElement("td");
+    const providerName = document.createElement("div");
+    providerName.textContent = item.display_name || item.provider_id;
+    const identityNote = document.createElement("small");
+    identityNote.textContent = item.product_identity_known ? "Product identity reported" : "Product identity not verified";
+    providerCell.append(providerName, identityNote);
+    row.append(providerCell);
     row.append(textCell(item.category.replaceAll("_", " ")));
     const health = document.createElement("td");
     const reportedHealth = item.evidence_freshness === "fresh" ? item.status : item.evidence_freshness;
