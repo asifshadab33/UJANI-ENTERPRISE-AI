@@ -8,6 +8,10 @@ It is designed for controlled internal use, not a public marketplace for strange
 
 > **Project status: pre-alpha policy and control-plane prototype.** The repository now contains substantial Rust policy and persistence foundations, authenticated telemetry/admission and reservation primitives, and a read-only operator console with a transport-independent authenticated service core. It is not a deployed fleet manager, production scheduler, endpoint agent or security product: no live HTTP/identity-provider integration, production key custody, durable multi-tenant service backend, OS-enforced workload isolation or remote worker execution is enabled. See [Operator Control Plane](docs/OPERATOR-CONTROL-PLANE.md), [Device Trust Integration](docs/DEVICE-TRUST-SERVICE-INTEGRATION.md) and [Release Gates](docs/RELEASE-GATES.md).
 
+## Project handbook
+
+For the complete navigable guide to setup, build-from-zero instructions, repository folders, policy/service/database operation index, operator workflows, troubleshooting and deployment gates, see the [UJANI Enterprise AI Project Handbook](docs/PROJECT-HANDBOOK.md).
+
 ## Product principles
 
 - Only explicitly enrolled, organisation-authorised devices participate.
