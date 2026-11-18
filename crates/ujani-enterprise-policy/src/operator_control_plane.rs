@@ -3401,21 +3401,14 @@ mod tests {
                 minimum_memory_mb: Some(4096),
             };
             let result = service
-                .match_model_for_task(
-                    &token,
-                    "device-1",
-                    "llama3.2:latest",
-                    &requirements,
-                    10_100,
-                )
+                .match_model_for_task(&token, "device-1", "llama3.2:latest", &requirements, 10_100)
                 .unwrap();
 
             assert_eq!(result.result.status, expected_status);
             if expected_status == crate::model_inventory::ModelFitStatus::Incompatible {
-                assert!(result
-                    .result
-                    .reasons
-                    .contains(&crate::model_inventory::ModelFitReason::HardwareMemoryBelowRequirement));
+                assert!(result.result.reasons.contains(
+                    &crate::model_inventory::ModelFitReason::HardwareMemoryBelowRequirement
+                ));
             } else {
                 assert!(result
                     .result
