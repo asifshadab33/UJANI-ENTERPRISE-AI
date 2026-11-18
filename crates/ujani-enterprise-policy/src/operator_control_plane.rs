@@ -1567,6 +1567,7 @@ fn validate_overview(overview: &OperatorOverview, now: u64) -> Result<(), ()> {
                 || !category_valid
                 || !status_valid
                 || !freshness_valid
+                || !evidence_age_policy_valid
                 || !update_valid
                 || !valid_bounded_text(&provider.evidence_source, 128)
                 || !observed_valid
