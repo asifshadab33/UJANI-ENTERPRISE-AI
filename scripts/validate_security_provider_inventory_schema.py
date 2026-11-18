@@ -23,6 +23,7 @@ def sample() -> dict:
                 "category": "malware_protection",
                 "status": "healthy",
                 "evidence_source": "customer-configured read-only connector",
+                "evidence_freshness": "fresh",
                 "observed_at_unix_ms": 1_999_000,
                 "product_identity_known": True,
                 "capabilities": ["malware_protection", "quarantine"],
@@ -38,6 +39,7 @@ def sample() -> dict:
                 "category": "firewall",
                 "status": "unknown",
                 "evidence_source": "customer-configured read-only connector",
+                "evidence_freshness": "stale",
                 "observed_at_unix_ms": 1_999_000,
                 "product_identity_known": False,
                 "capabilities": [],
@@ -73,6 +75,10 @@ def main() -> None:
     unexpected_field = sample()
     unexpected_field["providers"][0]["credentials"] = "must never be present"
     invalid_cases.append(unexpected_field)
+
+    invalid_freshness = sample()
+    invalid_freshness["providers"][0]["evidence_freshness"] = "fresh-ish"
+    invalid_cases.append(invalid_freshness)
 
     for candidate in invalid_cases:
         if validator.is_valid(candidate):
