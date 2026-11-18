@@ -1553,7 +1553,7 @@ fn validate_overview(overview: &OperatorOverview, now: u64) -> Result<(), ()> {
                     && checked <= now.saturating_add(CLOCK_SKEW_TOLERANCE_MS)
                     && checked <= inventory.generated_at_unix_ms.saturating_add(CLOCK_SKEW_TOLERANCE_MS)
                     && now.saturating_sub(checked) <= provider.evidence_max_age_ms
-            }) && (!["current", "out_of_date"].contains(&provider.update_posture.as_str())
+            }) && (provider.update_posture != "current"
                 || provider.update_checked_at_unix_ms.is_some())
                 && (provider.evidence_freshness == "fresh"
                     || !["current", "out_of_date"].contains(&provider.update_posture.as_str()))
@@ -2089,6 +2089,31 @@ mod tests {
         duplicate.providers.push(duplicate.providers[0].clone());
         overview.security_provider_inventory = Some(duplicate);
         assert!(validate_overview(&overview, 10_100).is_err());
+    }
+
+    #[test]
+    fn fresh_outdated_inventory_without_update_check_time_is_valid_and_visible() {
+        let mut overview = empty_overview("tenant-a");
+        overview.devices.push(OperatorDeviceView {
+            device_id: "device-1".into(),
+            display_name: "Lab workstation".into(),
+            platform: "windows".into(),
+            trust_state: "enrolled".into(),
+            availability: "online".into(),
+            remaining_cpu_millis: None,
+            remaining_memory_mb: None,
+            last_seen_unix_ms: 10_100,
+        });
+        overview.fleet.registered_devices = 1;
+        overview.fleet.trusted_consented_devices = 1;
+        overview.fleet.online_fresh_devices = 1;
+        let mut inventory = sample_security_provider_inventory(10_100);
+        inventory.providers[0].update_checked_at_unix_ms = None;
+        overview.security_provider_inventory = Some(inventory);
+        assert!(validate_overview(&overview, 10_100).is_ok());
+        let json = overview.to_json();
+        assert!(json.contains("\\\"update_posture\\\":\\\"out_of_date\\\""));
+        assert!(json.contains("\\\"update_checked_at_unix_ms\\\":null"));
     }
 
     #[test]
