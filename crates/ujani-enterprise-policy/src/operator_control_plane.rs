@@ -2125,6 +2125,28 @@ mod tests {
     }
 
     #[test]
+    fn explicit_outdated_status_without_fresh_check_time_is_unverified() {
+        let page = sample_security_evidence_page(
+            100_000,
+            "out_of_date",
+            None,
+            DataClassification::Internal,
+        );
+        let inventory = map_security_provider_evidence_page(
+            &page,
+            "tenant-a",
+            "device-1",
+            "microsoft.defender",
+            10,
+            100_000,
+            60_000,
+        )
+        .unwrap();
+        assert_eq!(inventory.providers[0].update_posture, "unverified");
+        assert_eq!(inventory.providers[0].update_checked_at_unix_ms, None);
+    }
+
+    #[test]
     fn stale_connector_page_never_exports_current_update_claims() {
         let page = sample_security_evidence_page(
             1,
