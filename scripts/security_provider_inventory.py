@@ -16,6 +16,8 @@ from typing import Mapping
 IDENTIFIER = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 MAX_LABEL = 160
 MAX_SOURCE = 96
+MAX_PROVIDER_ID = 96
+MAX_CAPABILITY_LEN = 96
 MAX_OBSERVATIONS = 64
 MAX_CLOCK_SKEW_MS = 30_000
 
@@ -115,9 +117,12 @@ def observation_from_validated_connector_record(
     EvidenceRecord itself does not carry an enrolled device ID; never derive that
     identity from provider-controlled fields or payloads.
     """
-    if not all(_identifier(value) for value in (
-        authenticated_tenant_id, enrolled_device_id, expected_provider_id
-    )):
+    if (
+        not _identifier(authenticated_tenant_id)
+        or not _identifier(enrolled_device_id)
+        or not _identifier(expected_provider_id)
+        or len(expected_provider_id) > MAX_PROVIDER_ID
+    ):
         raise InventoryError("authenticated tenant, device or provider identity is invalid")
     if not isinstance(record, Mapping):
         raise InventoryError("connector evidence record is invalid")
@@ -154,7 +159,10 @@ def observation_from_validated_connector_record(
     if (
         not isinstance(capabilities, list)
         or len(capabilities) > 32
-        or any(not isinstance(item, str) or not _identifier(item) for item in capabilities)
+        or any(
+            not isinstance(item, str) or not _identifier(item) or len(item) > MAX_CAPABILITY_LEN
+            for item in capabilities
+        )
     ):
         raise InventoryError("connector capability list is invalid")
 
@@ -224,12 +232,13 @@ def assess_device_category(
         if not isinstance(item.product_identity_known, bool):
             raise InventoryError("provider product-identity flag is invalid")
         if not isinstance(item.capabilities, tuple) or len(item.capabilities) > 32 or any(
-            not _identifier(capability) for capability in item.capabilities
+            not _identifier(capability) or len(capability) > MAX_CAPABILITY_LEN
+            for capability in item.capabilities
         ):
             raise InventoryError("provider capability list is invalid")
         if item.tenant_id != tenant_id or item.device_id != device_id:
             raise InventoryError("cross-tenant or cross-device evidence rejected")
-        if not _identifier(item.provider_id):
+        if not _identifier(item.provider_id) or len(item.provider_id) > MAX_PROVIDER_ID:
             raise InventoryError("provider identifier is invalid")
         if not isinstance(item.evidence_source, str) or not 1 <= len(item.evidence_source) <= MAX_SOURCE:
             raise InventoryError("evidence source is invalid")
