@@ -15,6 +15,8 @@ pub const MAX_DEVICE_INGEST_BODY_BYTES: usize = 1024 * 1024;
 /// Model inventory contains bounded metadata only; keep the same 1 MiB transport ceiling.
 pub const MAX_MODEL_INVENTORY_BODY_BYTES: usize = MAX_DEVICE_INGEST_BODY_BYTES;
 pub const MAX_OWNER_CONSENT_BODY_BYTES: usize = 16 * 1024;
+/// A task-match request contains only bounded task requirements and identifiers.
+pub const MAX_MODEL_TASK_MATCH_BODY_BYTES: usize = 8 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HttpMethod {
@@ -33,6 +35,7 @@ pub enum RoutePrincipal {
 pub enum OperatorHttpRoute {
     Health,
     OperatorOverview,
+    OperatorModelTaskMatch,
     DeviceEnrollment,
     DeviceTelemetry,
     DeviceModelInventory,
@@ -101,6 +104,15 @@ pub fn resolve_route(method: HttpMethod, path: &str) -> Option<RouteContract> {
                 minimum_role: OperatorRole::Viewer,
             },
             max_body_bytes: 0,
+        });
+    }
+    if path == "/v1/operator/model-task-match" && method == HttpMethod::Post {
+        return Some(RouteContract {
+            route: OperatorHttpRoute::OperatorModelTaskMatch,
+            principal: RoutePrincipal::Operator {
+                minimum_role: OperatorRole::Viewer,
+            },
+            max_body_bytes: MAX_MODEL_TASK_MATCH_BODY_BYTES,
         });
     }
     if path == "/v1/devices/enroll" && method == HttpMethod::Post {
@@ -230,6 +242,9 @@ pub fn service_error_status(error: OperatorServiceError) -> u16 {
         OperatorServiceError::InvalidTenantBoundary => 500,
         OperatorServiceError::RepositoryUnavailable | OperatorServiceError::AuditUnavailable => 503,
         OperatorServiceError::InvalidOverview => 502,
+        OperatorServiceError::InvalidModelMatchRequest => 400,
+        OperatorServiceError::ModelInventoryUnavailable => 404,
+        OperatorServiceError::ModelMatchRejected => 422,
     }
 }
 
@@ -253,6 +268,17 @@ mod tests {
         assert!(route.permits_operator_role(OperatorRole::Viewer));
         assert!(route.permits_operator_role(OperatorRole::Administrator));
         assert!(!route.permits_body_size(1));
+    }
+
+    #[test]
+    fn model_task_match_is_read_only_operator_route_with_bounded_request() {
+        let route = resolve_route(HttpMethod::Post, "/v1/operator/model-task-match").unwrap();
+        assert_eq!(route.route, OperatorHttpRoute::OperatorModelTaskMatch);
+        assert!(route.permits_operator_role(OperatorRole::Viewer));
+        assert!(route.permits_operator_role(OperatorRole::Administrator));
+        assert!(route.permits_body_size(MAX_MODEL_TASK_MATCH_BODY_BYTES));
+        assert!(!route.permits_body_size(MAX_MODEL_TASK_MATCH_BODY_BYTES + 1));
+        assert!(resolve_route(HttpMethod::Get, "/v1/operator/model-task-match").is_none());
     }
 
     #[test]
