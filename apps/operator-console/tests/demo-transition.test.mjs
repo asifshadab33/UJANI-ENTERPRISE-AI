@@ -6,6 +6,7 @@ import vm from "node:vm";
 class FakeElement {
   constructor() {
     this.textContent = "";
+    this.value = "";
     this.children = [];
     this.hidden = false;
     this.disabled = false;
@@ -334,3 +335,46 @@ test("security-provider inventory enforces device binding and conservative fresh
   assert.match(collectText(getElement("security-provider-inventory")), /not treated as current/);
 });
 
+
+
+test("model catalogue task filter is explicit and uses only declared catalogue metadata", async () => {
+  const source = await readFile(new URL("../app.js", import.meta.url), "utf8");
+  const elements = new Map();
+  const getElement = (id) => {
+    if (!elements.has(id)) elements.set(id, new FakeElement());
+    return elements.get(id);
+  };
+  const context = vm.createContext({
+    document: {
+      getElementById: getElement,
+      createElement: () => new FakeElement(),
+      addEventListener: () => {},
+      hidden: false
+    },
+    window: { setTimeout: () => 1, clearTimeout: () => {}, addEventListener: () => {} },
+    fetch: async () => ({ ok: false, status: 404 }),
+    AbortController,
+    console
+  });
+  vm.runInContext(source, context);
+  const catalogue = {
+    schema_version: 1,
+    models: [
+      { id: "small-chat", display_name: "Small Chat", publisher: "Example", purpose: "Chat", tasks: ["chat", "summarization"], limitations: ["Limited reasoning"], planning_ram_gib: { minimum: 4, recommended: 8 }, license: "Example licence" },
+      { id: "code-model", display_name: "Code Model", publisher: "Example", purpose: "Coding", tasks: ["coding_assistance"], limitations: ["Slower"], planning_ram_gib: { minimum: 8, recommended: 16 }, license: "Example licence" }
+    ],
+    specialist_tools: []
+  };
+  context.catalogue = catalogue;
+  vm.runInContext("renderModelCatalogue(catalogue)", context);
+  const filter = getElement("model-catalogue-task-filter");
+  assert.equal(filter.children.length, 3);
+  assert.equal(getElement("model-catalogue").children.length, 3, "two model cards plus the summary are shown initially");
+
+  filter.value = "coding_assistance";
+  filter.onchange();
+  assert.equal(getElement("model-catalogue").children.length, 2, "one matching model card plus the summary is shown");
+  assert.match(collectText(getElement("model-catalogue")), /Code Model/);
+  assert.doesNotMatch(collectText(getElement("model-catalogue")), /Small Chat/);
+  assert.match(collectText(getElement("model-catalogue")), /not verified runtime capability/);
+});
