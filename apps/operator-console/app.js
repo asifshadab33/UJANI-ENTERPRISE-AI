@@ -678,7 +678,13 @@ function renderSecurityProviderInventory(inventory) {
     row.append(updates);
     row.append(textCell(item.capabilities.join(", ") || "Not reported"));
     row.append(textCell(item.evidence_source));
-    row.append(textCell(formatAge(item.observed_at_unix_ms)));
+    const observed = document.createElement("td");
+    const observedAge = document.createElement("div");
+    observedAge.textContent = formatAge(item.observed_at_unix_ms);
+    const freshnessLimit = document.createElement("small");
+    freshnessLimit.textContent = "Freshness limit: " + Math.max(1, Math.round(item.evidence_max_age_ms / 3_600_000)) + "h";
+    observed.append(observedAge, freshnessLimit);
+    row.append(observed);
     body.append(row);
   }
 }
