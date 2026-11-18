@@ -10,9 +10,12 @@ The policy crate now contains `operator_control_plane`, a transport-independent 
 - calls a repository with the authenticated tenant identifier (never a tenant supplied by the browser);
 - rejects a repository response whose tenant does not match the authenticated session;
 - validates overview schema, freshness, record limits, unique device IDs and non-contradictory fleet counts;
-- requires an append-only audit sink to acknowledge each successful or denied overview read before returning a response (fail closed when audit is unavailable).
+- requires an append-only audit sink to acknowledge each successful or denied overview read before returning a response (fail closed when audit is unavailable);
+- exposes an authenticated, tenant-scoped, read-only model-to-task match service method that uses the existing evidence-qualified inventory matcher and only considers an installed model on the selected device. Matching is advisory and does not allocate or dispatch work.
 
-The console reads the versioned `GET /api/v1/operator/overview` response. The service core and UI currently share the contract, but the repository does **not yet contain a network listener, an OIDC/SAML adapter, a production database-backed overview repository, a durable audit sink, or a deployed endpoint**. The application is therefore not yet live-connected or production-ready.
+The console reads the versioned `GET /api/v1/operator/overview` response. A bounded `POST /v1/operator/model-task-match` route contract now specifies viewer-or-higher authentication and an 8 KiB body ceiling, but it is not yet wired to a request decoder, HTTP handler or UI. The service core and UI currently share the overview contract, but the repository does **not yet contain a network listener, an OIDC/SAML adapter, a production database-backed overview repository, a durable audit sink, or a deployed endpoint**. The application is therefore not yet live-connected or production-ready.
+
+Model matching reads the authenticated tenant overview, validates the selected device inventory and calls `match_model_to_task`. Unknown or stale evidence stays unknown; estimated memory fit is not promoted to verified compatibility. The result is informational only and cannot admit workloads, reserve resources, install models or dispatch work.
 
 ## Identity and session boundary
 
