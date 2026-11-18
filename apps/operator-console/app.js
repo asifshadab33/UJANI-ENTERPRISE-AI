@@ -651,6 +651,12 @@ function renderSecurityProviderInventory(inventory) {
     row.append(health);
     const updates = document.createElement("td");
     updates.append(pill(item.update_posture));
+    const checked = document.createElement("small");
+    checked.textContent = item.update_checked_at_unix_ms === null
+      ? "Update check not reported"
+      : "Checked " + formatAge(item.update_checked_at_unix_ms)
+        + (item.update_channel ? " · " + item.update_channel : "");
+    updates.append(checked);
     if (item.update_posture === "out_of_date" || item.update_posture === "unverified" || item.update_posture === "not_reported") {
       const note = document.createElement("small");
       note.textContent = item.update_recommendation;
