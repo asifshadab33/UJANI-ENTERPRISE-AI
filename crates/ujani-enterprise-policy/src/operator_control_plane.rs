@@ -1479,7 +1479,11 @@ where
         }
 
         let overview = self.get_overview(session_token, now_unix_ms)?;
-        if !overview.devices.iter().any(|device| device.device_id == device_id) {
+        if !overview
+            .devices
+            .iter()
+            .any(|device| device.device_id == device_id)
+        {
             return Err(OperatorServiceError::ModelInventoryUnavailable);
         }
         let inventory_view = overview
@@ -3186,7 +3190,9 @@ mod tests {
             online_fresh_devices: 1,
             schedulable_devices: 1,
         };
-        overview.model_inventory.push(sample_model_inventory("device-1", 10_100));
+        overview
+            .model_inventory
+            .push(sample_model_inventory("device-1", 10_100));
         let repo = Arc::new(TestRepo {
             values: Mutex::new(HashMap::from([("tenant-a".into(), overview)])),
         });
@@ -3199,18 +3205,18 @@ mod tests {
         };
 
         let result = service
-            .match_model_for_task(
-                &token,
-                "device-1",
-                "llama3.2:latest",
-                &requirements,
-                10_100,
-            )
+            .match_model_for_task(&token, "device-1", "llama3.2:latest", &requirements, 10_100)
             .unwrap();
         assert_eq!(result.device_id, "device-1");
-        assert_eq!(result.result.status, crate::model_inventory::ModelFitStatus::Compatible);
+        assert_eq!(
+            result.result.status,
+            crate::model_inventory::ModelFitStatus::Compatible
+        );
         assert!(result.result.reasons.is_empty());
-        assert_eq!(audit.events.lock().unwrap()[0].outcome, OperatorAuditOutcome::ReadSucceeded);
+        assert_eq!(
+            audit.events.lock().unwrap()[0].outcome,
+            OperatorAuditOutcome::ReadSucceeded
+        );
     }
 
     #[test]
@@ -3266,7 +3272,9 @@ mod tests {
             online_fresh_devices: 1,
             schedulable_devices: 1,
         };
-        overview.model_inventory.push(sample_model_inventory("device-1", 10_100));
+        overview
+            .model_inventory
+            .push(sample_model_inventory("device-1", 10_100));
         let repo = Arc::new(TestRepo {
             values: Mutex::new(HashMap::from([("tenant-a".into(), overview)])),
         });
@@ -3278,11 +3286,23 @@ mod tests {
             minimum_memory_mb: None,
         };
         assert_eq!(
-            service.match_model_for_task(&token, "device-1", "/home/operator/model", &requirements, 10_100),
+            service.match_model_for_task(
+                &token,
+                "device-1",
+                "/home/operator/model",
+                &requirements,
+                10_100
+            ),
             Err(OperatorServiceError::InvalidModelMatchRequest)
         );
         assert_eq!(
-            service.match_model_for_task(&token, "device-1", "not-installed", &requirements, 10_100),
+            service.match_model_for_task(
+                &token,
+                "device-1",
+                "not-installed",
+                &requirements,
+                10_100
+            ),
             Err(OperatorServiceError::ModelMatchRejected)
         );
     }
