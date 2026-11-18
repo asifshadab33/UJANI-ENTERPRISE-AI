@@ -231,20 +231,47 @@ function renderList(id, records, emptyText, detailKeys) {
 
 function renderModelCatalogue(catalogue) {
   const root = byId("model-catalogue");
+  const taskFilter = byId("model-catalogue-task-filter");
+  const selectedTask = taskFilter.value || "all";
   root.replaceChildren();
   if (!catalogue || catalogue.schema_version !== 1
       || !Array.isArray(catalogue.models) || catalogue.models.length > 64
       || !Array.isArray(catalogue.specialist_tools) || catalogue.specialist_tools.length > 32) {
     throw new Error("The local model catalogue has an unsupported structure.");
   }
+
+  const availableTasks = new Set();
   for (const model of catalogue.models) {
     if (!model || !boundedString(model.id, 96) || !boundedString(model.display_name, 128)
         || !boundedString(model.purpose, 600) || !Array.isArray(model.tasks)
+        || model.tasks.length > 32 || !model.tasks.every((task) => boundedString(task, 64))
+        || new Set(model.tasks).size !== model.tasks.length
         || !Array.isArray(model.limitations) || !model.planning_ram_gib
         || !Number.isSafeInteger(model.planning_ram_gib.minimum)
         || !Number.isSafeInteger(model.planning_ram_gib.recommended)) {
       throw new Error("A model catalogue entry failed validation.");
     }
+    for (const task of model.tasks) availableTasks.add(task);
+  }
+
+  taskFilter.replaceChildren();
+  const allTasks = document.createElement("option");
+  allTasks.value = "all";
+  allTasks.textContent = "All tasks";
+  taskFilter.append(allTasks);
+  for (const task of [...availableTasks].sort()) {
+    const option = document.createElement("option");
+    option.value = task;
+    option.textContent = task.replaceAll("_", " ");
+    taskFilter.append(option);
+  }
+  taskFilter.value = availableTasks.has(selectedTask) ? selectedTask : "all";
+  taskFilter.onchange = () => renderModelCatalogue(catalogue);
+
+  const visibleModels = catalogue.models.filter((model) =>
+    taskFilter.value === "all" || model.tasks.includes(taskFilter.value)
+  );
+  for (const model of visibleModels) {
     const card = document.createElement("article");
     card.className = "catalogue-card";
     const heading = document.createElement("h3");
@@ -265,6 +292,12 @@ function renderModelCatalogue(catalogue) {
     card.append(heading, purpose, tasks, limits, resources, size, licence);
     root.append(card);
   }
+  const summary = document.createElement("p");
+  summary.className = "muted";
+  summary.textContent = "Showing " + visibleModels.length + " of " + catalogue.models.length
+    + " candidate models. Task labels are catalogue metadata, not verified runtime capability.";
+  root.append(summary);
+
   for (const tool of catalogue.specialist_tools) {
     if (!tool || !boundedString(tool.id, 96) || !boundedString(tool.display_name, 128)
         || !boundedString(tool.purpose, 600) || !Array.isArray(tool.limitations)) {
