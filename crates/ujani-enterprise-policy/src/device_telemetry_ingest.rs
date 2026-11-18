@@ -91,6 +91,7 @@ pub enum DeviceTelemetryIntakeError {
     InvalidDeviceId,
     InvalidGenerationOrSequence,
     InvalidResourceMeasurement,
+    BodyTooLarge,
     StaleOrFutureSample,
     InvalidRoute,
     RequestBindingMismatch,
@@ -106,6 +107,7 @@ impl DeviceTelemetryIntakeError {
             Self::InvalidRoute => 404,
             Self::DeviceAuthenticationFailed | Self::RequestBindingMismatch => 401,
             Self::OwnerConsentMissing => 403,
+            Self::BodyTooLarge => 413,
             Self::TrustStoreUnavailable => 503,
             _ => 400,
         }
@@ -132,7 +134,10 @@ pub fn validate_device_telemetry_body(
     raw_body: &[u8],
     now_unix_ms: u64,
 ) -> Result<DeviceTelemetrySample, DeviceTelemetryIntakeError> {
-    if raw_body.is_empty() || raw_body.len() > MAX_DEVICE_REQUEST_BODY_BYTES {
+    if raw_body.len() > MAX_DEVICE_REQUEST_BODY_BYTES {
+        return Err(DeviceTelemetryIntakeError::BodyTooLarge);
+    }
+    if raw_body.is_empty() {
         return Err(DeviceTelemetryIntakeError::InvalidResourceMeasurement);
     }
     let body: DeviceTelemetryBody = serde_json::from_slice(raw_body)
@@ -190,11 +195,11 @@ pub fn authenticate_device_telemetry_request(
     now_unix_ms: u64,
 ) -> Result<(AuthenticatedDeviceRequest, DeviceTelemetrySample), DeviceTelemetryIntakeError> {
     let route = resolve_route(method, path).ok_or(DeviceTelemetryIntakeError::InvalidRoute)?;
-    if route.route != OperatorHttpRoute::DeviceTelemetry
-        || route.max_body_bytes < raw_body.len()
-        || !route.permits_body_size(raw_body.len())
-    {
+    if route.route != OperatorHttpRoute::DeviceTelemetry {
         return Err(DeviceTelemetryIntakeError::InvalidRoute);
+    }
+    if !route.permits_body_size(raw_body.len()) {
+        return Err(DeviceTelemetryIntakeError::BodyTooLarge);
     }
 
     let sample = validate_device_telemetry_body(raw_body, now_unix_ms)?;
@@ -511,6 +516,36 @@ mod tests {
         assert_eq!(sample.memory_available_mb, Some(4_096));
         let expected_digest: [u8; 32] = Sha256::digest(&raw).into();
         assert_eq!(sample.payload_digest, expected_digest);
+    }
+
+    #[test]
+    fn authenticated_intake_maps_oversized_body_to_http_413_before_authentication() {
+        let (registry, device, directory, unique_id) = signed_registry(true);
+        let oversized = vec![b' '; MAX_DEVICE_REQUEST_BODY_BYTES + 1];
+        let signed = signed_telemetry_request(&device, &oversized, "device-1", unique_id);
+        let error = authenticate_device_telemetry_request(
+            &registry,
+            HttpMethod::Post,
+            "/v1/devices/device-1/telemetry",
+            &signed,
+            &oversized,
+            250,
+        )
+        .unwrap_err();
+        assert_eq!(error, DeviceTelemetryIntakeError::BodyTooLarge);
+        assert_eq!(error.http_status(), 413);
+        drop(registry);
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn validate_body_reports_payload_too_large_consistently() {
+        let oversized = vec![b' '; MAX_DEVICE_REQUEST_BODY_BYTES + 1];
+        assert_eq!(
+            validate_device_telemetry_body(&oversized, 250),
+            Err(DeviceTelemetryIntakeError::BodyTooLarge)
+        );
+        assert_eq!(DeviceTelemetryIntakeError::BodyTooLarge.http_status(), 413);
     }
 
     #[test]
