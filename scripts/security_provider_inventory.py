@@ -212,11 +212,21 @@ def assess_device_category(
         raise InventoryError("current timestamp is invalid")
     if isinstance(max_age_ms, bool) or not isinstance(max_age_ms, int) or max_age_ms < 0:
         raise InventoryError("evidence age limit is invalid")
-    if len(observations) > MAX_OBSERVATIONS:
+    if not isinstance(observations, (tuple, list)) or len(observations) > MAX_OBSERVATIONS:
         raise InventoryError("provider observation limit exceeded")
 
     relevant = []
     for item in observations:
+        if not isinstance(item, ProviderObservation):
+            raise InventoryError("provider observation record is invalid")
+        if not isinstance(item.category, SecurityCategory) or not isinstance(item.status, ProviderStatus):
+            raise InventoryError("provider category or health status is invalid")
+        if not isinstance(item.product_identity_known, bool):
+            raise InventoryError("provider product-identity flag is invalid")
+        if not isinstance(item.capabilities, tuple) or len(item.capabilities) > 32 or any(
+            not _identifier(capability) for capability in item.capabilities
+        ):
+            raise InventoryError("provider capability list is invalid")
         if item.tenant_id != tenant_id or item.device_id != device_id:
             raise InventoryError("cross-tenant or cross-device evidence rejected")
         if not _identifier(item.provider_id):
@@ -231,7 +241,11 @@ def assess_device_category(
             or any(ord(ch) < 32 for ch in item.display_name)
         ):
             raise InventoryError("provider display name is invalid")
-        if isinstance(item.observed_at_unix_ms, bool) or not isinstance(item.observed_at_unix_ms, int):
+        if (
+            isinstance(item.observed_at_unix_ms, bool)
+            or not isinstance(item.observed_at_unix_ms, int)
+            or item.observed_at_unix_ms < 0
+        ):
             raise InventoryError("provider timestamp is invalid")
         if not isinstance(item.update_status, UpdateStatus):
             raise InventoryError("update status is invalid")
