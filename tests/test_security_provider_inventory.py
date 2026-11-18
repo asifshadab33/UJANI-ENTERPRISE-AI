@@ -143,6 +143,10 @@ class SecurityProviderInventoryTests(unittest.TestCase):
             self.assess([self.observation(status="healthy")])
         with self.assertRaisesRegex(InventoryError, "observation record"):
             self.assess([{"provider_id": "untrusted"}])
+        with self.assertRaisesRegex(InventoryError, "provider identifier"):
+            self.assess([self.observation(provider_id="p" * 97)])
+        with self.assertRaisesRegex(InventoryError, "capability list"):
+            self.assess([self.observation(capabilities=("c" * 97,))])
 
     def test_invalid_update_timestamp_is_rejected(self):
         item = self.observation(
