@@ -16,6 +16,9 @@ Supported categories are malware protection, firewall, EDR, quarantine, device i
 
 - Show which existing provider is connected, which devices have recent observations, the source and timestamp, and which capabilities are actually exposed by the connector.
 - A healthy antivirus report is not proof of current signatures, successful file scans, ransomware protection, quarantine readiness, or network isolation.
+- Treat update currency as a separate security finding for both malware protection and firewalls. A provider must explicitly report whether its security intelligence/virus definitions, engine/platform, and firewall software/signature/rule feeds are current or out of date; UJANI must not infer currency from product name, version strings alone, or an aggregate healthy state.
+- If the provider reports an out-of-date component, raise a visible security warning identifying the affected product/category and evidence timestamp, and direct the user/administrator to update it through the existing vendor/OS workflow. If update evidence is absent, stale, or unsupported, say **cannot verify latest updates**—never label it current.
+- Compare against current vendor release information only through an authenticated, supported provider connector or authoritative update feed. Do not hard-code a supposedly latest version that will become stale.
 - Missing provider: warn the operator and let the tenant choose whether to install/configure an existing free or paid product through its normal vendor/OS workflow.
 - Stale, unsupported, failed, or conflicting provider: mark posture unverified and show the integration problem.
 - Preserve existing products; do not recommend replacement when a working approved product already covers the required capabilities.
