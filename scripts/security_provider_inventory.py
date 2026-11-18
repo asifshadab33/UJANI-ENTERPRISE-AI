@@ -205,6 +205,117 @@ def observation_from_validated_connector_record(
     )
 
 
+def to_operator_inventory_record(
+    item: ProviderObservation,
+    *,
+    now_unix_ms: int,
+    max_age_ms: int,
+) -> dict[str, object]:
+    """Project one validated provider observation into the v1 operator API shape."""
+    # Reuse the existing strict domain validator before exposing any field.
+    assess_device_category(
+        tenant_id=item.tenant_id,
+        device_id=item.device_id,
+        category=item.category,
+        observations=[item],
+        now_unix_ms=now_unix_ms,
+        max_age_ms=max_age_ms,
+    )
+    if item.observed_at_unix_ms > now_unix_ms + MAX_CLOCK_SKEW_MS:
+        evidence_freshness = "unknown"
+    elif now_unix_ms - item.observed_at_unix_ms > max_age_ms:
+        evidence_freshness = "stale"
+    else:
+        evidence_freshness = "fresh"
+
+    checked = item.update_checked_at_unix_ms
+    update_check_fresh = (
+        checked is not None
+        and 0 < checked <= now_unix_ms + MAX_CLOCK_SKEW_MS
+        and now_unix_ms - checked <= max_age_ms
+    )
+    if evidence_freshness != "fresh":
+        update_posture = "unverified"
+        update_recommendation = (
+            "Provider evidence is stale or has an invalid timestamp. Refresh the existing "
+            "OS/vendor connector before relying on provider health or update status."
+        )
+    elif item.update_status is UpdateStatus.OUT_OF_DATE and update_check_fresh:
+        update_posture = "out_of_date"
+        update_recommendation = (
+            "Security product updates are reported out of date. Ask the device owner or "
+            "administrator to update the antivirus intelligence/engine or firewall software "
+            "and rule/signature feeds through the existing vendor or OS workflow."
+        )
+    elif item.update_status is UpdateStatus.CURRENT and update_check_fresh:
+        update_posture = "current"
+        update_recommendation = (
+            "The configured provider reports its checked security updates are current; "
+            "continue normal update monitoring."
+        )
+    elif item.update_status is UpdateStatus.UNKNOWN and checked is None:
+        update_posture = "not_reported"
+        update_recommendation = (
+            "UJANI cannot verify whether antivirus definitions, engine/platform or firewall "
+            "updates are current. Check the existing product or operating-system security console."
+        )
+    else:
+        update_posture = "unverified"
+        update_recommendation = (
+            "Update evidence is stale or incomplete. Ask the device owner or administrator "
+            "to check the product's latest security intelligence, engine/platform and firewall updates."
+        )
+
+    return {
+        "device_id": item.device_id,
+        "provider_id": item.provider_id,
+        "display_name": item.display_name,
+        "category": item.category.value,
+        "status": item.status.value,
+        "evidence_source": item.evidence_source,
+        "evidence_freshness": evidence_freshness,
+        "observed_at_unix_ms": item.observed_at_unix_ms,
+        "product_identity_known": item.product_identity_known,
+        "capabilities": list(item.capabilities),
+        "update_posture": update_posture,
+        "update_checked_at_unix_ms": checked if update_check_fresh else None,
+        "update_channel": item.update_channel,
+        "update_recommendation": update_recommendation,
+    }
+
+
+def build_operator_inventory_payload(
+    *,
+    authenticated_tenant_id: str,
+    observations: list[ProviderObservation],
+    now_unix_ms: int,
+    max_age_ms: int,
+) -> dict[str, object]:
+    """Build bounded tenant-scoped metadata only; no credentials or endpoint actions."""
+    if not _identifier(authenticated_tenant_id):
+        raise InventoryError("authenticated tenant identity is invalid")
+    if not isinstance(observations, list) or len(observations) > 10_000:
+        raise InventoryError("operator provider inventory limit exceeded")
+    records = []
+    seen: set[tuple[str, str, str]] = set()
+    for item in observations:
+        if not isinstance(item, ProviderObservation) or item.tenant_id != authenticated_tenant_id:
+            raise InventoryError("cross-tenant or malformed provider inventory observation rejected")
+        record = to_operator_inventory_record(
+            item, now_unix_ms=now_unix_ms, max_age_ms=max_age_ms
+        )
+        key = (item.device_id, item.provider_id, item.category.value)
+        if key in seen:
+            raise InventoryError("duplicate device/provider/category observation")
+        seen.add(key)
+        records.append(record)
+    return {
+        "schema_version": 1,
+        "generated_at_unix_ms": now_unix_ms,
+        "providers": records,
+    }
+
+
 def assess_device_category(
     *,
     tenant_id: str,
@@ -253,7 +364,7 @@ def assess_device_category(
         if (
             isinstance(item.observed_at_unix_ms, bool)
             or not isinstance(item.observed_at_unix_ms, int)
-            or item.observed_at_unix_ms < 0
+            or item.observed_at_unix_ms <= 0
         ):
             raise InventoryError("provider timestamp is invalid")
         if not isinstance(item.update_status, UpdateStatus):
@@ -261,7 +372,7 @@ def assess_device_category(
         if item.update_checked_at_unix_ms is not None and (
             isinstance(item.update_checked_at_unix_ms, bool)
             or not isinstance(item.update_checked_at_unix_ms, int)
-            or item.update_checked_at_unix_ms < 0
+            or item.update_checked_at_unix_ms <= 0
         ):
             raise InventoryError("update-check timestamp is invalid")
         if item.update_channel is not None and (
