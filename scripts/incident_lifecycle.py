@@ -74,13 +74,19 @@ def transition_incident(
         raise IncidentError("incident or tenant identifier is invalid")
     if command.tenant_id != current.tenant_id:
         raise IncidentError("tenant boundary violation")
-    if isinstance(command.expected_version, bool) or command.expected_version != current.version:
-        raise IncidentError("stale incident version")
+    if (isinstance(command.expected_version, bool)
+            or not isinstance(command.expected_version, int)
+            or command.expected_version < 0
+            or isinstance(current.version, bool)
+            or not isinstance(current.version, int)
+            or current.version < 0
+            or command.expected_version != current.version):
+        raise IncidentError("stale or invalid incident version")
     if not _valid_identifier(command.evidence_ref):
         raise IncidentError("a bounded evidence reference is required")
 
     role = command.actor_role
-    if role not in {"tenant_admin", "security_operator", "device_owner", "trusted_controller"}:
+    if not isinstance(role, str) or role not in {"tenant_admin", "security_operator", "device_owner", "trusted_controller"}:
         raise IncidentError("actor role is not authorised for incident workflow")
 
     next_state: IncidentState
