@@ -2290,7 +2290,11 @@ mod tests {
         overview.security_provider_inventory = Some(inventory);
         assert!(validate_overview(&overview, 100_100).is_ok());
 
+        overview.security_provider_inventory.as_mut().unwrap().providers[0].observed_at_unix_ms = 60_100;
+        assert!(validate_overview(&overview, 100_100).is_err());
+
         overview.security_provider_inventory.as_mut().unwrap().providers[0].evidence_freshness = "fresh".into();
+        overview.security_provider_inventory.as_mut().unwrap().providers[0].observed_at_unix_ms = 1;
         assert!(validate_overview(&overview, 100_100).is_err());
     }
 
