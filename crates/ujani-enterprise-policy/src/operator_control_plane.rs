@@ -2115,8 +2115,8 @@ mod tests {
         overview.security_provider_inventory = Some(inventory);
         assert!(validate_overview(&overview, 10_100).is_ok());
         let json = overview.to_json();
-        assert!(json.contains("\\\"update_posture\\\":\\\"out_of_date\\\""));
-        assert!(json.contains("\\\"update_checked_at_unix_ms\\\":null"));
+        assert!(json.contains("\\"update_posture\\":\\"out_of_date\\""));
+        assert!(json.contains("\\"update_checked_at_unix_ms\\":null"));
     }
 
     #[test]
