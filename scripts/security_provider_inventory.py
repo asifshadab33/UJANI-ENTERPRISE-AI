@@ -9,7 +9,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+import json
 import re
+from typing import Mapping
 
 IDENTIFIER = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 MAX_LABEL = 160
@@ -96,6 +98,103 @@ class DevicePosture:
 
 def _identifier(value: str) -> bool:
     return isinstance(value, str) and bool(IDENTIFIER.fullmatch(value))
+
+
+
+def observation_from_validated_connector_record(
+    *,
+    authenticated_tenant_id: str,
+    enrolled_device_id: str,
+    expected_provider_id: str,
+    record: Mapping[str, object],
+) -> ProviderObservation:
+    """Map one already-validated Rust EvidenceRecord into inventory posture.
+
+    The caller must first run the existing connector contract's request/page
+    validation and supply tenant/device identity from authenticated host state.
+    EvidenceRecord itself does not carry an enrolled device ID; never derive that
+    identity from provider-controlled fields or payloads.
+    """
+    if not all(_identifier(value) for value in (
+        authenticated_tenant_id, enrolled_device_id, expected_provider_id
+    )):
+        raise InventoryError("authenticated tenant, device or provider identity is invalid")
+    if not isinstance(record, Mapping):
+        raise InventoryError("connector evidence record is invalid")
+    if record.get("tenant_id") != authenticated_tenant_id:
+        raise InventoryError("cross-tenant connector evidence rejected")
+    if record.get("provider_id") != expected_provider_id:
+        raise InventoryError("unexpected connector provider identity")
+    observed_at = record.get("observed_at_unix_ms")
+    if isinstance(observed_at, bool) or not isinstance(observed_at, int) or observed_at < 0:
+        raise InventoryError("connector observation timestamp is invalid")
+    fields = record.get("fields")
+    if not isinstance(fields, Mapping) or any(
+        not isinstance(key, str) or not isinstance(value, str)
+        for key, value in fields.items()
+    ):
+        raise InventoryError("connector evidence fields are invalid")
+
+    try:
+        category = SecurityCategory(fields.get("category", ""))
+        status = ProviderStatus(fields.get("status", "unknown"))
+        update_status = UpdateStatus(fields.get("update_status", "unknown"))
+    except ValueError as exc:
+        raise InventoryError("connector evidence contains an unsupported category or status") from exc
+
+    identity_flag = fields.get("product_identity_known", "false")
+    if identity_flag not in ("true", "false"):
+        raise InventoryError("connector product-identity flag is invalid")
+
+    raw_capabilities = fields.get("capabilities", "[]")
+    try:
+        capabilities = json.loads(raw_capabilities)
+    except (TypeError, ValueError) as exc:
+        raise InventoryError("connector capability list is invalid") from exc
+    if (
+        not isinstance(capabilities, list)
+        or len(capabilities) > 32
+        or any(not isinstance(item, str) or not _identifier(item) for item in capabilities)
+    ):
+        raise InventoryError("connector capability list is invalid")
+
+    raw_update_checked = fields.get("update_checked_at_unix_ms")
+    if raw_update_checked is None:
+        update_checked_at = None
+    elif re.fullmatch(r"[0-9]{1,16}", raw_update_checked):
+        update_checked_at = int(raw_update_checked)
+    else:
+        raise InventoryError("connector update-check timestamp is invalid")
+
+    display_name = fields.get("display_name")
+    if display_name is not None and (
+        not 1 <= len(display_name) <= MAX_LABEL
+        or any(ord(ch) < 32 for ch in display_name)
+    ):
+        raise InventoryError("connector display name is invalid")
+
+    update_channel = fields.get("update_channel")
+    if update_channel is not None and (
+        not 1 <= len(update_channel) <= MAX_LABEL
+        or any(ord(ch) < 32 for ch in update_channel)
+    ):
+        raise InventoryError("connector update channel is invalid")
+
+    return ProviderObservation(
+        tenant_id=authenticated_tenant_id,
+        device_id=enrolled_device_id,
+        provider_id=expected_provider_id,
+        display_name=display_name,
+        category=category,
+        status=status,
+        evidence_source="validated read-only connector evidence",
+        observed_at_unix_ms=observed_at,
+        product_identity_known=(identity_flag == "true"),
+        capabilities=tuple(capabilities),
+        update_status=update_status,
+        update_checked_at_unix_ms=update_checked_at,
+        update_channel=update_channel,
+    )
 
 
 def assess_device_category(
