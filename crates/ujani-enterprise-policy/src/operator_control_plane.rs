@@ -3289,15 +3289,13 @@ mod tests {
                 online_fresh_devices: 1,
                 schedulable_devices: 1,
             };
-            overview.model_inventory.push(sample_model_inventory("device-1", 10_100));
+            overview
+                .model_inventory
+                .push(sample_model_inventory("device-1", 10_100));
             let repo = Arc::new(TestRepo {
                 values: Mutex::new(HashMap::from([("tenant-a".into(), overview)])),
             });
-            let service = OperatorControlPlane::new(
-                auth,
-                repo,
-                Arc::new(TestAudit::default()),
-            );
+            let service = OperatorControlPlane::new(auth, repo, Arc::new(TestAudit::default()));
             assert_eq!(
                 service.match_model_for_task(
                     &token,
@@ -3335,7 +3333,9 @@ mod tests {
             online_fresh_devices: 1,
             schedulable_devices: 1,
         };
-        overview.model_inventory.push(sample_model_inventory("device-1", 100_100));
+        overview
+            .model_inventory
+            .push(sample_model_inventory("device-1", 100_100));
         let repo = Arc::new(TestRepo {
             values: Mutex::new(HashMap::from([("tenant-a".into(), overview)])),
         });
