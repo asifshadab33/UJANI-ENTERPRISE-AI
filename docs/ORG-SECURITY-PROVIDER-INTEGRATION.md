@@ -33,6 +33,12 @@ Map the already validated connector evidence into the inventory observation as f
 
 The connector must provide update fields only when its authenticated source actually reports them. Missing, malformed, stale, or unsupported update evidence maps to **cannot verify**, not current. An explicit out-of-date report remains a warning even when overall provider health is reported healthy. Do not add a parallel transport, credential store, connector registry, or capability registry for this feature.
 
+## Operator-console inventory contract
+
+The read-only operator overview may include an optional `security_provider_inventory` object conforming to `schemas/security-provider-inventory-v1.schema.json`. The console validates tenant/device-bound provider IDs, categories, status, capabilities, evidence timestamps and update posture before rendering. It shows the source, last observation and update recommendation. Explicit `out_of_date` findings are visually distinguished from `unverified` and `not_reported`; none are silently converted to current.
+
+The current console is a display surface only. If the control plane omits this optional field, the console displays **No authenticated security-provider evidence is available**. It does not query endpoints directly, install agents, invoke provider actions, change settings, quarantine files or isolate devices. A live provider inventory will appear only after a customer-configured authenticated connector and the control-plane evidence pipeline are deployed.
+
 ## Operator experience
 
 - Show which existing provider is connected, which devices have recent observations, the source and timestamp, and which capabilities are actually exposed by the connector.
