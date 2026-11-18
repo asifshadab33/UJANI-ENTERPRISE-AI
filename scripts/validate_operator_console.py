@@ -109,6 +109,7 @@ def main():
     assert '"out_of_date"' in js and "item.update_recommendation" in js, "Outdated provider evidence must show an explicit warning and recommendation."
     assert "No authenticated security-provider evidence is available" in js, "Missing provider evidence must never imply healthy protection."
     assert "Product identity reported" in js and "Product identity not verified" in js, "Aggregate provider health must not imply product identity."
+    assert "Update evidence: " in js and "channel not reported" in js, "Provider update evidence age and channel must be visible."
     assert "renderSecurityProviderInventory(data.security_provider_inventory || null)" in js, "Live provider inventory must render only from the authenticated overview."
     assert "pub security_provider_inventory: Option<OperatorSecurityProviderInventoryView>" in control_plane, "Provider inventory must be part of the authenticated operator overview contract."
     assert "json_security_provider_inventory(inventory, available)" in control_plane, "Provider inventory must be serialized within the bounded overview response."
