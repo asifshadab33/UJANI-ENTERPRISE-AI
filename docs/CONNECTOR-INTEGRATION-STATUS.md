@@ -1,6 +1,6 @@
 # UJANI Enterprise connector integration status
 
-**Status date:** 8 November 2026  
+**Status date:** 18 November 2026  
 **Overall project status:** pre-alpha. The entries below are integration targets and staged design decisions, not claims that live adapters or production deployments exist.
 
 ## Shared integration rule
@@ -146,3 +146,26 @@ The accompanying tests cover successful identity-to-tenant mapping, replay rejec
 
 
 The branch also adds `scripts/trusted_network_event_ingest.py` as a library-only composition boundary between the signed device envelope and the existing tenant-scoped `SecurityEventStore`. It authenticates the exact raw request bytes before JSON parsing, derives tenant scope from the trusted device registry, takes provider identity from trusted host connector configuration, and overwrites any tenant/provider labels inside the event payload before storage. It does not open a socket or expose an HTTP listener. Regression tests verify authentication-before-parse and that payload-supplied tenant/provider values cannot redirect evidence into another tenant or provider partition. The receiver, registry lifecycle, key custody, rate limiting and customer deployment remain separate work.
+
+
+## Security-provider inventory v1 status (18 November 2026)
+
+The following reusable foundation is now merged to `main`:
+
+- PR [#254](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/pull/254) adds the authoritative Rust `map_security_provider_evidence_page` adapter to the existing operator control plane. It validates each page through `validate_evidence_page`, checks the authenticated tenant and expected provider, binds device identity from trusted enrollment context, and maps only bounded, privacy-minimised evidence into the optional operator overview field.
+- PR [#255](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/pull/255) adds bounded multi-page aggregation: at most 256 pages and 10,000 provider rows, deterministic ordering, duplicate device/provider/category rejection, and fail-closed handling when any page is invalid.
+- The versioned `schemas/security-provider-inventory-v1.schema.json` and operator-console validation/display distinguish provider health, evidence freshness, product identity, declared capabilities and update posture.
+- Fresh explicit `out_of_date` findings produce an operator warning. Missing, stale or unsupported update evidence remains `unverified` or `not_reported`; it is never promoted to current. A provider's healthy state does not prove current signatures, engine/platform updates, firewall feeds, scanning, quarantine or isolation capability.
+
+**This is not yet a live provider integration.** The existing `ReadOnlyConnector` is a contract interface, not a network client. The repository still has no deployed host-side provider connector pipeline, production credential store, concrete antivirus/firewall connector, authenticated polling service or durable provider-evidence repository. Until a customer-configured connector supplies authenticated evidence through the host, the console must continue to display that no authenticated security-provider evidence is available.
+
+### Next acceptance gates
+
+1. Select an actual customer-approved provider and document its exact read-only API, permission scope, licence and supported product versions; do not assume a vendor.
+2. Implement the connector in the trusted host service, not in the browser console or model. The host must derive tenant and enrolled-device identity from authenticated context and keep credentials in the customer's protected secret provider.
+3. Bound transport time, response bytes, pagination, concurrency and rate limits. Cancellation must stop further page collection; invalid or partial pages must not be silently treated as complete.
+4. Map vendor-specific signature/engine/platform and firewall software/rule-feed status to explicit `current`, `out_of_date`, `unverified` or `not_reported` states using the provider's authoritative freshness semantics. Do not invent a universal age threshold or compare version strings without vendor release metadata.
+5. Add provider contract fixtures, tenant-boundary tests, malformed/oversized response tests, timeout/cancellation tests, credential-redaction tests and a customer-controlled lab run before enabling the connector.
+6. Keep the connector read-only. No UJANI-owned scanner, quarantine, endpoint/network isolation, silent install/update, replacement, reconfiguration or remote execution is introduced by this work.
+
+The operator control-plane service itself remains a transport-independent policy core. Production HTTPS listener, external identity-provider adapter, durable tenant-filtered repository, append-only audit sink and protected key/secret integration remain separate deployment gates.
