@@ -134,6 +134,20 @@ def assess_device_category(
             raise InventoryError("provider display name is invalid")
         if isinstance(item.observed_at_unix_ms, bool) or not isinstance(item.observed_at_unix_ms, int):
             raise InventoryError("provider timestamp is invalid")
+        if not isinstance(item.update_status, UpdateStatus):
+            raise InventoryError("update status is invalid")
+        if item.update_checked_at_unix_ms is not None and (
+            isinstance(item.update_checked_at_unix_ms, bool)
+            or not isinstance(item.update_checked_at_unix_ms, int)
+            or item.update_checked_at_unix_ms < 0
+        ):
+            raise InventoryError("update-check timestamp is invalid")
+        if item.update_channel is not None and (
+            not isinstance(item.update_channel, str)
+            or not 1 <= len(item.update_channel) <= MAX_LABEL
+            or any(ord(ch) < 32 for ch in item.update_channel)
+        ):
+            raise InventoryError("update channel is invalid")
         if item.category is category:
             if (
                 item.observed_at_unix_ms <= now_unix_ms + MAX_CLOCK_SKEW_MS
