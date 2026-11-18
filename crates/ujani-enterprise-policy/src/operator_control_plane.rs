@@ -10,6 +10,7 @@
 use crate::connector_contract::{
     validate_evidence_page, ConnectorError, EvidenceFreshness, EvidencePage,
 };
+use serde::Deserialize;
 use crate::model_inventory::{
     match_model_to_task, AcceleratorInfo, AcceleratorKind, EvidenceConfidence, EvidenceSource,
     ModelAvailability, ModelCapability, ModelCapabilityMatch, ModelEvidence, ModelHardware,
@@ -629,6 +630,16 @@ pub struct OperatorModelInventoryView {
 pub struct OperatorModelTaskMatch {
     pub device_id: String,
     pub result: ModelCapabilityMatch,
+}
+
+/// Strict JSON body for the future authenticated model-task-match route.
+/// Tenant and role are intentionally absent; they are derived from the session.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct OperatorModelTaskMatchRequest {
+    pub device_id: String,
+    pub model_ref: String,
+    pub requirements: ModelTaskRequirements,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1506,6 +1517,23 @@ where
             device_id: device_id.to_owned(),
             result,
         })
+    }
+
+    /// Convenience entry point for the future bounded HTTP request decoder.
+    /// Tenant identity is never accepted from the request body.
+    pub fn match_model_task_request(
+        &self,
+        session_token: &str,
+        request: &OperatorModelTaskMatchRequest,
+        now_unix_ms: u64,
+    ) -> Result<OperatorModelTaskMatch, OperatorServiceError> {
+        self.match_model_for_task(
+            session_token,
+            &request.device_id,
+            &request.model_ref,
+            &request.requirements,
+            now_unix_ms,
+        )
     }
 }
 
@@ -3217,6 +3245,34 @@ mod tests {
             audit.events.lock().unwrap()[0].outcome,
             OperatorAuditOutcome::ReadSucceeded
         );
+    }
+
+    #[test]
+    fn model_task_match_request_body_cannot_override_tenant_or_role() {
+        let valid = br#"{
+            "device_id": "device-1",
+            "model_ref": "llama3.2:latest",
+            "requirements": {
+                "required_capabilities": ["chat"],
+                "minimum_context_length_tokens": 4096,
+                "minimum_memory_mb": null
+            }
+        }"#;
+        let parsed: OperatorModelTaskMatchRequest = serde_json::from_slice(valid).unwrap();
+        assert_eq!(parsed.device_id, "device-1");
+        assert_eq!(parsed.requirements.required_capabilities, vec![ModelCapability::Chat]);
+
+        let injected_tenant = br#"{
+            "device_id": "device-1",
+            "model_ref": "llama3.2:latest",
+            "tenant_id": "tenant-b",
+            "requirements": {
+                "required_capabilities": ["chat"],
+                "minimum_context_length_tokens": null,
+                "minimum_memory_mb": null
+            }
+        }"#;
+        assert!(serde_json::from_slice::<OperatorModelTaskMatchRequest>(injected_tenant).is_err());
     }
 
     #[test]
