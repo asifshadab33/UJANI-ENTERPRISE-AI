@@ -878,7 +878,10 @@ mod tests {
             "minimum_memory_mb": 4096
         }"#;
         let parsed: ModelTaskRequirements = serde_json::from_slice(valid).unwrap();
-        assert_eq!(parsed.required_capabilities, vec![ModelCapability::Chat, ModelCapability::Vision]);
+        assert_eq!(
+            parsed.required_capabilities,
+            vec![ModelCapability::Chat, ModelCapability::Vision]
+        );
         assert_eq!(parsed.minimum_context_length_tokens, Some(8192));
         assert_eq!(parsed.minimum_memory_mb, Some(4096));
 
