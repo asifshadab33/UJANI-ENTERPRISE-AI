@@ -7,6 +7,10 @@
 //! the upstream identity-provider response before minting a session, provide a
 //! durable tenant-isolated repository and append-only audit sink, and expose
 //! this service only behind HTTPS with secure session cookies and CSRF controls.
+use crate::connector_contract::{
+    validate_evidence_page, ConnectorError, EvidenceFreshness, EvidencePage,
+};
+use crate::DataClassification;
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 use std::collections::{HashMap, HashSet};
@@ -631,6 +635,158 @@ pub struct OperatorSecurityProviderInventoryView {
     pub schema_version: u8,
     pub generated_at_unix_ms: u64,
     pub providers: Vec<OperatorSecurityProviderView>,
+}
+
+/// Map one validated connector page into the tenant's operator inventory contract.
+///
+/// Device identity is supplied only by trusted enrollment context; provider-controlled
+/// fields cannot select a device. Raw summaries/source references are intentionally
+/// omitted from the operator payload.
+pub fn map_security_provider_evidence_page(
+    page: &EvidencePage,
+    authenticated_tenant_id: &str,
+    enrolled_device_id: &str,
+    expected_provider_id: &str,
+    requested_page_size: u16,
+    now_unix_ms: u64,
+    max_age_ms: u64,
+) -> Result<OperatorSecurityProviderInventoryView, ConnectorError> {
+    if !valid_identifier(enrolled_device_id, 128) {
+        return Err(ConnectorError::InvalidIdentifier);
+    }
+    let freshness = validate_evidence_page(
+        page,
+        authenticated_tenant_id,
+        expected_provider_id,
+        requested_page_size,
+        now_unix_ms,
+        max_age_ms,
+    )?;
+    let mut providers = Vec::with_capacity(page.records.len());
+    let mut keys = HashSet::with_capacity(page.records.len());
+    for (record, evidence_freshness) in page.records.iter().zip(freshness) {
+        if !matches!(
+            record.data_classification,
+            DataClassification::Internal | DataClassification::Confidential
+        ) {
+            return Err(ConnectorError::MalformedEvidence);
+        }
+        let category = record.fields.get("category")
+            .map(String::as_str)
+            .filter(|value| [
+                "malware_protection", "firewall", "endpoint_detection_response",
+                "quarantine", "device_isolation", "security_updates",
+            ].contains(value))
+            .ok_or(ConnectorError::MalformedEvidence)?;
+        let status = record.fields.get("status")
+            .map(String::as_str)
+            .filter(|value| [
+                "healthy", "attention", "alert", "not_monitored", "unavailable", "unknown",
+            ].contains(value))
+            .ok_or(ConnectorError::MalformedEvidence)?;
+        let product_identity_known = match record.fields.get("product_identity_known").map(String::as_str) {
+            Some("true") => true,
+            Some("false") | None => false,
+            _ => return Err(ConnectorError::MalformedEvidence),
+        };
+        let capabilities = match record.fields.get("capabilities") {
+            Some(raw) => serde_json::from_str::<Vec<String>>(raw)
+                .map_err(|_| ConnectorError::MalformedEvidence)?,
+            None => Vec::new(),
+        };
+        if capabilities.len() > 32
+            || capabilities.iter().any(|value| !valid_identifier(value, 96))
+            || capabilities.iter().collect::<HashSet<_>>().len() != capabilities.len()
+        {
+            return Err(ConnectorError::MalformedEvidence);
+        }
+        let update_status = record.fields.get("update_status")
+            .map(String::as_str)
+            .unwrap_or("unknown");
+        if !["current", "out_of_date", "unknown"].contains(&update_status) {
+            return Err(ConnectorError::MalformedEvidence);
+        }
+        let raw_checked = record.fields.get("update_checked_at_unix_ms");
+        let checked = raw_checked.map(|value| {
+            value.parse::<u64>().map_err(|_| ConnectorError::MalformedEvidence)
+        }).transpose()?;
+        if checked.is_some_and(|value| {
+            value == 0 || value > now_unix_ms.saturating_add(CLOCK_SKEW_TOLERANCE_MS)
+        }) {
+            return Err(ConnectorError::MalformedEvidence);
+        }
+        let update_channel = record.fields.get("update_channel").cloned();
+        let display_name = record.fields.get("display_name").cloned();
+        if update_channel.as_ref().is_some_and(|value| !valid_bounded_text(value, 160))
+            || display_name.as_ref().is_some_and(|value| !valid_bounded_text(value, 160))
+        {
+            return Err(ConnectorError::MalformedEvidence);
+        }
+
+        let checked_fresh = checked.is_some_and(|value| {
+            now_unix_ms.saturating_sub(value) <= max_age_ms
+        });
+        let (update_posture, update_recommendation, update_checked_at_unix_ms) =
+            if evidence_freshness == EvidenceFreshness::Stale {
+                (
+                    "unverified",
+                    "Provider evidence is stale. Refresh the existing OS/vendor connector before relying on its health or update status.",
+                    None,
+                )
+            } else if update_status == "out_of_date" && checked_fresh {
+                (
+                    "out_of_date",
+                    "Security product updates are reported out of date. Ask the device owner or administrator to update antivirus intelligence/engine or firewall software and rule/signature feeds through the existing vendor or OS workflow.",
+                    checked,
+                )
+            } else if update_status == "current" && checked_fresh {
+                (
+                    "current",
+                    "The configured provider reports its checked security updates are current; continue normal update monitoring.",
+                    checked,
+                )
+            } else if update_status == "unknown" && checked.is_none() {
+                (
+                    "not_reported",
+                    "UJANI cannot verify whether antivirus definitions, engine/platform or firewall updates are current. Check the existing product or operating-system security console.",
+                    None,
+                )
+            } else {
+                (
+                    "unverified",
+                    "Update evidence is stale or incomplete. Ask the device owner or administrator to check the product's latest security intelligence, engine/platform and firewall updates.",
+                    None,
+                )
+            };
+        let key = format!("{enrolled_device_id}:{expected_provider_id}:{category}");
+        if !keys.insert(key) {
+            return Err(ConnectorError::MalformedEvidence);
+        }
+        providers.push(OperatorSecurityProviderView {
+            device_id: enrolled_device_id.to_string(),
+            provider_id: expected_provider_id.to_string(),
+            display_name,
+            category: category.to_string(),
+            status: status.to_string(),
+            evidence_source: "ReadOnlyConnector".into(),
+            evidence_freshness: match evidence_freshness {
+                EvidenceFreshness::Fresh => "fresh",
+                EvidenceFreshness::Stale => "stale",
+            }.into(),
+            observed_at_unix_ms: record.observed_at_unix_ms,
+            product_identity_known,
+            capabilities,
+            update_posture: update_posture.into(),
+            update_checked_at_unix_ms,
+            update_channel,
+            update_recommendation: update_recommendation.into(),
+        });
+    }
+    Ok(OperatorSecurityProviderInventoryView {
+        schema_version: 1,
+        generated_at_unix_ms: now_unix_ms,
+        providers,
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
