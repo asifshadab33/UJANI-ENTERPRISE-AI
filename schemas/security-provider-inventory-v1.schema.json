@@ -47,7 +47,20 @@
         "update_checked_at_unix_ms": { "type": ["integer", "null"], "minimum": 1 },
         "update_channel": { "type": ["string", "null"], "maxLength": 160 },
         "update_recommendation": { "type": "string", "minLength": 1, "maxLength": 512 }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "update_posture": { "enum": ["current", "out_of_date"] } },
+            "required": ["update_posture"]
+          },
+          "then": {
+            "properties": {
+              "update_checked_at_unix_ms": { "type": "integer", "minimum": 1 }
+            }
+          }
+        }
+      ]
     }
   }
 }
