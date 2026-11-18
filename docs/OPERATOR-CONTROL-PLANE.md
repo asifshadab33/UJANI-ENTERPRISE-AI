@@ -15,7 +15,7 @@ The policy crate now contains `operator_control_plane`, a transport-independent 
 
 The console reads the versioned `GET /api/v1/operator/overview` response. A bounded `POST /v1/operator/model-task-match` route contract now specifies viewer-or-higher authentication and an 8 KiB body ceiling, but it is not yet wired to a request decoder, HTTP handler or UI. The service core and UI currently share the overview contract, but the repository does **not yet contain a network listener, an OIDC/SAML adapter, a production database-backed overview repository, a durable audit sink, or a deployed endpoint**. The application is therefore not yet live-connected or production-ready.
 
-Model matching reads the authenticated tenant overview, validates the selected device inventory and calls `match_model_to_task`. Unknown or stale evidence stays unknown; estimated memory fit is not promoted to verified compatibility. The result is informational only and cannot admit workloads, reserve resources, install models or dispatch work.
+Model matching reads the authenticated tenant overview and permits only a selected device whose current view is enrolled, schedulable and freshly seen; the repository must derive schedulability only while administrator approval and current owner consent are both valid. Revoked, paused, disabled, offline, future-dated or stale devices are unavailable even if an old inventory row remains. The service validates the selected device inventory and calls `match_model_to_task`. Unknown or stale evidence stays unknown; estimated memory fit is not promoted to verified compatibility. The result is informational only and cannot admit workloads, reserve resources, install models or dispatch work.
 
 ## Identity and session boundary
 
