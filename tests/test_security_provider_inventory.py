@@ -76,6 +76,27 @@ class SecurityProviderInventoryTests(unittest.TestCase):
         self.assertNotEqual(result.update_posture, UpdatePosture.CURRENT)
         self.assertIn("cannot verify", result.update_recommendation)
 
+    def test_firewall_feed_reported_outdated_is_a_security_warning(self):
+        item = self.observation(
+            category=SecurityCategory.FIREWALL,
+            update_status=UpdateStatus.OUT_OF_DATE,
+            update_checked_at_unix_ms=99_000,
+            update_channel="firewall_signatures",
+        )
+        result = self.assess([item], category=SecurityCategory.FIREWALL)
+        self.assertEqual(result.update_posture, UpdatePosture.OUT_OF_DATE)
+        self.assertIn("firewall", result.update_recommendation)
+        self.assertIn("rule/signature feeds", result.update_recommendation)
+
+    def test_mixed_current_and_unknown_providers_never_claim_all_current(self):
+        current = self.observation(
+            update_status=UpdateStatus.CURRENT,
+            update_checked_at_unix_ms=99_000,
+        )
+        unknown = self.observation(provider_id="vendor.second")
+        result = self.assess([current, unknown])
+        self.assertEqual(result.update_posture, UpdatePosture.UNVERIFIED)
+
     def test_alert_overrides_healthy(self):
         result = self.assess([
             self.observation(),
