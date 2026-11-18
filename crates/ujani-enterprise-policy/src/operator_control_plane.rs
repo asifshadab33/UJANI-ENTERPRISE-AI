@@ -31,6 +31,8 @@ const MAX_APPROVALS: usize = 1_000;
 const MAX_TOTAL_MODEL_ROWS: usize = 100_000;
 const MAX_OVERVIEW_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
 const MAX_SECURITY_EVIDENCE_AGE_MS: u64 = 30 * 24 * 60 * 60 * 1000;
+const MAX_SECURITY_PROVIDER_PAGES: usize = 256;
+const MAX_SECURITY_PROVIDER_ROWS: usize = 10_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OperatorRole {
@@ -962,6 +964,78 @@ impl OperatorOverview {
         out
     }
 }
+/// One authenticated provider evidence page plus its trusted enrollment context.
+///
+/// The tenant identity is supplied once to the aggregator. Device identity must
+/// come from the host's enrollment registry, never from fields in the page.
+#[derive(Debug, Clone, Copy)]
+pub struct SecurityProviderEvidenceSource<'a> {
+    pub page: &'a EvidencePage,
+    pub enrolled_device_id: &'a str,
+    pub expected_provider_id: &'a str,
+    pub requested_page_size: u16,
+    pub max_age_ms: u64,
+}
+
+/// Aggregate read-only provider pages for a tenant into one bounded inventory.
+///
+/// Every page is independently validated using the existing connector contract.
+/// Duplicate device/provider/category tuples are rejected instead of silently
+/// overwriting evidence. The result is sorted for deterministic serialization.
+pub fn map_security_provider_evidence_pages(
+    pages: &[SecurityProviderEvidenceSource<'_>],
+    authenticated_tenant_id: &str,
+    now_unix_ms: u64,
+) -> Result<OperatorSecurityProviderInventoryView, ConnectorError> {
+    if !valid_identifier(authenticated_tenant_id, 128)
+        || now_unix_ms == 0
+        || pages.len() > MAX_SECURITY_PROVIDER_PAGES
+    {
+        return Err(ConnectorError::MalformedEvidence);
+    }
+
+    let mut providers = Vec::new();
+    let mut seen = HashSet::new();
+    for source in pages {
+        let inventory = map_security_provider_evidence_page(
+            source.page,
+            authenticated_tenant_id,
+            source.enrolled_device_id,
+            source.expected_provider_id,
+            source.requested_page_size,
+            now_unix_ms,
+            source.max_age_ms,
+        )?;
+        for provider in inventory.providers {
+            if providers.len() >= MAX_SECURITY_PROVIDER_ROWS {
+                return Err(ConnectorError::MalformedEvidence);
+            }
+            let key = (
+                provider.device_id.clone(),
+                provider.provider_id.clone(),
+                provider.category.clone(),
+            );
+            if !seen.insert(key) {
+                return Err(ConnectorError::MalformedEvidence);
+            }
+            providers.push(provider);
+        }
+    }
+
+    providers.sort_by(|left, right| {
+        left.device_id
+            .cmp(&right.device_id)
+            .then_with(|| left.provider_id.cmp(&right.provider_id))
+            .then_with(|| left.category.cmp(&right.category))
+    });
+
+    Ok(OperatorSecurityProviderInventoryView {
+        schema_version: 1,
+        generated_at_unix_ms: now_unix_ms,
+        providers,
+    })
+}
+
 fn json_string(value: &str) -> String {
     let mut out = String::with_capacity(value.len() + 2);
     out.push('"');
