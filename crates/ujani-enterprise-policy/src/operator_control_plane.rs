@@ -1598,7 +1598,7 @@ fn validate_overview(overview: &OperatorOverview, now: u64) -> Result<(), ()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+    use std::collections::{BTreeMap, HashMap};
     use std::sync::Mutex;
 
     fn claims(tenant: &str) -> OperatorSessionClaims {
@@ -1627,6 +1627,43 @@ mod tests {
             approvals: vec![],
             model_inventory: vec![],
             security_provider_inventory: None,
+        }
+    }
+
+    fn sample_security_evidence_page(
+        observed_at_unix_ms: u64,
+        update_status: &str,
+        update_checked_at: Option<&str>,
+        classification: DataClassification,
+    ) -> EvidencePage {
+        let mut fields = BTreeMap::from([
+            ("category".to_string(), "malware_protection".to_string()),
+            ("status".to_string(), "healthy".to_string()),
+            ("product_identity_known".to_string(), "true".to_string()),
+            ("capabilities".to_string(), "[\\"malware_protection\\"]".to_string()),
+            ("update_status".to_string(), update_status.to_string()),
+            ("display_name".to_string(), "Microsoft Defender".to_string()),
+            ("device_id".to_string(), "untrusted-device-field".to_string()),
+        ]);
+        if let Some(checked) = update_checked_at {
+            fields.insert("update_checked_at_unix_ms".into(), checked.into());
+            fields.insert("update_channel".into(), "security_intelligence".into());
+        }
+        EvidencePage {
+            contract_version: crate::connector_contract::CONNECTOR_CONTRACT_VERSION,
+            tenant_id: "tenant-a".into(),
+            provider_id: "microsoft.defender".into(),
+            records: vec![crate::connector_contract::EvidenceRecord {
+                tenant_id: "tenant-a".into(),
+                provider_id: "microsoft.defender".into(),
+                record_id: "record-001".into(),
+                source_ref: "provider-record-001".into(),
+                observed_at_unix_ms,
+                data_classification: classification,
+                summary: "Provider posture observation".into(),
+                fields,
+            }],
+            next_cursor: None,
         }
     }
 
@@ -1927,6 +1964,68 @@ mod tests {
             OperatorAuditOutcome::InvalidOverview
         );
     }
+    #[test]
+    fn validated_connector_page_maps_to_tenant_bound_provider_inventory() {
+        let page = sample_security_evidence_page(
+            100_000,
+            "out_of_date",
+            Some("99_000"),
+            DataClassification::Internal,
+        );
+        let inventory = map_security_provider_evidence_page(
+            &page, "tenant-a", "device-1", "microsoft.defender", 10, 100_000, 60_000,
+        ).unwrap();
+        assert_eq!(inventory.schema_version, 1);
+        assert_eq!(inventory.providers.len(), 1);
+        let provider = &inventory.providers[0];
+        assert_eq!(provider.device_id, "device-1");
+        assert_eq!(provider.provider_id, "microsoft.defender");
+        assert_eq!(provider.evidence_freshness, "fresh");
+        assert_eq!(provider.update_posture, "out_of_date");
+        assert_eq!(provider.update_checked_at_unix_ms, Some(99_000));
+        assert_eq!(provider.capabilities, vec!["malware_protection"]);
+    }
+
+    #[test]
+    fn stale_connector_page_never_exports_current_update_claims() {
+        let page = sample_security_evidence_page(
+            1,
+            "current",
+            Some("99_000"),
+            DataClassification::Internal,
+        );
+        let inventory = map_security_provider_evidence_page(
+            &page, "tenant-a", "device-1", "microsoft.defender", 10, 100_000, 60_000,
+        ).unwrap();
+        assert_eq!(inventory.providers[0].status, "healthy");
+        assert_eq!(inventory.providers[0].evidence_freshness, "stale");
+        assert_eq!(inventory.providers[0].update_posture, "unverified");
+        assert_eq!(inventory.providers[0].update_checked_at_unix_ms, None);
+    }
+
+    #[test]
+    fn connector_page_mapping_rejects_cross_tenant_and_restricted_evidence() {
+        let mut page = sample_security_evidence_page(
+            100_000, "unknown", None, DataClassification::Internal,
+        );
+        page.tenant_id = "tenant-b".into();
+        assert_eq!(
+            map_security_provider_evidence_page(
+                &page, "tenant-a", "device-1", "microsoft.defender", 10, 100_000, 60_000,
+            ),
+            Err(ConnectorError::TenantBoundaryViolation)
+        );
+        let restricted = sample_security_evidence_page(
+            100_000, "unknown", None, DataClassification::Restricted,
+        );
+        assert_eq!(
+            map_security_provider_evidence_page(
+                &restricted, "tenant-a", "device-1", "microsoft.defender", 10, 100_000, 60_000,
+            ),
+            Err(ConnectorError::MalformedEvidence)
+        );
+    }
+
     #[test]
     fn security_provider_inventory_is_tenant_device_scoped_and_warns_on_old_updates() {
         let mut overview = empty_overview("tenant-a");
