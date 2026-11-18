@@ -2,11 +2,10 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import vm from "node:vm";
-import { readBoundedJson } from "../boundedJson.js";
 
 async function readAppSource() {
   const source = await readFile(new URL("../app.js", import.meta.url), "utf8");
-  return source.replace(/^import \{ readBoundedJson \} from "\.\/boundedJson\.js";\s*/u, "");
+  return source.replace(/^import \{ readBoundedJson as readBoundedCatalogueJson \} from "\.\/boundedJson\.js";\s*/u, "");
 }
 
 
