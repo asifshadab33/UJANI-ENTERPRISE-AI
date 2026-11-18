@@ -2094,6 +2094,37 @@ mod tests {
     }
 
     #[test]
+    fn stale_update_check_does_not_support_an_outdated_finding() {
+        let page = sample_security_evidence_page(
+            100_000,
+            "out_of_date",
+            Some("1"),
+            DataClassification::Internal,
+        );
+        let inventory = map_security_provider_evidence_page(
+            &page, "tenant-a", "device-1", "microsoft.defender", 10, 100_000, 60_000,
+        ).unwrap();
+        assert_eq!(inventory.providers[0].evidence_freshness, "fresh");
+        assert_eq!(inventory.providers[0].update_posture, "unverified");
+        assert_eq!(inventory.providers[0].update_checked_at_unix_ms, None);
+    }
+
+    #[test]
+    fn current_update_claim_requires_a_fresh_check_timestamp() {
+        let page = sample_security_evidence_page(
+            100_000,
+            "current",
+            None,
+            DataClassification::Internal,
+        );
+        let inventory = map_security_provider_evidence_page(
+            &page, "tenant-a", "device-1", "microsoft.defender", 10, 100_000, 60_000,
+        ).unwrap();
+        assert_eq!(inventory.providers[0].update_posture, "unverified");
+        assert_eq!(inventory.providers[0].update_checked_at_unix_ms, None);
+    }
+
+    #[test]
     fn stale_connector_page_never_exports_current_update_claims() {
         let page = sample_security_evidence_page(
             1,
