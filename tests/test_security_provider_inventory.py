@@ -134,6 +134,16 @@ class SecurityProviderInventoryTests(unittest.TestCase):
         result = self.assess([item])
         self.assertEqual(result.capabilities, ("malware_protection", "quarantine"))
 
+    def test_direct_observations_reject_invalid_identity_and_capability_fields(self):
+        with self.assertRaisesRegex(InventoryError, "product-identity flag"):
+            self.assess([self.observation(product_identity_known="false")])
+        with self.assertRaisesRegex(InventoryError, "capability list"):
+            self.assess([self.observation(capabilities=("bad\\ncapability",))])
+        with self.assertRaisesRegex(InventoryError, "category or health status"):
+            self.assess([self.observation(status="healthy")])
+        with self.assertRaisesRegex(InventoryError, "observation record"):
+            self.assess([{"provider_id": "untrusted"}])
+
     def test_invalid_update_timestamp_is_rejected(self):
         item = self.observation(
             update_status=UpdateStatus.CURRENT,
