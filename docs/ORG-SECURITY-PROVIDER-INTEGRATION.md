@@ -12,6 +12,12 @@ The inventory domain layer accepts normalized provider observations already boun
 
 Supported categories are malware protection, firewall, EDR, quarantine, device isolation, and security updates. Capabilities are not inferred from the product name or from an aggregate healthy state.
 
+## Authoritative Rust evidence mapping
+
+The single authoritative mapper is `ujani_enterprise_policy::operator_control_plane::map_security_provider_evidence_page`. It calls the existing `validate_evidence_page` contract itself, checks the authenticated tenant and configured provider, and receives the enrolled device ID only from trusted host context. Provider-controlled `device_id` fields are ignored. It then bounds and normalizes category, reported health, product-identity flag, capabilities, update status, update-check time and update channel into the optional `OperatorOverview.security_provider_inventory` field.
+
+This mapping is implemented in Rust alongside the existing operator control plane. Do not add a parallel Python mapper or a second connector registry. The JSON Schema and operator-console checks validate the same versioned output contract.
+
 ## Existing connector-framework integration
 
 This inventory is a domain assessment layer, not a second connector framework. Production adapters must implement the existing `ReadOnlyConnector` contract in `crates/ujani-enterprise-policy/src/connector_contract.rs`, advertise their read-only capabilities through the existing `CapabilityRegistry`, and pass every returned `EvidencePage` through `validate_evidence_page` before normalization or display. The host remains responsible for authenticating the tenant, selecting the tenant boundary, applying least-privilege permissions and resource budgets, and recording audit events.
