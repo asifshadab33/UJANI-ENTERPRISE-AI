@@ -2020,6 +2020,80 @@ mod tests {
     }
 
     #[test]
+    fn provider_freshness_uses_configured_policy_not_overview_snapshot_age() {
+        let page = sample_security_evidence_page(
+            10_000,
+            "current",
+            Some("10000"),
+            DataClassification::Internal,
+        );
+        let inventory = map_security_provider_evidence_page(
+            &page,
+            "tenant-a",
+            "device-1",
+            "microsoft.defender",
+            10,
+            100_000,
+            86_400_000,
+        )
+        .unwrap();
+        assert_eq!(inventory.providers[0].evidence_max_age_ms, 86_400_000);
+        assert_eq!(inventory.providers[0].evidence_freshness, "fresh");
+        assert_eq!(inventory.providers[0].update_posture, "current");
+
+        let mut overview = empty_overview("tenant-a");
+        overview.devices.push(OperatorDeviceView {
+            device_id: "device-1".into(),
+            display_name: "Device 1".into(),
+            platform: "Windows".into(),
+            trust_state: "trusted".into(),
+            availability: "online".into(),
+            remaining_cpu_millis: None,
+            remaining_memory_mb: None,
+            last_seen_unix_ms: 100_000,
+        });
+        overview.fleet.registered_devices = 1;
+        overview.fleet.trusted_consented_devices = 1;
+        overview.fleet.online_fresh_devices = 1;
+        overview.security_provider_inventory = Some(inventory);
+        assert!(validate_overview(&overview, 100_000).is_ok());
+    }
+
+    #[test]
+    fn provider_freshness_policy_is_bounded() {
+        let page = sample_security_evidence_page(
+            100_000,
+            "current",
+            Some("100000"),
+            DataClassification::Internal,
+        );
+        assert_eq!(
+            map_security_provider_evidence_page(
+                &page,
+                "tenant-a",
+                "device-1",
+                "microsoft.defender",
+                10,
+                100_000,
+                0,
+            ),
+            Err(ConnectorError::MalformedEvidence)
+        );
+        assert_eq!(
+            map_security_provider_evidence_page(
+                &page,
+                "tenant-a",
+                "device-1",
+                "microsoft.defender",
+                10,
+                100_000,
+                MAX_SECURITY_EVIDENCE_AGE_MS + 1,
+            ),
+            Err(ConnectorError::MalformedEvidence)
+        );
+    }
+
+    #[test]
     fn stale_connector_page_never_exports_current_update_claims() {
         let page = sample_security_evidence_page(
             1,
