@@ -2526,6 +2526,39 @@ mod tests {
     }
 
     #[test]
+    fn aggregate_fails_closed_when_any_page_crosses_tenant_boundary() {
+        let good_page = sample_security_evidence_page(
+            100_000,
+            "current",
+            Some("100000"),
+            DataClassification::Internal,
+        );
+        let mut invalid_page = good_page.clone();
+        invalid_page.tenant_id = "tenant-b".into();
+        invalid_page.records[0].tenant_id = "tenant-b".into();
+        let sources = [
+            SecurityProviderEvidenceSource {
+                page: &good_page,
+                enrolled_device_id: "device-a",
+                expected_provider_id: "microsoft.defender",
+                requested_page_size: 10,
+                max_age_ms: 60_000,
+            },
+            SecurityProviderEvidenceSource {
+                page: &invalid_page,
+                enrolled_device_id: "device-b",
+                expected_provider_id: "microsoft.defender",
+                requested_page_size: 10,
+                max_age_ms: 60_000,
+            },
+        ];
+        assert_eq!(
+            map_security_provider_evidence_pages(&sources, "tenant-a", 100_000),
+            Err(ConnectorError::TenantBoundaryViolation)
+        );
+    }
+
+    #[test]
     fn aggregate_enforces_page_count_and_tenant_identity_even_when_empty() {
         let page = sample_security_evidence_page(
             100_000,
