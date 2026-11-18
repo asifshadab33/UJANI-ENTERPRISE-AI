@@ -1,4 +1,4 @@
-import { readBoundedJson } from "./boundedJson.js";
+import { readBoundedJson as readBoundedCatalogueJson } from "./boundedJson.js";
 
 const API_PATH = "/api/v1/operator/overview";
 const MAX_MODEL_CATALOGUE_BYTES = 256 * 1024;
@@ -329,7 +329,7 @@ async function loadModelCatalogue() {
       headers: { "Accept": "application/json" }
     });
     if (!response.ok) throw new Error("Catalogue request returned HTTP " + response.status + ".");
-    const catalogue = await readBoundedJson(response, MAX_MODEL_CATALOGUE_BYTES, "model catalogue");
+    const catalogue = await readBoundedCatalogueJson(response, MAX_MODEL_CATALOGUE_BYTES, "model catalogue");
     renderModelCatalogue(catalogue);
   } catch (error) {
     root.textContent = error instanceof Error && error.name === "AbortError"
