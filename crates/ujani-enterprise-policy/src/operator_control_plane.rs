@@ -1724,11 +1724,7 @@ fn model_inventory_for_matching(
 }
 
 fn downgrade_stale_model_inventory_evidence_to_unknown(overview: &mut OperatorOverview, now: u64) {
-    fn downgrade(
-        evidence: &mut OperatorInventoryEvidence,
-        inventory_generated_at: u64,
-        now: u64,
-    ) {
+    fn downgrade(evidence: &mut OperatorInventoryEvidence, inventory_generated_at: u64, now: u64) {
         let valid_source = [
             "runtime_api",
             "os_api",
@@ -1765,7 +1761,11 @@ fn downgrade_stale_model_inventory_evidence_to_unknown(overview: &mut OperatorOv
 
     for inventory in &mut overview.model_inventory {
         for accelerator in &mut inventory.hardware.accelerators {
-            downgrade(&mut accelerator.evidence, inventory.generated_at_unix_ms, now);
+            downgrade(
+                &mut accelerator.evidence,
+                inventory.generated_at_unix_ms,
+                now,
+            );
         }
         for runtime in &mut inventory.runtimes {
             downgrade(&mut runtime.evidence, inventory.generated_at_unix_ms, now);
