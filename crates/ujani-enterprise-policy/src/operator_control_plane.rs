@@ -2411,6 +2411,103 @@ mod tests {
     }
 
     #[test]
+    fn aggregates_multiple_devices_and_providers_in_deterministic_order() {
+        let page_a = sample_security_evidence_page(
+            100_000,
+            "current",
+            Some("100000"),
+            DataClassification::Internal,
+        );
+        let mut page_b = sample_security_evidence_page(
+            100_000,
+            "out_of_date",
+            None,
+            DataClassification::Internal,
+        );
+        page_b.provider_id = "vendor.firewall".into();
+        page_b.records[0].provider_id = "vendor.firewall".into();
+        page_b.records[0].record_id = "record-002".into();
+        page_b.records[0]
+            .fields
+            .insert("category".into(), "firewall".into());
+        page_b.records[0]
+            .fields
+            .insert("display_name".into(), "Customer Firewall".into());
+
+        let sources = [
+            SecurityProviderEvidenceSource {
+                page: &page_b,
+                enrolled_device_id: "device-b",
+                expected_provider_id: "vendor.firewall",
+                requested_page_size: 10,
+                max_age_ms: 60_000,
+            },
+            SecurityProviderEvidenceSource {
+                page: &page_a,
+                enrolled_device_id: "device-a",
+                expected_provider_id: "microsoft.defender",
+                requested_page_size: 10,
+                max_age_ms: 60_000,
+            },
+        ];
+        let inventory =
+            map_security_provider_evidence_pages(&sources, "tenant-a", 100_000).unwrap();
+        assert_eq!(inventory.providers.len(), 2);
+        assert_eq!(inventory.providers[0].device_id, "device-a");
+        assert_eq!(inventory.providers[0].provider_id, "microsoft.defender");
+        assert_eq!(inventory.providers[1].device_id, "device-b");
+        assert_eq!(inventory.providers[1].provider_id, "vendor.firewall");
+        assert_eq!(inventory.providers[1].update_posture, "out_of_date");
+    }
+
+    #[test]
+    fn aggregate_rejects_duplicate_device_provider_category_tuples() {
+        let page = sample_security_evidence_page(
+            100_000,
+            "current",
+            Some("100000"),
+            DataClassification::Internal,
+        );
+        let source = SecurityProviderEvidenceSource {
+            page: &page,
+            enrolled_device_id: "device-a",
+            expected_provider_id: "microsoft.defender",
+            requested_page_size: 10,
+            max_age_ms: 60_000,
+        };
+        assert_eq!(
+            map_security_provider_evidence_pages(&[source, source], "tenant-a", 100_000),
+            Err(ConnectorError::MalformedEvidence)
+        );
+    }
+
+    #[test]
+    fn aggregate_enforces_page_count_and_tenant_identity_even_when_empty() {
+        let page = sample_security_evidence_page(
+            100_000,
+            "current",
+            Some("100000"),
+            DataClassification::Internal,
+        );
+        let source = SecurityProviderEvidenceSource {
+            page: &page,
+            enrolled_device_id: "device-a",
+            expected_provider_id: "microsoft.defender",
+            requested_page_size: 10,
+            max_age_ms: 60_000,
+        };
+        let too_many = vec![source; MAX_SECURITY_PROVIDER_PAGES + 1];
+        assert_eq!(
+            map_security_provider_evidence_pages(&too_many, "tenant-a", 100_000),
+            Err(ConnectorError::MalformedEvidence)
+        );
+        assert_eq!(
+            map_security_provider_evidence_pages(&[], "", 100_000),
+            Err(ConnectorError::MalformedEvidence)
+        );
+    }
+
+    #[test]
     fn security_provider_inventory_is_tenant_device_scoped_and_warns_on_old_updates() {
         let mut overview = empty_overview("tenant-a");
         overview.devices.push(OperatorDeviceView {
