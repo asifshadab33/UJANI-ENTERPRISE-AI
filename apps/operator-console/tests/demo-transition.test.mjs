@@ -298,6 +298,18 @@ test("security-provider inventory enforces device binding and conservative fresh
 
   context.inventory.providers[0] = {
     ...validProvider,
+    evidence_max_age_ms: 200_000,
+    observed_at_unix_ms: 900_000,
+    update_checked_at_unix_ms: 950_000
+  };
+  assert.equal(
+    vm.runInContext("validSecurityProviderInventory(inventory, 1000000, devices)", context),
+    false,
+    "an update check must not post-date its source observation beyond clock skew"
+  );
+
+  context.inventory.providers[0] = {
+    ...validProvider,
     update_posture: "current",
     update_checked_at_unix_ms: 1
   };
