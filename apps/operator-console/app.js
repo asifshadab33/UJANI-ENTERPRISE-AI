@@ -586,7 +586,11 @@ function validSecurityProviderInventory(inventory, overviewGeneratedAt, devices)
         || !["healthy", "attention", "alert", "not_monitored", "unavailable", "unknown"].includes(item.status)
         || !["fresh", "stale", "unknown"].includes(item.evidence_freshness)
         || !Number.isSafeInteger(item.evidence_max_age_ms) || item.evidence_max_age_ms <= 0 || item.evidence_max_age_ms > 2592000000
-        || (item.evidence_freshness === "fresh" && inventory.generated_at_unix_ms - item.observed_at_unix_ms > item.evidence_max_age_ms)
+        || (item.evidence_freshness === "fresh"
+          && (inventory.generated_at_unix_ms - item.observed_at_unix_ms < -MAX_INVENTORY_EVIDENCE_SKEW_MS
+            || inventory.generated_at_unix_ms - item.observed_at_unix_ms > item.evidence_max_age_ms))
+        || (item.evidence_freshness === "stale"
+          && inventory.generated_at_unix_ms - item.observed_at_unix_ms <= item.evidence_max_age_ms)
         || !boundedString(item.evidence_source, 128)
         || !Number.isSafeInteger(item.observed_at_unix_ms) || item.observed_at_unix_ms <= 0
         || item.observed_at_unix_ms > inventory.generated_at_unix_ms + MAX_INVENTORY_EVIDENCE_SKEW_MS
