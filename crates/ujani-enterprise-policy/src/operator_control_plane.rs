@@ -1554,7 +1554,11 @@ fn validate_overview(overview: &OperatorOverview, now: u64) -> Result<(), ()> {
                     && checked <= inventory.generated_at_unix_ms.saturating_add(CLOCK_SKEW_TOLERANCE_MS)
                     && now.saturating_sub(checked) <= provider.evidence_max_age_ms
             }) && (!["current", "out_of_date"].contains(&provider.update_posture.as_str())
-                || provider.update_checked_at_unix_ms.is_some());
+                || provider.update_checked_at_unix_ms.is_some())
+                && (provider.evidence_freshness == "fresh"
+                    || !["current", "out_of_date"].contains(&provider.update_posture.as_str()))
+                && (provider.update_posture != "not_reported"
+                    || provider.update_checked_at_unix_ms.is_none());
             let capabilities_valid = provider.capabilities.len() <= 32
                 && provider.capabilities.iter().all(|value| valid_identifier(value, 96))
                 && provider.capabilities.iter().collect::<HashSet<_>>().len() == provider.capabilities.len();
