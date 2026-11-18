@@ -35,7 +35,7 @@ The connector must provide update fields only when its authenticated source actu
 
 ## Operator-console inventory contract
 
-The read-only operator overview may include an optional `security_provider_inventory` object conforming to `schemas/security-provider-inventory-v1.schema.json`. The console validates tenant/device-bound provider IDs, categories, status, capabilities, evidence timestamps and update posture before rendering. It shows the source, last observation and update recommendation. Explicit `out_of_date` findings are visually distinguished from `unverified` and `not_reported`; none are silently converted to current.
+The read-only operator overview may include an optional `security_provider_inventory` object conforming to `schemas/security-provider-inventory-v1.schema.json`. The console validates tenant/device-bound provider IDs, categories, status, explicit fresh/stale/unknown evidence freshness, capabilities, evidence timestamps and update posture before rendering. Stale or unknown evidence is never presented as healthy, even if the provider's last reported health was healthy. It shows the source, last observation and update recommendation. Explicit `out_of_date` findings are visually distinguished from `unverified` and `not_reported`; none are silently converted to current.
 
 The current console is a display surface only. If the control plane omits this optional field, the console displays **No authenticated security-provider evidence is available**. It does not query endpoints directly, install agents, invoke provider actions, change settings, quarantine files or isolate devices. A live provider inventory will appear only after a customer-configured authenticated connector and the control-plane evidence pipeline are deployed.
 
