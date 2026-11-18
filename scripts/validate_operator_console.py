@@ -110,6 +110,8 @@ def main():
     assert "No authenticated security-provider evidence is available" in js, "Missing provider evidence must never imply healthy protection."
     assert "Product identity reported" in js and "Product identity not verified" in js, "Aggregate provider health must not imply product identity."
     assert '"Checked " + formatAge(item.update_checked_at_unix_ms)' in js, "Update freshness must show the provider update-check timestamp."
+    assert "item.evidence_max_age_ms > 2592000000" in js, "Provider freshness must use a bounded configured age policy."
+    assert 'item.evidence_freshness !== "fresh" && ["current", "out_of_date"].includes(item.update_posture)' in js, "Stale evidence must never claim current or out-of-date verified updates."
     assert "Update evidence: " in js and "channel not reported" in js, "Provider update evidence age and channel must be visible."
     assert "renderSecurityProviderInventory(data.security_provider_inventory || null)" in js, "Live provider inventory must render only from the authenticated overview."
     assert "pub security_provider_inventory: Option<OperatorSecurityProviderInventoryView>" in control_plane, "Provider inventory must be part of the authenticated operator overview contract."
