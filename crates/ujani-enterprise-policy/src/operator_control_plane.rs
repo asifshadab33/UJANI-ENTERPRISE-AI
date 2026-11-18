@@ -748,10 +748,11 @@ impl OperatorOverview {
             returned_model_count
         );
         if let Some(inventory) = &self.security_provider_inventory {
-            let entry = json_security_provider_inventory(inventory);
-            if out.len().saturating_add(entry.len()).saturating_add(1) > MAX_OVERVIEW_RESPONSE_BYTES {
+            let available = MAX_OVERVIEW_RESPONSE_BYTES
+                .saturating_sub(out.len().saturating_add(32));
+            let Some(entry) = json_security_provider_inventory(inventory, available) else {
                 return "{\"error\":\"overview_exceeds_response_budget\"}".into();
-            }
+            };
             out.push_str(",\"security_provider_inventory\":");
             out.push_str(&entry);
         }
@@ -875,13 +876,17 @@ fn json_model_inventory(inventory: &OperatorModelInventoryView) -> String {
 }
 fn json_security_provider_inventory(
     inventory: &OperatorSecurityProviderInventoryView,
-) -> String {
-    let mut out = String::with_capacity(256 + inventory.providers.len() * 320);
+    max_bytes: usize,
+) -> Option<String> {
+    let mut out = String::with_capacity(256.min(max_bytes));
     let _ = write!(
         &mut out,
         "{{\"schema_version\":{},\"generated_at_unix_ms\":{},\"providers\":[",
         inventory.schema_version, inventory.generated_at_unix_ms
     );
+    if out.len() > max_bytes {
+        return None;
+    }
     for (index, provider) in inventory.providers.iter().enumerate() {
         if index > 0 {
             out.push(',');
@@ -909,8 +914,12 @@ fn json_security_provider_inventory(
             json_string(&provider.update_recommendation)
         );
     }
+        if out.len() > max_bytes {
+            return None;
+        }
+    }
     out.push_str("]}");
-    out
+    (out.len() <= max_bytes).then_some(out)
 }
 
 fn valid_bounded_text(value: &str, max: usize) -> bool {
