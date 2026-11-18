@@ -656,6 +656,13 @@ function renderSecurityProviderInventory(inventory) {
       note.textContent = item.update_recommendation;
       updates.append(note);
     }
+    const updateEvidence = document.createElement("small");
+    const checkedAge = formatAge(item.update_checked_at_unix_ms);
+    const channel = typeof item.update_channel === "string" && item.update_channel.length > 0
+      ? item.update_channel
+      : "channel not reported";
+    updateEvidence.textContent = "Update evidence: " + checkedAge + " · " + channel;
+    updates.append(updateEvidence);
     row.append(updates);
     row.append(textCell(item.capabilities.join(", ") || "Not reported"));
     row.append(textCell(item.evidence_source));
