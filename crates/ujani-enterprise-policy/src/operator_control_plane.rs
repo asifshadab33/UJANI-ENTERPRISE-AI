@@ -1676,7 +1676,7 @@ mod tests {
                 display_name: Some("Microsoft Defender".into()),
                 category: "malware_protection".into(),
                 status: "healthy".into(),
-                evidence_source: "windows_defender_wmi".into(),
+                evidence_source: "ReadOnlyConnector".into(),
                 evidence_freshness: "fresh".into(),
                 observed_at_unix_ms: generated_at_unix_ms,
                 product_identity_known: true,
@@ -1966,7 +1966,7 @@ mod tests {
         let page = sample_security_evidence_page(
             100_000,
             "out_of_date",
-            Some("99_000"),
+            Some("99000"),
             DataClassification::Internal,
         );
         let inventory = map_security_provider_evidence_page(
