@@ -9,6 +9,7 @@ from scripts.security_provider_inventory import (
     UpdatePosture,
     UpdateStatus,
     assess_device_category,
+    observation_from_validated_connector_record,
 )
 
 
@@ -140,6 +141,104 @@ class SecurityProviderInventoryTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(InventoryError, "update-check timestamp"):
             self.assess([item])
+
+    def test_validated_connector_record_maps_to_enrolled_device_posture(self):
+        record = {
+            "tenant_id": "tenant-a",
+            "provider_id": "vendor.edr",
+            "record_id": "record-001",
+            "observed_at_unix_ms": 100_000,
+            "fields": {
+                "category": "malware_protection",
+                "status": "healthy",
+                "product_identity_known": "true",
+                "capabilities": '["malware_protection","quarantine"]',
+                "update_status": "out_of_date",
+                "update_checked_at_unix_ms": "99_000",
+                "update_channel": "security_intelligence",
+                "display_name": "Existing Endpoint Protection",
+            },
+        }
+        item = observation_from_validated_connector_record(
+            authenticated_tenant_id="tenant-a",
+            enrolled_device_id="device-a",
+            expected_provider_id="vendor.edr",
+            record=record,
+        )
+        self.assertEqual(item.device_id, "device-a")
+        result = self.assess([item])
+        self.assertEqual(result.update_posture, UpdatePosture.OUT_OF_DATE)
+
+    def test_connector_mapping_rejects_cross_tenant_and_provider_spoofing(self):
+        record = {
+            "tenant_id": "tenant-b",
+            "provider_id": "vendor.edr",
+            "observed_at_unix_ms": 100_000,
+            "fields": {"category": "malware_protection", "status": "healthy"},
+        }
+        with self.assertRaisesRegex(InventoryError, "cross-tenant"):
+            observation_from_validated_connector_record(
+                authenticated_tenant_id="tenant-a",
+                enrolled_device_id="device-a",
+                expected_provider_id="vendor.edr",
+                record=record,
+            )
+        record["tenant_id"] = "tenant-a"
+        record["provider_id"] = "unconfigured.provider"
+        with self.assertRaisesRegex(InventoryError, "provider identity"):
+            observation_from_validated_connector_record(
+                authenticated_tenant_id="tenant-a",
+                enrolled_device_id="device-a",
+                expected_provider_id="vendor.edr",
+                record=record,
+            )
+
+    def test_connector_mapping_never_accepts_device_identity_from_payload(self):
+        record = {
+            "tenant_id": "tenant-a",
+            "provider_id": "vendor.edr",
+            "observed_at_unix_ms": 100_000,
+            "fields": {
+                "category": "malware_protection",
+                "status": "healthy",
+                "device_id": "attacker-device",
+            },
+        }
+        item = observation_from_validated_connector_record(
+            authenticated_tenant_id="tenant-a",
+            enrolled_device_id="trusted-enrolled-device",
+            expected_provider_id="vendor.edr",
+            record=record,
+        )
+        self.assertEqual(item.device_id, "trusted-enrolled-device")
+
+    def test_connector_mapping_rejects_malformed_capabilities_and_update_timestamps(self):
+        record = {
+            "tenant_id": "tenant-a",
+            "provider_id": "vendor.edr",
+            "observed_at_unix_ms": 100_000,
+            "fields": {
+                "category": "malware_protection",
+                "status": "healthy",
+                "capabilities": '["malware_protection", 7]',
+            },
+        }
+        with self.assertRaisesRegex(InventoryError, "capability list"):
+            observation_from_validated_connector_record(
+                authenticated_tenant_id="tenant-a",
+                enrolled_device_id="device-a",
+                expected_provider_id="vendor.edr",
+                record=record,
+            )
+        record["fields"]["capabilities"] = "[]"
+        record["fields"]["update_checked_at_unix_ms"] = "not-a-time"
+        with self.assertRaisesRegex(InventoryError, "update-check timestamp"):
+            observation_from_validated_connector_record(
+                authenticated_tenant_id="tenant-a",
+                enrolled_device_id="device-a",
+                expected_provider_id="vendor.edr",
+                record=record,
+            )
 
 
 if __name__ == "__main__":
