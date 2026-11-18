@@ -21,7 +21,7 @@
       "additionalProperties": false,
       "required": [
         "device_id", "provider_id", "display_name", "category", "status",
-        "evidence_source", "observed_at_unix_ms", "product_identity_known",
+        "evidence_source", "evidence_freshness", "observed_at_unix_ms", "product_identity_known",
         "capabilities", "update_posture", "update_checked_at_unix_ms",
         "update_channel", "update_recommendation"
       ],
@@ -34,6 +34,7 @@
         },
         "status": { "enum": ["healthy", "attention", "alert", "not_monitored", "unavailable", "unknown"] },
         "evidence_source": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "evidence_freshness": { "enum": ["fresh", "stale", "unknown"] },
         "observed_at_unix_ms": { "type": "integer", "minimum": 1 },
         "product_identity_known": { "type": "boolean" },
         "capabilities": {
