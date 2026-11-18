@@ -1797,6 +1797,13 @@ mod tests {
 
         overview.security_provider_inventory.as_mut().unwrap().providers[0].device_id = "other-device".into();
         assert!(validate_overview(&overview, 10_100).is_err());
+
+        let inventory = sample_security_provider_inventory(10_100);
+        assert!(json_security_provider_inventory(&inventory, 8).is_none());
+        let mut duplicate = sample_security_provider_inventory(10_100);
+        duplicate.providers.push(duplicate.providers[0].clone());
+        overview.security_provider_inventory = Some(duplicate);
+        assert!(validate_overview(&overview, 10_100).is_err());
     }
 
     #[test]
