@@ -40,6 +40,21 @@ class ProviderStatus(str, Enum):
     UNKNOWN = "unknown"
 
 
+class UpdateStatus(str, Enum):
+    """Provider-verified update state; UJANI does not compare guessed version numbers."""
+
+    CURRENT = "current"
+    OUT_OF_DATE = "out_of_date"
+    UNKNOWN = "unknown"
+
+
+class UpdatePosture(str, Enum):
+    CURRENT = "current"
+    OUT_OF_DATE = "out_of_date"
+    UNVERIFIED = "unverified"
+    NOT_REPORTED = "not_reported"
+
+
 class Posture(str, Enum):
     REPORTED_HEALTHY = "reported_healthy"
     NEEDS_ATTENTION = "needs_attention"
@@ -60,6 +75,9 @@ class ProviderObservation:
     observed_at_unix_ms: int
     product_identity_known: bool = False
     capabilities: tuple[str, ...] = ()
+    update_status: UpdateStatus = UpdateStatus.UNKNOWN
+    update_checked_at_unix_ms: int | None = None
+    update_channel: str | None = None
 
 
 @dataclass(frozen=True)
@@ -72,6 +90,8 @@ class DevicePosture:
     product_identity_known: bool
     capabilities: tuple[str, ...]
     recommendation: str
+    update_posture: UpdatePosture
+    update_recommendation: str
 
 
 def _identifier(value: str) -> bool:
@@ -137,6 +157,44 @@ def assess_device_category(
         posture = Posture.UNVERIFIED
         recommendation = "Security posture is unverified; do not assume protection. Check the operating system or configured security console."
 
+    # Update currency is independent from provider health. Only a fresh,
+    # provider-authenticated explicit state is accepted; version strings alone
+    # and old observations never prove that a product is current.
+    update_evidence = []
+    for item in relevant:
+        checked = item.update_checked_at_unix_ms
+        if item.update_status is UpdateStatus.UNKNOWN or checked is None:
+            continue
+        if isinstance(checked, bool) or not isinstance(checked, int):
+            raise InventoryError("update-check timestamp is invalid")
+        if checked < 0 or checked > now_unix_ms + MAX_CLOCK_SKEW_MS:
+            raise InventoryError("update-check timestamp is invalid")
+        if now_unix_ms - checked <= max_age_ms:
+            update_evidence.append(item)
+
+    if any(item.update_status is UpdateStatus.OUT_OF_DATE for item in update_evidence):
+        update_posture = UpdatePosture.OUT_OF_DATE
+        update_recommendation = (
+            "Security product updates are reported out of date. Warn the device owner or "
+            "administrator and ask them to update the antivirus security intelligence/engine "
+            "or firewall software and rule/signature feeds through the existing vendor or OS workflow."
+        )
+    elif update_evidence and all(item.update_status is UpdateStatus.CURRENT for item in update_evidence):
+        update_posture = UpdatePosture.CURRENT
+        update_recommendation = "The configured provider reports its checked security updates are current; continue normal update monitoring."
+    elif any(item.update_status is not UpdateStatus.UNKNOWN for item in relevant):
+        update_posture = UpdatePosture.UNVERIFIED
+        update_recommendation = (
+            "Update status evidence is stale or incomplete. Ask the device owner or administrator "
+            "to check the product's latest security intelligence, engine, platform and firewall updates."
+        )
+    else:
+        update_posture = UpdatePosture.NOT_REPORTED
+        update_recommendation = (
+            "UJANI cannot verify whether antivirus definitions, engine/platform or firewall "
+            "updates are current. Check the existing product or operating-system security console."
+        )
+
     capabilities = tuple(sorted({cap for item in relevant for cap in item.capabilities if _identifier(cap)}))
     return DevicePosture(
         tenant_id=tenant_id,
@@ -147,4 +205,6 @@ def assess_device_category(
         product_identity_known=any(item.product_identity_known for item in relevant),
         capabilities=capabilities,
         recommendation=recommendation,
+        update_posture=update_posture,
+        update_recommendation=update_recommendation,
     )
