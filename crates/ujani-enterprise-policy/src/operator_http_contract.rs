@@ -230,6 +230,9 @@ pub fn service_error_status(error: OperatorServiceError) -> u16 {
         OperatorServiceError::InvalidTenantBoundary => 500,
         OperatorServiceError::RepositoryUnavailable | OperatorServiceError::AuditUnavailable => 503,
         OperatorServiceError::InvalidOverview => 502,
+        OperatorServiceError::InvalidModelMatchRequest => 400,
+        OperatorServiceError::ModelInventoryUnavailable => 404,
+        OperatorServiceError::ModelMatchRejected => 422,
     }
 }
 
