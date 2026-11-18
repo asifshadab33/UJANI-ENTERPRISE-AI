@@ -18,6 +18,9 @@ MAX_LABEL = 160
 MAX_SOURCE = 96
 MAX_PROVIDER_ID = 96
 MAX_CAPABILITY_LEN = 96
+MAX_EVIDENCE_FIELDS = 32
+MAX_FIELD_KEY_BYTES = 96
+MAX_FIELD_VALUE_BYTES = 1024
 MAX_OBSERVATIONS = 64
 MAX_CLOCK_SKEW_MS = 30_000
 
@@ -134,9 +137,17 @@ def observation_from_validated_connector_record(
     if isinstance(observed_at, bool) or not isinstance(observed_at, int) or observed_at < 0:
         raise InventoryError("connector observation timestamp is invalid")
     fields = record.get("fields")
-    if not isinstance(fields, Mapping) or any(
-        not isinstance(key, str) or not isinstance(value, str)
-        for key, value in fields.items()
+    if (
+        not isinstance(fields, Mapping)
+        or len(fields) > MAX_EVIDENCE_FIELDS
+        or any(
+            not isinstance(key, str)
+            or not isinstance(value, str)
+            or not key
+            or len(key.encode("utf-8")) > MAX_FIELD_KEY_BYTES
+            or len(value.encode("utf-8")) > MAX_FIELD_VALUE_BYTES
+            for key, value in fields.items()
+        )
     ):
         raise InventoryError("connector evidence fields are invalid")
 
