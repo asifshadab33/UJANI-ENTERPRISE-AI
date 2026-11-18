@@ -368,7 +368,11 @@ test("model catalogue task filter is explicit and uses only declared catalogue m
   context.catalogue = catalogue;
   vm.runInContext("renderModelCatalogue(catalogue)", context);
   const filter = getElement("model-catalogue-task-filter");
-  assert.equal(filter.children.length, 3);
+  assert.equal(filter.children.length, 4, "all-task option plus the three distinct declared tasks are shown");
+  assert.deepEqual(
+    filter.children.map((option) => option.value),
+    ["all", "chat", "coding_assistance", "summarization"]
+  );
   assert.equal(getElement("model-catalogue").children.length, 3, "two model cards plus the summary are shown initially");
 
   filter.value = "coding_assistance";
