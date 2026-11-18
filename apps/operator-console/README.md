@@ -65,3 +65,5 @@ Serve this directory with any static file server and open `index.html`.
 - Select **Load demo data** to explore the read-only layout. The **DEMO DATA** view uses synthetic devices, model inventory, workloads and approvals only; every record is visibly labelled synthetic and cannot trigger a control-plane action.
 - Select **Refresh live data** to leave demo mode and request the authenticated same-origin API. If the service is unavailable, the console clears the demo records and returns to the unavailable state.
 - The model catalogue remains descriptive only; demo data never installs, approves or dispatches a model.
+
+Synthetic security-provider examples are also shown only in the clearly labelled demo; they are not live product status or connected to an organisation.
