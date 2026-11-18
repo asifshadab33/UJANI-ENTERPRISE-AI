@@ -52,7 +52,7 @@
       "allOf": [
         {
           "if": {
-            "properties": { "update_posture": { "enum": ["current", "out_of_date"] } },
+            "properties": { "update_posture": { "enum": ["current"] } },
             "required": ["update_posture"]
           },
           "then": {
