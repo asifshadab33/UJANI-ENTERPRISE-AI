@@ -600,7 +600,7 @@ function validSecurityProviderInventory(inventory, overviewGeneratedAt, devices)
             && item.update_checked_at_unix_ms <= inventory.generated_at_unix_ms + MAX_INVENTORY_EVIDENCE_SKEW_MS
             && trustedDisplayNow() - item.update_checked_at_unix_ms >= -MAX_INVENTORY_EVIDENCE_SKEW_MS
             && trustedDisplayNow() - item.update_checked_at_unix_ms <= item.evidence_max_age_ms)
-        || (["current", "out_of_date"].includes(item.update_posture)
+        || (item.update_posture === "current"
           && (item.update_checked_at_unix_ms === null
             || inventory.generated_at_unix_ms - item.update_checked_at_unix_ms > item.evidence_max_age_ms))
         || (item.evidence_freshness !== "fresh" && ["current", "out_of_date"].includes(item.update_posture))
