@@ -102,6 +102,7 @@ def main():
     assert "item.evidence_freshness === \"fresh\" ? item.status : item.evidence_freshness" in js, "Stale provider evidence must not be displayed as healthy."
     assert '"out_of_date"' in js and "item.update_recommendation" in js, "Outdated provider evidence must show an explicit warning and recommendation."
     assert "No authenticated security-provider evidence is available" in js, "Missing provider evidence must never imply healthy protection."
+    assert "Product identity reported" in js and "Product identity not verified" in js, "Aggregate provider health must not imply product identity."
     assert "renderSecurityProviderInventory(data.security_provider_inventory || null)" in js, "Live provider inventory must render only from the authenticated overview."
     assert "function hardwareSummary" in js and "Accelerators not reported" in js, "Hardware-only inventory must expose reported CPU/RAM/storage and preserve unknown accelerators."
     assert "function runtimeEvidenceSummary" in js and "validEvidence(runtime.evidence, inventory.generated_at_unix_ms)" in js, "Runtime evidence freshness must be validated and visible."
