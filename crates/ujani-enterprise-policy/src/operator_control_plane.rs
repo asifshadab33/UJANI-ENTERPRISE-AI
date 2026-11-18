@@ -2045,6 +2045,7 @@ mod tests {
         assert_eq!(inventory.providers[0].update_posture, "current");
 
         let mut overview = empty_overview("tenant-a");
+        overview.generated_at_unix_ms = 100_000;
         overview.devices.push(OperatorDeviceView {
             device_id: "device-1".into(),
             display_name: "Device 1".into(),
@@ -2132,7 +2133,7 @@ mod tests {
         let page = sample_security_evidence_page(
             100_000,
             "out_of_date",
-            None,
+            Some("1000"),
             DataClassification::Internal,
         );
         let inventory = map_security_provider_evidence_page(
@@ -2154,7 +2155,7 @@ mod tests {
         let page = sample_security_evidence_page(
             1,
             "current",
-            Some("99_000"),
+            Some("1"),
             DataClassification::Internal,
         );
         let inventory = map_security_provider_evidence_page(
