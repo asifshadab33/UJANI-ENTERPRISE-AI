@@ -185,7 +185,7 @@ function showDemoData() {
       {
         device_id: "demo-ws-01", provider_id: "microsoft.defender", display_name: "DEMO · Microsoft Defender",
         category: "malware_protection", status: "healthy", evidence_freshness: "fresh", evidence_source: "Synthetic demo observation",
-        observed_at_unix_ms: now - 30_000, product_identity_known: true,
+        observed_at_unix_ms: now - 30_000, evidence_max_age_ms: 60_000, product_identity_known: true,
         capabilities: ["malware_protection"], update_posture: "out_of_date",
         update_checked_at_unix_ms: now - 30_000, update_channel: "security_intelligence",
         update_recommendation: "DEMO ONLY: update the existing antivirus security intelligence through its vendor or OS workflow."
@@ -193,7 +193,7 @@ function showDemoData() {
       {
         device_id: "demo-ws-02", provider_id: "opnsense.firewall", display_name: "DEMO · OPNsense Firewall",
         category: "firewall", status: "healthy", evidence_freshness: "stale", evidence_source: "Synthetic demo observation",
-        observed_at_unix_ms: now - 60_000, product_identity_known: true,
+        observed_at_unix_ms: now - 60_000, evidence_max_age_ms: 60_000, product_identity_known: true,
         capabilities: ["firewall"], update_posture: "unverified",
         update_checked_at_unix_ms: null, update_channel: null,
         update_recommendation: "DEMO ONLY: firewall update freshness cannot be verified."
@@ -585,6 +585,8 @@ function validSecurityProviderInventory(inventory, overviewGeneratedAt, devices)
         || !["malware_protection", "firewall", "endpoint_detection_response", "quarantine", "device_isolation", "security_updates"].includes(item.category)
         || !["healthy", "attention", "alert", "not_monitored", "unavailable", "unknown"].includes(item.status)
         || !["fresh", "stale", "unknown"].includes(item.evidence_freshness)
+        || !Number.isSafeInteger(item.evidence_max_age_ms) || item.evidence_max_age_ms <= 0 || item.evidence_max_age_ms > 2592000000
+        || (item.evidence_freshness === "fresh" && inventory.generated_at_unix_ms - item.observed_at_unix_ms > item.evidence_max_age_ms)
         || !boundedString(item.evidence_source, 128)
         || !Number.isSafeInteger(item.observed_at_unix_ms) || item.observed_at_unix_ms <= 0
         || item.observed_at_unix_ms > inventory.generated_at_unix_ms + MAX_INVENTORY_EVIDENCE_SKEW_MS
