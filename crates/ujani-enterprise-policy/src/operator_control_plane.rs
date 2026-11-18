@@ -1490,10 +1490,19 @@ where
         }
 
         let overview = self.get_overview(session_token, now_unix_ms)?;
-        if !overview
+        let device = overview
             .devices
             .iter()
-            .any(|device| device.device_id == device_id)
+            .find(|device| device.device_id == device_id)
+            .ok_or(OperatorServiceError::ModelInventoryUnavailable)?;
+        // Model planning is limited to devices whose current operator view proves
+        // enrollment, dual-consent-derived schedulability and a fresh last-seen time.
+        // A stale inventory row cannot keep a revoked, paused or offline device eligible.
+        if device.trust_state != "enrolled"
+            || device.availability != "schedulable"
+            || device.last_seen_unix_ms == 0
+            || device.last_seen_unix_ms > now_unix_ms.saturating_add(CLOCK_SKEW_TOLERANCE_MS)
+            || now_unix_ms.saturating_sub(device.last_seen_unix_ms) > MAX_OVERVIEW_AGE_MS
         {
             return Err(OperatorServiceError::ModelInventoryUnavailable);
         }
@@ -3244,6 +3253,102 @@ mod tests {
         assert_eq!(
             audit.events.lock().unwrap()[0].outcome,
             OperatorAuditOutcome::ReadSucceeded
+        );
+    }
+
+    #[test]
+    fn model_task_match_requires_enrolled_schedulable_and_fresh_device() {
+        let requirements = ModelTaskRequirements {
+            required_capabilities: vec![ModelCapability::Chat],
+            minimum_context_length_tokens: Some(4096),
+            minimum_memory_mb: None,
+        };
+        for (trust_state, availability, last_seen_unix_ms) in [
+            ("revoked", "schedulable", 10_100),
+            ("enrolled", "paused", 10_100),
+            ("enrolled", "schedulable", 0),
+        ] {
+            let auth = auth();
+            let token = auth
+                .mint_after_identity_verification(&claims("tenant-a"), 10_000)
+                .unwrap();
+            let mut overview = empty_overview("tenant-a");
+            overview.devices.push(OperatorDeviceView {
+                device_id: "device-1".into(),
+                display_name: "Lab workstation".into(),
+                platform: "linux".into(),
+                trust_state: trust_state.into(),
+                availability: availability.into(),
+                remaining_cpu_millis: Some(1500),
+                remaining_memory_mb: Some(4096),
+                last_seen_unix_ms,
+            });
+            overview.fleet = OperatorFleetCounts {
+                registered_devices: 1,
+                trusted_consented_devices: 1,
+                online_fresh_devices: 1,
+                schedulable_devices: 1,
+            };
+            overview.model_inventory.push(sample_model_inventory("device-1", 10_100));
+            let repo = Arc::new(TestRepo {
+                values: Mutex::new(HashMap::from([("tenant-a".into(), overview)])),
+            });
+            let service = OperatorControlPlane::new(
+                auth,
+                repo,
+                Arc::new(TestAudit::default()),
+            );
+            assert_eq!(
+                service.match_model_for_task(
+                    &token,
+                    "device-1",
+                    "llama3.2:latest",
+                    &requirements,
+                    10_100,
+                ),
+                Err(OperatorServiceError::ModelInventoryUnavailable)
+            );
+        }
+
+        let auth = auth();
+        let mut claims = claims("tenant-a");
+        claims.issued_at_unix_ms = 90_000;
+        claims.expires_at_unix_ms = 110_000;
+        let token = auth
+            .mint_after_identity_verification(&claims, 100_100)
+            .unwrap();
+        let mut overview = empty_overview("tenant-a");
+        overview.generated_at_unix_ms = 100_100;
+        overview.devices.push(OperatorDeviceView {
+            device_id: "device-1".into(),
+            display_name: "Lab workstation".into(),
+            platform: "linux".into(),
+            trust_state: "enrolled".into(),
+            availability: "schedulable".into(),
+            remaining_cpu_millis: Some(1500),
+            remaining_memory_mb: Some(4096),
+            last_seen_unix_ms: 1,
+        });
+        overview.fleet = OperatorFleetCounts {
+            registered_devices: 1,
+            trusted_consented_devices: 1,
+            online_fresh_devices: 1,
+            schedulable_devices: 1,
+        };
+        overview.model_inventory.push(sample_model_inventory("device-1", 100_100));
+        let repo = Arc::new(TestRepo {
+            values: Mutex::new(HashMap::from([("tenant-a".into(), overview)])),
+        });
+        let service = OperatorControlPlane::new(auth, repo, Arc::new(TestAudit::default()));
+        assert_eq!(
+            service.match_model_for_task(
+                &token,
+                "device-1",
+                "llama3.2:latest",
+                &requirements,
+                100_100,
+            ),
+            Err(OperatorServiceError::ModelInventoryUnavailable)
         );
     }
 
