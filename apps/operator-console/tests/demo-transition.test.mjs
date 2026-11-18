@@ -2,6 +2,13 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import vm from "node:vm";
+import { readBoundedJson } from "../boundedJson.js";
+
+async function readAppSource() {
+  const source = await readAppSource();
+  return source.replace(/^import \\{ readBoundedJson \\} from \"\\.\\/boundedJson\\.js\";\\s*/u, "");
+}
+
 
 class FakeElement {
   constructor() {
@@ -39,10 +46,7 @@ function collectText(element) {
 }
 
 test("live refresh clears synthetic demo data before the API request resolves", async () => {
-  const source = await readFile(
-    new URL("../app.js", import.meta.url),
-    "utf8"
-  );
+  const source = await readAppSource();
   const elements = new Map();
   const getElement = (id) => {
     if (!elements.has(id)) elements.set(id, new FakeElement());
@@ -119,7 +123,7 @@ test("live refresh clears synthetic demo data before the API request resolves", 
 
 
 test("live snapshot freshness uses server time plus a monotonic clock, not the local wall clock", async () => {
-  const source = await readFile(new URL("../app.js", import.meta.url), "utf8");
+  const source = await readAppSource();
   const elements = new Map();
   const getElement = (id) => {
     if (!elements.has(id)) elements.set(id, new FakeElement());
@@ -159,7 +163,7 @@ test("live snapshot freshness uses server time plus a monotonic clock, not the l
 
 
 test("console refreshes live data after resume but preserves explicitly selected demo mode", async () => {
-  const source = await readFile(new URL("../app.js", import.meta.url), "utf8");
+  const source = await readAppSource();
   const elements = new Map();
   const getElement = (id) => {
     if (!elements.has(id)) elements.set(id, new FakeElement());
@@ -216,7 +220,7 @@ test("console refreshes live data after resume but preserves explicitly selected
 });
 
 test("security-provider inventory enforces device binding and conservative freshness", async () => {
-  const source = await readFile(new URL("../app.js", import.meta.url), "utf8");
+  const source = await readAppSource();
   const elements = new Map();
   const getElement = (id) => {
     if (!elements.has(id)) elements.set(id, new FakeElement());
@@ -338,7 +342,7 @@ test("security-provider inventory enforces device binding and conservative fresh
 
 
 test("model catalogue task filter is explicit and uses only declared catalogue metadata", async () => {
-  const source = await readFile(new URL("../app.js", import.meta.url), "utf8");
+  const source = await readAppSource();
   const elements = new Map();
   const getElement = (id) => {
     if (!elements.has(id)) elements.set(id, new FakeElement());
