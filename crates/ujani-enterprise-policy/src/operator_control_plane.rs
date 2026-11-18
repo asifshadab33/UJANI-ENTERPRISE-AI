@@ -1832,7 +1832,7 @@ mod tests {
         assert!(validate_overview(&overview, 100_100).is_ok());
 
         overview.security_provider_inventory.as_mut().unwrap().providers[0].evidence_freshness = "fresh".into();
-        assert!(validate_overview(&overview, 10_100).is_err());
+        assert!(validate_overview(&overview, 100_100).is_err());
     }
 
     #[test]
