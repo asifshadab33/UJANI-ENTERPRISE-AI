@@ -17,6 +17,8 @@ Supported categories are malware protection, firewall, EDR, quarantine, device i
 The single authoritative mapper is `ujani_enterprise_policy::operator_control_plane::map_security_provider_evidence_page`. It calls the existing `validate_evidence_page` contract itself, checks the authenticated tenant and configured provider, and receives the enrolled device ID only from trusted host context. Provider-controlled `device_id` fields are ignored. It then bounds and normalizes category, reported health, product-identity flag, capabilities, update status, update-check time and update channel into the optional `OperatorOverview.security_provider_inventory` field.
 
 This mapping is implemented in Rust alongside the existing operator control plane. Do not add a parallel Python mapper or a second connector registry. The JSON Schema and operator-console checks validate the same versioned output contract.
+The host supplies `max_age_ms` from the configured provider/tenant evidence policy (bounded to 1 ms–30 days); this is serialized as `evidence_max_age_ms`. Fresh/stale labels are checked against that per-provider limit, not a universal five-minute threshold. A current update claim requires a fresh explicit update-check timestamp. A provider's explicit out-of-date result may use the fresh source-observation timestamp when it does not report a separate check time; stale evidence can never claim current or out-of-date.
+
 
 ## Existing connector-framework integration
 
