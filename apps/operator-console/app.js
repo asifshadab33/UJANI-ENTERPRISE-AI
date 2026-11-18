@@ -569,16 +569,18 @@ async function readBoundedJson(response) {
   }
 }
 
-function validSecurityProviderInventory(inventory, overviewGeneratedAt) {
+function validSecurityProviderInventory(inventory, overviewGeneratedAt, devices) {
   if (inventory === undefined) return true;
   if (!inventory || inventory.schema_version !== 1
       || !Number.isSafeInteger(inventory.generated_at_unix_ms) || inventory.generated_at_unix_ms <= 0
       || inventory.generated_at_unix_ms > overviewGeneratedAt + MAX_INVENTORY_EVIDENCE_SKEW_MS
       || !snapshotIsFresh(inventory.generated_at_unix_ms)
       || !Array.isArray(inventory.providers) || inventory.providers.length > 10000) return false;
+  const deviceIds = new Set(devices.map((device) => device.device_id));
   const ids = new Set();
   return inventory.providers.every((item) => {
     if (!item || !boundedString(item.device_id, 128)
+        || !deviceIds.has(item.device_id)
         || !boundedString(item.provider_id, 96)
         || !["malware_protection", "firewall", "endpoint_detection_response", "quarantine", "device_isolation", "security_updates"].includes(item.category)
         || !["healthy", "attention", "alert", "not_monitored", "unavailable", "unknown"].includes(item.status)
@@ -586,9 +588,11 @@ function validSecurityProviderInventory(inventory, overviewGeneratedAt) {
         || !boundedString(item.evidence_source, 128)
         || !Number.isSafeInteger(item.observed_at_unix_ms) || item.observed_at_unix_ms <= 0
         || item.observed_at_unix_ms > inventory.generated_at_unix_ms + MAX_INVENTORY_EVIDENCE_SKEW_MS
+        || (item.evidence_freshness === "fresh" && !snapshotIsFresh(item.observed_at_unix_ms))
         || typeof item.product_identity_known !== "boolean"
         || !Array.isArray(item.capabilities) || item.capabilities.length > 32
         || !item.capabilities.every((capability) => boundedString(capability, 96))
+        || new Set(item.capabilities).size !== item.capabilities.length
         || !["current", "out_of_date", "unverified", "not_reported"].includes(item.update_posture)
         || !(item.update_checked_at_unix_ms === null
           || Number.isSafeInteger(item.update_checked_at_unix_ms) && item.update_checked_at_unix_ms > 0
@@ -597,7 +601,7 @@ function validSecurityProviderInventory(inventory, overviewGeneratedAt) {
         || !(item.display_name === null || boundedString(item.display_name, 160))
         || !(item.update_channel === null || boundedString(item.update_channel, 160))
         || !boundedString(item.update_recommendation, 512)) return false;
-    const key = item.device_id + ":" + item.provider_id + ":" + item.category;
+    const key = JSON.stringify([item.device_id, item.provider_id, item.category]);
     if (ids.has(key)) return false;
     ids.add(key);
     return true;
@@ -697,7 +701,7 @@ function validOverview(data) {
     && data.devices.length === counts.registered_devices
     && Number.isSafeInteger(data.generated_at_unix_ms) && data.generated_at_unix_ms > 0
     && Number.isSafeInteger(data.server_time_unix_ms) && data.server_time_unix_ms > 0
-    && validSecurityProviderInventory(data.security_provider_inventory, data.generated_at_unix_ms);
+    && validSecurityProviderInventory(data.security_provider_inventory, data.generated_at_unix_ms, data.devices);
 }
 function renderOverview(data) {
   if (!data || !Number.isSafeInteger(data.server_time_unix_ms) || data.server_time_unix_ms <= 0) {
