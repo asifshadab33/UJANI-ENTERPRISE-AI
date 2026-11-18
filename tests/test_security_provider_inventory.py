@@ -6,6 +6,8 @@ from scripts.security_provider_inventory import (
     ProviderObservation,
     ProviderStatus,
     SecurityCategory,
+    UpdatePosture,
+    UpdateStatus,
     assess_device_category,
 )
 
@@ -44,6 +46,35 @@ class SecurityProviderInventoryTests(unittest.TestCase):
         self.assertEqual(result.posture, Posture.REPORTED_HEALTHY)
         self.assertTrue(result.product_identity_known)
         self.assertEqual(result.capabilities, ("malware_protection", "quarantine"))
+        self.assertEqual(result.update_posture, UpdatePosture.NOT_REPORTED)
+
+    def test_provider_reported_outdated_security_intelligence_is_a_warning(self):
+        result = self.assess([self.observation(
+            update_status=UpdateStatus.OUT_OF_DATE,
+            update_checked_at_unix_ms=99_000,
+            update_channel="security_intelligence",
+        )])
+        self.assertEqual(result.posture, Posture.REPORTED_HEALTHY)
+        self.assertEqual(result.update_posture, UpdatePosture.OUT_OF_DATE)
+        self.assertIn("out of date", result.update_recommendation)
+        self.assertIn("antivirus", result.update_recommendation)
+
+    def test_current_update_state_requires_fresh_provider_evidence(self):
+        current = self.observation(
+            update_status=UpdateStatus.CURRENT,
+            update_checked_at_unix_ms=99_000,
+        )
+        self.assertEqual(self.assess([current]).update_posture, UpdatePosture.CURRENT)
+        stale = self.observation(
+            update_status=UpdateStatus.CURRENT,
+            update_checked_at_unix_ms=1,
+        )
+        self.assertEqual(self.assess([stale]).update_posture, UpdatePosture.UNVERIFIED)
+
+    def test_missing_update_evidence_never_claims_current(self):
+        result = self.assess([self.observation()])
+        self.assertNotEqual(result.update_posture, UpdatePosture.CURRENT)
+        self.assertIn("cannot verify", result.update_recommendation)
 
     def test_alert_overrides_healthy(self):
         result = self.assess([
@@ -80,6 +111,14 @@ class SecurityProviderInventoryTests(unittest.TestCase):
         item = self.observation(capabilities=("quarantine", "malware_protection", "quarantine"))
         result = self.assess([item])
         self.assertEqual(result.capabilities, ("malware_protection", "quarantine"))
+
+    def test_invalid_update_timestamp_is_rejected(self):
+        item = self.observation(
+            update_status=UpdateStatus.CURRENT,
+            update_checked_at_unix_ms=True,
+        )
+        with self.assertRaisesRegex(InventoryError, "update-check timestamp"):
+            self.assess([item])
 
 
 if __name__ == "__main__":
