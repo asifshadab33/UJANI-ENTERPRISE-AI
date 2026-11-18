@@ -252,6 +252,7 @@ test("security-provider inventory enforces device binding and conservative fresh
     status: "healthy",
     evidence_source: "ReadOnlyConnector",
     evidence_freshness: "fresh",
+    evidence_max_age_ms: 60_000,
     observed_at_unix_ms: 999_000,
     product_identity_known: true,
     capabilities: ["malware_protection"],
@@ -281,6 +282,18 @@ test("security-provider inventory enforces device binding and conservative fresh
   assert.equal(
     vm.runInContext("validSecurityProviderInventory(inventory, 1000000, devices)", context),
     false
+  );
+
+  context.inventory.providers[0] = {
+    ...validProvider,
+    evidence_max_age_ms: 24 * 60 * 60 * 1000,
+    observed_at_unix_ms: 100_000,
+    update_checked_at_unix_ms: 100_000
+  };
+  assert.equal(
+    vm.runInContext("validSecurityProviderInventory(inventory, 1000000, devices)", context),
+    true,
+    "freshness must use the provider's configured age, not a universal five-minute window"
   );
 
   context.inventory.providers[0] = {
