@@ -665,10 +665,7 @@ pub fn map_security_provider_evidence_page(
     let mut providers = Vec::with_capacity(page.records.len());
     let mut keys = HashSet::with_capacity(page.records.len());
     for (record, evidence_freshness) in page.records.iter().zip(freshness) {
-        if !matches!(
-            record.data_classification,
-            DataClassification::Internal | DataClassification::Confidential
-        ) {
+        if record.data_classification != DataClassification::Internal {
             return Err(ConnectorError::MalformedEvidence);
         }
         let category = record.fields.get("category")
