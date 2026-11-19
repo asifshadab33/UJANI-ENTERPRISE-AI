@@ -1,3 +1,20 @@
+ALTER TABLE ujani_control.device_telemetry_samples
+ ADD COLUMN IF NOT EXISTS consent_generation bigint;
+
+DO $block$
+BEGIN
+ IF NOT EXISTS (
+  SELECT 1 FROM pg_catalog.pg_constraint
+  WHERE conrelid = 'ujani_control.device_telemetry_samples'::regclass
+    AND conname = 'device_telemetry_samples_consent_generation_safe'
+ ) THEN
+  ALTER TABLE ujani_control.device_telemetry_samples
+   ADD CONSTRAINT device_telemetry_samples_consent_generation_safe
+   CHECK (consent_generation IS NULL OR consent_generation BETWEEN 1 AND 9007199254740991);
+ END IF;
+END;
+$block$;
+
 -- Consent-bound, authenticated device telemetry v2 admission.
 -- Apply after migrations 0001-0014 (requires the trust, owner-binding and
 -- reservation-watermark columns introduced by 0008 and the consent trigger in 0013).
@@ -180,11 +197,11 @@ BEGIN
 
  INSERT INTO ujani_control.device_telemetry_samples
   (tenant_id, device_id, generation, sequence, request_id, observed_at,
-   payload_digest, reservation_revision, cpu_available_millis, memory_available_mb,
+   payload_digest, reservation_revision, consent_generation, cpu_available_millis, memory_available_mb,
    thermal_state, power_state, participation_state)
  VALUES
   (p_tenant_id, p_device_id, p_generation, p_sequence, p_request_id, p_observed_at,
-   p_payload_digest, p_reservation_revision, p_cpu_available_millis, p_memory_available_mb,
+   p_payload_digest, p_reservation_revision, p_consent_generation, p_cpu_available_millis, p_memory_available_mb,
    p_thermal_state, p_power_state, p_participation_state);
 
  INSERT INTO ujani_control.audit_events
@@ -265,3 +282,6 @@ COMMENT ON FUNCTION ujani_control.accept_authenticated_device_telemetry_v2(
  text,text,text,bigint,bigint,bigint,bigint,bigint,bytea,bigint,timestamptz,bytea,integer,bigint,text,text,text
 ) IS
  'SECURITY INVOKER authenticated telemetry v2 admission. The host verifies the exact signed body and passes the authenticated key/request claims. The function rechecks active key, owner binding, enabled owner, exact consent generation, organisation approval, replay, freshness, monotonic generation/sequence and reservation watermark under tenant/device locks, then commits the sample and audit receipt atomically. No raw body is stored and no workload is dispatched.';
+
+COMMENT ON COLUMN ujani_control.device_telemetry_samples.consent_generation IS
+ 'Server-issued owner-consent generation captured in authenticated telemetry v2. NULL denotes a legacy sample admitted before consent-generation binding.';
