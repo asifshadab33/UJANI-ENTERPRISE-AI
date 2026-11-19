@@ -255,6 +255,12 @@ jobs:
           PGPASSWORD: postgres
         run: |
           "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < scripts/test_atomic_telemetry_lease_admission.sql
+      - name: Verify concurrent atomic telemetry-plus-lease admission serialization
+        env:
+          PGPASSWORD: postgres
+          PGUSER: postgres
+          PGDATABASE: ujani_test
+        run: bash scripts/test_atomic_telemetry_lease_admission_concurrency.sh
       - name: Apply atomic model inventory v2 admission migration
         env:
           PGPASSWORD: postgres
