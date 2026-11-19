@@ -425,6 +425,10 @@ DECLARE
 BEGIN
  SELECT oid INTO v_runtime_role_oid
  FROM pg_catalog.pg_roles WHERE rolname = 'ujani_runtime';
+ IF v_runtime_role_oid IS NULL THEN
+  RAISE EXCEPTION 'ujani_runtime must be provisioned before migration 0015'
+   USING ERRCODE = '42704';
+ END IF;
  IF v_runtime_role_oid IS NOT NULL THEN
   IF EXISTS (
    SELECT 1 FROM pg_catalog.pg_roles
