@@ -21,7 +21,7 @@
 ### Useful feature work — proceed without waiting for remote execution
 1. Operator console improvements and admin workflows remain read-only until authenticated APIs and permission/approval gates exist.
 2. Model/task matching (merged PR #266) remains advisory: display capability evidence, resource estimates, freshness, conflicts and explanations; never reserve/dispatch.
-3. Model-runtime inventory v2: schema parity, enrolled-device authorization, privacy minimisation, freshness/unknown evidence, no-model/unsupported-runtime cases.
+3. Model-runtime inventory v2: schema parity, enrolled-device authorization, privacy minimisation, freshness/unknown evidence, no-model/unsupported-runtime cases. Next feature: add a versioned v2 operator projection and console evidence display; never infer fit from v1-only facts.
 4. Security-provider inventory: update freshness and stale/unverified states; no remote remediation or containment without opt-in and validated tooling.
 5. Control-plane service core, tenant-safe persistence, admission and lease transactions: continue isolated tests and architecture work, but do not expose worker execution.
 6. UI, accessibility, handbook, setup, operator troubleshooting and reproducible local testing.
