@@ -365,3 +365,78 @@ mod inventory_v2_preflight_boundary_regression_tests {
         );
     }
 }
+
+
+#[cfg(test)]
+mod inventory_v2_consent_timestamp_regression_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn payload() -> Value {
+        json!({
+            "schema_version": 2,
+            "generated_at_unix_ms": 1_800_000_000_000u64,
+            "device_ref": "device-1",
+            "collection_context": {
+                "scope": "organisation_enrolled",
+                "owner_consent": "granted",
+                "organisation_authorisation": "authorised",
+                "policy_version": "policy-v2"
+            },
+            "platform": {},
+            "hardware": {},
+            "runtimes": [],
+            "models": [],
+            "privacy": {
+                "contains_prompts": false,
+                "contains_user_files": false,
+                "contains_local_paths": false,
+                "contains_credentials": false
+            }
+        })
+    }
+
+    #[test]
+    fn accepts_payload_at_the_safe_integer_timestamp_ceiling() {
+        let mut value = payload();
+        value["generated_at_unix_ms"] = json!(9_007_199_254_740_991u64);
+        assert_eq!(
+            validate_enterprise_inventory_v2_preflight(&value, "device-1"),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn rejects_zero_timestamp_and_non_boolean_privacy_flags() {
+        let mut zero = payload();
+        zero["generated_at_unix_ms"] = json!(0);
+        assert_eq!(
+            validate_enterprise_inventory_v2_preflight(&zero, "device-1"),
+            Err(InventoryV2PreflightError::InvalidTimestamp)
+        );
+
+        let mut invalid_privacy = payload();
+        invalid_privacy["privacy"]["contains_prompts"] = json!("false");
+        assert_eq!(
+            validate_enterprise_inventory_v2_preflight(&invalid_privacy, "device-1"),
+            Err(InventoryV2PreflightError::InvalidPrivacyDeclaration)
+        );
+    }
+
+    #[test]
+    fn rejects_missing_or_non_granted_organisation_consent_context() {
+        let mut owner = payload();
+        owner["collection_context"]["owner_consent"] = json!("revoked");
+        assert_eq!(
+            validate_enterprise_inventory_v2_preflight(&owner, "device-1"),
+            Err(InventoryV2PreflightError::ConsentNotGranted)
+        );
+
+        let mut organisation = payload();
+        organisation["collection_context"]["organisation_authorisation"] = json!("pending");
+        assert_eq!(
+            validate_enterprise_inventory_v2_preflight(&organisation, "device-1"),
+            Err(InventoryV2PreflightError::OrganisationNotAuthorised)
+        );
+    }
+}
