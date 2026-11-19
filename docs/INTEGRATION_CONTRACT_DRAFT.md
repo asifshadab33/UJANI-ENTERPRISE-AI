@@ -22,11 +22,12 @@ This RFC describes a future protocol boundary. It does not enable transport, rem
 
 ### Important implementation details
 
-- Public peer protocol v2 signs a domain-separated, length-prefixed `serde_json` representation and verifies against a trusted public key supplied out of band. The envelope contains no `key_id` or organisation audience. Its replay guard is in memory; the module comments describe persistence as a future production-adapter responsibility.
-- Public receipt v3 records input/output digests, adapter/model provenance, timestamps, network evidence and outcome for supported local operations. It is not the signed receipt required for a remote task.
-- Enterprise's workload manifest is a bounded scheduler input, not an authorisation grant. Its signed administrator approval binds the workload/device/class/resource limits, approver key ID, manifest digest and expiry. The durable device-trust registry is a persistence primitive that accepts externally supplied integrity material and can use an external monotonic anchor; this is not a deployed authenticated ingestion service or proof of production KMS custody.
-- The shared `model-runtime-inventory-v1` schema is already byte-for-byte identical in both repositories. It is a separate, privacy-minimised capability/resource report; it must never carry prompts, files, credentials or conversation history and it does not authorise a task.
-- Current v1 limitation: the descriptor reports host platform/architecture and accelerator observations, but does not declare per-model OS/accelerator compatibility or per-capability provenance. Consumers must preserve **Unknown** unless verified runtime metadata or a signed catalogue establishes compatibility; never infer it from hardware presence or a model name. Device trust, user consent, worker-owner opt-in and organisation-admin approval are enforced by authenticated enrollment/transport/task policy, not implied by an inventory payload. Enterprise's typed matcher is side-effect-free, not a live ingestion service or operator-console model inventory view; Public's live discovery currently targets Ollama. A future v2 may add per-model compatibility and finer-grained evidence; keep strict v1 unchanged.
+- Public peer protocol v2 signs its legacy envelope with a domain-separated, length-prefixed `serde_json` representation. It has no organisation audience or signed key ID in the envelope, and its task replay guard is bounded in-memory state. Public's separate device-trust layer does not make that legacy envelope interoperable with the shared v1 task contract.
+- Public execution receipt v3 is a local hash-chained SQLite metadata record. It is useful for local audit but is not a digitally signed, organisation-bound remote worker receipt.
+- Enterprise `WorkloadManifest` v1 is a bounded scheduler input, not an authorisation grant. Its signed administrator approval and the device-owner opt-in are separate controls. Durable trust/replay primitives do not by themselves prove production KMS custody or an end-to-end authenticated task service.
+- The shared model/runtime inventory v1 and v2 schemas, reference vectors, local-model catalogue, task-contract v1 schema, consent-binding vector and shared manifest are pinned in both repositories. Tenant-specific model approval, distribution, retention and inventory visibility policy remain Enterprise-only.
+- Inventory v2 is now implemented as a metadata-only contract. Public produces a personal-local-only descriptor from its existing OS/Ollama observations and presents evidence while preserving explicit model choice. Enterprise has an authenticated device-request/preflight boundary and an atomic PostgreSQL admission migration for enrolled-device inventory. The v2 operator projection is not yet connected to a live authenticated read API. V1 remains unchanged for existing consumers.
+- Unknown, stale, future-dated, estimated or unverified capability and compatibility facts must remain distinct and cannot establish verified placement. Hardware presence or a model/provider name is not evidence of capability. Inventory is not a task, consent grant, device-trust proof or execution permission.
 
 ## Proposed language-neutral v1 message set
 
@@ -143,20 +144,57 @@ Public model selection remains an explicit device-owner choice. Enterprise may e
 
 
 
-## Latest cross-repository integration evidence — 2026-11-19
+## Latest cross-repository integration evidence — 2026-11-19 evening refresh
 
-This status section supersedes earlier dated snapshots. The shared schemas are specifications and fixtures; they do not establish authenticated transport, execution authorization or production deployment.
+This section supersedes all earlier dated repository, PR and feature-status snapshots in this document. Schema parity is not proof of a deployed service or interoperable execution.
 
-### Verified main-branch status
-- Public main: `69f7794bd045dc50e9421b214e1dedd20f6b4d11`. The local model/runtime inventory v2 producer is merged; the desktop UI presents installed models and evidence and retains explicit owner model choice. Post-merge CI is pending.
-- Enterprise main: `197bf007411b3c4aab10e9ed620a9b6e0f3671be`. PR #249's authenticated inventory v2 admission/persistence boundary and PR #266 advisory model/task matching are merged. Enterprise main CI, RustSec and CodeQL passed.
-- Enterprise inventory admission is a database/policy boundary, not a deployed HTTP service. The static operator console reads same-origin `GET /api/v1/operator/overview`; without the authenticated service it remains unavailable, with synthetic demo data only after an explicit demo action. No live inventory/operator view is established.
+### Verified default-branch and workflow evidence
 
-### Shared artifact parity
-The main branches' `schemas/shared-contract-manifest-v1.json` is byte-identical (Git blob SHA `5c41a57411453145f0d80a470f9985375b6e3ca4`). All seven pinned artifacts were fetched from both main branches and matched the manifest hashes: local-model catalogue v1, model/runtime inventory v1 and v2 schemas, personal-to-enterprise task-contract v1 schema, consent-binding vector, and inventory v1/v2 vectors. This proves schema/fixture parity only.
+- **Public AI** `main`: `95cd331ca870a3ca4de534997ee07f508a00669a`. Current-head UJANI CI run [44549577584](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/actions/runs/44549577584) and CodeQL run [44549577477](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/actions/runs/44549577477) completed successfully on this exact SHA.
+- **Enterprise AI** `main`: `bf5128372caf6901479cc0ac2c195efec848b5dc`. Scheduled CI run [44575943210](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/actions/runs/44575943210) completed successfully on this exact SHA. Push CI [44575498199](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/actions/runs/44575498199) was still queued at this refresh; CodeQL [44575498880](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/actions/runs/44575498880) and RustSec [44575498162](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/actions/runs/44575498162) passed on the same SHA.
+- The products remain separate repositories, independently buildable and usable. No release was published and no remote execution or automated containment was enabled.
 
-### Remaining protocol incompatibility
-Public peer envelope v2 and Enterprise WorkloadManifest v1 still differ in sender/device/tenant/audience identity, consent binding, privacy classification, capability/access-scope vocabulary, resource units and bounds, expiry units, nonce encoding and durable replay semantics, state sequencing and receipt/signature semantics. No production authenticated adapter maps these protocols end-to-end. The adapter must not invent missing identity/consent/trust and must atomically bind task digest, replay claim, policy admission and lease before any future execution.
+### Shared artifact compatibility
 
-### Model/runtime inventory boundary
-The descriptor remains metadata-only: observed/runtime-reported/catalogue/estimate/unknown evidence, freshness, platform/accelerator compatibility and explicit capability evidence. Public scope is personal-local-only; Enterprise scope is enrolled/authorised, owner-consented and administrator-approved. No prompts, files, paths, credentials or history are shared. A descriptor is not trust or execution authority. Remote worker execution and automated containment remain disabled.
+The current main branches contain byte-identical copies of the seven artifacts pinned by `schemas/shared-contract-manifest-v1.json`: the local-model catalogue, model/runtime inventory v1 and v2 schemas, Personal-to-Enterprise task-contract v1 schema, consent-binding vector, and model-inventory v1 and v2 vectors. The manifest itself is also identical. The task-contract Python validator is byte-identical in both repositories. Native Rust decoders remain separately maintained so neither product depends on the other at runtime.
+
+Important shared identities include:
+
+- Task-contract v1 schema: `566a0d72babd58636a3ef40e55b5c44168776522`
+- Model/runtime inventory v2 schema: `6f1d5a6dd3b70a4b5e78203a20a67b71ed35a489`
+- Shared artifact manifest: `5c41a57411453145f0d80a470f9985375b6e3ca4`
+- Task-contract validator: `a61c241289a32b750200bdcb01a8d79485e17a28`
+
+This proves schema, fixture and validator parity; it does not prove authenticated cross-product transport or execution.
+
+### Model/runtime capability inventory v2
+
+- **Public AI:** the local producer is merged. It builds the v2 descriptor from the existing bounded OS and loopback Ollama observations, keeps collection `personal_local_only`, preserves unknown facts, and does not send inventory to Enterprise. The desktop exposes evidence-qualified capability/resource metadata and preserves explicit user model choice. Runtime discovery/selection is currently Ollama-specific; other providers remain unsupported until a dedicated adapter is registered. No automatic model switch, silent install, managed download or cloud transfer is enabled.
+- **Enterprise AI:** the v2 schema, preflight boundary, authenticated device-request verifier and PostgreSQL migration 0014 are present. The intake module verifies the enrolled-device request against the exact raw body, checks current device trust and owner opt-in, and applies bounded preflight. The database admission transaction rechecks tenant, active device key/generation, owner-consent binding/generation, administrator policy/approval, request expiry/replay and freshness while committing the snapshot, device revision and digest-only audit evidence atomically. Revocation or policy changes clear stored model/runtime metadata.
+- **Remaining Enterprise boundary:** the hosting adapter must preserve and pass the raw body, perform full Draft 2020-12 JSON Schema validation, and call the authenticated intake and database transaction in one authoritative request flow. The database migration is an admission primitive, not a deployed customer-hosted HTTP service.
+- **Operator visibility:** a bounded v2 projection schema, fixture and validator exist, but the v2 projection is not yet connected to a live authenticated operator read API/console feed. The current operator overview's `model_inventory` member is the older v1 view. No live fleet model inventory should be claimed from the static console or synthetic demo data.
+- Inventory contains no prompts, file contents, credentials, conversation history, local paths or employee activity. Enterprise visibility requires an enrolled device, current owner consent and current organisation policy; a descriptor never proves trust or grants execution authority.
+
+The shared v2 descriptor supports open, bounded runtime/provider identifiers for future adapters without assuming that vendors behave like Ollama. It distinguishes OS-observed facts, runtime-reported facts, signed/published catalogue claims, estimates and unknown values; stale or future-dated evidence and insufficient measured resources cannot establish fit. Empty inventories and unknown capabilities remain valid unknown states, not implicit availability.
+
+### Personal-to-Enterprise task contract v1
+
+The shared v1 schema and consent-binding vector are present in both products, and both have side-effect-free native decoders for task envelope, status and execution receipt messages. The contract defines sender/device identity, organisation/service audience, task and payload identity, data/privacy classification, separate access scopes and model/task capabilities, CPU/MiB/runtime/output limits, user plus administrator and worker-owner consent, device trust constraints, expiry, nonce, monotonic status/receipt sequences, Ed25519 signatures and verifiable output-byte receipts.
+
+The legacy formats are still not wire-compatible:
+
+- Public `PeerTaskEnvelope` v2 uses seconds-based timestamps, a 16-byte hex nonce, legacy peer scopes and a bounded in-memory replay guard; its signing bytes use a different profile.
+- Enterprise `WorkloadManifest` v1 and its separate administrator-approval claim use different workload/device identity, resource and approval semantics. Enterprise HTTP device requests have their own request ID, body digest and shorter request TTL.
+- Public local receipt v3 is a hash-chained local SQLite record, not a signed worker receipt. The shared v1 execution-receipt schema is not yet emitted and verified by a production worker.
+
+No adapter may invent missing sender, tenant, device-trust or consent evidence. Existing Enterprise durable task replay tables/functions are not yet bound to authenticated task intake, dual-consent checks and lease admission in one transaction. Cross-language signing/verification vectors and the complete authenticated transport, policy, lease and receipt lifecycle remain open. The shared schema is a compatibility target, not an active dispatch protocol.
+
+### Ordered integration and release backlog
+
+1. **Public P0:** finish command-by-command native IPC authorization and denial-before-side-effect/receipt regressions; close remaining Ollama, PDF/OS-isolation, filesystem, history/key-management and reliability blockers. Keep the seven previously identified Rust dependency advisories visible; a successful audit workflow is not the same as a clean dependency set.
+2. **Enterprise P0:** connect the v2 authenticated intake module to a customer-hosted HTTP adapter and tenant-scoped repository; add the authenticated v2 operator read projection and GUI; complete protected KMS/HSM/TPM key custody, separately protected rollback anchoring, encrypted audit/ledger retention and recovery.
+3. **Cross-product P0:** implement only explicit, user-approved translation from the legacy formats to task-contract v1; bind sender/organisation/worker identity, dual consent, privacy policy, capability and resource checks, expiry, durable replay and lease admission atomically. Add end-to-end cancellation, failure recovery and signed receipt/output verification.
+4. **Before any worker pilot:** prove OS-enforced process/filesystem/network isolation, receiver-side authorization, current trust and consent revalidation, quotas, replay resistance, transactional lease renewal/release and crash/power-loss recovery. Remote execution stays disabled until independent security review passes.
+5. **External validation:** physical Windows/Linux/macOS installation and launch, real Ollama/model-selection flows, PDF and isolation tests, production signing/updater/rollback, and customer KMS/database/deployment validation still require the relevant devices, credentials and deployment environment. Automated CI is not a substitute for these tests.
+
+No third repository or shared runtime dependency is required. Keep the existing schemas and product-local adapters; extend them only when a demonstrated compatibility gap is closed.
