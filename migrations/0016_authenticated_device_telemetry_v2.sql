@@ -254,16 +254,22 @@ BEGIN
    USING ERRCODE = '42501';
  END IF;
  IF EXISTS (
-  SELECT 1 FROM pg_catalog.pg_namespace
-  WHERE nspname = 'ujani_control' AND nspowner = v_runtime_role_oid
+  SELECT 1 FROM pg_catalog.pg_namespace n
+  WHERE n.nspname = 'ujani_control'
+    AND pg_catalog.pg_has_role(v_runtime_role_oid,n.nspowner,'MEMBER')
  ) OR EXISTS (
   SELECT 1 FROM pg_catalog.pg_class c
   JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-  WHERE n.nspname = 'ujani_control' AND c.relowner = v_runtime_role_oid
+  WHERE n.nspname = 'ujani_control'
+    AND pg_catalog.pg_has_role(v_runtime_role_oid,c.relowner,'MEMBER')
  ) THEN
   RAISE EXCEPTION 'ujani_runtime must not own the control schema or its objects'
    USING ERRCODE = '42501';
  END IF;
+
+
+END;
+$block$;
 
  GRANT USAGE ON SCHEMA ujani_control TO ujani_runtime;
  GRANT SELECT ON ujani_control.devices,ujani_control.device_keys,
@@ -281,8 +287,6 @@ BEGIN
  GRANT EXECUTE ON FUNCTION ujani_control.accept_authenticated_device_telemetry_v2(
   text,text,text,bigint,bigint,bigint,bigint,bigint,bytea,bigint,timestamptz,bytea,integer,bigint,text,text,text
  ) TO ujani_runtime;
-END;
-$block$;
 
 COMMENT ON FUNCTION ujani_control.accept_authenticated_device_telemetry_v2(
  text,text,text,bigint,bigint,bigint,bigint,bigint,bytea,bigint,timestamptz,bytea,integer,bigint,text,text,text
