@@ -547,6 +547,18 @@ impl DurableDeviceRegistry {
         &self,
         authenticated: &AuthenticatedDeviceRequest,
     ) -> Result<(VerifyingKey, bool), DurableDeviceTrustError> {
+        let (key, owner_opted_in, _) =
+            self.authenticated_device_status_with_consent_generation_for_request(authenticated)?;
+        Ok((key, owner_opted_in))
+    }
+
+    /// Re-read the active key, owner choice and exact consent generation after
+    /// request authentication. The generation lets a database transaction reject
+    /// a request created before an owner pause/withdrawal and later re-consent.
+    pub fn authenticated_device_status_with_consent_generation_for_request(
+        &self,
+        authenticated: &AuthenticatedDeviceRequest,
+    ) -> Result<(VerifyingKey, bool, u64), DurableDeviceTrustError> {
         self.read(|registry| {
             let record = registry
                 .devices
@@ -566,7 +578,7 @@ impl DurableDeviceRegistry {
             let owner_opted_in = record.owner_opted_in
                 && record.owner_consent_generation == record.generation
                 && record.owner_consent_revision > 0;
-            Ok((record.key, owner_opted_in))
+            Ok((record.key, owner_opted_in, record.owner_consent_generation))
         })
     }
 
