@@ -1,3 +1,5 @@
+BEGIN;
+
 ALTER TABLE ujani_control.device_telemetry_samples
  ADD COLUMN IF NOT EXISTS consent_generation bigint;
 
@@ -10,8 +12,11 @@ BEGIN
  ) THEN
   ALTER TABLE ujani_control.device_telemetry_samples
    ADD CONSTRAINT device_telemetry_samples_consent_generation_safe
-   CHECK (consent_generation IS NULL OR consent_generation BETWEEN 1 AND 9007199254740991);
+   CHECK (consent_generation IS NULL OR consent_generation BETWEEN 1 AND 9007199254740991)
+   NOT VALID;
  END IF;
+ ALTER TABLE ujani_control.device_telemetry_samples
+  VALIDATE CONSTRAINT device_telemetry_samples_consent_generation_safe;
 END;
 $block$;
 
@@ -285,3 +290,5 @@ COMMENT ON FUNCTION ujani_control.accept_authenticated_device_telemetry_v2(
 
 COMMENT ON COLUMN ujani_control.device_telemetry_samples.consent_generation IS
  'Server-issued owner-consent generation captured in authenticated telemetry v2. NULL denotes a legacy sample admitted before consent-generation binding.';
+
+COMMIT;
