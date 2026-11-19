@@ -5,6 +5,25 @@ import re
 ROOT = Path(__file__).resolve().parents[1]
 APP = ROOT / "apps" / "operator-console"
 
+
+def css_block_after(css: str, pattern: str) -> str | None:
+    """Return one active CSS block, respecting nested braces and prior comment removal."""
+    match = re.search(pattern, css, re.S)
+    if not match:
+        return None
+    opening = css.find("{", match.start(), match.end())
+    if opening < 0:
+        return None
+    depth = 0
+    for index in range(opening, len(css)):
+        if css[index] == "{":
+            depth += 1
+        elif css[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return css[opening + 1:index]
+    return None
+
 class ConsoleParser(HTMLParser):
     """Inspect the static operator console for unsafe embedded resources."""
 
@@ -79,10 +98,14 @@ def main():
     assert "Load demo data" in readme and "synthetic devices" in readme, "Demo/live separation must be documented."
     assert "unavailable state by default" in readme, "The initial console state must not imply live fleet connectivity."
     assert ".demo-banner" in css and "[hidden]" in css, "Demo warning and hidden initial state must be styled."
-    assert re.search(r"tbody tr:hover td\s*\{[^}]*\bbackground\s*:\s*[^;}]+", css, re.S), "Hovered inventory rows must declare a visible cell background."
-    assert re.search(r"tbody tr:focus-within td\s*\{[^}]*\bbackground\s*:\s*[^;}]+", css, re.S), "Keyboard-focused inventory rows must declare a visible cell background."
-    reduced_motion = re.search(r"@media\s*\(prefers-reduced-motion\s*:\s*reduce\)\s*\{(?:(?!@media).)*", css, re.S)
-    assert reduced_motion and re.search(r"td\s*,\s*th\s*\{[^}]*transition\s*:\s*none", reduced_motion.group(0), re.S), "Table cells and headers must disable transitions for reduced-motion users."
+    active_css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    hover_rule = css_block_after(active_css, r"tbody tr:hover td\s*\{")
+    focus_rule = css_block_after(active_css, r"tbody tr:focus-within td\s*\{")
+    assert hover_rule and re.search(r"\bbackground\s*:\s*[^;}]+", hover_rule), "Hovered inventory rows must declare a visible cell background."
+    assert focus_rule and re.search(r"\bbackground\s*:\s*[^;}]+", focus_rule), "Keyboard-focused inventory rows must declare a visible cell background."
+    reduced_motion = css_block_after(active_css, r"@media\s*\(\s*prefers-reduced-motion\s*:\s*reduce\s*\)\s*\{")
+    reduced_cell_rule = css_block_after(reduced_motion, r"td\s*,\s*th\s*\{") if reduced_motion else None
+    assert reduced_cell_rule and re.search(r"\btransition\s*:\s*none\b", reduced_cell_rule), "Table cells and headers must disable transitions inside the reduced-motion block."
     assert "frame-ancestors" not in html, "Frame denial must be delivered as a server response header, not a meta policy."
     assert "schedulable_devices" in js and "remaining_memory_mb" in js, "Capacity fields missing."
     assert 'id="model-inventory"' in html and 'id="model-count"' in html, "Model inventory table and count must be present."
