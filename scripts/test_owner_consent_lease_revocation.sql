@@ -71,7 +71,7 @@ BEGIN
   'admission-test','consent-revocation-device','admission-workload','admission-approval',
   'consent-revocation-lease',decode(repeat('b7',16),'hex'),decode(repeat('b8',32),'hex'),
   decode(repeat('44',32),'hex'),1,1,500,512,decode(repeat('b9',32),'hex'),
-  clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000301');
+  clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-00000000a301');
  IF admitted IS DISTINCT FROM true THEN
   RAISE EXCEPTION 'test lease admission failed before consent revocation';
  END IF;
