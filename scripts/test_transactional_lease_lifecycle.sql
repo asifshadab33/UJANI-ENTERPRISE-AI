@@ -100,6 +100,182 @@ BEGIN
 END;
 $block$;
 
+-- A stale telemetry observation cannot extend an otherwise valid lease.
+-- Temporarily age the immutable sample as the migration owner to model a device
+-- that has stopped reporting; the renewal itself still runs as ujani_runtime.
+RESET ROLE;
+UPDATE ujani_control.device_telemetry_samples AS sample
+SET observed_at = device.last_seen_at - interval '3 minutes'
+FROM ujani_control.devices AS device
+WHERE sample.tenant_id='admission-test'
+  AND sample.device_id='admission-atomic-device'
+  AND sample.generation=3 AND sample.sequence=3
+  AND device.tenant_id=sample.tenant_id
+  AND device.device_id=sample.device_id
+  AND device.last_seen_at IS NOT NULL;
+SET ROLE ujani_runtime;
+DO $block$
+DECLARE renewed boolean; replay_count integer;
+BEGIN
+ renewed := ujani_control.renew_device_lease(
+  'admission-test','admission-atomic-device','admission-workload',
+  'admission-lifecycle-lease',1,5,
+  decode(repeat('10',16),'hex'),decode(repeat('11',32),'hex'),
+  decode(repeat('44',32),'hex'),clock_timestamp()+interval '4 minutes 30 seconds',
+  '00000000-0000-4000-8000-000000000214');
+ SELECT count(*) INTO replay_count FROM ujani_control.request_replays
+ WHERE tenant_id='admission-test' AND device_id='admission-atomic-device'
+   AND request_id=decode(repeat('10',16),'hex');
+ IF renewed IS DISTINCT FROM false OR replay_count <> 0 THEN
+  RAISE EXCEPTION 'stale telemetry renewed a lease or consumed its replay ID';
+ END IF;
+END;
+$block$;
+RESET ROLE;
+UPDATE ujani_control.device_telemetry_samples AS sample
+SET observed_at = device.last_seen_at
+FROM ujani_control.devices AS device
+WHERE sample.tenant_id='admission-test'
+  AND sample.device_id='admission-atomic-device'
+  AND sample.generation=3 AND sample.sequence=3
+  AND device.tenant_id=sample.tenant_id
+  AND device.device_id=sample.device_id;
+SET ROLE ujani_runtime;
+
+-- A sample predating the current reservation watermark must account for the
+-- active lease before a renewal can extend it.
+DO $block$
+DECLARE accepted boolean;
+BEGIN
+ accepted := ujani_control.accept_device_telemetry_v2(
+  'admission-test','admission-atomic-device',3,4,2,
+  decode(repeat('12',16),'hex'),clock_timestamp(),
+  decode(repeat('13',32),'hex'),400,400,'cool','ac','idle');
+ IF accepted IS DISTINCT FROM true THEN
+  RAISE EXCEPTION 'capacity regression telemetry sample was rejected';
+ END IF;
+END;
+$block$;
+DO $block$
+DECLARE renewed boolean; replay_count integer;
+BEGIN
+ renewed := ujani_control.renew_device_lease(
+  'admission-test','admission-atomic-device','admission-workload',
+  'admission-lifecycle-lease',1,5,
+  decode(repeat('14',16),'hex'),decode(repeat('15',32),'hex'),
+  decode(repeat('44',32),'hex'),clock_timestamp()+interval '4 minutes 30 seconds',
+  '00000000-0000-4000-8000-000000000215');
+ SELECT count(*) INTO replay_count FROM ujani_control.request_replays
+ WHERE tenant_id='admission-test' AND device_id='admission-atomic-device'
+   AND request_id=decode(repeat('14',16),'hex');
+ IF renewed IS DISTINCT FROM false OR replay_count <> 0 THEN
+  RAISE EXCEPTION 'renewal ignored active reservations newer than measured capacity';
+ END IF;
+END;
+$block$;
+
+-- A safe post-reservation sample restores the current capacity baseline.
+DO $block$
+DECLARE accepted boolean;
+BEGIN
+ accepted := ujani_control.accept_device_telemetry_v2(
+  'admission-test','admission-atomic-device',3,5,3,
+  decode(repeat('16',16),'hex'),clock_timestamp(),
+  decode(repeat('17',32),'hex'),4000,8192,'cool','ac','idle');
+ IF accepted IS DISTINCT FROM true THEN
+  RAISE EXCEPTION 'safe post-reservation telemetry sample was rejected';
+ END IF;
+END;
+$block$;
+
+-- Hot, low-battery and interactive samples cannot be renewed.
+DO $block$
+DECLARE accepted boolean; renewed boolean; replay_count integer;
+BEGIN
+ accepted := ujani_control.accept_device_telemetry_v2(
+  'admission-test','admission-atomic-device',3,6,3,
+  decode(repeat('18',16),'hex'),clock_timestamp(),
+  decode(repeat('19',32),'hex'),4000,8192,'hot','ac','idle');
+ IF accepted IS DISTINCT FROM true THEN
+  RAISE EXCEPTION 'hot telemetry sample was rejected before policy evaluation';
+ END IF;
+ renewed := ujani_control.renew_device_lease(
+  'admission-test','admission-atomic-device','admission-workload',
+  'admission-lifecycle-lease',1,5,
+  decode(repeat('1a',16),'hex'),decode(repeat('1b',32),'hex'),
+  decode(repeat('44',32),'hex'),clock_timestamp()+interval '4 minutes 30 seconds',
+  '00000000-0000-4000-8000-000000000216');
+ SELECT count(*) INTO replay_count FROM ujani_control.request_replays
+ WHERE tenant_id='admission-test' AND device_id='admission-atomic-device'
+   AND request_id=decode(repeat('1a',16),'hex');
+ IF renewed IS DISTINCT FROM false OR replay_count <> 0 THEN
+  RAISE EXCEPTION 'hot device telemetry renewed a lease or consumed its replay ID';
+ END IF;
+END;
+$block$;
+DO $block$
+DECLARE accepted boolean; renewed boolean; replay_count integer;
+BEGIN
+ accepted := ujani_control.accept_device_telemetry_v2(
+  'admission-test','admission-atomic-device',3,7,3,
+  decode(repeat('1c',16),'hex'),clock_timestamp(),
+  decode(repeat('1d',32),'hex'),4000,8192,'cool','low_battery','idle');
+ IF accepted IS DISTINCT FROM true THEN
+  RAISE EXCEPTION 'low-battery telemetry sample was rejected before policy evaluation';
+ END IF;
+ renewed := ujani_control.renew_device_lease(
+  'admission-test','admission-atomic-device','admission-workload',
+  'admission-lifecycle-lease',1,5,
+  decode(repeat('1e',16),'hex'),decode(repeat('1f',32),'hex'),
+  decode(repeat('44',32),'hex'),clock_timestamp()+interval '4 minutes 30 seconds',
+  '00000000-0000-4000-8000-000000000217');
+ SELECT count(*) INTO replay_count FROM ujani_control.request_replays
+ WHERE tenant_id='admission-test' AND device_id='admission-atomic-device'
+   AND request_id=decode(repeat('1e',16),'hex');
+ IF renewed IS DISTINCT FROM false OR replay_count <> 0 THEN
+  RAISE EXCEPTION 'low-battery telemetry renewed a lease or consumed its replay ID';
+ END IF;
+END;
+$block$;
+DO $block$
+DECLARE accepted boolean; renewed boolean; replay_count integer;
+BEGIN
+ accepted := ujani_control.accept_device_telemetry_v2(
+  'admission-test','admission-atomic-device',3,8,3,
+  decode(repeat('20',16),'hex'),clock_timestamp(),
+  decode(repeat('21',32),'hex'),4000,8192,'cool','ac','interactive');
+ IF accepted IS DISTINCT FROM true THEN
+  RAISE EXCEPTION 'interactive telemetry sample was rejected before policy evaluation';
+ END IF;
+ renewed := ujani_control.renew_device_lease(
+  'admission-test','admission-atomic-device','admission-workload',
+  'admission-lifecycle-lease',1,5,
+  decode(repeat('22',16),'hex'),decode(repeat('23',32),'hex'),
+  decode(repeat('44',32),'hex'),clock_timestamp()+interval '4 minutes 30 seconds',
+  '00000000-0000-4000-8000-000000000218');
+ SELECT count(*) INTO replay_count FROM ujani_control.request_replays
+ WHERE tenant_id='admission-test' AND device_id='admission-atomic-device'
+   AND request_id=decode(repeat('22',16),'hex');
+ IF renewed IS DISTINCT FROM false OR replay_count <> 0 THEN
+  RAISE EXCEPTION 'interactive device telemetry renewed a lease or consumed its replay ID';
+ END IF;
+END;
+$block$;
+
+-- Restore safe, fresh telemetry for the subsequent release/capacity tests.
+DO $block$
+DECLARE accepted boolean;
+BEGIN
+ accepted := ujani_control.accept_device_telemetry_v2(
+  'admission-test','admission-atomic-device',3,9,3,
+  decode(repeat('24',16),'hex'),clock_timestamp(),
+  decode(repeat('25',32),'hex'),4000,8192,'cool','ac','idle');
+ IF accepted IS DISTINCT FROM true THEN
+  RAISE EXCEPTION 'final safe telemetry sample was rejected';
+ END IF;
+END;
+$block$;
+
 -- A stale owner-consent generation is denied without consuming its replay ID.
 DO $block$
 DECLARE renewed boolean;
