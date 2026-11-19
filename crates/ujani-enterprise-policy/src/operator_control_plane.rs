@@ -12,7 +12,7 @@ use crate::connector_contract::{
 };
 use crate::model_inventory::{
     match_model_to_task, AcceleratorInfo, AcceleratorKind, EvidenceConfidence, EvidenceSource,
-    ModelAvailability, ModelCapability, ModelCapabilityMatch, ModelEvidence, ModelHardware,
+    ModelAvailability, ModelCapability, ModelCapabilityMatch, ModelEvidence, ModelFitReason, ModelFitStatus, ModelHardware,
     ModelInfo, ModelInventoryValidationError, ModelPlatform, ModelRuntimeInventory,
     ModelTaskRequirements, PrivacyDeclaration, RuntimeAvailability, RuntimeInfo,
     RuntimeNetworkScope,
