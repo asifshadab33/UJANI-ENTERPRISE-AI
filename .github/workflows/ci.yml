@@ -265,3 +265,19 @@ jobs:
           PGPASSWORD: postgres
         run: |
           "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < scripts/test_model_inventory_v2_admission.sql
+      - name: Apply transactional lease lifecycle migration
+        env:
+          PGPASSWORD: postgres
+        run: |
+          "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < migrations/0015_transactional_lease_lifecycle.sql
+      - name: Verify transactional lease renewal, release, rollback and capacity accounting
+        env:
+          PGPASSWORD: postgres
+        run: |
+          "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < scripts/test_transactional_lease_lifecycle.sql
+      - name: Verify concurrent lease expiry reconciliation
+        env:
+          PGPASSWORD: postgres
+          PGUSER: postgres
+          PGDATABASE: ujani_test
+        run: bash scripts/test_lease_expiry_concurrency.sh
