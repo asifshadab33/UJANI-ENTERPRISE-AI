@@ -2,7 +2,134 @@ from html.parser import HTMLParser
 from pathlib import Path
 import re
 
-ROOT = Path(__file__).resolve().parents[1]
+
+def _css_block_end(css: str, opening: int) -> int | None:
+    """Find a CSS block boundary without counting braces inside quoted strings."""
+    depth = 0
+    quote = None
+    escaped = False
+    for index in range(opening, len(css)):
+        char = css[index]
+        if quote:
+            if escaped:
+                escaped = False
+            elif char == "\\\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+            continue
+        if char in ("'", '"'):
+            quote = char
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return index
+    return None
+
+
+def _css_rules(css: str, conditions: tuple[str, ...] = ()) -> list[dict]:
+    """Return active CSS rules with their enclosing at-rules; ignore comments."""
+    source = re.sub(r"/\\*.*?\\*/", "", css, flags=re.S)
+    rules = []
+    cursor = 0
+    while cursor < len(source):
+        while cursor < len(source) and (source[cursor].isspace() or source[cursor] == ";"):
+            cursor += 1
+        if cursor >= len(source):
+            break
+        opening = None
+        quote = None
+        escaped = False
+        for index in range(cursor, len(source)):
+            char = source[index]
+            if quote:
+                if escaped:
+                    escaped = False
+                elif char == "\\\\":
+                    escaped = True
+                elif char == quote:
+                    quote = None
+                continue
+            if char in ("'", '"'):
+                quote = char
+            elif char == "{":
+                opening = index
+                break
+            elif char == ";":
+                cursor = index + 1
+                break
+        if opening is None:
+            if cursor <= index:
+                continue
+            break
+        prelude = source[cursor:opening].strip()
+        closing = _css_block_end(source, opening)
+        if closing is None:
+            break
+        body = source[opening + 1:closing]
+        if prelude.startswith("@"):
+            rules.extend(_css_rules(body, conditions + (prelude.casefold(),)))
+        elif prelude:
+            rules.append({
+                "selectors": tuple(item.strip() for item in prelude.split(",")),
+                "declarations": body,
+                "conditions": conditions,
+            })
+        cursor = closing + 1
+    return rules
+
+
+def _css_rule_matches(
+    css: str,
+    selectors: tuple[str, ...],
+    property_pattern: str,
+    value_pattern: str,
+    required_condition: str | None = None,
+) -> bool:
+    """Match a declaration only in a real rule, not a comment or print-only block."""
+    for rule in _css_rules(css):
+        if not set(selectors).intersection(rule["selectors"]):
+            continue
+        conditions = " ".join(rule["conditions"])
+        if "print" in conditions:
+            continue
+        if required_condition and required_condition not in conditions:
+            continue
+        if re.search(
+            rf"\\b{property_pattern}\\s*:\\s*{value_pattern}",
+            rule["declarations"],
+            flags=re.I,
+        ):
+            return True
+    return False
+
+
+def _validate_css_rule_parser() -> None:
+    """Prove comment removal, enclosing media conditions and nested rules work."""
+    fixture = """
+        /* tbody tr:hover td { background: red; } */
+        @media print { tbody tr:hover td { background: red; } }
+        @media screen {
+            @supports (display: grid) {
+                tbody tr:focus-within td { background: blue; }
+            }
+        }
+        @media (prefers-reduced-motion: reduce) { td, th { transition: none; } }
+    """
+    assert not _css_rule_matches(
+        fixture, ("tbody tr:hover td",), r"background(?:-color)?", r"[^;}]+"
+    ), "Commented or print-only hover rules must not satisfy screen styling."
+    assert _css_rule_matches(
+        fixture, ("tbody tr:focus-within td",), r"background(?:-color)?", r"[^;}]+"
+    ), "Nested screen focus rules must be recognised."
+    assert _css_rule_matches(
+        fixture, ("td", "th"), "transition", "none", "prefers-reduced-motion"
+    ), "Reduced-motion declarations must be scoped to their actual media block."
+
+
+\nROOT = Path(__file__).resolve().parents[1]
 APP = ROOT / "apps" / "operator-console"
 
 class ConsoleParser(HTMLParser):
@@ -79,6 +206,17 @@ def main():
     assert "Load demo data" in readme and "synthetic devices" in readme, "Demo/live separation must be documented."
     assert "unavailable state by default" in readme, "The initial console state must not imply live fleet connectivity."
     assert ".demo-banner" in css and "[hidden]" in css, "Demo warning and hidden initial state must be styled."
+    _validate_css_rule_parser()
+    assert _css_rule_matches(
+        css, ("tbody tr:hover td",), r"background(?:-color)?", r"[^;}]+"
+    ), "Hovered inventory rows must have a visible on-screen cell background."
+    assert _css_rule_matches(
+        css, ("tbody tr:focus-within td",), r"background(?:-color)?", r"[^;}]+"
+    ), "Keyboard-focused inventory rows must have a visible on-screen cell background."
+    assert _css_rule_matches(
+        css, ("td", "th", "*"), r"transition(?:-duration)?", r"(?:none|[^;}]*0?\\.01ms)",
+        "prefers-reduced-motion",
+    ), "Table cells must respect the actual reduced-motion media block."
     assert "frame-ancestors" not in html, "Frame denial must be delivered as a server response header, not a meta policy."
     assert "schedulable_devices" in js and "remaining_memory_mb" in js, "Capacity fields missing."
     assert 'id="model-inventory"' in html and 'id="model-count"' in html, "Model inventory table and count must be present."
