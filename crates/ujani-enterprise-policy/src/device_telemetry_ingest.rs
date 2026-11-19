@@ -1045,4 +1045,92 @@ mod tests {
         drop(registry);
         let _ = std::fs::remove_dir_all(directory);
     }
+
+    struct BlockingTelemetryRepository {
+        entered: std::sync::Arc<std::sync::Barrier>,
+        release: std::sync::Arc<std::sync::Barrier>,
+    }
+    impl DeviceTelemetryAdmissionRepository for BlockingTelemetryRepository {
+        fn admit_authenticated_telemetry(
+            &self,
+            _authenticated: &AuthenticatedDeviceRequest,
+            _sample: &DeviceTelemetrySample,
+        ) -> Result<(), DeviceTelemetryRepositoryError> {
+            self.entered.wait();
+            self.release.wait();
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn local_owner_opt_out_waits_until_the_atomic_admission_callback_finishes() {
+        use crate::device_trust::{owner_consent_bytes, SignedOwnerConsentCommand};
+        use ed25519_dalek::Signer;
+        use std::sync::{mpsc, Arc, Barrier};
+        use std::time::Duration;
+
+        let (registry_value, device, directory, unique_id) = signed_registry(true);
+        let registry = Arc::new(registry_value);
+        let raw = body_v2(250, 0, 1);
+        let signed = signed_telemetry_v2_request(&device, &raw, unique_id);
+        let entered = Arc::new(Barrier::new(2));
+        let release = Arc::new(Barrier::new(2));
+        let repository = Arc::new(BlockingTelemetryRepository {
+            entered: Arc::clone(&entered),
+            release: Arc::clone(&release),
+        });
+
+        let service_registry = Arc::clone(&registry);
+        let service_repository = Arc::clone(&repository);
+        let service_thread = std::thread::spawn(move || {
+            let service =
+                DeviceTelemetryAdmissionService::new(&service_registry, &service_repository);
+            service.ingest(
+                HttpMethod::Post,
+                "/v1/devices/device-1/telemetry",
+                &signed,
+                &raw,
+                250,
+            )
+        });
+
+        // The repository is now running while DeviceTelemetryAdmissionService
+        // holds the durable trust lock.
+        entered.wait();
+
+        let mut opt_out = SignedOwnerConsentCommand {
+            tenant_id: "tenant-a".into(),
+            device_id: "device-1".into(),
+            key_id: "device-key-v1".into(),
+            key_generation: 1,
+            revision: 2,
+            opted_in: false,
+            issued_at_unix_ms: 260,
+            expires_at_unix_ms: 1_000,
+            nonce: test_nonce(b"device-telemetry-v2-owner-opt-out", unique_id),
+            signature: [0; 64],
+        };
+        opt_out.signature = device.sign(&owner_consent_bytes(&opt_out)).to_bytes();
+
+        let writer_registry = Arc::clone(&registry);
+        let (started_tx, started_rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
+        let writer_thread = std::thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            let result = writer_registry.apply_owner_consent(&opt_out, 260);
+            done_tx.send(result.is_ok()).unwrap();
+        });
+        started_rx.recv().unwrap();
+        assert!(matches!(
+            done_rx.recv_timeout(Duration::from_millis(50)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+
+        release.wait();
+        assert_eq!(service_thread.join().unwrap(), Ok(()));
+        assert!(done_rx.recv_timeout(Duration::from_secs(1)).unwrap());
+        writer_thread.join().unwrap();
+        drop(registry);
+        let _ = std::fs::remove_dir_all(directory);
+    }
 }
