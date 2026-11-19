@@ -1,6 +1,6 @@
 # UJANI Enterprise AI — Master Requirements & Implementation Ledger (2026-11-19 evening)
 
-This is the current evidence ledger for the Enterprise default branch. Open PRs are not counted as merged. It does not certify production readiness.
+This is a time-qualified evidence snapshot for the Enterprise default branch as observed on 2026-11-19 evening. Recheck live refs and workflow results before acting; open PRs are not counted as merged. It does not certify production readiness.
 
 ## Product invariants
 
@@ -11,7 +11,7 @@ This is the current evidence ledger for the Enterprise default branch. Open PRs 
 - No stranger-device marketplace, silent compute or waking sleeping devices.
 - Remote dispatch/execution and automated containment remain disabled until all production trust, consent, replay, lease, isolation, receipt and recovery gates pass.
 
-## Requirements and status on current main
+## Requirements and status at the recorded main snapshot
 
 | ID | Requirement | Status | Remaining evidence |
 |---|---|---|---|
@@ -76,13 +76,13 @@ This is the current evidence ledger for the Enterprise default branch. Open PRs 
 1. Multi-site scheduling, queue fairness and advanced resource/energy optimisation.
 2. Optional customer-selected IDS/network and security integrations with controlled-lab validation.
 
-## Live repository evidence
+## Repository evidence at snapshot time
 
-- Current Enterprise `main`: `9603c9c5f52d8ac176f7d48f50b1a11037b96175`.
+- Enterprise `main` at snapshot: `9603c9c5f52d8ac176f7d48f50b1a11037b96175`.
 - Today's earlier merges: #281 catalogue parity/master ledger; #288 concurrent telemetry/lease admission regression; #290 bounded operator projection semantic consistency. This run merged #289 inventory-v2 preflight boundary tests, #293 oversized authenticated lease-body rejection tests, and #292 keyboard-accessible responsive operator inventory tables.
 - Post-merge CI [44579377651](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/actions/runs/44579377651) is pending, RustSec [44579377690](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/actions/runs/44579377690) is in progress and CodeQL [44579377596](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/actions/runs/44579377596) is queued on this exact SHA. The immediately preceding main SHA `bf5128372caf6901479cc0ac2c195efec848b5dc` passed CI, CodeQL and RustSec; do not transfer that green state to the new SHA.
 - Open PR #291 (CSS interaction/reduced-motion validation) has head `6e38357f1cc995a3ee5ee8187880088c82ffb903`; its exact-head CI, CodeQL, RustSec and security-watch checks are pending after the validator was hardened to ignore comments and inspect the actual reduced-motion block.
-- Open documentation PR #295 is being refreshed against the current implementation; it is not merged.
+- At snapshot time, documentation PR #295 was open for cross-repository status reconciliation; verify its live state before acting.
 
 ## Completion rule
 
