@@ -23,7 +23,7 @@ BEGIN;
 SET LOCAL ujani.tenant_id='authenticated-telemetry-test';
 SELECT CASE WHEN ujani_control.accept_authenticated_device_telemetry_v2(
  'authenticated-telemetry-test','telemetry-device','telemetry-key-v1',
- 1,1,1,2,0,decode(repeat('b1',16),'hex'),
+ 1,3,1,2,0,decode(repeat('b1',16),'hex'),
  floor(date_part('epoch',clock_timestamp()+interval '20 seconds')*1000)::bigint,
  clock_timestamp(),decode(repeat('b2',32),'hex'),4000,8192,'cool','ac','idle'
 ) THEN 'accepted' ELSE 'rejected' END;
@@ -56,7 +56,7 @@ BEGIN;
 SET LOCAL ujani.tenant_id='authenticated-telemetry-test';
 SELECT CASE WHEN ujani_control.accept_authenticated_device_telemetry_v2(
  'authenticated-telemetry-test','telemetry-device','telemetry-key-v1',
- 1,1,1,2,0,decode(repeat('b3',16),'hex'),
+ 1,3,1,2,0,decode(repeat('b3',16),'hex'),
  floor(date_part('epoch',clock_timestamp()+interval '20 seconds')*1000)::bigint,
  clock_timestamp(),decode(repeat('b4',32),'hex'),4000,8192,'cool','ac','idle'
 ) THEN 'accepted' ELSE 'rejected' END;
