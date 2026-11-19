@@ -265,3 +265,20 @@ jobs:
           PGPASSWORD: postgres
         run: |
           "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < scripts/test_model_inventory_v2_admission.sql
+
+      - name: Apply authenticated device telemetry v2 admission migration
+        env:
+          PGPASSWORD: postgres
+        run: |
+          "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < migrations/0016_authenticated_device_telemetry_v2.sql
+      - name: Verify authenticated device telemetry v2 consent, replay, ordering and rollback
+        env:
+          PGPASSWORD: postgres
+        run: |
+          "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < scripts/test_authenticated_device_telemetry_v2.sql
+      - name: Verify concurrent authenticated telemetry serialization
+        env:
+          PGPASSWORD: postgres
+          PGUSER: postgres
+          PGDATABASE: ujani_test
+        run: bash scripts/test_authenticated_device_telemetry_v2_concurrency.sh
