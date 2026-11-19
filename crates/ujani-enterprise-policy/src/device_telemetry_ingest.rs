@@ -446,6 +446,46 @@ mod tests {
         let _ = std::fs::remove_dir_all(directory);
     }
 
+
+    #[test]
+    fn authenticated_intake_rejects_body_substitution_without_consuming_valid_request() {
+        let (registry, device, directory, unique_id) = signed_registry(true);
+        let raw = body(250);
+        let signed = signed_telemetry_request(&device, &raw, "device-1", unique_id);
+        let substituted = String::from_utf8(raw.clone())
+            .expect("test telemetry is UTF-8")
+            .replace("\"cpu_available_millis\":1200", "\"cpu_available_millis\":1201");
+        assert_ne!(substituted.as_bytes(), raw.as_slice());
+
+        assert_eq!(
+            authenticate_device_telemetry_request(
+                &registry,
+                HttpMethod::Post,
+                "/v1/devices/device-1/telemetry",
+                &signed,
+                substituted.as_bytes(),
+                250,
+            ),
+            Err(DeviceTelemetryIntakeError::DeviceAuthenticationFailed),
+            "a valid schema with a substituted payload must fail the signed body digest"
+        );
+
+        let accepted = authenticate_device_telemetry_request(
+            &registry,
+            HttpMethod::Post,
+            "/v1/devices/device-1/telemetry",
+            &signed,
+            &raw,
+            250,
+        );
+        assert!(
+            accepted.is_ok(),
+            "a failed body-substitution attempt must not consume the original valid request"
+        );
+        drop(registry);
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
     #[test]
     fn authenticated_intake_rejects_request_identity_binding_mismatch() {
         let (registry, device, directory, unique_id) = signed_registry(true);
