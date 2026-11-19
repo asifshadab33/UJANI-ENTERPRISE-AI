@@ -32,6 +32,7 @@
 
 ## Live evidence
 - Enterprise main: `197bf007411b3c4aab10e9ed620a9b6e0f3671be`; PR #266 model/task matcher merged.
+- Public main: `69f7794bd045dc50e9421b214e1dedd20f6b4d11`; PR #332 local model/runtime inventory v2 producer merged with exact-head CI, Linux/macOS/Windows native tests, Rust lint/audit, TypeScript/frontend audit, Android, CodeQL and installer-size audit passing (unsigned preview skipped). Public PR #340 history/cache consent and #347 clock reliability are pending exact-head tests; #348 file-threat evidence/docs pending CI. Public post-merge main CI is not verified.
 - Main post-merge exact SHA `197bf007411b3c4aab10e9ed620a9b6e0f3671be`: CI #44451175579 passed Linux/Windows/macOS policy tests and customer-hosted PostgreSQL tenant isolation; RustSec #44451175518 and CodeQL #44451175833 passed.
 - #267 closed as superseded by current-main PR #268; original branch retained.
 - #268: current-main backlog snapshot PR; CI jobs were cancelled, CodeQL is in progress, RustSec/security watch queued; rerun of cancelled jobs initiated. Draft.
