@@ -23,6 +23,8 @@ pub const DEVICE_TELEMETRY_REQUEST_WORKLOAD: &str = "device-telemetry";
 pub const MAX_DEVICE_TELEMETRY_AGE_MS: u64 = 5 * 60 * 1000;
 pub const MAX_DEVICE_TELEMETRY_FUTURE_SKEW_MS: u64 = 60 * 1000;
 const TELEMETRY_BINDING_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-DEVICE-TELEMETRY-REQUEST-V1\0";
+const TELEMETRY_V2_BINDING_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-DEVICE-TELEMETRY-REQUEST-V2\0";
+const MAX_TELEMETRY_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -64,6 +66,10 @@ struct DeviceTelemetryBody {
     generation: u64,
     sequence: u64,
     observed_at_unix_ms: u64,
+    #[serde(default)]
+    reservation_revision: Option<u64>,
+    #[serde(default)]
+    consent_generation: Option<u64>,
     cpu_available_millis: Option<u32>,
     memory_available_mb: Option<u64>,
     thermal_state: DeviceThermalState,
@@ -73,10 +79,15 @@ struct DeviceTelemetryBody {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeviceTelemetrySample {
+    pub schema_version: u16,
     pub device_id: String,
     pub generation: u64,
     pub sequence: u64,
     pub observed_at_unix_ms: u64,
+    /// Present only for schema v2; binds capacity to the reservation watermark observed at measurement.
+    pub reservation_revision: Option<u64>,
+    /// Present only for schema v2; binds the report to the owner's exact opt-in generation.
+    pub consent_generation: Option<u64>,
     pub cpu_available_millis: Option<u32>,
     pub memory_available_mb: Option<u64>,
     pub thermal_state: DeviceThermalState,
@@ -90,6 +101,10 @@ pub enum DeviceTelemetryIntakeError {
     UnsupportedVersion,
     InvalidDeviceId,
     InvalidGenerationOrSequence,
+    InvalidTelemetryWatermark,
+    InvalidConsentGeneration,
+    ConsentGenerationMismatch,
+    ConsentGenerationMissing,
     InvalidResourceMeasurement,
     BodyTooLarge,
     StaleOrFutureSample,
@@ -106,7 +121,10 @@ impl DeviceTelemetryIntakeError {
         match self {
             Self::InvalidRoute => 404,
             Self::DeviceAuthenticationFailed | Self::RequestBindingMismatch => 401,
-            Self::OwnerConsentMissing => 403,
+            Self::OwnerConsentMissing | Self::ConsentGenerationMismatch => 403,
+            Self::ConsentGenerationMissing
+            | Self::InvalidTelemetryWatermark
+            | Self::InvalidConsentGeneration => 400,
             Self::BodyTooLarge => 413,
             Self::TrustStoreUnavailable => 503,
             _ => 400,
@@ -142,13 +160,35 @@ pub fn validate_device_telemetry_body(
     }
     let body: DeviceTelemetryBody = serde_json::from_slice(raw_body)
         .map_err(|_| DeviceTelemetryIntakeError::InvalidResourceMeasurement)?;
-    if body.schema_version != 1 {
-        return Err(DeviceTelemetryIntakeError::UnsupportedVersion);
-    }
+    let (reservation_revision, consent_generation) = match body.schema_version {
+        1 if body.reservation_revision.is_none() && body.consent_generation.is_none() => {
+            (None, None)
+        }
+        2 => {
+            let reservation_revision = body
+                .reservation_revision
+                .ok_or(DeviceTelemetryIntakeError::InvalidTelemetryWatermark)?;
+            if reservation_revision > MAX_TELEMETRY_SAFE_INTEGER {
+                return Err(DeviceTelemetryIntakeError::InvalidTelemetryWatermark);
+            }
+            let consent_generation = body
+                .consent_generation
+                .ok_or(DeviceTelemetryIntakeError::InvalidConsentGeneration)?;
+            if consent_generation == 0 || consent_generation > MAX_TELEMETRY_SAFE_INTEGER {
+                return Err(DeviceTelemetryIntakeError::InvalidConsentGeneration);
+            }
+            (Some(reservation_revision), Some(consent_generation))
+        }
+        _ => return Err(DeviceTelemetryIntakeError::UnsupportedVersion),
+    };
     if !valid_device_id(&body.device_id) {
         return Err(DeviceTelemetryIntakeError::InvalidDeviceId);
     }
-    if body.generation == 0 || body.sequence == 0 {
+    if body.generation == 0
+        || body.sequence == 0
+        || body.generation > MAX_TELEMETRY_SAFE_INTEGER
+        || body.sequence > MAX_TELEMETRY_SAFE_INTEGER
+    {
         return Err(DeviceTelemetryIntakeError::InvalidGenerationOrSequence);
     }
     if body
@@ -166,10 +206,13 @@ pub fn validate_device_telemetry_body(
         return Err(DeviceTelemetryIntakeError::StaleOrFutureSample);
     }
     Ok(DeviceTelemetrySample {
+        schema_version: body.schema_version,
         device_id: body.device_id,
         generation: body.generation,
         sequence: body.sequence,
         observed_at_unix_ms: body.observed_at_unix_ms,
+        reservation_revision,
+        consent_generation,
         cpu_available_millis: body.cpu_available_millis,
         memory_available_mb: body.memory_available_mb,
         thermal_state: body.thermal_state,
@@ -179,13 +222,14 @@ pub fn validate_device_telemetry_body(
     })
 }
 
-/// Authenticate a telemetry request at the service boundary.
-///
-/// The route selects method/resource; tenant identity comes only from the
-/// enrolled device key. Administrator approval is represented by the durable
-/// enrollment state. Owner opt-in is re-read from the current key generation.
-/// The SQL acceptance function must repeat both consent/trust checks and enforce
-/// monotonic generation/sequence in the same transaction that inserts the sample.
+/// Stable digest binding the v2 telemetry operation to its schema and consent/watermark fields.
+pub fn device_telemetry_v2_request_manifest_digest() -> [u8; 32] {
+    Sha256::digest(TELEMETRY_V2_BINDING_DOMAIN).into()
+}
+
+/// Authenticate the legacy v1 telemetry request. V1 remains parseable for
+/// compatibility, but it has no consent-generation or reservation-watermark
+/// binding and must not be used by the transactional admission service.
 pub fn authenticate_device_telemetry_request(
     registry: &DurableDeviceRegistry,
     method: HttpMethod,
@@ -193,6 +237,50 @@ pub fn authenticate_device_telemetry_request(
     signed_request: &SignedDeviceRequest,
     raw_body: &[u8],
     now_unix_ms: u64,
+) -> Result<(AuthenticatedDeviceRequest, DeviceTelemetrySample), DeviceTelemetryIntakeError> {
+    authenticate_device_telemetry_request_for_schema(
+        registry,
+        method,
+        path,
+        signed_request,
+        raw_body,
+        now_unix_ms,
+        1,
+        device_telemetry_request_manifest_digest(),
+    )
+}
+
+/// Authenticate schema v2 telemetry. Its signed body binds the owner's exact
+/// consent generation and the reservation revision observed at measurement time.
+pub fn authenticate_device_telemetry_v2_request(
+    registry: &DurableDeviceRegistry,
+    method: HttpMethod,
+    path: &str,
+    signed_request: &SignedDeviceRequest,
+    raw_body: &[u8],
+    now_unix_ms: u64,
+) -> Result<(AuthenticatedDeviceRequest, DeviceTelemetrySample), DeviceTelemetryIntakeError> {
+    authenticate_device_telemetry_request_for_schema(
+        registry,
+        method,
+        path,
+        signed_request,
+        raw_body,
+        now_unix_ms,
+        2,
+        device_telemetry_v2_request_manifest_digest(),
+    )
+}
+
+fn authenticate_device_telemetry_request_for_schema(
+    registry: &DurableDeviceRegistry,
+    method: HttpMethod,
+    path: &str,
+    signed_request: &SignedDeviceRequest,
+    raw_body: &[u8],
+    now_unix_ms: u64,
+    expected_schema_version: u16,
+    expected_manifest_digest: [u8; 32],
 ) -> Result<(AuthenticatedDeviceRequest, DeviceTelemetrySample), DeviceTelemetryIntakeError> {
     let route = resolve_route(method, path).ok_or(DeviceTelemetryIntakeError::InvalidRoute)?;
     if route.route != OperatorHttpRoute::DeviceTelemetry {
@@ -203,13 +291,22 @@ pub fn authenticate_device_telemetry_request(
     }
 
     let sample = validate_device_telemetry_body(raw_body, now_unix_ms)?;
+    if sample.schema_version != expected_schema_version {
+        return Err(DeviceTelemetryIntakeError::UnsupportedVersion);
+    }
+    if expected_schema_version == 2
+        && (sample.reservation_revision.is_none() || sample.consent_generation.is_none())
+    {
+        return Err(DeviceTelemetryIntakeError::ConsentGenerationMissing);
+    }
+
     let path_device_id = path.split('/').nth(3).unwrap_or_default();
     if path_device_id != sample.device_id
         || signed_request.claims.device_id != sample.device_id
         || signed_request.claims.method != DEVICE_TELEMETRY_REQUEST_METHOD
         || signed_request.claims.resource_id != DEVICE_TELEMETRY_REQUEST_RESOURCE
         || signed_request.claims.workload_id != DEVICE_TELEMETRY_REQUEST_WORKLOAD
-        || signed_request.claims.manifest_sha256 != device_telemetry_request_manifest_digest()
+        || signed_request.claims.manifest_sha256 != expected_manifest_digest
     {
         return Err(DeviceTelemetryIntakeError::RequestBindingMismatch);
     }
@@ -227,14 +324,106 @@ pub fn authenticate_device_telemetry_request(
     if authenticated.device_id() != sample.device_id {
         return Err(DeviceTelemetryIntakeError::RequestBindingMismatch);
     }
-    let owner_opted_in = registry
-        .authenticated_device_status_for_request(&authenticated)
-        .map(|(_, opted_in)| opted_in)
+    let (_, owner_opted_in, current_consent_generation) = registry
+        .authenticated_device_status_with_consent_generation_for_request(&authenticated)
         .map_err(map_device_trust_error)?;
     if !owner_opted_in {
         return Err(DeviceTelemetryIntakeError::OwnerConsentMissing);
     }
+    if sample
+        .consent_generation
+        .is_some_and(|generation| generation != current_consent_generation)
+    {
+        return Err(DeviceTelemetryIntakeError::ConsentGenerationMismatch);
+    }
     Ok((authenticated, sample))
+}
+
+/// Fail-closed errors from the tenant-scoped transactional telemetry repository.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeviceTelemetryRepositoryError {
+    /// The database rejected replay, stale ordering, changed consent/trust or policy state.
+    Rejected,
+    /// The database, connection pool, transaction or durable audit path is unavailable.
+    Unavailable,
+}
+
+/// Errors returned by the transport-neutral v2 telemetry admission service.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeviceTelemetryServiceError {
+    Intake(DeviceTelemetryIntakeError),
+    AdmissionRejected,
+    RepositoryUnavailable,
+}
+impl DeviceTelemetryServiceError {
+    pub fn http_status(self) -> u16 {
+        match self {
+            Self::Intake(error) => error.http_status(),
+            Self::AdmissionRejected => 409,
+            Self::RepositoryUnavailable => 503,
+        }
+    }
+}
+
+/// The production implementation must map this single call to
+/// ujani_control.accept_authenticated_device_telemetry_v2 inside one
+/// tenant-scoped PostgreSQL transaction. It must derive tenant/device/key
+/// identity from authenticated, pass the signed request ID/expiry and the
+/// v2 consent/reservation generations, and commit replay, telemetry watermark,
+/// sample and audit receipt together. Set ujani.tenant_id from the authenticated
+/// tenant, never from JSON. A false SQL result is Rejected; SQL/commit errors
+/// are Unavailable. Never persist raw bodies, prompts, paths or process lists.
+pub trait DeviceTelemetryAdmissionRepository: Send + Sync {
+    fn admit_authenticated_telemetry(
+        &self,
+        authenticated: &AuthenticatedDeviceRequest,
+        sample: &DeviceTelemetrySample,
+    ) -> Result<(), DeviceTelemetryRepositoryError>;
+}
+
+/// Orchestrates signed v2 intake and one atomic repository admission call.
+/// This remains transport-neutral; an HTTP host must enforce TLS, rate limits,
+/// bounded concurrency and request-body limits before invoking it.
+pub struct DeviceTelemetryAdmissionService<'a, R> {
+    registry: &'a DurableDeviceRegistry,
+    repository: &'a R,
+}
+impl<'a, R: DeviceTelemetryAdmissionRepository> DeviceTelemetryAdmissionService<'a, R> {
+    pub fn new(registry: &'a DurableDeviceRegistry, repository: &'a R) -> Self {
+        Self {
+            registry,
+            repository,
+        }
+    }
+
+    pub fn ingest(
+        &self,
+        method: HttpMethod,
+        path: &str,
+        signed_request: &SignedDeviceRequest,
+        raw_body: &[u8],
+        now_unix_ms: u64,
+    ) -> Result<(), DeviceTelemetryServiceError> {
+        let (authenticated, sample) = authenticate_device_telemetry_v2_request(
+            self.registry,
+            method,
+            path,
+            signed_request,
+            raw_body,
+            now_unix_ms,
+        )
+        .map_err(DeviceTelemetryServiceError::Intake)?;
+        self.repository
+            .admit_authenticated_telemetry(&authenticated, &sample)
+            .map_err(|error| match error {
+                DeviceTelemetryRepositoryError::Rejected => {
+                    DeviceTelemetryServiceError::AdmissionRejected
+                }
+                DeviceTelemetryRepositoryError::Unavailable => {
+                    DeviceTelemetryServiceError::RepositoryUnavailable
+                }
+            })
+    }
 }
 
 /// Convert trust-store errors to a generic intake failure without leaking
@@ -594,5 +783,267 @@ mod tests {
             validate_device_telemetry_body(bad_id.as_bytes(), 1_000),
             Err(DeviceTelemetryIntakeError::InvalidDeviceId)
         );
+    }
+
+    fn body_v2(observed_at: u64, reservation_revision: u64, consent_generation: u64) -> Vec<u8> {
+        format!(
+            r#"{{"schema_version":2,"device_id":"device-1","generation":2,"sequence":7,"observed_at_unix_ms":{observed_at},"reservation_revision":{reservation_revision},"consent_generation":{consent_generation},"cpu_available_millis":1200,"memory_available_mb":4096,"thermal_state":"cool","power_state":"ac","participation_state":"idle"}}"#
+        )
+        .into_bytes()
+    }
+
+    fn signed_telemetry_v2_request(
+        device: &ed25519_dalek::SigningKey,
+        raw_body: &[u8],
+        unique_id: u64,
+    ) -> SignedDeviceRequest {
+        use ed25519_dalek::Signer;
+        let claims = DeviceRequestClaims {
+            tenant_id: "tenant-a".into(),
+            device_id: "device-1".into(),
+            key_id: "device-key-v1".into(),
+            key_generation: 1,
+            request_id: test_nonce(b"device-telemetry-v2-request", unique_id),
+            issued_at_unix_ms: 230,
+            expires_at_unix_ms: 1_000,
+            method: DEVICE_TELEMETRY_REQUEST_METHOD.into(),
+            resource_id: DEVICE_TELEMETRY_REQUEST_RESOURCE.into(),
+            workload_id: DEVICE_TELEMETRY_REQUEST_WORKLOAD.into(),
+            manifest_sha256: device_telemetry_v2_request_manifest_digest(),
+            body_sha256: Sha256::digest(raw_body).into(),
+        };
+        SignedDeviceRequest {
+            signature: device
+                .sign(&canonical_device_request_bytes(&claims))
+                .to_bytes(),
+            claims,
+        }
+    }
+
+    #[test]
+    fn telemetry_v2_requires_safe_consent_and_reservation_generations() {
+        let raw = body_v2(1_000, 4, 3);
+        let sample = validate_device_telemetry_body(&raw, 1_100).unwrap();
+        assert_eq!(sample.schema_version, 2);
+        assert_eq!(sample.reservation_revision, Some(4));
+        assert_eq!(sample.consent_generation, Some(3));
+
+        let missing_revision = br#"{"schema_version":2,"device_id":"device-1","generation":2,"sequence":7,"observed_at_unix_ms":1000,"consent_generation":1,"thermal_state":"cool","power_state":"ac","participation_state":"idle"}"#;
+        assert_eq!(
+            validate_device_telemetry_body(missing_revision, 1_100),
+            Err(DeviceTelemetryIntakeError::InvalidTelemetryWatermark)
+        );
+        let zero_consent = body_v2(1_000, 4, 0);
+        assert_eq!(
+            validate_device_telemetry_body(&zero_consent, 1_100),
+            Err(DeviceTelemetryIntakeError::InvalidConsentGeneration)
+        );
+        let unsafe_revision = body_v2(1_000, MAX_TELEMETRY_SAFE_INTEGER + 1, 1);
+        assert_eq!(
+            validate_device_telemetry_body(&unsafe_revision, 1_100),
+            Err(DeviceTelemetryIntakeError::InvalidTelemetryWatermark)
+        );
+    }
+
+    #[test]
+    fn telemetry_v2_authentication_binds_the_current_owner_consent_generation() {
+        let (registry, device, directory, unique_id) = signed_registry(true);
+        let raw = body_v2(250, 0, 1);
+        let signed = signed_telemetry_v2_request(&device, &raw, unique_id);
+        let accepted = authenticate_device_telemetry_v2_request(
+            &registry,
+            HttpMethod::Post,
+            "/v1/devices/device-1/telemetry",
+            &signed,
+            &raw,
+            250,
+        );
+        assert!(accepted.is_ok());
+
+        let stale_raw = body_v2(250, 0, 2);
+        let stale_signed = signed_telemetry_v2_request(&device, &stale_raw, unique_id + 1);
+        assert_eq!(
+            authenticate_device_telemetry_v2_request(
+                &registry,
+                HttpMethod::Post,
+                "/v1/devices/device-1/telemetry",
+                &stale_signed,
+                &stale_raw,
+                250,
+            ),
+            Err(DeviceTelemetryIntakeError::ConsentGenerationMismatch)
+        );
+        drop(registry);
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[derive(Clone, Copy)]
+    enum TestRepositoryOutcome {
+        Accepted,
+        Rejected,
+        Unavailable,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct CapturedTelemetryAdmission {
+        tenant_id: String,
+        device_id: String,
+        key_id: String,
+        key_generation: u64,
+        request_id: [u8; 16],
+        request_expires_at_unix_ms: u64,
+        consent_generation: u64,
+        reservation_revision: u64,
+        generation: u64,
+        sequence: u64,
+        payload_digest: [u8; 32],
+    }
+
+    struct RecordingTelemetryRepository {
+        outcome: TestRepositoryOutcome,
+        calls: std::sync::atomic::AtomicUsize,
+        captured: std::sync::Mutex<Option<CapturedTelemetryAdmission>>,
+    }
+    impl RecordingTelemetryRepository {
+        fn new(outcome: TestRepositoryOutcome) -> Self {
+            Self {
+                outcome,
+                calls: std::sync::atomic::AtomicUsize::new(0),
+                captured: std::sync::Mutex::new(None),
+            }
+        }
+    }
+    impl DeviceTelemetryAdmissionRepository for RecordingTelemetryRepository {
+        fn admit_authenticated_telemetry(
+            &self,
+            authenticated: &AuthenticatedDeviceRequest,
+            sample: &DeviceTelemetrySample,
+        ) -> Result<(), DeviceTelemetryRepositoryError> {
+            self.calls
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            *self.captured.lock().unwrap() = Some(CapturedTelemetryAdmission {
+                tenant_id: authenticated.tenant_id().to_owned(),
+                device_id: authenticated.device_id().to_owned(),
+                key_id: authenticated.key_id().to_owned(),
+                key_generation: authenticated.key_generation(),
+                request_id: *authenticated.request_id(),
+                request_expires_at_unix_ms: authenticated.expires_at_unix_ms(),
+                consent_generation: sample.consent_generation.unwrap(),
+                reservation_revision: sample.reservation_revision.unwrap(),
+                generation: sample.generation,
+                sequence: sample.sequence,
+                payload_digest: sample.payload_digest,
+            });
+            match self.outcome {
+                TestRepositoryOutcome::Accepted => Ok(()),
+                TestRepositoryOutcome::Rejected => Err(DeviceTelemetryRepositoryError::Rejected),
+                TestRepositoryOutcome::Unavailable => {
+                    Err(DeviceTelemetryRepositoryError::Unavailable)
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn telemetry_service_passes_only_verified_identity_and_v2_evidence_to_repository() {
+        let (registry, device, directory, unique_id) = signed_registry(true);
+        let repository = RecordingTelemetryRepository::new(TestRepositoryOutcome::Accepted);
+        let service = DeviceTelemetryAdmissionService::new(&registry, &repository);
+        let raw = body_v2(250, 4, 1);
+        let signed = signed_telemetry_v2_request(&device, &raw, unique_id);
+        assert_eq!(
+            service.ingest(
+                HttpMethod::Post,
+                "/v1/devices/device-1/telemetry",
+                &signed,
+                &raw,
+                250,
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            repository.calls.load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+        let captured = repository.captured.lock().unwrap().clone().unwrap();
+        assert_eq!(captured.tenant_id, "tenant-a");
+        assert_eq!(captured.device_id, "device-1");
+        assert_eq!(captured.key_id, "device-key-v1");
+        assert_eq!(captured.key_generation, 1);
+        assert_eq!(captured.request_id, signed.claims.request_id);
+        assert_eq!(captured.request_expires_at_unix_ms, 1_000);
+        assert_eq!(captured.consent_generation, 1);
+        assert_eq!(captured.reservation_revision, 4);
+        assert_eq!(captured.generation, 2);
+        assert_eq!(captured.sequence, 7);
+        drop(registry);
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn telemetry_service_never_calls_repository_without_owner_opt_in() {
+        let (registry, device, directory, unique_id) = signed_registry(false);
+        let repository = RecordingTelemetryRepository::new(TestRepositoryOutcome::Accepted);
+        let service = DeviceTelemetryAdmissionService::new(&registry, &repository);
+        let raw = body_v2(250, 0, 1);
+        let signed = signed_telemetry_v2_request(&device, &raw, unique_id);
+        assert_eq!(
+            service.ingest(
+                HttpMethod::Post,
+                "/v1/devices/device-1/telemetry",
+                &signed,
+                &raw,
+                250,
+            ),
+            Err(DeviceTelemetryServiceError::Intake(
+                DeviceTelemetryIntakeError::OwnerConsentMissing
+            ))
+        );
+        assert_eq!(
+            repository.calls.load(std::sync::atomic::Ordering::SeqCst),
+            0
+        );
+        drop(registry);
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn telemetry_service_maps_transactional_denial_and_storage_failure() {
+        let (registry, device, directory, unique_id) = signed_registry(true);
+        let raw = body_v2(250, 0, 1);
+        let signed = signed_telemetry_v2_request(&device, &raw, unique_id);
+
+        let rejected = RecordingTelemetryRepository::new(TestRepositoryOutcome::Rejected);
+        let rejected_service = DeviceTelemetryAdmissionService::new(&registry, &rejected);
+        let rejected_error = rejected_service
+            .ingest(
+                HttpMethod::Post,
+                "/v1/devices/device-1/telemetry",
+                &signed,
+                &raw,
+                250,
+            )
+            .unwrap_err();
+        assert_eq!(rejected_error, DeviceTelemetryServiceError::AdmissionRejected);
+        assert_eq!(rejected_error.http_status(), 409);
+
+        let unavailable = RecordingTelemetryRepository::new(TestRepositoryOutcome::Unavailable);
+        let unavailable_service = DeviceTelemetryAdmissionService::new(&registry, &unavailable);
+        let unavailable_error = unavailable_service
+            .ingest(
+                HttpMethod::Post,
+                "/v1/devices/device-1/telemetry",
+                &signed,
+                &raw,
+                250,
+            )
+            .unwrap_err();
+        assert_eq!(
+            unavailable_error,
+            DeviceTelemetryServiceError::RepositoryUnavailable
+        );
+        assert_eq!(unavailable_error.http_status(), 503);
+        drop(registry);
+        let _ = std::fs::remove_dir_all(directory);
     }
 }
