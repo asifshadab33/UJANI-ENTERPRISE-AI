@@ -12,7 +12,7 @@
 ## Verified branch baselines
 
 - Public main: `7142e045927b116d101209779292701259021dd6` — local-chat IPC preflight.
-- Enterprise main: `c0da3b65514ddf133aa42f8a115cc63fe1e31b03` — oversized authenticated telemetry intake returns HTTP 413.
+- Enterprise main: `197bf007411b3c4aab10e9ed620a9b6e0f3671be` — advisory evidence-based model/task matching PR #266 merged; remote execution remains disabled.
 - Main-branch CI status could not be independently queried through the available Actions endpoint in this run (PR-triggered workflow runs only; commit statuses returned no entries). Do not mark main CI green from PR runs alone.
 
 ## Ordered backlog
@@ -51,15 +51,16 @@
 ### Public AI
 
 - **#336** `295de047a9257536ac27b52db289ef847039e689`: Linux/Windows, Rust tests/lint, React build, dependency audits, CodeQL, Android and installer audit passed; macOS native test was cancelled and has been rerun (in progress). Mergeable; draft.
-- **#332** `7b7734755c442b8d6af3210c203e98f78c0a0200`: all prior non-macOS native checks, Rust tests/lint, React build and audits passed; macOS native and macOS installer were cancelled and rerun (in progress). New digest-integrity commits have no exact-head workflow result yet. Branch is 2 commits behind main; draft.
+- **#332** `1866b8f413efda4ca6f6fd9cc2990bd3a35fb1d0`: added valid SHA-256 identity matching and regressions for malformed digests plus valid capability-selection fixtures. Exact-head CI queued; Android compatibility in progress, CodeQL pending, installer audit queued. Branch is 2 commits behind main; draft.
 - **#324** `1469cdecdc650c740d2496ee6148000b4a54dfb4`: earlier exact-head checks passed; branch is 3 commits behind main. Revalidate after update; draft.
 - **#328** `27116be457a564fd9f69db9e2479d8d1ea436558`: earlier exact-head checks passed; branch is 3 commits behind main. Revalidate after update; draft.
 - **#326, #327, #333, #334, #337:** open; exact-head checks/review status not established in this pass. Do not merge on the basis of this snapshot.
 
 ### Enterprise AI
 
-- **#266** `26b74e69424a846df13fcf8f1f248f6963cf9b06`: Linux/Windows and PostgreSQL tenant-isolation/admission checks, CodeQL, RustSec and security-sensitive-change watch passed. macOS was cancelled and rerun (in progress). Branch is current with main; draft.
+- **#266** `26b74e69424a846df13fcf8f1f248f6963cf9b06`: merged by squash as `197bf007411b3c4aab10e9ed620a9b6e0f3671be` after Linux/Windows/macOS policy tests, PostgreSQL tenant isolation, CodeQL, RustSec, security-sensitive checks passed and review threads were resolved. Post-merge main CI is not visible through the available Actions endpoint.
 - **Main:** current SHA above. No production remote execution or release.
+- **#267** `cd39dcd7f2a567baa2def2554101ceb534c4fdb6`: backlog snapshot documentation PR; CI, CodeQL, RustSec and security-sensitive check queued. Draft.
 
 ## Evidence discipline
 
