@@ -3961,6 +3961,23 @@ mod operator_model_task_match_response_v1_tests {
     }
 
     #[test]
+    fn response_identifier_limits_are_checked_before_serialization() {
+        let mut value = sample(ModelFitStatus::Unknown);
+        value.result.model_ref = "m".repeat(161);
+        assert_eq!(
+            value.to_json_v1(),
+            Err(OperatorModelTaskMatchResponseError::ResponseTooLarge)
+        );
+
+        let mut value = sample(ModelFitStatus::Unknown);
+        value.device_id = "d".repeat(129);
+        assert_eq!(
+            value.to_json_v1(),
+            Err(OperatorModelTaskMatchResponseError::ResponseTooLarge)
+        );
+    }
+
+    #[test]
     fn response_size_ceiling_fails_closed() {
         let mut value = sample(ModelFitStatus::Unknown);
         value.result.reasons = vec![ModelFitReason::CapabilityEvidenceUnknown; 2_000];
