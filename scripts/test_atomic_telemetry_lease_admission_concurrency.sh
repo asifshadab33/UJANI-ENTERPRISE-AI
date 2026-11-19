@@ -54,6 +54,10 @@ INSERT INTO ujani_control.device_telemetry_samples
 VALUES ('telemetry-lease-concurrency','device',1,1,decode(repeat('73',16),'hex'),
  clock_timestamp(),decode(repeat('74',32),'hex'),0,4000,8192,'cool','ac','idle')
 ON CONFLICT DO NOTHING;
+GRANT EXECUTE ON FUNCTION ujani_control.admit_device_lease_with_telemetry(
+ text,text,bigint,bigint,bigint,bigint,bigint,bytea,timestamptz,bytea,integer,bigint,text,text,text,
+ text,text,text,bytea,bytea,bytea,integer,bigint,bytea,timestamptz,uuid
+) TO ujani_runtime;
 INSERT INTO ujani_control.workloads
  (tenant_id,workload_id,manifest_digest,class,state,created_by)
 VALUES ('telemetry-lease-concurrency','workload',decode(repeat('75',32),'hex'),'inference','approved','admin')
