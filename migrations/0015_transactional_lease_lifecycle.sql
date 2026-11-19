@@ -422,6 +422,16 @@ REVOKE ALL ON FUNCTION ujani_control.expire_device_leases(text,text,integer) FRO
 DO $block$
 BEGIN
  IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'ujani_runtime') THEN
+  EXECUTE 'GRANT USAGE ON SCHEMA ujani_control TO ujani_runtime';
+  EXECUTE 'GRANT SELECT ON ujani_control.devices,ujani_control.device_keys,ujani_control.device_owner_bindings,ujani_control.owner_consents,ujani_control.operator_subjects,ujani_control.workloads,ujani_control.approvals,ujani_control.leases,ujani_control.request_replays,ujani_control.audit_events TO ujani_runtime';
+  -- Row-lock privileges are column-scoped. Admission evidence remains
+  -- immutable; the runtime can update only lifecycle and reservation columns.
+  EXECUTE 'GRANT UPDATE (admission_lock_marker) ON ujani_control.device_keys,ujani_control.device_owner_bindings,ujani_control.owner_consents,ujani_control.operator_subjects,ujani_control.workloads,ujani_control.approvals TO ujani_runtime';
+  EXECUTE 'GRANT UPDATE (reservation_revision,updated_at) ON ujani_control.devices TO ujani_runtime';
+  EXECUTE 'GRANT UPDATE (state,expires_at,revision) ON ujani_control.leases TO ujani_runtime';
+  EXECUTE 'GRANT INSERT,SELECT ON ujani_control.request_replays TO ujani_runtime';
+  EXECUTE 'GRANT INSERT,SELECT ON ujani_control.audit_events TO ujani_runtime';
+  EXECUTE 'GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA ujani_control TO ujani_runtime';
   EXECUTE 'GRANT EXECUTE ON FUNCTION ujani_control.renew_device_lease(text,text,text,text,bigint,bigint,bytea,bytea,bytea,timestamptz,uuid) TO ujani_runtime';
   EXECUTE 'GRANT EXECUTE ON FUNCTION ujani_control.release_device_lease(text,text,text,text,bigint,bytea,bytea,bytea,uuid) TO ujani_runtime';
   EXECUTE 'GRANT EXECUTE ON FUNCTION ujani_control.expire_device_leases(text,text,integer) TO ujani_runtime';
