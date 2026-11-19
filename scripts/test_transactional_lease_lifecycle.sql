@@ -31,8 +31,13 @@ BEGIN
 END;
 $block$;
 
+SET ROLE ujani_runtime;
+BEGIN;
+SET LOCAL ujani.tenant_id='admission-test';
+
 -- Refresh authenticated telemetry so this test remains independent of the time
--- spent in the preceding migration and inventory tests.
+-- spent in the preceding migration and inventory tests. This call deliberately
+-- runs under the narrow runtime role rather than the migration owner.
 DO $block$
 DECLARE accepted boolean;
 BEGIN
@@ -60,10 +65,6 @@ BEGIN
  END IF;
 END;
 $block$;
-
-SET ROLE ujani_runtime;
-BEGIN;
-SET LOCAL ujani.tenant_id='admission-test';
 
 -- Renewal requires the current device key, current owner consent generation,
 -- current administrator approval and the same approved workload manifest.
@@ -200,6 +201,9 @@ RESET ROLE;
 -- Verify that release frees the reservation. The existing telemetry sample
 -- predates the release, so the released lease must not be counted as an active
 -- reservation when the same measured headroom is admitted again.
+SET ROLE ujani_runtime;
+BEGIN;
+SET LOCAL ujani.tenant_id='admission-test';
 DO $block$
 DECLARE admitted boolean;
 BEGIN
@@ -213,6 +217,8 @@ BEGIN
  END IF;
 END;
 $block$;
+COMMIT;
+RESET ROLE;
 
 SET ROLE ujani_runtime;
 BEGIN;
@@ -234,6 +240,9 @@ COMMIT;
 RESET ROLE;
 
 -- Prepare a due lease for the separate concurrent expiry/reconciliation test.
+SET ROLE ujani_runtime;
+BEGIN;
+SET LOCAL ujani.tenant_id='admission-test';
 DO $block$
 DECLARE admitted boolean;
 BEGIN
@@ -273,3 +282,5 @@ BEGIN
  END IF;
 END;
 $block$;
+COMMIT;
+RESET ROLE;
