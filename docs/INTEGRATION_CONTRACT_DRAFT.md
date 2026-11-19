@@ -141,3 +141,23 @@ The shared strict v2 descriptor is metadata only. It adds per-capability evidenc
 
 Public model selection remains an explicit device-owner choice. Enterprise may expose inventory for operator planning only while enrolled-device trust, current owner consent and organisation authorisation are all independently verified. Catalogue claims, runtime-reported facts, OS observations and estimates remain distinguishable; unknown or stale evidence stays unknown. The descriptor does not authenticate a producer, prove consent, authorise a task, install a model or enable remote execution. V1 remains unchanged for existing consumers.
 
+
+
+## Latest verified integration status — 2026-11-19
+
+This dated section supersedes older status snapshots in this draft. The RFC remains a future protocol specification; no cross-product task transport or remote worker execution is enabled.
+
+### Independent product status
+- Public main: `010b24a927a75411e8f7c6d2ec46cb4c3ca6e9fb`; PR #336 merged read-only Windows Security Center/Defender update-freshness reporting. It does not scan, remediate, update security software or claim to compare every product with the vendor's latest release.
+- Enterprise main: `197bf007411b3c4aab10e9ed620a9b6e0f3671be`; PR #266 merged advisory evidence-based model/task matching. It does not reserve, install, admit or dispatch work. The route contract is not connected to a production HTTP listener.
+- Enterprise PR #249 merged the authenticated inventory v2 admission/persistence boundary. It is not proof of a production deployment or complete device-agent lifecycle.
+- Public model-inventory v2 producer remains in draft PR #332 at head `1866b8f413efda4ca6f6fd9cc2990bd3a35fb1d0`; exact-head native/platform/installer/CodeQL checks are pending or running. It now validates both installed-model and metadata SHA-256 digests before joining capabilities/context and includes regressions for malformed digests.
+
+### Integration boundary
+The shared language-neutral task-contract v1 remains the specification; do not duplicate it. Legacy Public peer protocol v2 and Enterprise WorkloadManifest v1 remain incompatible in sender/tenant/audience identity, consent binding, data/privacy classification, capability versus access-scope vocabulary, resource units/bounds, expiry and nonce/replay semantics, state sequencing and receipt signing. A production authenticated adapter that binds all of these to the exact task digest, atomically claims replay state and admission/lease, and verifies signed output-byte receipts remains unimplemented.
+
+### Model/runtime inventory
+The v2 descriptor is metadata-only: it distinguishes OS-observed, runtime-reported, catalogue, estimate and unknown evidence; includes freshness, per-capability evidence and platform/accelerator compatibility; and requires a privacy-minimised enrolled-device scope for Enterprise. Public remains personal-local-only and owner-selected. Enterprise inventory requires enrollment, current owner consent and organisation authorisation; the descriptor itself does not authenticate those claims or authorise execution. No prompts, files, paths, credentials or conversation history are shared.
+
+### Evidence limitations
+The available GitHub Actions integration in this run exposed PR-triggered runs but not post-merge main-branch workflow runs; post-merge commit status endpoints returned no checks. Do not infer main CI success. Physical-device isolation, signed production installers, updater rollback, protected KMS/HSM/TPM custody, external anti-rollback, production deployment and independent penetration tests remain external gates.
