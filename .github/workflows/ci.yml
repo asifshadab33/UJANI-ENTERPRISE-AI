@@ -42,6 +42,8 @@ jobs:
         run: python scripts/validate_model_runtime_inventory_schema.py
       - name: Validate Personal-to-Enterprise task contract v1
         run: python scripts/validate_personal_enterprise_task_contract.py
+      - name: Validate operator model/runtime inventory v2 projection schema
+        run: python scripts/validate_operator_model_runtime_inventory_v2_projection.py
       - name: Validate read-only operator console
         run: python scripts/validate_operator_console.py
       - name: Validate existing security-provider inventory v1 schema
