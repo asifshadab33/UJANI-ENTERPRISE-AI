@@ -848,6 +848,11 @@ mod tests {
             validate_device_telemetry_body(&zero_consent, 1_100),
             Err(DeviceTelemetryIntakeError::InvalidConsentGeneration)
         );
+        let missing_consent = br#"{"schema_version":2,"device_id":"device-1","generation":2,"sequence":7,"observed_at_unix_ms":1000,"reservation_revision":4,"thermal_state":"cool","power_state":"ac","participation_state":"idle"}"#;
+        assert_eq!(
+            validate_device_telemetry_body(missing_consent, 1_100),
+            Err(DeviceTelemetryIntakeError::ConsentGenerationMissing)
+        );
         let unsafe_revision = body_v2(1_000, MAX_TELEMETRY_SAFE_INTEGER + 1, 1);
         assert_eq!(
             validate_device_telemetry_body(&unsafe_revision, 1_100),
@@ -1130,6 +1135,33 @@ mod tests {
         assert_eq!(service_thread.join().unwrap(), Ok(()));
         assert!(done_rx.recv_timeout(Duration::from_secs(1)).unwrap());
         writer_thread.join().unwrap();
+        drop(registry);
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn telemetry_admission_service_does_not_accept_legacy_v1_bodies() {
+        let (registry, device, directory, unique_id) = signed_registry(true);
+        let repository = RecordingTelemetryRepository::new(TestRepositoryOutcome::Accepted);
+        let service = DeviceTelemetryAdmissionService::new(&registry, &repository);
+        let raw = body(250);
+        let signed = signed_telemetry_request(&device, &raw, unique_id);
+        assert_eq!(
+            service.ingest(
+                HttpMethod::Post,
+                "/v1/devices/device-1/telemetry",
+                &signed,
+                &raw,
+                250,
+            ),
+            Err(DeviceTelemetryServiceError::Intake(
+                DeviceTelemetryIntakeError::UnsupportedVersion
+            ))
+        );
+        assert_eq!(
+            repository.calls.load(std::sync::atomic::Ordering::SeqCst),
+            0
+        );
         drop(registry);
         let _ = std::fs::remove_dir_all(directory);
     }
