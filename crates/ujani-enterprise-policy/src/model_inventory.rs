@@ -398,7 +398,8 @@ pub fn validate_model_runtime_inventory(
     Ok(())
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ModelTaskRequirements {
     pub required_capabilities: Vec<ModelCapability>,
     pub minimum_context_length_tokens: Option<u64>,
@@ -524,7 +525,11 @@ pub fn match_model_to_task(
             Some(actual) if actual >= required_context => {}
             Some(_) => {
                 reasons.push(ModelFitReason::ContextLengthTooShort);
-                incompatible = true;
+                if evidence_is_usable(&model.evidence, now_unix_ms, max_age_ms) {
+                    incompatible = true;
+                } else {
+                    unknown = true;
+                }
             }
             None => {
                 reasons.push(ModelFitReason::ContextLengthUnknown);
@@ -714,6 +719,42 @@ mod tests {
     }
 
     #[test]
+    fn stale_model_evidence_does_not_claim_short_context_is_incompatible() {
+        let mut value = inventory();
+        value.generated_at_unix_ms = 10_000;
+        value.runtimes[0].evidence.observed_at_unix_ms = Some(10_000);
+        value.models[0].evidence.observed_at_unix_ms = Some(1);
+        value.models[0].context_length_tokens = Some(8_192);
+        let mut task = requirements();
+        task.minimum_context_length_tokens = Some(16_000);
+
+        let result = match_model_to_task(&value, "qwen2.5:7b", &task, 10_100, 10_000).unwrap();
+
+        assert_eq!(result.status, ModelFitStatus::Unknown);
+        assert!(result
+            .reasons
+            .contains(&ModelFitReason::ModelEvidenceNotFresh));
+        assert!(result
+            .reasons
+            .contains(&ModelFitReason::ContextLengthTooShort));
+    }
+
+    #[test]
+    fn fresh_model_evidence_rejects_short_context() {
+        let mut value = inventory();
+        value.models[0].context_length_tokens = Some(8_192);
+        let mut task = requirements();
+        task.minimum_context_length_tokens = Some(16_000);
+
+        let result = match_model_to_task(&value, "qwen2.5:7b", &task, 1_100, 10_000).unwrap();
+
+        assert_eq!(result.status, ModelFitStatus::Incompatible);
+        assert!(result
+            .reasons
+            .contains(&ModelFitReason::ContextLengthTooShort));
+    }
+
+    #[test]
     fn empty_inventory_and_unsupported_runtimes_never_claim_a_usable_model() {
         let mut empty = inventory();
         empty.models.clear();
@@ -867,6 +908,30 @@ mod tests {
             match_model_to_task(&value, "qwen2.5:7b", &requirements(), 1_100, 10_000).unwrap();
         assert_eq!(result.status, ModelFitStatus::Incompatible);
         assert!(result.reasons.contains(&ModelFitReason::ModelNotInstalled));
+    }
+
+    #[test]
+    fn task_requirements_deserialization_rejects_unknown_fields() {
+        let valid = br#"{
+            "required_capabilities": ["chat", "vision"],
+            "minimum_context_length_tokens": 8192,
+            "minimum_memory_mb": 4096
+        }"#;
+        let parsed: ModelTaskRequirements = serde_json::from_slice(valid).unwrap();
+        assert_eq!(
+            parsed.required_capabilities,
+            vec![ModelCapability::Chat, ModelCapability::Vision]
+        );
+        assert_eq!(parsed.minimum_context_length_tokens, Some(8192));
+        assert_eq!(parsed.minimum_memory_mb, Some(4096));
+
+        let unknown = br#"{
+            "required_capabilities": ["chat"],
+            "minimum_context_length_tokens": null,
+            "minimum_memory_mb": null,
+            "tenant_id": "other-tenant"
+        }"#;
+        assert!(serde_json::from_slice::<ModelTaskRequirements>(unknown).is_err());
     }
 
     #[test]

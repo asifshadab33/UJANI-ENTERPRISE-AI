@@ -10,8 +10,16 @@
 use crate::connector_contract::{
     validate_evidence_page, ConnectorError, EvidenceFreshness, EvidencePage,
 };
+use crate::model_inventory::{
+    match_model_to_task, AcceleratorInfo, AcceleratorKind, EvidenceConfidence, EvidenceSource,
+    ModelAvailability, ModelCapability, ModelCapabilityMatch, ModelEvidence, ModelHardware,
+    ModelInfo, ModelInventoryValidationError, ModelPlatform, ModelRuntimeInventory,
+    ModelTaskRequirements, PrivacyDeclaration, RuntimeAvailability, RuntimeInfo,
+    RuntimeNetworkScope,
+};
 use crate::DataClassification;
 use hmac::{Hmac, KeyInit, Mac};
+use serde::Deserialize;
 use sha2::Sha256;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as FmtWrite;
@@ -614,6 +622,24 @@ pub struct OperatorModelInventoryView {
     pub runtimes: Vec<OperatorModelRuntimeView>,
     pub models: Vec<OperatorModelView>,
     pub privacy: Option<OperatorModelInventoryPrivacy>,
+}
+
+/// Read-only result from matching one authenticated tenant device's installed model
+/// against an explicit task requirement set. This is advisory and grants no admission.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OperatorModelTaskMatch {
+    pub device_id: String,
+    pub result: ModelCapabilityMatch,
+}
+
+/// Strict JSON body for the future authenticated model-task-match route.
+/// Tenant and role are intentionally absent; they are derived from the session.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct OperatorModelTaskMatchRequest {
+    pub device_id: String,
+    pub model_ref: String,
+    pub requirements: ModelTaskRequirements,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1292,6 +1318,9 @@ pub enum OperatorServiceError {
     InvalidTenantBoundary,
     InvalidOverview,
     AuditUnavailable,
+    InvalidModelMatchRequest,
+    ModelInventoryUnavailable,
+    ModelMatchRejected,
 }
 
 /// Verifies an operator session issued only after trusted identity-provider validation.
@@ -1383,16 +1412,39 @@ where
 
     /// Authorize a short-lived session, read only that tenant's overview, validate
     /// the response contract, and durably audit the access before returning it.
+    /// Authorize a short-lived session, read only that tenant's overview, validate
+    /// the response contract, and durably audit the access before returning it.
+    /// General operator overview reads remain strict about stale model evidence.
     pub fn get_overview(
         &self,
         session_token: &str,
         now_unix_ms: u64,
     ) -> Result<OperatorOverview, OperatorServiceError> {
+        self.get_overview_internal(session_token, now_unix_ms, false)
+    }
+
+    /// Model matching may downgrade only age-stale runtime/model evidence to Unknown.
+    /// Inventory freshness, tenant identity, device trust, consent-derived scheduling,
+    /// malformed/future evidence, and audit requirements remain enforced.
+    fn get_overview_for_model_match(
+        &self,
+        session_token: &str,
+        now_unix_ms: u64,
+    ) -> Result<OperatorOverview, OperatorServiceError> {
+        self.get_overview_internal(session_token, now_unix_ms, true)
+    }
+
+    fn get_overview_internal(
+        &self,
+        session_token: &str,
+        now_unix_ms: u64,
+        downgrade_stale_model_evidence: bool,
+    ) -> Result<OperatorOverview, OperatorServiceError> {
         let claims = self
             .authenticator
             .verify_session(session_token, now_unix_ms)
             .map_err(|_| OperatorServiceError::Unauthorized)?;
-        let overview = match self
+        let mut overview = match self
             .repository
             .load_tenant_overview(&claims.tenant_id, now_unix_ms)
         {
@@ -1410,6 +1462,9 @@ where
                 return Err(OperatorServiceError::RepositoryUnavailable);
             }
         };
+        if downgrade_stale_model_evidence {
+            downgrade_stale_model_inventory_evidence_to_unknown(&mut overview, now_unix_ms);
+        }
         let outcome = if overview.tenant_id != claims.tenant_id
             || validate_overview(&overview, now_unix_ms).is_err()
             || overview
@@ -1440,7 +1495,302 @@ where
             }
         }
     }
+
+    /// Match an installed model using the authenticated tenant's validated device
+    /// inventory. The overview read is audited before matching. This operation is
+    /// advisory only: it does not admit a workload, reserve resources, install a model,
+    /// start a runtime or dispatch work. Catalogue labels are never used as evidence.
+    pub fn match_model_for_task(
+        &self,
+        session_token: &str,
+        device_id: &str,
+        model_ref: &str,
+        requirements: &ModelTaskRequirements,
+        now_unix_ms: u64,
+    ) -> Result<OperatorModelTaskMatch, OperatorServiceError> {
+        if !valid_identifier(device_id, 128)
+            || !valid_bounded_text(model_ref, 160)
+            || contains_local_path(model_ref)
+        {
+            return Err(OperatorServiceError::InvalidModelMatchRequest);
+        }
+
+        let overview = self.get_overview_for_model_match(session_token, now_unix_ms)?;
+        let device = overview
+            .devices
+            .iter()
+            .find(|device| device.device_id == device_id)
+            .ok_or(OperatorServiceError::ModelInventoryUnavailable)?;
+        // Model planning is limited to devices whose current operator view proves
+        // enrollment, dual-consent-derived schedulability and a fresh last-seen time.
+        // A stale inventory row cannot keep a revoked, paused or offline device eligible.
+        if device.trust_state != "enrolled"
+            || device.availability != "schedulable"
+            || device.last_seen_unix_ms == 0
+            || device.last_seen_unix_ms > now_unix_ms.saturating_add(CLOCK_SKEW_TOLERANCE_MS)
+            || now_unix_ms.saturating_sub(device.last_seen_unix_ms) > MAX_OVERVIEW_AGE_MS
+        {
+            return Err(OperatorServiceError::ModelInventoryUnavailable);
+        }
+        let inventory_view = overview
+            .model_inventory
+            .iter()
+            .find(|inventory| inventory.device_id == device_id)
+            .ok_or(OperatorServiceError::ModelInventoryUnavailable)?;
+        let mut inventory = model_inventory_for_matching(inventory_view)
+            .map_err(|_| OperatorServiceError::InvalidOverview)?;
+        // The inventory is an OS/runtime free-memory snapshot; the operator view is
+        // the current remaining fleet budget after reservations. A fit must satisfy
+        // both. If one source is unknown, retain a known insufficiency but never
+        // promote a known-sufficient value into a compatibility claim.
+        if let Some(required_memory) = requirements.minimum_memory_mb {
+            inventory.hardware.memory_available_mb = match (
+                inventory.hardware.memory_available_mb,
+                device.remaining_memory_mb,
+            ) {
+                (Some(snapshot), Some(remaining)) => Some(snapshot.min(remaining)),
+                (Some(snapshot), None) if snapshot < required_memory => Some(snapshot),
+                (None, Some(remaining)) if remaining < required_memory => Some(remaining),
+                _ => None,
+            };
+        }
+        let result = match_model_to_task(
+            &inventory,
+            model_ref,
+            requirements,
+            now_unix_ms,
+            MAX_OVERVIEW_AGE_MS,
+        )
+        .map_err(|_| OperatorServiceError::ModelMatchRejected)?;
+
+        Ok(OperatorModelTaskMatch {
+            device_id: device_id.to_owned(),
+            result,
+        })
+    }
+
+    /// Convenience entry point for the future bounded HTTP request decoder.
+    /// Tenant identity is never accepted from the request body.
+    pub fn match_model_task_request(
+        &self,
+        session_token: &str,
+        request: &OperatorModelTaskMatchRequest,
+        now_unix_ms: u64,
+    ) -> Result<OperatorModelTaskMatch, OperatorServiceError> {
+        self.match_model_for_task(
+            session_token,
+            &request.device_id,
+            &request.model_ref,
+            &request.requirements,
+            now_unix_ms,
+        )
+    }
 }
+
+fn model_inventory_for_matching(
+    view: &OperatorModelInventoryView,
+) -> Result<ModelRuntimeInventory, ModelInventoryValidationError> {
+    fn evidence(
+        value: &OperatorInventoryEvidence,
+    ) -> Result<ModelEvidence, ModelInventoryValidationError> {
+        let source = match value.source.as_str() {
+            "runtime_api" => EvidenceSource::RuntimeApi,
+            "os_api" => EvidenceSource::OsApi,
+            "runtime_metadata" => EvidenceSource::RuntimeMetadata,
+            "signed_catalogue" => EvidenceSource::SignedCatalogue,
+            "published_catalogue" => EvidenceSource::PublishedCatalogue,
+            "estimate" => EvidenceSource::Estimate,
+            "unknown" => EvidenceSource::Unknown,
+            _ => return Err(ModelInventoryValidationError::InvalidEvidence),
+        };
+        let confidence = match value.confidence.as_str() {
+            "verified" => EvidenceConfidence::Verified,
+            "reported" => EvidenceConfidence::Reported,
+            "estimated" => EvidenceConfidence::Estimated,
+            "unknown" => EvidenceConfidence::Unknown,
+            _ => return Err(ModelInventoryValidationError::InvalidEvidence),
+        };
+        Ok(ModelEvidence {
+            source,
+            confidence,
+            observed_at_unix_ms: value.observed_at_unix_ms,
+        })
+    }
+
+    let hardware = ModelHardware {
+        cpu_logical_cores: view
+            .hardware
+            .cpu_logical_cores
+            .map(u16::try_from)
+            .transpose()
+            .map_err(|_| ModelInventoryValidationError::InvalidHardware)?,
+        memory_total_mb: view.hardware.memory_total_mb,
+        memory_available_mb: view.hardware.memory_available_mb,
+        storage_free_mb: view.hardware.storage_free_mb,
+        accelerators: view
+            .hardware
+            .accelerators
+            .iter()
+            .map(|item| {
+                Ok(AcceleratorInfo {
+                    kind: match item.kind.as_str() {
+                        "gpu" => AcceleratorKind::Gpu,
+                        "npu" => AcceleratorKind::Npu,
+                        "other" => AcceleratorKind::Other,
+                        _ => return Err(ModelInventoryValidationError::InvalidMetadata),
+                    },
+                    vendor: item.vendor.clone(),
+                    device_family: item.device_family.clone(),
+                    memory_mb: item.memory_mb,
+                    runtime_api: item.runtime_api.clone(),
+                    evidence: evidence(&item.evidence)?,
+                })
+            })
+            .collect::<Result<Vec<_>, ModelInventoryValidationError>>()?,
+    };
+    let runtimes = view
+        .runtimes
+        .iter()
+        .map(|item| {
+            Ok(RuntimeInfo {
+                runtime_id: item.runtime_id.clone(),
+                provider: item.provider.clone(),
+                version: item.version.clone(),
+                availability: match item.availability.as_str() {
+                    "available" => RuntimeAvailability::Available,
+                    "unavailable" => RuntimeAvailability::Unavailable,
+                    "unknown" => RuntimeAvailability::Unknown,
+                    _ => return Err(ModelInventoryValidationError::InvalidMetadata),
+                },
+                network_scope: match item.network_scope.as_str() {
+                    "loopback_only" => RuntimeNetworkScope::LoopbackOnly,
+                    "local_socket" => RuntimeNetworkScope::LocalSocket,
+                    "enterprise_internal" => RuntimeNetworkScope::EnterpriseInternal,
+                    "not_applicable" => RuntimeNetworkScope::NotApplicable,
+                    "unknown" => RuntimeNetworkScope::Unknown,
+                    _ => return Err(ModelInventoryValidationError::InvalidMetadata),
+                },
+                evidence: evidence(&item.evidence)?,
+            })
+        })
+        .collect::<Result<Vec<_>, ModelInventoryValidationError>>()?;
+    let models = view
+        .models
+        .iter()
+        .map(|item| {
+            let capabilities = item
+                .capabilities
+                .iter()
+                .map(|capability| match capability.as_str() {
+                    "chat" => Ok(ModelCapability::Chat),
+                    "reasoning" => Ok(ModelCapability::Reasoning),
+                    "coding" => Ok(ModelCapability::Coding),
+                    "vision" => Ok(ModelCapability::Vision),
+                    "embeddings" => Ok(ModelCapability::Embeddings),
+                    "tool_use" => Ok(ModelCapability::ToolUse),
+                    "streaming" => Ok(ModelCapability::Streaming),
+                    "audio_input" => Ok(ModelCapability::AudioInput),
+                    "audio_output" => Ok(ModelCapability::AudioOutput),
+                    "unknown" => Ok(ModelCapability::Unknown),
+                    _ => Err(ModelInventoryValidationError::InvalidMetadata),
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(ModelInfo {
+                model_ref: item.model_ref.clone(),
+                runtime_id: item.runtime_id.clone(),
+                display_name: item.display_name.clone(),
+                family: item.family.clone(),
+                version: item.version.clone(),
+                availability: match item.availability.as_str() {
+                    "installed" => ModelAvailability::Installed,
+                    "downloadable" => ModelAvailability::Downloadable,
+                    "unavailable" => ModelAvailability::Unavailable,
+                    "unknown" => ModelAvailability::Unknown,
+                    _ => return Err(ModelInventoryValidationError::InvalidMetadata),
+                },
+                size_bytes: item.size_bytes,
+                context_length_tokens: item.context_length_tokens,
+                estimated_min_memory_mb: item.estimated_min_memory_mb,
+                capabilities,
+                evidence: evidence(&item.evidence)?,
+            })
+        })
+        .collect::<Result<Vec<_>, ModelInventoryValidationError>>()?;
+
+    Ok(ModelRuntimeInventory {
+        schema_version: u16::from(view.schema_version),
+        generated_at_unix_ms: view.generated_at_unix_ms,
+        device_ref: Some(view.device_id.clone()),
+        platform: ModelPlatform {
+            os: view.platform.os.clone(),
+            os_version: view.platform.os_version.clone(),
+            architecture: view.platform.architecture.clone(),
+        },
+        hardware,
+        runtimes,
+        models,
+        privacy: view.privacy.as_ref().map(|privacy| PrivacyDeclaration {
+            contains_prompts: Some(privacy.contains_prompts),
+            contains_user_files: Some(privacy.contains_user_files),
+            contains_local_paths: Some(privacy.contains_local_paths),
+            contains_credentials: Some(privacy.contains_credentials),
+        }),
+    })
+}
+
+fn downgrade_stale_model_inventory_evidence_to_unknown(overview: &mut OperatorOverview, now: u64) {
+    fn downgrade(evidence: &mut OperatorInventoryEvidence, inventory_generated_at: u64, now: u64) {
+        let valid_source = [
+            "runtime_api",
+            "os_api",
+            "runtime_metadata",
+            "signed_catalogue",
+            "published_catalogue",
+            "estimate",
+            "unknown",
+        ]
+        .contains(&evidence.source.as_str());
+        let valid_confidence = ["verified", "reported", "estimated", "unknown"]
+            .contains(&evidence.confidence.as_str());
+        if !valid_source
+            || !valid_confidence
+            || (evidence.source == "unknown" && evidence.confidence == "verified")
+        {
+            return;
+        }
+        let Some(observed_at) = evidence.observed_at_unix_ms else {
+            return;
+        };
+        // Do not hide zero, future, or post-snapshot timestamps: those remain invalid.
+        if observed_at == 0
+            || observed_at > now.saturating_add(CLOCK_SKEW_TOLERANCE_MS)
+            || observed_at > inventory_generated_at.saturating_add(CLOCK_SKEW_TOLERANCE_MS)
+            || now.saturating_sub(observed_at) <= MAX_OVERVIEW_AGE_MS
+        {
+            return;
+        }
+        evidence.source = "unknown".into();
+        evidence.confidence = "unknown".into();
+        evidence.observed_at_unix_ms = None;
+    }
+
+    for inventory in &mut overview.model_inventory {
+        for accelerator in &mut inventory.hardware.accelerators {
+            downgrade(
+                &mut accelerator.evidence,
+                inventory.generated_at_unix_ms,
+                now,
+            );
+        }
+        for runtime in &mut inventory.runtimes {
+            downgrade(&mut runtime.evidence, inventory.generated_at_unix_ms, now);
+        }
+        for model in &mut inventory.models {
+            downgrade(&mut model.evidence, inventory.generated_at_unix_ms, now);
+        }
+    }
+}
+
 fn validate_overview(overview: &OperatorOverview, now: u64) -> Result<(), ()> {
     let total_model_rows = overview
         .model_inventory
@@ -2946,6 +3296,434 @@ mod tests {
         assert!(json.contains("\"model_inventory_status\":\"partial_response_budget\""));
         assert!(json.contains("\"model_inventory_total_devices\":1000"));
         assert!(json.contains("\"model_inventory_total_models\":50000"));
+    }
+
+    #[test]
+    fn authenticated_operator_matches_only_the_selected_devices_installed_inventory() {
+        let auth = auth();
+        let token = auth
+            .mint_after_identity_verification(&claims("tenant-a"), 10_000)
+            .unwrap();
+        let mut overview = empty_overview("tenant-a");
+        overview.devices.push(OperatorDeviceView {
+            device_id: "device-1".into(),
+            display_name: "Lab workstation".into(),
+            platform: "linux".into(),
+            trust_state: "enrolled".into(),
+            availability: "schedulable".into(),
+            remaining_cpu_millis: Some(1500),
+            remaining_memory_mb: Some(4096),
+            last_seen_unix_ms: 10_100,
+        });
+        overview.fleet = OperatorFleetCounts {
+            registered_devices: 1,
+            trusted_consented_devices: 1,
+            online_fresh_devices: 1,
+            schedulable_devices: 1,
+        };
+        overview
+            .model_inventory
+            .push(sample_model_inventory("device-1", 10_100));
+        let repo = Arc::new(TestRepo {
+            values: Mutex::new(HashMap::from([("tenant-a".into(), overview)])),
+        });
+        let audit = Arc::new(TestAudit::default());
+        let service = OperatorControlPlane::new(auth, repo, audit.clone());
+        let requirements = ModelTaskRequirements {
+            required_capabilities: vec![ModelCapability::Chat],
+            minimum_context_length_tokens: Some(4096),
+            minimum_memory_mb: None,
+        };
+
+        let result = service
+            .match_model_for_task(&token, "device-1", "llama3.2:latest", &requirements, 10_100)
+            .unwrap();
+        assert_eq!(result.device_id, "device-1");
+        assert_eq!(
+            result.result.status,
+            crate::model_inventory::ModelFitStatus::Compatible
+        );
+        assert!(result.result.reasons.is_empty());
+        assert_eq!(
+            audit.events.lock().unwrap()[0].outcome,
+            OperatorAuditOutcome::ReadSucceeded
+        );
+    }
+
+    #[test]
+    fn model_task_match_uses_snapshot_and_current_remaining_memory_budget() {
+        for (snapshot_memory, remaining_memory, expected_status) in [
+            (
+                8_192,
+                Some(1_024),
+                crate::model_inventory::ModelFitStatus::Incompatible,
+            ),
+            (
+                1_024,
+                Some(8_192),
+                crate::model_inventory::ModelFitStatus::Incompatible,
+            ),
+            (8_192, None, crate::model_inventory::ModelFitStatus::Unknown),
+        ] {
+            let auth = auth();
+            let token = auth
+                .mint_after_identity_verification(&claims("tenant-a"), 10_000)
+                .unwrap();
+            let mut overview = empty_overview("tenant-a");
+            overview.generated_at_unix_ms = 10_100;
+            overview.devices.push(OperatorDeviceView {
+                device_id: "device-1".into(),
+                display_name: "Lab workstation".into(),
+                platform: "linux".into(),
+                trust_state: "enrolled".into(),
+                availability: "schedulable".into(),
+                remaining_cpu_millis: Some(1500),
+                remaining_memory_mb: remaining_memory,
+                last_seen_unix_ms: 10_100,
+            });
+            overview.fleet = OperatorFleetCounts {
+                registered_devices: 1,
+                trusted_consented_devices: 1,
+                online_fresh_devices: 1,
+                schedulable_devices: 1,
+            };
+            let mut inventory = sample_model_inventory("device-1", 10_100);
+            inventory.hardware.memory_available_mb = Some(snapshot_memory);
+            overview.model_inventory.push(inventory);
+
+            let repo = Arc::new(TestRepo {
+                values: Mutex::new(HashMap::from([("tenant-a".into(), overview)])),
+            });
+            let service = OperatorControlPlane::new(auth, repo, Arc::new(TestAudit::default()));
+            let requirements = ModelTaskRequirements {
+                required_capabilities: vec![ModelCapability::Chat],
+                minimum_context_length_tokens: Some(4096),
+                minimum_memory_mb: Some(4096),
+            };
+            let result = service
+                .match_model_for_task(&token, "device-1", "llama3.2:latest", &requirements, 10_100)
+                .unwrap();
+
+            assert_eq!(result.result.status, expected_status);
+            if expected_status == crate::model_inventory::ModelFitStatus::Incompatible {
+                assert!(result.result.reasons.contains(
+                    &crate::model_inventory::ModelFitReason::HardwareMemoryBelowRequirement
+                ));
+            } else {
+                assert!(result
+                    .result
+                    .reasons
+                    .contains(&crate::model_inventory::ModelFitReason::HardwareMemoryUnknown));
+            }
+        }
+    }
+
+    #[test]
+    fn model_task_match_returns_unknown_for_age_stale_runtime_or_model_evidence() {
+        let requirements = ModelTaskRequirements {
+            required_capabilities: vec![ModelCapability::Chat],
+            minimum_context_length_tokens: Some(4096),
+            minimum_memory_mb: None,
+        };
+
+        for stale_kind in ["runtime", "model"] {
+            let auth = auth();
+            let mut session_claims = claims("tenant-a");
+            session_claims.issued_at_unix_ms = 90_000;
+            session_claims.expires_at_unix_ms = 110_000;
+            let token = auth
+                .mint_after_identity_verification(&session_claims, 100_100)
+                .unwrap();
+
+            let mut overview = empty_overview("tenant-a");
+            overview.generated_at_unix_ms = 100_100;
+            overview.devices.push(OperatorDeviceView {
+                device_id: "device-1".into(),
+                display_name: "Lab workstation".into(),
+                platform: "linux".into(),
+                trust_state: "enrolled".into(),
+                availability: "schedulable".into(),
+                remaining_cpu_millis: Some(1500),
+                remaining_memory_mb: Some(4096),
+                last_seen_unix_ms: 100_100,
+            });
+            overview.fleet = OperatorFleetCounts {
+                registered_devices: 1,
+                trusted_consented_devices: 1,
+                online_fresh_devices: 1,
+                schedulable_devices: 1,
+            };
+            let mut inventory = sample_model_inventory("device-1", 100_100);
+            match stale_kind {
+                "runtime" => {
+                    inventory.runtimes[0].evidence.observed_at_unix_ms = Some(1);
+                }
+                "model" => {
+                    inventory.models[0].evidence.observed_at_unix_ms = Some(1);
+                }
+                _ => unreachable!(),
+            }
+            overview.model_inventory.push(inventory);
+
+            let repo = Arc::new(TestRepo {
+                values: Mutex::new(HashMap::from([("tenant-a".into(), overview)])),
+            });
+            let audit = Arc::new(TestAudit::default());
+            let service = OperatorControlPlane::new(auth, repo, audit.clone());
+
+            let result = service
+                .match_model_for_task(
+                    &token,
+                    "device-1",
+                    "llama3.2:latest",
+                    &requirements,
+                    100_100,
+                )
+                .expect("stale evidence should produce an Unknown match, not an overview error");
+            assert_eq!(
+                result.result.status,
+                crate::model_inventory::ModelFitStatus::Unknown
+            );
+            let expected_reason = if stale_kind == "runtime" {
+                crate::model_inventory::ModelFitReason::RuntimeEvidenceNotFresh
+            } else {
+                crate::model_inventory::ModelFitReason::ModelEvidenceNotFresh
+            };
+            assert!(result.result.reasons.contains(&expected_reason));
+            assert_eq!(
+                audit.events.lock().unwrap()[0].outcome,
+                OperatorAuditOutcome::ReadSucceeded
+            );
+
+            // Ordinary overview reads intentionally retain their strict stale-evidence denial.
+            assert_eq!(
+                service.get_overview(&token, 100_100),
+                Err(OperatorServiceError::InvalidOverview)
+            );
+            assert_eq!(
+                audit.events.lock().unwrap()[1].outcome,
+                OperatorAuditOutcome::InvalidOverview
+            );
+        }
+    }
+
+    #[test]
+    fn model_task_match_requires_enrolled_schedulable_and_fresh_device() {
+        let requirements = ModelTaskRequirements {
+            required_capabilities: vec![ModelCapability::Chat],
+            minimum_context_length_tokens: Some(4096),
+            minimum_memory_mb: None,
+        };
+        // Aggregate fleet counters may lag a device transition; the selected
+        // device's own trust, consent-derived availability and freshness must gate.
+        for (trust_state, availability, last_seen_unix_ms) in [
+            ("revoked", "schedulable", 10_100),
+            ("enrolled", "paused", 10_100),
+            ("enrolled", "disabled", 10_100),
+            ("enrolled", "schedulable", 0),
+            ("enrolled", "schedulable", 100_000),
+        ] {
+            let auth = auth();
+            let token = auth
+                .mint_after_identity_verification(&claims("tenant-a"), 10_000)
+                .unwrap();
+            let mut overview = empty_overview("tenant-a");
+            overview.devices.push(OperatorDeviceView {
+                device_id: "device-1".into(),
+                display_name: "Lab workstation".into(),
+                platform: "linux".into(),
+                trust_state: trust_state.into(),
+                availability: availability.into(),
+                remaining_cpu_millis: Some(1500),
+                remaining_memory_mb: Some(4096),
+                last_seen_unix_ms,
+            });
+            overview.fleet = OperatorFleetCounts {
+                registered_devices: 1,
+                trusted_consented_devices: 1,
+                online_fresh_devices: 1,
+                schedulable_devices: 1,
+            };
+            overview
+                .model_inventory
+                .push(sample_model_inventory("device-1", 10_100));
+            let repo = Arc::new(TestRepo {
+                values: Mutex::new(HashMap::from([("tenant-a".into(), overview)])),
+            });
+            let service = OperatorControlPlane::new(auth, repo, Arc::new(TestAudit::default()));
+            assert_eq!(
+                service.match_model_for_task(
+                    &token,
+                    "device-1",
+                    "llama3.2:latest",
+                    &requirements,
+                    10_100,
+                ),
+                Err(OperatorServiceError::ModelInventoryUnavailable)
+            );
+        }
+
+        let auth = auth();
+        let mut claims = claims("tenant-a");
+        claims.issued_at_unix_ms = 90_000;
+        claims.expires_at_unix_ms = 110_000;
+        let token = auth
+            .mint_after_identity_verification(&claims, 100_100)
+            .unwrap();
+        let mut overview = empty_overview("tenant-a");
+        overview.generated_at_unix_ms = 100_100;
+        overview.devices.push(OperatorDeviceView {
+            device_id: "device-1".into(),
+            display_name: "Lab workstation".into(),
+            platform: "linux".into(),
+            trust_state: "enrolled".into(),
+            availability: "schedulable".into(),
+            remaining_cpu_millis: Some(1500),
+            remaining_memory_mb: Some(4096),
+            last_seen_unix_ms: 1,
+        });
+        overview.fleet = OperatorFleetCounts {
+            registered_devices: 1,
+            trusted_consented_devices: 1,
+            online_fresh_devices: 1,
+            schedulable_devices: 1,
+        };
+        overview
+            .model_inventory
+            .push(sample_model_inventory("device-1", 100_100));
+        let repo = Arc::new(TestRepo {
+            values: Mutex::new(HashMap::from([("tenant-a".into(), overview)])),
+        });
+        let service = OperatorControlPlane::new(auth, repo, Arc::new(TestAudit::default()));
+        assert_eq!(
+            service.match_model_for_task(
+                &token,
+                "device-1",
+                "llama3.2:latest",
+                &requirements,
+                100_100,
+            ),
+            Err(OperatorServiceError::ModelInventoryUnavailable)
+        );
+    }
+
+    #[test]
+    fn model_task_match_request_body_cannot_override_tenant_or_role() {
+        let valid = br#"{
+            "device_id": "device-1",
+            "model_ref": "llama3.2:latest",
+            "requirements": {
+                "required_capabilities": ["chat"],
+                "minimum_context_length_tokens": 4096,
+                "minimum_memory_mb": null
+            }
+        }"#;
+        let parsed: OperatorModelTaskMatchRequest = serde_json::from_slice(valid).unwrap();
+        assert_eq!(parsed.device_id, "device-1");
+        assert_eq!(
+            parsed.requirements.required_capabilities,
+            vec![ModelCapability::Chat]
+        );
+
+        let injected_tenant = br#"{
+            "device_id": "device-1",
+            "model_ref": "llama3.2:latest",
+            "tenant_id": "tenant-b",
+            "requirements": {
+                "required_capabilities": ["chat"],
+                "minimum_context_length_tokens": null,
+                "minimum_memory_mb": null
+            }
+        }"#;
+        assert!(serde_json::from_slice::<OperatorModelTaskMatchRequest>(injected_tenant).is_err());
+    }
+
+    #[test]
+    fn authenticated_operator_cannot_match_another_tenant_or_unlisted_device() {
+        let auth = auth();
+        let token = auth
+            .mint_after_identity_verification(&claims("tenant-a"), 10_000)
+            .unwrap();
+        let repo = Arc::new(TestRepo {
+            values: Mutex::new(HashMap::from([(
+                "tenant-a".into(),
+                empty_overview("tenant-b"),
+            )])),
+        });
+        let audit = Arc::new(TestAudit::default());
+        let service = OperatorControlPlane::new(auth, repo, audit);
+        assert_eq!(
+            service.match_model_for_task(
+                &token,
+                "device-1",
+                "llama3.2:latest",
+                &ModelTaskRequirements {
+                    required_capabilities: vec![ModelCapability::Chat],
+                    minimum_context_length_tokens: None,
+                    minimum_memory_mb: None,
+                },
+                10_100,
+            ),
+            Err(OperatorServiceError::InvalidTenantBoundary)
+        );
+    }
+
+    #[test]
+    fn task_matching_rejects_unknown_model_and_unbounded_or_path_like_input() {
+        let auth = auth();
+        let token = auth
+            .mint_after_identity_verification(&claims("tenant-a"), 10_000)
+            .unwrap();
+        let mut overview = empty_overview("tenant-a");
+        overview.devices.push(OperatorDeviceView {
+            device_id: "device-1".into(),
+            display_name: "Lab workstation".into(),
+            platform: "linux".into(),
+            trust_state: "enrolled".into(),
+            availability: "schedulable".into(),
+            remaining_cpu_millis: Some(1500),
+            remaining_memory_mb: Some(4096),
+            last_seen_unix_ms: 10_100,
+        });
+        overview.fleet = OperatorFleetCounts {
+            registered_devices: 1,
+            trusted_consented_devices: 1,
+            online_fresh_devices: 1,
+            schedulable_devices: 1,
+        };
+        overview
+            .model_inventory
+            .push(sample_model_inventory("device-1", 10_100));
+        let repo = Arc::new(TestRepo {
+            values: Mutex::new(HashMap::from([("tenant-a".into(), overview)])),
+        });
+        let audit = Arc::new(TestAudit::default());
+        let service = OperatorControlPlane::new(auth, repo, audit);
+        let requirements = ModelTaskRequirements {
+            required_capabilities: vec![ModelCapability::Chat],
+            minimum_context_length_tokens: None,
+            minimum_memory_mb: None,
+        };
+        assert_eq!(
+            service.match_model_for_task(
+                &token,
+                "device-1",
+                "/home/operator/model",
+                &requirements,
+                10_100
+            ),
+            Err(OperatorServiceError::InvalidModelMatchRequest)
+        );
+        assert_eq!(
+            service.match_model_for_task(
+                &token,
+                "device-1",
+                "not-installed",
+                &requirements,
+                10_100
+            ),
+            Err(OperatorServiceError::ModelMatchRejected)
+        );
     }
 
     #[test]

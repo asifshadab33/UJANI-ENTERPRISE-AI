@@ -10,9 +10,12 @@ The policy crate now contains `operator_control_plane`, a transport-independent 
 - calls a repository with the authenticated tenant identifier (never a tenant supplied by the browser);
 - rejects a repository response whose tenant does not match the authenticated session;
 - validates overview schema, freshness, record limits, unique device IDs and non-contradictory fleet counts;
-- requires an append-only audit sink to acknowledge each successful or denied overview read before returning a response (fail closed when audit is unavailable).
+- requires an append-only audit sink to acknowledge each successful or denied overview read before returning a response (fail closed when audit is unavailable);
+- exposes an authenticated, tenant-scoped, read-only model-to-task match service method that uses the existing evidence-qualified inventory matcher and only considers an installed model on the selected device. Matching is advisory and does not allocate or dispatch work.
 
-The console reads the versioned `GET /api/v1/operator/overview` response. The service core and UI currently share the contract, but the repository does **not yet contain a network listener, an OIDC/SAML adapter, a production database-backed overview repository, a durable audit sink, or a deployed endpoint**. The application is therefore not yet live-connected or production-ready.
+The console reads the versioned `GET /api/v1/operator/overview` response. A bounded `POST /v1/operator/model-task-match` route contract now specifies viewer-or-higher authentication and an 8 KiB body ceiling, but it is not yet wired to a request decoder, HTTP handler or UI. The service core and UI currently share the overview contract, but the repository does **not yet contain a network listener, an OIDC/SAML adapter, a production database-backed overview repository, a durable audit sink, or a deployed endpoint**. The application is therefore not yet live-connected or production-ready.
+
+Model matching reads the authenticated tenant overview and permits only a selected device whose current view is enrolled, schedulable and freshly seen; the repository must derive schedulability only while administrator approval and current owner consent are both valid. Revoked, paused, disabled, offline, future-dated or stale devices are unavailable even if an old inventory row remains. The service validates the selected device inventory and calls `match_model_to_task`. Unknown or stale evidence stays unknown; estimated memory fit is not promoted to verified compatibility. The result is informational only and cannot admit workloads, reserve resources, install models or dispatch work.
 
 ## Identity and session boundary
 
@@ -61,3 +64,8 @@ The policy crate's unit tests exercise token integrity/expiry, tenant-boundary r
 ## Customer-hosted deployment foundation
 
 The recommended customer-owned topology, initial PostgreSQL tenant/RLS migration, audit-event schema and implementation gates are documented in [Customer-hosted Control Plane Deployment](CUSTOMER-HOSTED-CONTROL-PLANE-DEPLOYMENT.md). The migration is a schema foundation, not a live database adapter; the operator console remains unavailable until a real authenticated service is deployed.
+
+
+## Model inventory v2 projection boundary
+
+The authenticated model-inventory v2 preflight and persistence path validates the shared descriptor, owner consent, organisation authorisation, device reference, freshness and privacy flags. The current operator overview and task matcher still consume the bounded v1 `OperatorModelInventoryView` projection. They do not yet preserve v2 per-capability evidence, tool/vision/embedding evidence, platform/accelerator compatibility or all resource estimates. Until a production repository adapter and versioned operator-view projection expose those fields, task matching must use only the v1 facts present in the overview and must not infer v2-only capabilities or placement compatibility. A v2 operator projection and its schema/console tests remain required before v2 metadata can drive placement decisions.
