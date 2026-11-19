@@ -103,7 +103,6 @@ pub enum DeviceTelemetryIntakeError {
     InvalidGenerationOrSequence,
     InvalidTelemetryWatermark,
     InvalidConsentGeneration,
-    ConsentGenerationMismatch,
     ConsentGenerationMissing,
     InvalidResourceMeasurement,
     BodyTooLarge,
@@ -121,7 +120,7 @@ impl DeviceTelemetryIntakeError {
         match self {
             Self::InvalidRoute => 404,
             Self::DeviceAuthenticationFailed | Self::RequestBindingMismatch => 401,
-            Self::OwnerConsentMissing | Self::ConsentGenerationMismatch => 403,
+            Self::OwnerConsentMissing => 403,
             Self::ConsentGenerationMissing
             | Self::InvalidTelemetryWatermark
             | Self::InvalidConsentGeneration => 400,
@@ -324,17 +323,11 @@ fn authenticate_device_telemetry_request_for_schema(
     if authenticated.device_id() != sample.device_id {
         return Err(DeviceTelemetryIntakeError::RequestBindingMismatch);
     }
-    let (_, owner_opted_in, current_consent_generation) = registry
-        .authenticated_device_status_with_consent_generation_for_request(&authenticated)
+    let (_, owner_opted_in) = registry
+        .authenticated_device_status_for_request(&authenticated)
         .map_err(map_device_trust_error)?;
     if !owner_opted_in {
         return Err(DeviceTelemetryIntakeError::OwnerConsentMissing);
-    }
-    if sample
-        .consent_generation
-        .is_some_and(|generation| generation != current_consent_generation)
-    {
-        return Err(DeviceTelemetryIntakeError::ConsentGenerationMismatch);
     }
     Ok((authenticated, sample))
 }
@@ -846,33 +839,22 @@ mod tests {
     }
 
     #[test]
-    fn telemetry_v2_authentication_binds_the_current_owner_consent_generation() {
+    fn telemetry_v2_preserves_server_issued_database_consent_generation() {
         let (registry, device, directory, unique_id) = signed_registry(true);
-        let raw = body_v2(250, 0, 1);
+        // The local durable registry's consent generation is key-bound; the
+        // SQL owner-consent generation is a separate server-issued watermark.
+        let raw = body_v2(250, 0, 3);
         let signed = signed_telemetry_v2_request(&device, &raw, unique_id);
-        let accepted = authenticate_device_telemetry_v2_request(
+        let (_, sample) = authenticate_device_telemetry_v2_request(
             &registry,
             HttpMethod::Post,
             "/v1/devices/device-1/telemetry",
             &signed,
             &raw,
             250,
-        );
-        assert!(accepted.is_ok());
-
-        let stale_raw = body_v2(250, 0, 2);
-        let stale_signed = signed_telemetry_v2_request(&device, &stale_raw, unique_id + 1);
-        assert_eq!(
-            authenticate_device_telemetry_v2_request(
-                &registry,
-                HttpMethod::Post,
-                "/v1/devices/device-1/telemetry",
-                &stale_signed,
-                &stale_raw,
-                250,
-            ),
-            Err(DeviceTelemetryIntakeError::ConsentGenerationMismatch)
-        );
+        )
+        .unwrap();
+        assert_eq!(sample.consent_generation, Some(3));
         drop(registry);
         let _ = std::fs::remove_dir_all(directory);
     }
