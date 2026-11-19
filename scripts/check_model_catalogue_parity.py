@@ -1,26 +1,33 @@
 #!/usr/bin/env python3
-"""Fail CI if the UI and canonical model catalogue copies drift."""
+"""Fail CI if the application model-catalogue mirror drifts from its source."""
+from argparse import ArgumentParser
 from pathlib import Path
 import sys
 
-ROOT = Path(__file__).resolve().parents[1]
-CANONICAL = ROOT / "catalogs" / "local-model-catalog-v1.json"
-MIRRORS = (
-    ROOT / "apps" / "desktop" / "src" / "model-catalog.json",
-    ROOT / "apps" / "operator-console" / "model-catalog.json",
-)
+MIRROR_CANDIDATES = (Path("apps/desktop/src/model-catalog.json"), Path("apps/operator-console/model-catalog.json"))
+
+def catalogue_paths(root: Path):
+    source = root / "catalogs" / "local-model-catalog-v1.json"
+    mirrors = [root / rel for rel in MIRROR_CANDIDATES if (root / rel).is_file()]
+    if not source.is_file() or len(mirrors) != 1:
+        return None, None, f"expected source and exactly one mirror; found {len(mirrors)}"
+    return source, mirrors[0], None
+
+def check_catalogue(root: Path) -> int:
+    source, mirror, error = catalogue_paths(root)
+    if error:
+        print(error, file=sys.stderr)
+        return 2
+    if source.read_bytes() != mirror.read_bytes():
+        print(f"catalogue drift: {source.relative_to(root)} != {mirror.relative_to(root)}", file=sys.stderr)
+        return 1
+    print(f"catalogue parity OK: {source.relative_to(root)} == {mirror.relative_to(root)}")
+    return 0
 
 def main() -> int:
-    existing = [path for path in MIRRORS if path.is_file()]
-    if not CANONICAL.is_file() or len(existing) != 1:
-        print("expected canonical catalogue and exactly one app mirror; found: " + ", ".join(str(p) for p in existing), file=sys.stderr)
-        return 2
-    mirror = existing[0]
-    if CANONICAL.read_bytes() != mirror.read_bytes():
-        print(f"catalogue drift detected: {CANONICAL.relative_to(ROOT)} != {mirror.relative_to(ROOT)}", file=sys.stderr)
-        return 1
-    print(f"catalogue parity OK: {CANONICAL.relative_to(ROOT)} == {mirror.relative_to(ROOT)}")
-    return 0
+    parser = ArgumentParser(description=__doc__)
+    parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
+    return check_catalogue(parser.parse_args().root.resolve())
 
 if __name__ == "__main__":
     raise SystemExit(main())
