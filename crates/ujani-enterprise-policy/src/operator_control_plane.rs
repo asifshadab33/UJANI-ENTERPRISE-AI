@@ -12,10 +12,10 @@ use crate::connector_contract::{
 };
 use crate::model_inventory::{
     match_model_to_task, AcceleratorInfo, AcceleratorKind, EvidenceConfidence, EvidenceSource,
-    ModelAvailability, ModelCapability, ModelCapabilityMatch, ModelEvidence, ModelFitReason, ModelFitStatus, ModelHardware,
-    ModelInfo, ModelInventoryValidationError, ModelPlatform, ModelRuntimeInventory,
-    ModelTaskRequirements, PrivacyDeclaration, RuntimeAvailability, RuntimeInfo,
-    RuntimeNetworkScope,
+    ModelAvailability, ModelCapability, ModelCapabilityMatch, ModelEvidence, ModelFitReason,
+    ModelFitStatus, ModelHardware, ModelInfo, ModelInventoryValidationError, ModelPlatform,
+    ModelRuntimeInventory, ModelTaskRequirements, PrivacyDeclaration, RuntimeAvailability,
+    RuntimeInfo, RuntimeNetworkScope,
 };
 use crate::DataClassification;
 use hmac::{Hmac, KeyInit, Mac};
@@ -3904,7 +3904,6 @@ mod session_keyring_negative_tests {
     }
 }
 
-
 #[cfg(test)]
 mod operator_model_task_match_response_v1_tests {
     use super::*;
@@ -3930,7 +3929,10 @@ mod operator_model_task_match_response_v1_tests {
         assert_eq!(parsed["result"]["model_ref"], "model-local-1");
         assert_eq!(parsed["result"]["status"], "unknown");
         assert_eq!(parsed["result"]["evidence_confidence"], "unknown");
-        assert_eq!(parsed["result"]["reasons"][0], "capability_evidence_unknown");
+        assert_eq!(
+            parsed["result"]["reasons"][0],
+            "capability_evidence_unknown"
+        );
         assert!(!parsed.as_object().unwrap().contains_key("tenant_id"));
     }
 
