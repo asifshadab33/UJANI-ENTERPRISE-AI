@@ -703,4 +703,38 @@ BEGIN
 END;
 $block$;
 RESET ROLE;
+-- A disabled administrator cannot revise the organisation model-inventory policy.
+-- The policy trigger must reject the write and leave its revision unchanged.
+SELECT pg_catalog.set_config('ujani.tenant_id','inventory-test',true);
+UPDATE ujani_control.operator_subjects
+ SET enabled=false
+ WHERE tenant_id='inventory-test' AND subject_id='inventory-admin';
+DO $block$
+DECLARE
+ v_before bigint;
+ v_after bigint;
+BEGIN
+ SELECT revision INTO v_before
+ FROM ujani_control.model_inventory_policies
+ WHERE tenant_id='inventory-test';
+ BEGIN
+  UPDATE ujani_control.model_inventory_policies
+  SET revision=revision+1,updated_by_subject_id='inventory-admin'
+  WHERE tenant_id='inventory-test';
+  RAISE EXCEPTION 'disabled administrator unexpectedly changed model inventory policy';
+ EXCEPTION WHEN insufficient_privilege THEN
+  NULL;
+ END;
+ SELECT revision INTO v_after
+ FROM ujani_control.model_inventory_policies
+ WHERE tenant_id='inventory-test';
+ IF v_after IS DISTINCT FROM v_before THEN
+  RAISE EXCEPTION 'rejected disabled-administrator policy write changed the policy revision';
+ END IF;
+END;
+$block$;
+UPDATE ujani_control.operator_subjects
+ SET enabled=true
+ WHERE tenant_id='inventory-test' AND subject_id='inventory-admin';
+
 ROLLBACK;
