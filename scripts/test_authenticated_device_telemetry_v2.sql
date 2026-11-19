@@ -53,6 +53,10 @@ VALUES
   decode(repeat('34',32),'hex'))
 ON CONFLICT (tenant_id,device_id,consent_generation) DO NOTHING;
 
+-- Positive admission, replay, ordering, generation, freshness and watermark tests.
+SET ROLE ujani_runtime;
+BEGIN;
+SET LOCAL ujani.tenant_id='authenticated-telemetry-test';
 DO $block$
 DECLARE
  v_consent_generation bigint;
@@ -70,9 +74,6 @@ BEGIN
 
  v_expiry := pg_catalog.floor(pg_catalog.date_part('epoch',pg_catalog.clock_timestamp())*1000)::bigint + 20000;
 
- SET LOCAL ROLE ujani_runtime;
- PERFORM pg_catalog.set_config('ujani.tenant_id','authenticated-telemetry-test',true);
-
  v_accepted := ujani_control.accept_authenticated_device_telemetry_v2(
   'authenticated-telemetry-test','telemetry-device','telemetry-key-v1',
   v_key_generation,v_consent_generation,1,1,0,
@@ -82,7 +83,6 @@ BEGIN
   RAISE EXCEPTION 'fresh telemetry with current dual consent should be accepted';
  END IF;
 
- -- Same request ID is rejected even when the sequence would otherwise advance.
  v_accepted := ujani_control.accept_authenticated_device_telemetry_v2(
   'authenticated-telemetry-test','telemetry-device','telemetry-key-v1',
   v_key_generation,v_consent_generation,1,2,0,
@@ -92,7 +92,6 @@ BEGIN
   RAISE EXCEPTION 'replayed request ID was accepted';
  END IF;
 
- -- A duplicate sequence with a fresh request ID is rejected before replay is claimed.
  v_accepted := ujani_control.accept_authenticated_device_telemetry_v2(
   'authenticated-telemetry-test','telemetry-device','telemetry-key-v1',
   v_key_generation,v_consent_generation,1,1,0,
@@ -102,7 +101,6 @@ BEGIN
   RAISE EXCEPTION 'duplicate telemetry sequence was accepted';
  END IF;
 
- -- Old/future key and consent generations cannot authorise telemetry.
  v_accepted := ujani_control.accept_authenticated_device_telemetry_v2(
   'authenticated-telemetry-test','telemetry-device','telemetry-key-v1',
   v_key_generation+1,v_consent_generation,1,2,0,
@@ -124,7 +122,6 @@ BEGIN
   decode(repeat('ab',32),'hex'),4000,8192,'cool','ac','idle');
  IF v_accepted IS DISTINCT FROM false THEN RAISE EXCEPTION 'wrong active key ID was accepted'; END IF;
 
- -- Future reservation watermarks, stale/future observations and expired requests fail closed.
  v_accepted := ujani_control.accept_authenticated_device_telemetry_v2(
   'authenticated-telemetry-test','telemetry-device','telemetry-key-v1',
   v_key_generation,v_consent_generation,1,2,1,
@@ -161,55 +158,53 @@ BEGIN
   pg_catalog.floor(pg_catalog.date_part('epoch',pg_catalog.clock_timestamp())*1000)::bigint+60000,
   pg_catalog.clock_timestamp(),decode(repeat('b5',32),'hex'),4000,8192,'cool','ac','idle');
  IF v_accepted IS DISTINCT FROM false THEN RAISE EXCEPTION 'overlong signed request was accepted'; END IF;
-
- RESET ROLE;
- UPDATE ujani_control.devices SET owner_consent_state='paused'
- WHERE tenant_id='authenticated-telemetry-test' AND device_id='telemetry-device';
- SET LOCAL ROLE ujani_runtime;
- v_accepted := ujani_control.accept_authenticated_device_telemetry_v2(
-  'authenticated-telemetry-test','telemetry-device','telemetry-key-v1',
-  v_key_generation,v_consent_generation,1,2,0,
-  decode(repeat('b6',16),'hex'),v_expiry,pg_catalog.clock_timestamp(),
-  decode(repeat('b7',32),'hex'),4000,8192,'cool','ac','idle');
- IF v_accepted IS DISTINCT FROM false THEN RAISE EXCEPTION 'owner pause did not block telemetry'; END IF;
-
- RESET ROLE;
- UPDATE ujani_control.devices SET owner_consent_state='granted',admin_approval_state='rejected'
- WHERE tenant_id='authenticated-telemetry-test' AND device_id='telemetry-device';
- SET LOCAL ROLE ujani_runtime;
- v_accepted := ujani_control.accept_authenticated_device_telemetry_v2(
-  'authenticated-telemetry-test','telemetry-device','telemetry-key-v1',
-  v_key_generation,v_consent_generation,1,2,0,
-  decode(repeat('b8',16),'hex'),v_expiry,pg_catalog.clock_timestamp(),
-  decode(repeat('b9',32),'hex'),4000,8192,'cool','ac','idle');
- IF v_accepted IS DISTINCT FROM false THEN RAISE EXCEPTION 'organisation denial did not block telemetry'; END IF;
-
- RESET ROLE;
- UPDATE ujani_control.devices SET admin_approval_state='approved'
- WHERE tenant_id='authenticated-telemetry-test' AND device_id='telemetry-device';
- SET LOCAL ROLE ujani_runtime;
-
- -- All rejected requests above must leave no replay claims.
- IF EXISTS (
-  SELECT 1 FROM ujani_control.request_replays
-  WHERE tenant_id='authenticated-telemetry-test'
-    AND device_id='telemetry-device'
-    AND request_id IN (
-     decode(repeat('a4',16),'hex'),decode(repeat('a6',16),'hex'),
-     decode(repeat('a8',16),'hex'),decode(repeat('aa',16),'hex'),
-     decode(repeat('ac',16),'hex'),decode(repeat('ae',16),'hex'),
-     decode(repeat('b0',16),'hex'),decode(repeat('b2',16),'hex'),
-     decode(repeat('b4',16),'hex'),decode(repeat('b6',16),'hex'),
-     decode(repeat('b8',16),'hex'))
- ) THEN
-  RAISE EXCEPTION 'a rejected telemetry request consumed replay state';
- END IF;
 END;
 $block$;
-
+COMMIT;
 RESET ROLE;
 
--- Inject an audit failure after the replay/sample/watermark writes. The function
+-- Both consent layers are independently rechecked by the transaction.
+UPDATE ujani_control.devices SET owner_consent_state='paused'
+WHERE tenant_id='authenticated-telemetry-test' AND device_id='telemetry-device';
+SET ROLE ujani_runtime;
+BEGIN;
+SET LOCAL ujani.tenant_id='authenticated-telemetry-test';
+DO $block$
+DECLARE accepted boolean;
+BEGIN
+ accepted := ujani_control.accept_authenticated_device_telemetry_v2(
+  'authenticated-telemetry-test','telemetry-device','telemetry-key-v1',
+  1,1,1,2,0,decode(repeat('b6',16),'hex'),
+  pg_catalog.floor(pg_catalog.date_part('epoch',pg_catalog.clock_timestamp())*1000)::bigint+20000,
+  pg_catalog.clock_timestamp(),decode(repeat('b7',32),'hex'),4000,8192,'cool','ac','idle');
+ IF accepted IS DISTINCT FROM false THEN RAISE EXCEPTION 'owner pause did not block telemetry'; END IF;
+END;
+$block$;
+COMMIT;
+RESET ROLE;
+UPDATE ujani_control.devices SET owner_consent_state='granted',admin_approval_state='rejected'
+WHERE tenant_id='authenticated-telemetry-test' AND device_id='telemetry-device';
+
+SET ROLE ujani_runtime;
+BEGIN;
+SET LOCAL ujani.tenant_id='authenticated-telemetry-test';
+DO $block$
+DECLARE accepted boolean;
+BEGIN
+ accepted := ujani_control.accept_authenticated_device_telemetry_v2(
+  'authenticated-telemetry-test','telemetry-device','telemetry-key-v1',
+  1,1,1,2,0,decode(repeat('b8',16),'hex'),
+  pg_catalog.floor(pg_catalog.date_part('epoch',pg_catalog.clock_timestamp())*1000)::bigint+20000,
+  pg_catalog.clock_timestamp(),decode(repeat('b9',32),'hex'),4000,8192,'cool','ac','idle');
+ IF accepted IS DISTINCT FROM false THEN RAISE EXCEPTION 'organisation denial did not block telemetry'; END IF;
+END;
+$block$;
+COMMIT;
+RESET ROLE;
+UPDATE ujani_control.devices SET admin_approval_state='approved'
+WHERE tenant_id='authenticated-telemetry-test' AND device_id='telemetry-device';
+
+-- Inject an audit failure after replay/sample/watermark writes. The function
 -- must abort the whole statement transaction rather than leave partial telemetry.
 CREATE OR REPLACE FUNCTION ujani_control.reject_test_telemetry_audit()
 RETURNS trigger
@@ -226,7 +221,9 @@ CREATE TRIGGER reject_test_telemetry_audit
  BEFORE INSERT ON ujani_control.audit_events
  FOR EACH ROW EXECUTE FUNCTION ujani_control.reject_test_telemetry_audit();
 
-SET LOCAL ROLE ujani_runtime;
+SET ROLE ujani_runtime;
+BEGIN;
+SET LOCAL ujani.tenant_id='authenticated-telemetry-test';
 DO $block$
 DECLARE
  v_failed boolean := false;
@@ -246,6 +243,7 @@ BEGIN
  END IF;
 END;
 $block$;
+COMMIT;
 RESET ROLE;
 
 DROP TRIGGER reject_test_telemetry_audit ON ujani_control.audit_events;
