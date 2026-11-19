@@ -285,3 +285,160 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod inventory_v2_preflight_boundary_regression_tests {
+    use super::*;
+    use serde_json::{json, Value};
+
+    fn valid_payload() -> Value {
+        json!({
+            "schema_version": 2,
+            "generated_at_unix_ms": 1_800_000_000_000u64,
+            "device_ref": "device-1",
+            "collection_context": {
+                "scope": "organisation_enrolled",
+                "owner_consent": "granted",
+                "organisation_authorisation": "authorised",
+                "policy_version": "policy-v2"
+            },
+            "platform": {},
+            "hardware": {},
+            "runtimes": [],
+            "models": [],
+            "privacy": {
+                "contains_prompts": false,
+                "contains_user_files": false,
+                "contains_local_paths": false,
+                "contains_credentials": false
+            }
+        })
+    }
+
+    #[test]
+    fn rejects_invalid_authenticated_device_and_policy_identifiers() {
+        let mut payload = valid_payload();
+        payload["device_ref"] = json!("device/1");
+        assert_eq!(
+            validate_enterprise_inventory_v2_preflight(&payload, "device/1"),
+            Err(InventoryV2PreflightError::InvalidDeviceBinding)
+        );
+        let mut invalid_policy = valid_payload();
+        invalid_policy["collection_context"]["policy_version"] = json!("policy/v2");
+        assert_eq!(
+            validate_enterprise_inventory_v2_preflight(&invalid_policy, "device-1"),
+            Err(InventoryV2PreflightError::InvalidPolicyVersion)
+        );
+    }
+
+    #[test]
+    fn rejects_runtime_and_model_collections_over_their_independent_limits() {
+        let mut too_many_runtimes = valid_payload();
+        too_many_runtimes["runtimes"] = Value::Array(vec![json!({}); 17]);
+        assert_eq!(
+            validate_enterprise_inventory_v2_preflight(&too_many_runtimes, "device-1"),
+            Err(InventoryV2PreflightError::InvalidInventoryCollections)
+        );
+
+        let mut too_many_models = valid_payload();
+        too_many_models["models"] = Value::Array(vec![json!({}); 513]);
+        assert_eq!(
+            validate_enterprise_inventory_v2_preflight(&too_many_models, "device-1"),
+            Err(InventoryV2PreflightError::InvalidInventoryCollections)
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_nested_authority_fields_and_incomplete_privacy_flags() {
+        let mut extra_context = valid_payload();
+        extra_context["collection_context"]["admin_override"] = json!(true);
+        assert_eq!(
+            validate_enterprise_inventory_v2_preflight(&extra_context, "device-1"),
+            Err(InventoryV2PreflightError::InvalidCollectionContext)
+        );
+
+        let mut incomplete_privacy = valid_payload();
+        incomplete_privacy["privacy"]
+            .as_object_mut()
+            .unwrap()
+            .remove("contains_credentials");
+        assert_eq!(
+            validate_enterprise_inventory_v2_preflight(&incomplete_privacy, "device-1"),
+            Err(InventoryV2PreflightError::InvalidPrivacyDeclaration)
+        );
+    }
+}
+
+#[cfg(test)]
+mod inventory_v2_consent_timestamp_regression_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn payload() -> Value {
+        json!({
+            "schema_version": 2,
+            "generated_at_unix_ms": 1_800_000_000_000u64,
+            "device_ref": "device-1",
+            "collection_context": {
+                "scope": "organisation_enrolled",
+                "owner_consent": "granted",
+                "organisation_authorisation": "authorised",
+                "policy_version": "policy-v2"
+            },
+            "platform": {},
+            "hardware": {},
+            "runtimes": [],
+            "models": [],
+            "privacy": {
+                "contains_prompts": false,
+                "contains_user_files": false,
+                "contains_local_paths": false,
+                "contains_credentials": false
+            }
+        })
+    }
+
+    #[test]
+    fn accepts_payload_at_the_safe_integer_timestamp_ceiling() {
+        let mut value = payload();
+        value["generated_at_unix_ms"] = json!(9_007_199_254_740_991u64);
+        assert_eq!(
+            validate_enterprise_inventory_v2_preflight(&value, "device-1"),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn rejects_zero_timestamp_and_non_boolean_privacy_flags() {
+        let mut zero = payload();
+        zero["generated_at_unix_ms"] = json!(0);
+        assert_eq!(
+            validate_enterprise_inventory_v2_preflight(&zero, "device-1"),
+            Err(InventoryV2PreflightError::InvalidTimestamp)
+        );
+
+        let mut invalid_privacy = payload();
+        invalid_privacy["privacy"]["contains_prompts"] = json!("false");
+        assert_eq!(
+            validate_enterprise_inventory_v2_preflight(&invalid_privacy, "device-1"),
+            Err(InventoryV2PreflightError::InvalidPrivacyDeclaration)
+        );
+    }
+
+    #[test]
+    fn rejects_missing_or_non_granted_organisation_consent_context() {
+        let mut owner = payload();
+        owner["collection_context"]["owner_consent"] = json!("revoked");
+        assert_eq!(
+            validate_enterprise_inventory_v2_preflight(&owner, "device-1"),
+            Err(InventoryV2PreflightError::ConsentNotGranted)
+        );
+
+        let mut organisation = payload();
+        organisation["collection_context"]["organisation_authorisation"] = json!("pending");
+        assert_eq!(
+            validate_enterprise_inventory_v2_preflight(&organisation, "device-1"),
+            Err(InventoryV2PreflightError::OrganisationNotAuthorised)
+        );
+    }
+}
