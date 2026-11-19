@@ -79,6 +79,10 @@ def main():
     assert "Load demo data" in readme and "synthetic devices" in readme, "Demo/live separation must be documented."
     assert "unavailable state by default" in readme, "The initial console state must not imply live fleet connectivity."
     assert ".demo-banner" in css and "[hidden]" in css, "Demo warning and hidden initial state must be styled."
+    assert re.search(r"tbody tr:hover td\s*\{[^}]*\bbackground\s*:\s*[^;}]+", css, re.S), "Hovered inventory rows must declare a visible cell background."
+    assert re.search(r"tbody tr:focus-within td\s*\{[^}]*\bbackground\s*:\s*[^;}]+", css, re.S), "Keyboard-focused inventory rows must declare a visible cell background."
+    reduced_motion = re.search(r"@media\s*\(prefers-reduced-motion\s*:\s*reduce\)\s*\{(?:(?!@media).)*", css, re.S)
+    assert reduced_motion and re.search(r"td\s*,\s*th\s*\{[^}]*transition\s*:\s*none", reduced_motion.group(0), re.S), "Table cells and headers must disable transitions for reduced-motion users."
     assert "frame-ancestors" not in html, "Frame denial must be delivered as a server response header, not a meta policy."
     assert "schedulable_devices" in js and "remaining_memory_mb" in js, "Capacity fields missing."
     assert 'id="model-inventory"' in html and 'id="model-count"' in html, "Model inventory table and count must be present."
