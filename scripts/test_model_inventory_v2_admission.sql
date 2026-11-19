@@ -737,4 +737,31 @@ UPDATE ujani_control.operator_subjects
  SET enabled=true
  WHERE tenant_id='inventory-test' AND subject_id='inventory-admin';
 
+-- Policy history is immutable: deletion must fail even for an enabled administrator.
+DO $block$
+DECLARE
+ v_count integer;
+BEGIN
+ SELECT count(*) INTO v_count
+ FROM ujani_control.model_inventory_policies
+ WHERE tenant_id='inventory-test';
+ IF v_count <> 1 THEN
+  RAISE EXCEPTION 'expected exactly one retained model inventory policy before delete test';
+ END IF;
+ BEGIN
+  DELETE FROM ujani_control.model_inventory_policies
+  WHERE tenant_id='inventory-test';
+  RAISE EXCEPTION 'model inventory policy deletion unexpectedly succeeded';
+ EXCEPTION WHEN insufficient_privilege THEN
+  NULL;
+ END;
+ SELECT count(*) INTO v_count
+ FROM ujani_control.model_inventory_policies
+ WHERE tenant_id='inventory-test';
+ IF v_count <> 1 THEN
+  RAISE EXCEPTION 'rejected model inventory policy deletion removed policy history';
+ END IF;
+END;
+$block$;
+
 ROLLBACK;
