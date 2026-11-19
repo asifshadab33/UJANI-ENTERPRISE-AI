@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-: "\${PGPASSWORD:?PGPASSWORD must be set for PostgreSQL integration}"
-PSQL_BIN="\${PSQL_BIN:-psql}"
-PSQL=( "$PSQL_BIN" --host "\${PGHOST:-localhost}" --username "\${PGUSER:-postgres}" --dbname "\${PGDATABASE:-ujani_test}" --set ON_ERROR_STOP=1 --quiet --tuples-only --no-align )
+: "${PGPASSWORD:?PGPASSWORD must be set for PostgreSQL integration}"
+PSQL_BIN="${PSQL_BIN:-psql}"
+PSQL=( "$PSQL_BIN" --host "${PGHOST:-localhost}" --username "${PGUSER:-postgres}" --dbname "${PGDATABASE:-ujani_test}" --set ON_ERROR_STOP=1 --quiet --tuples-only --no-align )
 
 first_out="$(mktemp)"
 second_out="$(mktemp)"
@@ -17,7 +17,7 @@ cleanup() {
 trap cleanup EXIT
 
 (
-  PGAPPNAME=ujani-auth-telemetry-first "\${PSQL[@]}" >"$first_out" 2>&1 <<'SQL'
+  PGAPPNAME=ujani-auth-telemetry-first "${PSQL[@]}" >"$first_out" 2>&1 <<'SQL'
 SET ROLE ujani_runtime;
 BEGIN;
 SET LOCAL ujani.tenant_id='authenticated-telemetry-test';
@@ -36,7 +36,7 @@ first_pid=$!
 
 first_ready=0
 for _ in $(seq 1 100); do
-  active="$("\${PSQL[@]}" -c "SELECT count(*) FROM pg_catalog.pg_stat_activity WHERE application_name='ujani-auth-telemetry-first' AND state='active' AND query LIKE '%pg_sleep%'")"
+  active="$("${PSQL[@]}" -c "SELECT count(*) FROM pg_catalog.pg_stat_activity WHERE application_name='ujani-auth-telemetry-first' AND state='active' AND query LIKE '%pg_sleep%'")"
   if [[ "$active" == "1" ]] && grep -qx 'accepted' "$first_out"; then
     first_ready=1
     break
@@ -50,7 +50,7 @@ if [[ "$first_ready" != "1" ]]; then
 fi
 
 (
-  PGAPPNAME=ujani-auth-telemetry-second "\${PSQL[@]}" >"$second_out" 2>&1 <<'SQL'
+  PGAPPNAME=ujani-auth-telemetry-second "${PSQL[@]}" >"$second_out" 2>&1 <<'SQL'
 SET ROLE ujani_runtime;
 BEGIN;
 SET LOCAL ujani.tenant_id='authenticated-telemetry-test';
@@ -68,7 +68,7 @@ second_pid=$!
 
 second_waiting=0
 for _ in $(seq 1 100); do
-  waiting="$("\${PSQL[@]}" -c "SELECT count(*) FROM pg_catalog.pg_stat_activity AS waiting WHERE waiting.application_name='ujani-auth-telemetry-second' AND waiting.state='active' AND waiting.wait_event_type='Lock' AND EXISTS (SELECT 1 FROM pg_catalog.pg_stat_activity AS blocker WHERE blocker.pid = ANY(pg_catalog.pg_blocking_pids(waiting.pid)) AND blocker.application_name='ujani-auth-telemetry-first')")"
+  waiting="$("${PSQL[@]}" -c "SELECT count(*) FROM pg_catalog.pg_stat_activity AS waiting WHERE waiting.application_name='ujani-auth-telemetry-second' AND waiting.state='active' AND waiting.wait_event_type='Lock' AND EXISTS (SELECT 1 FROM pg_catalog.pg_stat_activity AS blocker WHERE blocker.pid = ANY(pg_catalog.pg_blocking_pids(waiting.pid)) AND blocker.application_name='ujani-auth-telemetry-first')")"
   if [[ "$waiting" == "1" ]]; then
     second_waiting=1
     break
@@ -101,7 +101,7 @@ if ! grep -qx 'accepted' "$first_out" || ! grep -qx 'rejected' "$second_out"; th
   exit 1
 fi
 
-state="$("\${PSQL[@]}" -c "SELECT CASE WHEN (SELECT telemetry_sequence=2 FROM ujani_control.devices WHERE tenant_id='authenticated-telemetry-test' AND device_id='telemetry-device') AND (SELECT count(*)=1 FROM ujani_control.device_telemetry_samples WHERE tenant_id='authenticated-telemetry-test' AND device_id='telemetry-device' AND generation=1 AND sequence=2) AND (SELECT count(*)=1 FROM ujani_control.request_replays WHERE tenant_id='authenticated-telemetry-test' AND device_id='telemetry-device' AND request_id=decode(repeat('b1',16),'hex')) AND (SELECT count(*)=0 FROM ujani_control.request_replays WHERE tenant_id='authenticated-telemetry-test' AND device_id='telemetry-device' AND request_id=decode(repeat('b3',16),'hex')) AND (SELECT count(*)=2 FROM ujani_control.audit_events WHERE tenant_id='authenticated-telemetry-test' AND event_type='device.telemetry.accepted' AND object_ref='telemetry-device') THEN 'ok' ELSE 'bad' END")"
+state="$("${PSQL[@]}" -c "SELECT CASE WHEN (SELECT telemetry_sequence=2 FROM ujani_control.devices WHERE tenant_id='authenticated-telemetry-test' AND device_id='telemetry-device') AND (SELECT count(*)=1 FROM ujani_control.device_telemetry_samples WHERE tenant_id='authenticated-telemetry-test' AND device_id='telemetry-device' AND generation=1 AND sequence=2) AND (SELECT count(*)=1 FROM ujani_control.request_replays WHERE tenant_id='authenticated-telemetry-test' AND device_id='telemetry-device' AND request_id=decode(repeat('b1',16),'hex')) AND (SELECT count(*)=0 FROM ujani_control.request_replays WHERE tenant_id='authenticated-telemetry-test' AND device_id='telemetry-device' AND request_id=decode(repeat('b3',16),'hex')) AND (SELECT count(*)=2 FROM ujani_control.audit_events WHERE tenant_id='authenticated-telemetry-test' AND event_type='device.telemetry.accepted' AND object_ref='telemetry-device') THEN 'ok' ELSE 'bad' END")"
 if [[ "$state" != "ok" ]]; then
   echo "concurrent telemetry admission did not preserve one sample, replay claim and audit receipt: $state" >&2
   exit 1
