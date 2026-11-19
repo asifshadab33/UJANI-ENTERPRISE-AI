@@ -286,11 +286,14 @@ DO $block$
 DECLARE
  v_generation bigint;
  v_sequence bigint;
+ v_consent_generation bigint;
+ v_consent_state text;
  v_samples integer;
  v_replays integer;
  v_audits integer;
 BEGIN
- SELECT telemetry_generation,telemetry_sequence INTO v_generation,v_sequence
+ SELECT telemetry_generation,telemetry_sequence,consent_generation,owner_consent_state
+ INTO v_generation,v_sequence,v_consent_generation,v_consent_state
  FROM ujani_control.devices
  WHERE tenant_id='authenticated-telemetry-test' AND device_id='telemetry-device';
  SELECT count(*) INTO v_samples FROM ujani_control.device_telemetry_samples
@@ -303,7 +306,8 @@ BEGIN
  WHERE tenant_id='authenticated-telemetry-test'
    AND event_type='device.telemetry.accepted'
    AND object_ref='telemetry-device';
- IF v_generation <> 1 OR v_sequence <> 1 OR v_samples <> 1 OR v_replays <> 0 OR v_audits <> 1 THEN
+ IF v_generation <> 1 OR v_sequence <> 1 OR v_consent_generation <> 3
+    OR v_consent_state <> 'granted' OR v_samples <> 1 OR v_replays <> 0 OR v_audits <> 1 THEN
   RAISE EXCEPTION 'audit rollback left partial telemetry: generation %, sequence %, samples %, replay %, audit %',
    v_generation,v_sequence,v_samples,v_replays,v_audits;
  END IF;
