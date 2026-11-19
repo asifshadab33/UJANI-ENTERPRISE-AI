@@ -449,15 +449,28 @@ BEGIN
     USING ERRCODE = '42501';
   END IF;
   EXECUTE 'GRANT USAGE ON SCHEMA ujani_control TO ujani_runtime';
-  EXECUTE 'GRANT SELECT ON ujani_control.devices,ujani_control.device_keys,ujani_control.device_owner_bindings,ujani_control.owner_consents,ujani_control.operator_subjects,ujani_control.workloads,ujani_control.approvals,ujani_control.leases,ujani_control.request_replays,ujani_control.audit_events TO ujani_runtime';
-  -- Row-lock privileges are column-scoped. Admission evidence remains
-  -- immutable; the runtime can update only lifecycle and reservation columns.
+  -- Remove broad table-level write access left by bootstrap fixtures and
+  -- replace it with the exact columns needed by the admission/lifecycle
+  -- functions. Owner consent, trust and admission evidence remain read-only.
+  EXECUTE 'REVOKE UPDATE,DELETE ON ujani_control.devices,ujani_control.leases FROM PUBLIC,ujani_runtime';
+  EXECUTE 'REVOKE UPDATE (owner_consent_state,admin_approval_state,trust_state,key_generation,consent_generation,active_key_id) ON ujani_control.devices FROM ujani_runtime';
+  EXECUTE 'REVOKE UPDATE (manifest_digest) ON ujani_control.leases FROM ujani_runtime';
+  EXECUTE 'GRANT SELECT ON ujani_control.devices,ujani_control.device_keys,ujani_control.device_owner_bindings,ujani_control.owner_consents,ujani_control.operator_subjects,ujani_control.workloads,ujani_control.approvals,ujani_control.leases,ujani_control.device_telemetry_samples,ujani_control.request_replays,ujani_control.audit_events,ujani_control.model_inventory_policies TO ujani_runtime';
+  -- Row-lock privileges are column-scoped. The runtime can update telemetry,
+  -- inventory and reservation watermarks, but not trust or owner-consent state.
   EXECUTE 'GRANT UPDATE (admission_lock_marker) ON ujani_control.device_keys,ujani_control.device_owner_bindings,ujani_control.owner_consents,ujani_control.operator_subjects,ujani_control.workloads,ujani_control.approvals TO ujani_runtime';
-  EXECUTE 'GRANT UPDATE (reservation_revision,updated_at) ON ujani_control.devices TO ujani_runtime';
+  EXECUTE 'GRANT UPDATE (telemetry_generation,telemetry_sequence,last_seen_at,reservation_revision,model_inventory_revision,updated_at) ON ujani_control.devices TO ujani_runtime';
+  EXECUTE 'GRANT SELECT,INSERT ON ujani_control.device_telemetry_samples TO ujani_runtime';
+  EXECUTE 'GRANT SELECT,INSERT ON ujani_control.leases TO ujani_runtime';
   EXECUTE 'GRANT UPDATE (state,expires_at,revision) ON ujani_control.leases TO ujani_runtime';
-  EXECUTE 'GRANT INSERT,SELECT ON ujani_control.request_replays TO ujani_runtime';
-  EXECUTE 'GRANT INSERT,SELECT ON ujani_control.audit_events TO ujani_runtime';
+  EXECUTE 'GRANT SELECT,INSERT ON ujani_control.request_replays TO ujani_runtime';
+  EXECUTE 'GRANT SELECT,INSERT ON ujani_control.audit_events TO ujani_runtime';
+  EXECUTE 'GRANT SELECT,INSERT,UPDATE ON ujani_control.device_model_inventory TO ujani_runtime';
   EXECUTE 'GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA ujani_control TO ujani_runtime';
+  EXECUTE 'GRANT EXECUTE ON FUNCTION ujani_control.accept_device_telemetry_v2(text,text,bigint,bigint,bigint,bytea,timestamptz,bytea,integer,bigint,text,text,text) TO ujani_runtime';
+  EXECUTE 'GRANT EXECUTE ON FUNCTION ujani_control.admit_device_lease(text,text,text,text,text,bytea,bytea,bytea,bigint,bigint,integer,bigint,bytea,timestamptz,uuid) TO ujani_runtime';
+  EXECUTE 'GRANT EXECUTE ON FUNCTION ujani_control.admit_device_lease_with_telemetry(text,text,bigint,bigint,bigint,bigint,bigint,bytea,timestamptz,bytea,integer,bigint,text,text,text,text,text,text,bytea,bytea,bytea,integer,bigint,bytea,timestamptz,uuid) TO ujani_runtime';
+  EXECUTE 'GRANT EXECUTE ON FUNCTION ujani_control.accept_model_runtime_inventory_v2(text,text,text,bigint,bigint,bytea,timestamptz,bigint,text,bytea,jsonb,uuid) TO ujani_runtime';
   EXECUTE 'GRANT EXECUTE ON FUNCTION ujani_control.renew_device_lease(text,text,text,text,bigint,bigint,bytea,bytea,bytea,timestamptz,uuid) TO ujani_runtime';
   EXECUTE 'GRANT EXECUTE ON FUNCTION ujani_control.release_device_lease(text,text,text,text,bigint,bytea,bytea,bytea,uuid) TO ujani_runtime';
   EXECUTE 'GRANT EXECUTE ON FUNCTION ujani_control.expire_device_leases(text,text,integer) TO ujani_runtime';
