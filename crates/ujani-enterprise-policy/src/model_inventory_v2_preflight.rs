@@ -317,7 +317,8 @@ mod inventory_v2_preflight_boundary_regression_tests {
 
     #[test]
     fn rejects_invalid_authenticated_device_and_policy_identifiers() {
-        let payload = valid_payload();
+        let mut payload = valid_payload();
+        payload["device_ref"] = json!("device/1");
         assert_eq!(
             validate_enterprise_inventory_v2_preflight(&payload, "device/1"),
             Err(InventoryV2PreflightError::InvalidDeviceBinding)
