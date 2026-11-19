@@ -101,7 +101,7 @@ BEGIN
     OR v_device.key_generation IS DISTINCT FROM p_device_key_generation
     OR v_device.consent_generation IS DISTINCT FROM p_consent_generation
     OR p_request_expires_at_unix_ms <= v_now_unix_ms
-    OR p_request_expires_at_unix_ms > v_now_unix_ms + 30000
+    OR p_request_expires_at_unix_ms > v_now_unix_ms + 60000
     OR p_observed_at < v_now - interval '5 minutes'
     OR p_observed_at > v_now + interval '60 seconds'
     OR (v_device.last_seen_at IS NOT NULL AND p_observed_at < v_device.last_seen_at)
@@ -151,8 +151,8 @@ BEGIN
  FOR SHARE;
  IF NOT FOUND THEN RETURN false; END IF;
 
- -- Recheck time after all authority locks. The signed request has a 30-second
- -- maximum lifetime; a lock wait must not make an expired request admissible.
+ -- Recheck time after all authority locks. The signed request has a 30-second TTL and up to 30 seconds of permitted clock skew;
+ -- a lock wait must not make an expired request admissible.
  v_now := pg_catalog.clock_timestamp();
  v_now_unix_ms := pg_catalog.floor(pg_catalog.date_part('epoch', v_now) * 1000)::bigint;
  IF p_request_expires_at_unix_ms <= v_now_unix_ms
