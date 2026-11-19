@@ -19,7 +19,7 @@ use crate::model_inventory::{
 };
 use crate::DataClassification;
 use hmac::{Hmac, KeyInit, Mac};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as FmtWrite;
@@ -630,6 +630,46 @@ pub struct OperatorModelInventoryView {
 pub struct OperatorModelTaskMatch {
     pub device_id: String,
     pub result: ModelCapabilityMatch,
+}
+
+/// Stable, bounded, read-only JSON response for the operator task-match service.
+/// This DTO is not a network endpoint; the hosting adapter must authenticate and
+/// audit the request before returning it to the console.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct OperatorModelTaskMatchResponseV1 {
+    pub schema_version: u16,
+    pub device_id: String,
+    pub result: ModelCapabilityMatch,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OperatorModelTaskMatchResponseError {
+    SerializationFailed,
+    ResponseTooLarge,
+}
+
+impl OperatorModelTaskMatch {
+    pub fn to_response_v1(&self) -> OperatorModelTaskMatchResponseV1 {
+        OperatorModelTaskMatchResponseV1 {
+            schema_version: 1,
+            device_id: self.device_id.clone(),
+            result: self.result.clone(),
+        }
+    }
+
+    /// Serialise a response with a hard byte ceiling. It contains only the
+    /// device/model identifiers and conservative match result; no tenant,
+    /// prompts, paths, credentials, raw inventory or execution authorization.
+    pub fn to_json_v1(&self) -> Result<String, OperatorModelTaskMatchResponseError> {
+        const MAX_BYTES: usize = 8 * 1024;
+        let json = serde_json::to_string(&self.to_response_v1())
+            .map_err(|_| OperatorModelTaskMatchResponseError::SerializationFailed)?;
+        if json.len() > MAX_BYTES {
+            return Err(OperatorModelTaskMatchResponseError::ResponseTooLarge);
+        }
+        Ok(json)
+    }
 }
 
 /// Strict JSON body for the future authenticated model-task-match route.
