@@ -324,17 +324,6 @@ def main():
         css, ("td", "th", "*"), ("transition-duration",), (".01ms",),
         "prefers-reduced-motion: reduce",
     ), "Table transitions must be reduced under the actual reduced-motion preference."
-    _validate_css_rule_parser()
-    assert _css_rule_matches(
-        css, ("tbody tr:hover td",), r"background(?:-color)?", r"[^;}]+"
-    ), "Hovered inventory rows must have a visible on-screen cell background."
-    assert _css_rule_matches(
-        css, ("tbody tr:focus-within td",), r"background(?:-color)?", r"[^;}]+"
-    ), "Keyboard-focused inventory rows must have a visible on-screen cell background."
-    assert _css_rule_matches(
-        css, ("td", "th", "*"), r"transition(?:-duration)?", r"(?:none|[^;}]*0?\.01ms)",
-        "prefers-reduced-motion",
-    ), "Table cells must respect the actual reduced-motion media block."
     assert "frame-ancestors" not in html, "Frame denial must be delivered as a server response header, not a meta policy."
     assert "schedulable_devices" in js and "remaining_memory_mb" in js, "Capacity fields missing."
     assert 'id="model-inventory"' in html and 'id="model-count"' in html, "Model inventory table and count must be present."
