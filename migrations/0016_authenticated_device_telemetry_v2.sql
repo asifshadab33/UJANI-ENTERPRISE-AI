@@ -76,7 +76,7 @@ BEGIN
  IF NOT FOUND THEN RETURN false; END IF;
 
  v_now := pg_catalog.clock_timestamp();
- v_now_unix_ms := pg_catalog.floor(pg_catalog.extract(epoch FROM v_now) * 1000)::bigint;
+ v_now_unix_ms := pg_catalog.floor(pg_catalog.date_part('epoch', v_now) * 1000)::bigint;
  IF v_device.trust_state <> 'enrolled'
     OR v_device.owner_consent_state <> 'granted'
     OR v_device.admin_approval_state <> 'approved'
@@ -137,7 +137,7 @@ BEGIN
  -- Recheck time after all authority locks. The signed request has a 30-second
  -- maximum lifetime; a lock wait must not make an expired request admissible.
  v_now := pg_catalog.clock_timestamp();
- v_now_unix_ms := pg_catalog.floor(pg_catalog.extract(epoch FROM v_now) * 1000)::bigint;
+ v_now_unix_ms := pg_catalog.floor(pg_catalog.date_part('epoch', v_now) * 1000)::bigint;
  IF p_request_expires_at_unix_ms <= v_now_unix_ms
     OR p_observed_at < v_now - interval '5 minutes'
     OR p_observed_at > v_now + interval '60 seconds' THEN
@@ -196,7 +196,7 @@ BEGIN
  -- Audit append can be slow. Do not commit a sample whose request or observation
  -- expired while the durable receipt was being recorded.
  v_now := pg_catalog.clock_timestamp();
- v_now_unix_ms := pg_catalog.floor(pg_catalog.extract(epoch FROM v_now) * 1000)::bigint;
+ v_now_unix_ms := pg_catalog.floor(pg_catalog.date_part('epoch', v_now) * 1000)::bigint;
  IF p_request_expires_at_unix_ms <= v_now_unix_ms
     OR p_observed_at < v_now - interval '5 minutes'
     OR p_observed_at > v_now + interval '60 seconds' THEN
