@@ -205,6 +205,7 @@ pub trait MonotonicSnapshotAnchor: Send + Sync {
         context: &AnchorCallContext,
     ) -> Result<bool, String>;
 }
+
 /// Enforce the caller's deadline and cancellation both before and after provider I/O.
 ///
 /// This cannot interrupt a non-cooperative synchronous provider. Every production
@@ -220,7 +221,6 @@ fn load_anchor_record(
     context.check_active().map_err(|error| error.to_string())?;
     Ok(record)
 }
-
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DurableDeviceTrustError {
@@ -1316,12 +1316,13 @@ mod tests {
             Err(AnchorCallContextError::Cancelled)
         );
     }
- 
+
     struct NonCooperativeAnchor {
         record: Mutex<Option<SnapshotAnchorRecord>>,
         load_delay: Duration,
         compare_delay: Duration,
         cancel_on_load: Option<AnchorCancellationToken>,
+        cancel_on_compare: Option<AnchorCancellationToken>,
     }
 
     impl MonotonicSnapshotAnchor for NonCooperativeAnchor {
@@ -1359,6 +1360,9 @@ mod tests {
                 return Ok(false);
             }
             *record = Some(next);
+            if let Some(token) = &self.cancel_on_compare {
+                token.cancel();
+            }
             Ok(true)
         }
     }
@@ -1372,6 +1376,7 @@ mod tests {
             load_delay: Duration::from_millis(20),
             compare_delay: Duration::ZERO,
             cancel_on_load: None,
+            cancel_on_compare: None,
         });
         let policy = AnchorCallPolicy::new(Duration::from_millis(5)).unwrap();
 
@@ -1403,6 +1408,7 @@ mod tests {
             load_delay: Duration::ZERO,
             compare_delay: Duration::ZERO,
             cancel_on_load: Some(cancellation.clone()),
+            cancel_on_compare: None,
         });
         let policy =
             AnchorCallPolicy::with_cancellation(Duration::from_secs(1), cancellation).unwrap();
@@ -1434,6 +1440,7 @@ mod tests {
             load_delay: Duration::ZERO,
             compare_delay: Duration::from_millis(20),
             cancel_on_load: None,
+            cancel_on_compare: None,
         });
         let policy = AnchorCallPolicy::new(Duration::from_millis(5)).unwrap();
 
@@ -1707,6 +1714,48 @@ mod tests {
         drop(store);
         let migrated = fs::read_to_string(&path).unwrap();
         assert!(migrated.starts_with(&format!("{HEADER}\n")));
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(suffix(&path, ".lock"));
+        let _ = fs::remove_file(suffix(&path, ".bak"));
+    }
+
+    #[test]
+    fn cancelled_anchor_compare_and_set_is_reconciled_before_reporting_success() {
+        let path = path();
+        let admin = test_signing_key("cancelled-anchor-cas-admin");
+        let cancellation = AnchorCancellationToken::new();
+        let anchor = std::sync::Arc::new(NonCooperativeAnchor {
+            record: Mutex::new(None),
+            load_delay: Duration::ZERO,
+            compare_delay: Duration::ZERO,
+            cancel_on_load: None,
+            cancel_on_compare: Some(cancellation.clone()),
+        });
+        let policy =
+            AnchorCallPolicy::with_cancellation(Duration::from_secs(1), cancellation).unwrap();
+
+        let result = DurableDeviceRegistry::open_with_anchor_and_policy(
+            &path,
+            "tenant-a-cancelled-cas",
+            vec![("admin-v1".into(), admin.verifying_key())],
+            DeviceTrustIntegrityKey::new("integrity-v1", test_integrity_key_bytes()),
+            anchor.clone(),
+            policy,
+        );
+        assert!(
+            result.is_ok(),
+            "a CAS committed before cancellation must be confirmed by read-back"
+        );
+        assert_eq!(
+            anchor
+                .record
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(SnapshotAnchorRecord::generation),
+            Some(1)
+        );
+        drop(result);
         let _ = fs::remove_file(&path);
         let _ = fs::remove_file(suffix(&path, ".lock"));
         let _ = fs::remove_file(suffix(&path, ".bak"));
