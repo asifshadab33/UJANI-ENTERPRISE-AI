@@ -21,7 +21,12 @@ BEGIN
     OR pg_catalog.has_column_privilege('ujani_runtime','ujani_control.leases','manifest_digest','UPDATE') IS DISTINCT FROM false
     OR pg_catalog.has_column_privilege('ujani_runtime','ujani_control.devices','reservation_revision','UPDATE') IS DISTINCT FROM true
     OR pg_catalog.has_column_privilege('ujani_runtime','ujani_control.devices','owner_consent_state','UPDATE') IS DISTINCT FROM false THEN
-  RAISE EXCEPTION 'ujani_runtime lease lifecycle privileges are broader or narrower than intended';
+  RAISE EXCEPTION 'ujani_runtime lifecycle grants unexpected: lease state %, expiry %, manifest %, device reservation %, owner consent %',
+   pg_catalog.has_column_privilege('ujani_runtime','ujani_control.leases','state','UPDATE'),
+   pg_catalog.has_column_privilege('ujani_runtime','ujani_control.leases','expires_at','UPDATE'),
+   pg_catalog.has_column_privilege('ujani_runtime','ujani_control.leases','manifest_digest','UPDATE'),
+   pg_catalog.has_column_privilege('ujani_runtime','ujani_control.devices','reservation_revision','UPDATE'),
+   pg_catalog.has_column_privilege('ujani_runtime','ujani_control.devices','owner_consent_state','UPDATE');
  END IF;
 END;
 $block$;
