@@ -28,3 +28,9 @@
 @media(max-width:520px){.top-actions{flex-wrap:wrap;justify-content:flex-end}.button{padding:9px 11px;font-size:12px}}
 
 .clock-warning{padding:13px 16px;border:1px solid #d9a441;background:#fff4d9;border-radius:10px;margin:0 0 22px;color:#68480d;font-size:13px;line-height:1.5}
+
+/* Small interaction affordances for dense inventory tables; avoid motion for users who opt out. */
+tbody tr:hover td{background:#f7f9fc}
+tbody tr:focus-within td{background:#f3f7ff}
+td,th{transition:background-color 120ms ease}
+@media(prefers-reduced-motion:reduce){td,th{transition:none}}
