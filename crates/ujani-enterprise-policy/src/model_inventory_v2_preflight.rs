@@ -286,7 +286,6 @@ mod tests {
     }
 }
 
-
 #[cfg(test)]
 mod inventory_v2_preflight_boundary_regression_tests {
     use super::*;
@@ -358,14 +357,16 @@ mod inventory_v2_preflight_boundary_regression_tests {
         );
 
         let mut incomplete_privacy = valid_payload();
-        incomplete_privacy["privacy"].as_object_mut().unwrap().remove("contains_credentials");
+        incomplete_privacy["privacy"]
+            .as_object_mut()
+            .unwrap()
+            .remove("contains_credentials");
         assert_eq!(
             validate_enterprise_inventory_v2_preflight(&incomplete_privacy, "device-1"),
             Err(InventoryV2PreflightError::InvalidPrivacyDeclaration)
         );
     }
 }
-
 
 #[cfg(test)]
 mod inventory_v2_consent_timestamp_regression_tests {
