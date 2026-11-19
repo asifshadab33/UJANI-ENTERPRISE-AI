@@ -49,3 +49,28 @@
 Production identity/OIDC, KMS/HSM/TPM, device physical trust, OS sandbox enforcement, signing, backup/restore, rollback, deployment and independent penetration tests require external access/manual validation.
 
 **Verified shared-schema evidence (2026-11-19):** Public and Enterprise main contain byte-identical `schemas/shared-contract-manifest-v1.json` (Git blob SHA `5c41a57411453145f0d80a470f9985375b6e3ca4`). It pins the same inventory v1/v2 schemas, task-contract v1 schema, consent-binding vector, and inventory v1/v2 vectors. Schema parity is established; authenticated inventory ingestion and task transport are not.
+
+---
+
+## Preservation-first evidence refresh — 2026-11-19
+
+This section supersedes the older commit/CI snapshot above for current repository identity. Older PR and workflow references remain historical records and must not be treated as current branch state.
+
+- **Current Enterprise main:** `2a11534d7ae992d91d4aad7b6f5b9f78a4bb2fbc` (commit: `test: enforce model-match reason count limit`).
+- **Current Public main checked in parallel:** `ce7d72d55312b230d4585c13f45db471f1e06131` (commit: `fix(ollama): verify cancellation of non-streaming response`).
+- **Open Enterprise PR at this refresh:** #275, documentation-only adaptive capability architecture proposal. It does not enable a production authenticated adapter, task dispatch, worker execution, or automated containment.
+- **Open Public PRs at this refresh:** #352, #353, #354 and #355. Their current exact heads and CI must be checked before any merge or branch cleanup.
+- The live Enterprise master backlog remains: authenticated production control plane and tenant isolation; device enrollment/revocation; owner and administrator consent binding; replay-resistant atomic admission/lease reservation; protected key custody; OS-enforced worker isolation; signed receipts and durable audit; production deployment and independent security review.
+- The read-only model/task matching work remains advisory. It must not reserve capacity, dispatch tasks, or create execution authority.
+- Public and Enterprise remain separate trust domains. Shared schema parity does not provide identity, consent, authorization, or transport authority.
+
+### Required evidence discipline
+
+A green workflow on a pull-request head is evidence only for that exact SHA and those specific jobs. It does not prove post-merge main status, physical-device behaviour, production signing, rollback, sandbox enforcement, or independent security review. Record each separately.
+
+### Preservation-first next work
+
+1. Complete Public native-command authorization and denial-before-side-effect review without replacing existing gates.
+2. Complete Enterprise trusted-device, tenant isolation, authenticated admission and lease transaction verification without enabling remote execution.
+3. Extend operator UI and capability inventory only through existing read-only and consent-controlled boundaries.
+4. Keep optional capability installation, external transfer, remote execution and automated containment disabled until their respective security gates are proven.
