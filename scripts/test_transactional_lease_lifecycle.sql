@@ -3,6 +3,29 @@
 -- suite. All lifecycle mutations are executed as the non-BYPASSRLS runtime role.
 SELECT pg_catalog.set_config('ujani.tenant_id','admission-test',false);
 
+-- The runtime is deliberately not an owner, superuser or BYPASSRLS role. Its
+-- lease writes are restricted to lifecycle columns; admission evidence remains
+-- read-only even though the lifecycle functions use SECURITY INVOKER.
+DO $block$
+DECLARE
+ v_superuser boolean;
+ v_bypass_rls boolean;
+BEGIN
+ SELECT rolsuper, rolbypassrls INTO v_superuser, v_bypass_rls
+ FROM pg_catalog.pg_roles WHERE rolname='ujani_runtime';
+ IF v_superuser IS DISTINCT FROM false OR v_bypass_rls IS DISTINCT FROM false THEN
+  RAISE EXCEPTION 'ujani_runtime must remain non-superuser and non-BYPASSRLS';
+ END IF;
+ IF pg_catalog.has_column_privilege('ujani_runtime','ujani_control.leases','state','UPDATE') IS DISTINCT FROM true
+    OR pg_catalog.has_column_privilege('ujani_runtime','ujani_control.leases','expires_at','UPDATE') IS DISTINCT FROM true
+    OR pg_catalog.has_column_privilege('ujani_runtime','ujani_control.leases','manifest_digest','UPDATE') IS DISTINCT FROM false
+    OR pg_catalog.has_column_privilege('ujani_runtime','ujani_control.devices','reservation_revision','UPDATE') IS DISTINCT FROM true
+    OR pg_catalog.has_column_privilege('ujani_runtime','ujani_control.devices','owner_consent_state','UPDATE') IS DISTINCT FROM false THEN
+  RAISE EXCEPTION 'ujani_runtime lease lifecycle privileges are broader or narrower than intended';
+ END IF;
+END;
+$block$;
+
 -- Refresh authenticated telemetry so this test remains independent of the time
 -- spent in the preceding migration and inventory tests.
 DO $block$
