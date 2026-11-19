@@ -78,7 +78,7 @@ else
  release_controller(){ touch "$release_file"; }
  release_cleanup(){ rm -rf "$release_dir"; }
 fi
-export UJANI_TELEMETRY_LEASE_RELEASE_FILE="$release_file"
+export UJANI_TELEMETRY_RELEASE_FILE="$release_file"
 first_pid=""; second_pid=""
 cleanup(){
  release_controller 2>/dev/null || true
