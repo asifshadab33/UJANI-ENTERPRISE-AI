@@ -172,7 +172,7 @@ pub fn validate_device_telemetry_body(
             }
             let consent_generation = body
                 .consent_generation
-                .ok_or(DeviceTelemetryIntakeError::InvalidConsentGeneration)?;
+                .ok_or(DeviceTelemetryIntakeError::ConsentGenerationMissing)?;
             if consent_generation == 0 || consent_generation > MAX_TELEMETRY_SAFE_INTEGER {
                 return Err(DeviceTelemetryIntakeError::InvalidConsentGeneration);
             }
@@ -362,7 +362,8 @@ impl DeviceTelemetryServiceError {
 /// ujani_control.accept_authenticated_device_telemetry_v2 inside one
 /// tenant-scoped PostgreSQL transaction. It must derive tenant/device/key
 /// identity from authenticated, pass the signed request ID/expiry and the
-/// v2 consent/reservation generations, and commit replay, telemetry watermark,
+/// server-issued SQL consent/reservation generations (not the local key-bound
+/// consent revision), and commit replay, telemetry watermark,
 /// sample and audit receipt together. Set ujani.tenant_id from the authenticated
 /// tenant, never from JSON. A false SQL result is Rejected; SQL/commit errors
 /// are Unavailable. Never persist raw bodies, prompts, paths or process lists.
