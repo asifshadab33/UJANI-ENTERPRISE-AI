@@ -886,4 +886,76 @@ mod tests {
         );
         cleanup(fixture);
     }
+    #[test]
+    fn oversized_authenticated_lease_bodies_fail_before_authentication_or_mutation() {
+        let fixture = setup();
+        let oversized_body = vec![0u8; MAX_DEVICE_REQUEST_BODY_BYTES + 1];
+        let before = fixture
+            .ledger
+            .snapshot()
+            .expect("read initial lease snapshot");
+
+        let renew = signed_request(
+            &fixture.device,
+            fixture.manifest_sha256,
+            "lease.renew",
+            42,
+            1_500,
+            b"",
+        );
+        assert_eq!(
+            authenticate_and_renew_device_lease(
+                &fixture.registry,
+                &fixture.ledger,
+                &renew,
+                &oversized_body,
+                TENANT_ID,
+                WORKLOAD_ID,
+                &fixture.manifest_sha256,
+                &fixture.lease_token,
+                1_500,
+            ),
+            Err(LeaseControlError::RequestBodyTooLarge)
+        );
+
+        let release = signed_request(
+            &fixture.device,
+            fixture.manifest_sha256,
+            "lease.release",
+            43,
+            1_500,
+            b"",
+        );
+        assert_eq!(
+            authenticate_and_release_device_lease(
+                &fixture.registry,
+                &fixture.ledger,
+                &release,
+                &oversized_body,
+                TENANT_ID,
+                WORKLOAD_ID,
+                &fixture.manifest_sha256,
+                &fixture.lease_token,
+                1_500,
+            ),
+            Err(LeaseControlError::RequestBodyTooLarge)
+        );
+
+        let after = fixture
+            .ledger
+            .snapshot()
+            .expect("read unchanged lease snapshot");
+        assert_eq!(after.active_jobs, before.active_jobs);
+        assert_eq!(after.reserved_cpu_millis, before.reserved_cpu_millis);
+        assert_eq!(after.reserved_memory_mb, before.reserved_memory_mb);
+        assert_eq!(
+            fixture
+                .ledger
+                .reservation_revision(DEVICE_ID, 1_501)
+                .unwrap(),
+            1,
+            "oversized requests must not renew, release or revise the reservation"
+        );
+        cleanup(fixture);
+    }
 }
