@@ -65,3 +65,6 @@ tbody tr:hover td{background:#f8fafc}
 @media(prefers-reduced-motion:reduce){
   *,*::before,*::after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
 }
+
+/* Keep keyboard focus visible while scanning dense inventory rows. */
+tbody tr:focus-within td{background:#eef4ff}
