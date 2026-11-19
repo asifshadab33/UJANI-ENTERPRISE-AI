@@ -217,7 +217,7 @@ def main():
         css, ("tbody tr:focus-within td",), r"background(?:-color)?", r"[^;}]+"
     ), "Keyboard-focused inventory rows must have a visible on-screen cell background."
     assert _css_rule_matches(
-        css, ("td", "th", "*"), r"transition(?:-duration)?", r"(?:none|[^;}]*0?\\.01ms)",
+        css, ("td", "th", "*"), r"transition(?:-duration)?", r"(?:none|[^;}]*0?\.01ms)",
         "prefers-reduced-motion",
     ), "Table cells must respect the actual reduced-motion media block."
     assert "frame-ancestors" not in html, "Frame denial must be delivered as a server response header, not a meta policy."
