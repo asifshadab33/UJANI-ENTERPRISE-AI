@@ -196,6 +196,26 @@ VALUES
  ('authenticated-telemetry-test','telemetry-device',3,'granted','telemetry-owner',
   decode(repeat('b9',32),'hex'));
 
+-- A delayed report created under generation 1 cannot be revived by a later grant at generation 3.
+SET ROLE ujani_runtime;
+BEGIN;
+SET LOCAL ujani.tenant_id='authenticated-telemetry-test';
+DO $block$
+DECLARE accepted boolean;
+BEGIN
+ accepted := ujani_control.accept_authenticated_device_telemetry_v2(
+  'authenticated-telemetry-test','telemetry-device','telemetry-key-v1',
+  1,1,1,2,0,decode(repeat('b8',16),'hex'),
+  pg_catalog.floor(pg_catalog.date_part('epoch',pg_catalog.clock_timestamp())*1000)::bigint+20000,
+  pg_catalog.clock_timestamp(),decode(repeat('be',32),'hex'),4000,8192,'cool','ac','idle');
+ IF accepted IS DISTINCT FROM false THEN
+  RAISE EXCEPTION 'pre-re-consent telemetry was accepted after a new grant';
+ END IF;
+END;
+$block$;
+COMMIT;
+RESET ROLE;
+
 UPDATE ujani_control.devices SET admin_approval_state='rejected'
 WHERE tenant_id='authenticated-telemetry-test' AND device_id='telemetry-device';
 SET ROLE ujani_runtime;
