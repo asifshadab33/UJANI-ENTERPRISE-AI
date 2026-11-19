@@ -60,6 +60,7 @@
 
 - **#266** `26b74e69424a846df13fcf8f1f248f6963cf9b06`: merged by squash as `197bf007411b3c4aab10e9ed620a9b6e0f3671be` after Linux/Windows/macOS policy tests, PostgreSQL tenant isolation, CodeQL, RustSec, security-sensitive checks passed and review threads were resolved. Post-merge main CI is not visible through the available Actions endpoint.
 - **Main:** current SHA above. No production remote execution or release.
+- **#267** `3701f7f38bb0bc5ebc2348b7180ffaf4ef11deef`: master-backlog documentation PR; CI, CodeQL, RustSec and security-sensitive check queued. Draft.
 - **#267** `cd39dcd7f2a567baa2def2554101ceb534c4fdb6`: backlog snapshot documentation PR; CI, CodeQL, RustSec and security-sensitive check queued. Draft.
 
 ## Evidence discipline
