@@ -70,3 +70,8 @@ Complete only when code is on main, exact merged SHA CI is green and evidence sc
 | #281 | Master ledger + catalogue parity CI | New audit batch; exact-head CI pending |
 
 Candidate sequence after CI: #277/#278 safety tests, #280 schema, #279 design contract, #276 evidence doc, #275 architecture doc, #281 ledger/parity. This is not approval to merge.
+
+
+## Follow-on verification batch — 2026-11-19
+
+- PR #286 (`test/inventory-v2-preflight-boundaries-20261119`) adds negative tests for authenticated device/policy identifiers, independent runtime/model collection ceilings, unknown nested authority fields and incomplete privacy declarations. Tests only; no intake, trust, consent, persistence, scheduling or execution behavior changed. Exact head: `ca1db4d488e6c6f47510529521ffd322cec58d15`. Hosted workflow runs had not appeared at the time of this ledger update.
