@@ -28,3 +28,38 @@
 @media(max-width:520px){.top-actions{flex-wrap:wrap;justify-content:flex-end}.button{padding:9px 11px;font-size:12px}}
 
 .clock-warning{padding:13px 16px;border:1px solid #d9a441;background:#fff4d9;border-radius:10px;margin:0 0 22px;color:#68480d;font-size:13px;line-height:1.5}
+
+
+/* Keyboard, narrow-screen and dense-inventory usability safeguards. */
+:where(a,button,input,select,textarea,summary,[tabindex]):focus-visible{
+  outline:3px solid #315fba;
+  outline-offset:3px;
+}
+.table-wrap{
+  max-width:100%;
+  overflow-x:auto;
+  overscroll-behavior-inline:contain;
+  scrollbar-gutter:stable;
+}
+.table-wrap:focus-visible{
+  outline:3px solid #315fba;
+  outline-offset:2px;
+}
+table thead th{
+  position:sticky;
+  top:0;
+  z-index:1;
+  background:#f8fafc;
+}
+tbody tr:hover td{background:#f8fafc}
+.metric,.panel,.catalogue-card,.feature-risk-card{min-width:0}
+@media(max-width:700px){
+  .topbar{height:auto;min-height:72px;padding:12px 16px;align-items:flex-start;flex-wrap:wrap}
+  .top-actions{width:100%;justify-content:flex-start;flex-wrap:wrap}
+  .status{max-width:100%;overflow-wrap:anywhere}
+  .section-title{align-items:flex-start;flex-direction:column}
+  .table-wrap{border:1px solid #e5e9f0;border-radius:8px}
+}
+@media(prefers-reduced-motion:reduce){
+  *,*::before,*::after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
+}
