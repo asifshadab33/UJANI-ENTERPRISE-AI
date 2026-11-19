@@ -155,7 +155,7 @@ BEGIN
   'authenticated-telemetry-test','telemetry-device','telemetry-key-v1',
   v_key_generation,v_consent_generation,1,2,0,
   decode(repeat('b4',16),'hex'),
-  pg_catalog.floor(pg_catalog.date_part('epoch',pg_catalog.clock_timestamp())*1000)::bigint+60000,
+  pg_catalog.floor(pg_catalog.date_part('epoch',pg_catalog.clock_timestamp())*1000 )::bigint+120000,
   pg_catalog.clock_timestamp(),decode(repeat('b5',32),'hex'),4000,8192,'cool','ac','idle');
  IF v_accepted IS DISTINCT FROM false THEN RAISE EXCEPTION 'overlong signed request was accepted'; END IF;
 END;
