@@ -395,3 +395,14 @@ test("model catalogue task filter is explicit and uses only declared catalogue m
   assert.doesNotMatch(collectText(getElement("model-catalogue")), /Small Chat/);
   assert.match(collectText(getElement("model-catalogue")), /not verified runtime capability/);
 });
+
+
+test("operator console styles preserve keyboard focus and responsive inventory navigation", async () => {
+  const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
+  assert.match(css, /:where\(a,button,input,select,textarea,summary,\[tabindex\]\):focus-visible/);
+  assert.match(css, /\.table-wrap\s*\{[^}]*overflow-x:auto/s);
+  assert.match(css, /\.table-wrap:focus-visible/);
+  assert.match(css, /table thead th\s*\{[^}]*position:sticky/s);
+  assert.match(css, /@media\(max-width:700px\)/);
+  assert.match(css, /@media\(prefers-reduced-motion:reduce\)/);
+});
