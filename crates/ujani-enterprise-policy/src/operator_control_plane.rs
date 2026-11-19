@@ -3903,3 +3903,56 @@ mod session_keyring_negative_tests {
         assert!(!rendered.contains("165"));
     }
 }
+
+
+#[cfg(test)]
+mod operator_model_task_match_response_v1_tests {
+    use super::*;
+
+    fn sample(status: ModelFitStatus) -> OperatorModelTaskMatch {
+        OperatorModelTaskMatch {
+            device_id: "device-1".into(),
+            result: ModelCapabilityMatch {
+                model_ref: "model-local-1".into(),
+                status,
+                reasons: vec![ModelFitReason::CapabilityEvidenceUnknown],
+                evidence_confidence: EvidenceConfidence::Unknown,
+            },
+        }
+    }
+
+    #[test]
+    fn response_is_versioned_and_preserves_unknown_evidence() {
+        let response = sample(ModelFitStatus::Unknown).to_json_v1().unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&response).unwrap();
+        assert_eq!(parsed["schema_version"], 1);
+        assert_eq!(parsed["device_id"], "device-1");
+        assert_eq!(parsed["result"]["model_ref"], "model-local-1");
+        assert_eq!(parsed["result"]["status"], "unknown");
+        assert_eq!(parsed["result"]["evidence_confidence"], "unknown");
+        assert_eq!(parsed["result"]["reasons"][0], "capability_evidence_unknown");
+        assert!(!parsed.as_object().unwrap().contains_key("tenant_id"));
+    }
+
+    #[test]
+    fn response_serialization_preserves_incompatible_and_compatible_labels() {
+        for (status, expected) in [
+            (ModelFitStatus::Compatible, "compatible"),
+            (ModelFitStatus::Incompatible, "incompatible"),
+        ] {
+            let json = sample(status).to_json_v1().unwrap();
+            let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+            assert_eq!(parsed["result"]["status"], expected);
+        }
+    }
+
+    #[test]
+    fn response_size_ceiling_fails_closed() {
+        let mut value = sample(ModelFitStatus::Unknown);
+        value.result.reasons = vec![ModelFitReason::CapabilityEvidenceUnknown; 2_000];
+        assert_eq!(
+            value.to_json_v1(),
+            Err(OperatorModelTaskMatchResponseError::ResponseTooLarge)
+        );
+    }
+}
