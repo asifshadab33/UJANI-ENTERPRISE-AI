@@ -255,6 +255,12 @@ jobs:
           PGPASSWORD: postgres
         run: |
           "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < scripts/test_atomic_telemetry_lease_admission.sql
+      - name: Verify owner-consent withdrawal revokes leases and later grant does not reactivate
+        env:
+          PGPASSWORD: postgres
+        run: |
+          "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < scripts/test_owner_consent_lease_revocation.sql
+
       - name: Apply atomic model inventory v2 admission migration
         env:
           PGPASSWORD: postgres
