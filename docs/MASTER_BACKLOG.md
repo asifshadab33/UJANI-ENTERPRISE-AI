@@ -31,12 +31,20 @@
 - Shared model/runtime inventory descriptor is not authentication or execution authority. Public local model selection is owner-controlled; Enterprise inventory only from enrolled/authorised devices with current consent.
 
 ## Live evidence
-- Enterprise main: `197bf007411b3c4aab10e9ed620a9b6e0f3671be`; PR #266 model/task matcher merged.
-- Public main: `69f7794bd045dc50e9421b214e1dedd20f6b4d11`; PR #332 local model/runtime inventory v2 producer merged with exact-head CI, Linux/macOS/Windows native tests, Rust lint/audit, TypeScript/frontend audit, Android, CodeQL and installer-size audit passing (unsigned preview skipped). Public PR #340 history/cache consent and #347 clock reliability are pending exact-head tests; #348 file-threat evidence/docs pending CI. Public post-merge main CI is not verified.
-- Main post-merge exact SHA `197bf007411b3c4aab10e9ed620a9b6e0f3671be`: CI #44451175579 passed Linux/Windows/macOS policy tests and customer-hosted PostgreSQL tenant isolation; RustSec #44451175518 and CodeQL #44451175833 passed.
-- #267 closed as superseded by current-main PR #268; original branch retained.
-- #268: current-main backlog snapshot PR; CI jobs were cancelled, CodeQL is in progress, RustSec/security watch queued; rerun of cancelled jobs initiated. Draft.
-- Remote execution remains disabled.
+
+- Enterprise main: `6c8b905855144e6b654a5f2f70852f405dbca6ff`; PR #268 backlog refresh merged. Current-main CI (Linux/Windows/macOS and customer-hosted PostgreSQL tenant-isolation), RustSec and CodeQL all passed.
+- Public main: `585330e094f415d4d0cf3ec42ac0e009516d8bb0`. PR #340 history/cache consent protections and PR #348 hash-bound file-scan evidence are merged. Post-merge CI and CodeQL are currently running on this exact main head; do not claim post-merge validation until those runs finish.
+- Public PR #347 clock reliability is on corrected exact head `880b79953c02494438d60b65568deea52c0b2bc5`; it restores the Android-only command delimiter removed in the original patch. CI/native tests, Android compile, installers and CodeQL are running. The earlier failed head had a syntax error; only the corrected head is eligible for merge.
+- Public PR #344 Ollama non-streaming cancellation is rebased onto current main. Desktop CI passed on its inspected head; Android compatibility failed at Gradle dependency resolution (Kotlin artifacts unavailable), so this remains unresolved and requires a clean rerun/diagnosis.
+- Public PR #349 was closed as an unnecessary duplicate after confirming main already had the closing delimiter. PRs #345 and #346 were closed as stale backlog snapshots after main advanced; no code branches were deleted.
+- Enterprise PR #269 adds a bounded, versioned JSON response contract for the existing evidence-qualified model/task matcher. It is still draft and all exact-head checks are pending. It does not create an HTTP listener, UI or execution pathway.
+- Enterprise model/task matching remains advisory; remote execution, dispatch and automated containment remain disabled.
+
+## Current dependency evidence
+- Public frontend dependency audit reports 0 vulnerabilities on the newer exact-head PR #349 workflow; post-merge main audit is still running.
+- Public Rust dependency audit has not yet been verified clean; do not conflate a successful job with allowed RustSec warnings until the full log is reviewed.
+- Enterprise current-main CI, CodeQL and RustSec pass on `6c8b905855144e6b654a5f2f70852f405dbca6ff`.
+
 
 ## External gates
 Production identity/OIDC, KMS/HSM/TPM, device physical trust, OS sandbox enforcement, signing, backup/restore, rollback, deployment and independent penetration tests require external access/manual validation.
