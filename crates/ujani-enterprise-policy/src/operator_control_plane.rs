@@ -663,6 +663,17 @@ impl OperatorModelTaskMatch {
     /// prompts, paths, credentials, raw inventory or execution authorization.
     pub fn to_json_v1(&self) -> Result<String, OperatorModelTaskMatchResponseError> {
         const MAX_BYTES: usize = 8 * 1024;
+        const MAX_DEVICE_ID_BYTES: usize = 128;
+        const MAX_MODEL_REF_BYTES: usize = 160;
+        const MAX_REASON_COUNT: usize = 32;
+        // Check the public DTO fields before serialization so an arbitrary caller
+        // cannot allocate an oversized string/vector merely to be rejected later.
+        if self.device_id.len() > MAX_DEVICE_ID_BYTES
+            || self.result.model_ref.len() > MAX_MODEL_REF_BYTES
+            || self.result.reasons.len() > MAX_REASON_COUNT
+        {
+            return Err(OperatorModelTaskMatchResponseError::ResponseTooLarge);
+        }
         let json = serde_json::to_string(&self.to_response_v1())
             .map_err(|_| OperatorModelTaskMatchResponseError::SerializationFailed)?;
         if json.len() > MAX_BYTES {
@@ -3947,6 +3958,23 @@ mod operator_model_task_match_response_v1_tests {
             let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
             assert_eq!(parsed["result"]["status"], expected);
         }
+    }
+
+    #[test]
+    fn response_identifier_limits_are_checked_before_serialization() {
+        let mut value = sample(ModelFitStatus::Unknown);
+        value.result.model_ref = "m".repeat(161);
+        assert_eq!(
+            value.to_json_v1(),
+            Err(OperatorModelTaskMatchResponseError::ResponseTooLarge)
+        );
+
+        let mut value = sample(ModelFitStatus::Unknown);
+        value.device_id = "d".repeat(129);
+        assert_eq!(
+            value.to_json_v1(),
+            Err(OperatorModelTaskMatchResponseError::ResponseTooLarge)
+        );
     }
 
     #[test]
