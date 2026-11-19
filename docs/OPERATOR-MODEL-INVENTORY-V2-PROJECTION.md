@@ -22,7 +22,7 @@ The overview API v1 may gain an optional, independently versioned member. Its ab
   "model_runtime_inventory_v2": {
     "projection_version": 1,
     "status": "complete",
-    "generated_at_unix_ms": 0,
+    "generated_at_unix_ms": 1,
     "total_devices": 0,
     "returned_devices": 0,
     "total_models": 0,
