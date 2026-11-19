@@ -3986,4 +3986,17 @@ mod operator_model_task_match_response_v1_tests {
             Err(OperatorModelTaskMatchResponseError::ResponseTooLarge)
         );
     }
+
+    #[test]
+    fn response_reason_count_is_bounded_before_serialization() {
+        let mut value = sample(ModelFitStatus::Unknown);
+        value.result.reasons = vec![ModelFitReason::CapabilityEvidenceUnknown; 32];
+        assert!(value.to_json_v1().is_ok());
+
+        value.result.reasons = vec![ModelFitReason::CapabilityEvidenceUnknown; 33];
+        assert_eq!(
+            value.to_json_v1(),
+            Err(OperatorModelTaskMatchResponseError::ResponseTooLarge)
+        );
+    }
 }
