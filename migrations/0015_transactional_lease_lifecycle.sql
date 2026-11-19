@@ -30,10 +30,14 @@ AS $function$
 DECLARE
  v_device ujani_control.devices%ROWTYPE;
  v_lease ujani_control.leases%ROWTYPE;
+ v_sample ujani_control.device_telemetry_samples%ROWTYPE;
  v_owner_subject_id text;
  v_approval_expires_at timestamptz;
+ v_reserved_cpu bigint;
+ v_reserved_memory bigint;
  v_now timestamptz;
  v_inserted bytea;
+ v_sample_found boolean;
 BEGIN
  IF p_tenant_id IS NULL OR p_tenant_id = ''
     OR p_tenant_id IS DISTINCT FROM pg_catalog.current_setting('ujani.tenant_id', true) THEN
@@ -138,16 +142,54 @@ BEGIN
   RETURN false;
  END IF;
 
- -- Authority row locks above may wait. Re-evaluate lease/approval freshness
- -- after those waits, then again after locking the lease row.
+ -- Renewal authorizes continued participation, so it must not outlive the
+ -- device's current safety evidence. The latest sample must match the device
+ -- watermark, be fresh, and report safe thermal/power/participation state.
+ SELECT * INTO v_sample
+ FROM ujani_control.device_telemetry_samples
+ WHERE tenant_id = p_tenant_id AND device_id = p_device_id
+ ORDER BY received_at DESC
+ LIMIT 1;
+ v_sample_found := FOUND;
  v_now := pg_catalog.clock_timestamp();
- IF v_lease.expires_at <= v_now
+ IF NOT v_sample_found
+    OR v_sample.observed_at < v_now - interval '2 minutes'
+    OR v_sample.observed_at > v_now + interval '60 seconds'
+    OR v_sample.received_at < v_now - interval '2 minutes'
+    OR v_sample.reservation_revision IS NULL
+    OR v_sample.reservation_revision > v_device.reservation_revision
+    OR v_sample.generation <> v_device.telemetry_generation
+    OR v_sample.sequence <> v_device.telemetry_sequence
+    OR v_sample.cpu_available_millis IS NULL
+    OR v_sample.memory_available_mb IS NULL
+    OR v_sample.thermal_state NOT IN ('cool','warm')
+    OR v_sample.power_state NOT IN ('ac','battery')
+    OR v_sample.participation_state <> 'idle'
+    OR v_lease.expires_at <= v_now
     OR v_approval_expires_at <= v_now
     OR p_new_expires_at <= v_now
     OR p_new_expires_at > v_now + interval '5 minutes' THEN
   RETURN false;
  END IF;
 
+ -- A telemetry sample may predate one or more reservations. Count every
+ -- still-active lease newer than the sample's reservation watermark, including
+ -- the lease being renewed when that lease was not yet reflected in the sample.
+ SELECT COALESCE(pg_catalog.sum(requested_cpu_millis), 0),
+        COALESCE(pg_catalog.sum(requested_memory_mb), 0)
+ INTO v_reserved_cpu, v_reserved_memory
+ FROM ujani_control.leases
+ WHERE tenant_id = p_tenant_id AND device_id = p_device_id
+   AND state IN ('reserved','active')
+   AND expires_at > v_now
+   AND revision > v_sample.reservation_revision;
+ IF v_reserved_cpu > v_sample.cpu_available_millis
+    OR v_reserved_memory > v_sample.memory_available_mb THEN
+  RETURN false;
+ END IF;
+
+ -- Authority and telemetry reads are protected by the device row lock. Lock
+ -- the target lease last, then recheck its expiry and the evidence deadline.
  SELECT * INTO v_lease
  FROM ujani_control.leases
  WHERE tenant_id = p_tenant_id AND lease_id = p_lease_id
@@ -193,8 +235,11 @@ BEGIN
    'device.lease.renewed','renewed',p_lease_id);
 
  v_now := pg_catalog.clock_timestamp();
- IF p_new_expires_at <= v_now OR v_approval_expires_at <= v_now THEN
-  RAISE EXCEPTION 'lease renewal authorization expired while recording the audit receipt'
+ IF p_new_expires_at <= v_now
+    OR v_approval_expires_at <= v_now
+    OR v_sample.observed_at < v_now - interval '2 minutes'
+    OR v_sample.received_at < v_now - interval '2 minutes' THEN
+  RAISE EXCEPTION 'lease renewal authorization or telemetry expired while recording the audit receipt'
    USING ERRCODE = '40001';
  END IF;
  RETURN true;
@@ -481,7 +526,7 @@ $block$;
 COMMENT ON FUNCTION ujani_control.renew_device_lease(
  text,text,text,text,bigint,bigint,bytea,bytea,bytea,timestamptz,uuid
 ) IS
- 'Atomic device-authenticated lease renewal. Rechecks enrolled trust, active key generation, current owner consent generation, enabled owner, approved workload and unexpired administrator approval. Claims request replay, extends expiry and appends audit in one transaction. Resource quantity is unchanged, so reservation_revision is not advanced.';
+ 'Atomic device-authenticated lease renewal. Rechecks enrolled trust, active key generation, current owner consent generation, enabled owner, approved workload, unexpired administrator approval and fresh safe telemetry. Capacity checks account for reservations newer than the measured reservation revision. Claims request replay, extends expiry and appends audit in one transaction. Resource quantity is unchanged, so reservation_revision is not advanced.';
 COMMENT ON FUNCTION ujani_control.release_device_lease(
  text,text,text,text,bigint,bytea,bytea,bytea,uuid
 ) IS
