@@ -13,7 +13,7 @@ def _css_block_end(css: str, opening: int) -> int | None:
         if quote:
             if escaped:
                 escaped = False
-            elif char == "\\\\":
+            elif char == "\\":
                 escaped = True
             elif char == quote:
                 quote = None
@@ -31,7 +31,7 @@ def _css_block_end(css: str, opening: int) -> int | None:
 
 def _css_rules(css: str, conditions: tuple[str, ...] = ()) -> list[dict]:
     """Return active CSS rules with their enclosing at-rules; ignore comments."""
-    source = re.sub(r"/\\*.*?\\*/", "", css, flags=re.S)
+    source = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
     rules = []
     cursor = 0
     while cursor < len(source):
@@ -40,6 +40,7 @@ def _css_rules(css: str, conditions: tuple[str, ...] = ()) -> list[dict]:
         if cursor >= len(source):
             break
         opening = None
+        semicolon = False
         quote = None
         escaped = False
         for index in range(cursor, len(source)):
@@ -47,7 +48,7 @@ def _css_rules(css: str, conditions: tuple[str, ...] = ()) -> list[dict]:
             if quote:
                 if escaped:
                     escaped = False
-                elif char == "\\\\":
+                elif char == "\\":
                     escaped = True
                 elif char == quote:
                     quote = None
@@ -59,9 +60,10 @@ def _css_rules(css: str, conditions: tuple[str, ...] = ()) -> list[dict]:
                 break
             elif char == ";":
                 cursor = index + 1
+                semicolon = True
                 break
         if opening is None:
-            if cursor <= index:
+            if semicolon:
                 continue
             break
         prelude = source[cursor:opening].strip()
@@ -98,7 +100,7 @@ def _css_rule_matches(
         if required_condition and required_condition not in conditions:
             continue
         if re.search(
-            rf"\\b{property_pattern}\\s*:\\s*{value_pattern}",
+            rf"\b{property_pattern}\s*:\s*{value_pattern}",
             rule["declarations"],
             flags=re.I,
         ):
@@ -129,7 +131,8 @@ def _validate_css_rule_parser() -> None:
     ), "Reduced-motion declarations must be scoped to their actual media block."
 
 
-\nROOT = Path(__file__).resolve().parents[1]
+
+ROOT = Path(__file__).resolve().parents[1]
 APP = ROOT / "apps" / "operator-console"
 
 class ConsoleParser(HTMLParser):
