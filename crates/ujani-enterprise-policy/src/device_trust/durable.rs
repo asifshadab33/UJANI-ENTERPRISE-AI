@@ -205,6 +205,22 @@ pub trait MonotonicSnapshotAnchor: Send + Sync {
         context: &AnchorCallContext,
     ) -> Result<bool, String>;
 }
+/// Enforce the caller's deadline and cancellation both before and after provider I/O.
+///
+/// This cannot interrupt a non-cooperative synchronous provider. Every production
+/// adapter must also configure its transport-level timeout from `context.remaining()`
+/// and ensure cancellation fences any in-flight write before returning.
+fn load_anchor_record(
+    anchor: &dyn MonotonicSnapshotAnchor,
+    namespace: &str,
+    context: &AnchorCallContext,
+) -> Result<Option<SnapshotAnchorRecord>, String> {
+    context.check_active().map_err(|error| error.to_string())?;
+    let record = anchor.load(namespace, context)?;
+    context.check_active().map_err(|error| error.to_string())?;
+    Ok(record)
+}
+
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DurableDeviceTrustError {
@@ -730,9 +746,11 @@ impl DurableDeviceRegistry {
             &self.anchor_namespace,
             &self.anchor_call_policy,
         ) {
-            (Some(anchor), Some(namespace), Some(policy)) => anchor
-                .load(namespace, &policy.call_context())
-                .map_err(DurableDeviceTrustError::AnchorUnavailable)?,
+            (Some(anchor), Some(namespace), Some(policy)) => {
+                let context = policy.call_context();
+                load_anchor_record(anchor.as_ref(), namespace, &context)
+                    .map_err(DurableDeviceTrustError::AnchorUnavailable)?
+            },
             (None, None, None) => None,
             _ => return Err(DurableDeviceTrustError::AnchorMismatch),
         };
@@ -789,9 +807,11 @@ impl DurableDeviceRegistry {
             &self.anchor_namespace,
             &self.anchor_call_policy,
         ) {
-            (Some(anchor), Some(namespace), Some(policy)) => anchor
-                .load(namespace, &policy.call_context())
-                .map_err(DurableDeviceTrustError::AnchorUnavailable)?,
+            (Some(anchor), Some(namespace), Some(policy)) => {
+                let context = policy.call_context();
+                load_anchor_record(anchor.as_ref(), namespace, &context)
+                    .map_err(DurableDeviceTrustError::AnchorUnavailable)?
+            },
             (None, None, None) => None,
             _ => return Err(DurableDeviceTrustError::AnchorMismatch),
         };
@@ -817,29 +837,40 @@ impl DurableDeviceRegistry {
                 generation,
                 snapshot_sha256: snapshot_sha256(&bytes),
             };
-            match anchor.compare_and_set(
+            let call_context = policy.call_context();
+            let compare_result = anchor.compare_and_set(
                 namespace,
                 expected_generation,
                 next.clone(),
-                &policy.call_context(),
-            ) {
-                Ok(true) => {}
-                Ok(false) => return Err(DurableDeviceTrustError::AnchorConflict),
-                Err(error) => {
-                    // A transport error can arrive after the provider committed.
-                    // Its load operation is a quiescence barrier, so read back the
-                    // authoritative record before telling the caller to retry.
-                    match anchor.load(namespace, &policy.reconciliation_context()) {
-                        Ok(Some(observed)) if observed == next => {}
-                        Ok(observed) if observed == anchor_record => {
-                            return Err(DurableDeviceTrustError::AnchorUnavailable(error));
-                        }
-                        Ok(_) => return Err(DurableDeviceTrustError::AnchorMismatch),
-                        Err(load_error) => {
-                            return Err(DurableDeviceTrustError::AnchorUnavailable(format!(
-                                "{error}; commit outcome could not be verified: {load_error}"
-                            )));
-                        }
+                &call_context,
+            );
+            // Do not trust an adapter's reported success if it returned after its
+            // deadline or after cancellation. The write may nevertheless have
+            // committed, so reconcile through the anchor's quiescent read before
+            // deciding whether the local snapshot is safe to keep.
+            let compare_error = match (compare_result, call_context.check_active()) {
+                (Ok(true), Ok(())) => None,
+                (Ok(false), Ok(())) => {
+                    return Err(DurableDeviceTrustError::AnchorConflict);
+                }
+                (Ok(_), Err(context_error)) => Some(context_error.to_string()),
+                (Err(error), _) => Some(error),
+            };
+            if let Some(error) = compare_error {
+                match load_anchor_record(
+                    anchor.as_ref(),
+                    namespace,
+                    &policy.reconciliation_context(),
+                ) {
+                    Ok(Some(observed)) if observed == next => {}
+                    Ok(observed) if observed == anchor_record => {
+                        return Err(DurableDeviceTrustError::AnchorUnavailable(error));
+                    }
+                    Ok(_) => return Err(DurableDeviceTrustError::AnchorMismatch),
+                    Err(load_error) => {
+                        return Err(DurableDeviceTrustError::AnchorUnavailable(format!(
+                            "{error}; commit outcome could not be verified: {load_error}"
+                        )));
                     }
                 }
             }
@@ -1284,6 +1315,150 @@ mod tests {
             context.check_active(),
             Err(AnchorCallContextError::Cancelled)
         );
+    }
+ 
+    struct NonCooperativeAnchor {
+        record: Mutex<Option<SnapshotAnchorRecord>>,
+        load_delay: Duration,
+        compare_delay: Duration,
+        cancel_on_load: Option<AnchorCancellationToken>,
+    }
+
+    impl MonotonicSnapshotAnchor for NonCooperativeAnchor {
+        fn load(
+            &self,
+            _registry_id: &str,
+            _context: &AnchorCallContext,
+        ) -> Result<Option<SnapshotAnchorRecord>, String> {
+            if let Some(token) = &self.cancel_on_load {
+                token.cancel();
+            }
+            if !self.load_delay.is_zero() {
+                std::thread::sleep(self.load_delay);
+            }
+            self.record
+                .lock()
+                .map(|record| record.clone())
+                .map_err(|error| error.to_string())
+        }
+
+        fn compare_and_set(
+            &self,
+            _registry_id: &str,
+            expected_generation: Option<u64>,
+            next: SnapshotAnchorRecord,
+            _context: &AnchorCallContext,
+        ) -> Result<bool, String> {
+            if !self.compare_delay.is_zero() {
+                std::thread::sleep(self.compare_delay);
+            }
+            let mut record = self.record.lock().map_err(|error| error.to_string())?;
+            if record.as_ref().map(SnapshotAnchorRecord::generation) != expected_generation
+                || next.generation() != expected_generation.unwrap_or(0).saturating_add(1)
+            {
+                return Ok(false);
+            }
+            *record = Some(next);
+            Ok(true)
+        }
+    }
+
+    #[test]
+    fn anchor_load_result_is_rejected_when_provider_returns_after_deadline() {
+        let path = path();
+        let admin = test_signing_key("late-anchor-load-admin");
+        let anchor = std::sync::Arc::new(NonCooperativeAnchor {
+            record: Mutex::new(None),
+            load_delay: Duration::from_millis(20),
+            compare_delay: Duration::ZERO,
+            cancel_on_load: None,
+        });
+        let policy = AnchorCallPolicy::new(Duration::from_millis(5)).unwrap();
+
+        let result = DurableDeviceRegistry::open_with_anchor_and_policy(
+            &path,
+            "tenant-a-late-load",
+            vec![("admin-v1".into(), admin.verifying_key())],
+            DeviceTrustIntegrityKey::new("integrity-v1", test_integrity_key_bytes()),
+            anchor,
+            policy,
+        );
+        assert!(matches!(
+            result,
+            Err(DurableDeviceTrustError::AnchorUnavailable(message))
+                if message.contains("deadline exceeded")
+        ));
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(suffix(&path, ".lock"));
+        let _ = fs::remove_file(suffix(&path, ".bak"));
+    }
+
+    #[test]
+    fn anchor_load_result_is_rejected_when_cancelled_during_provider_io() {
+        let path = path();
+        let admin = test_signing_key("cancelled-anchor-load-admin");
+        let cancellation = AnchorCancellationToken::new();
+        let anchor = std::sync::Arc::new(NonCooperativeAnchor {
+            record: Mutex::new(None),
+            load_delay: Duration::ZERO,
+            compare_delay: Duration::ZERO,
+            cancel_on_load: Some(cancellation.clone()),
+        });
+        let policy =
+            AnchorCallPolicy::with_cancellation(Duration::from_secs(1), cancellation).unwrap();
+
+        let result = DurableDeviceRegistry::open_with_anchor_and_policy(
+            &path,
+            "tenant-a-cancelled-load",
+            vec![("admin-v1".into(), admin.verifying_key())],
+            DeviceTrustIntegrityKey::new("integrity-v1", test_integrity_key_bytes()),
+            anchor,
+            policy,
+        );
+        assert!(matches!(
+            result,
+            Err(DurableDeviceTrustError::AnchorUnavailable(message))
+                if message.contains("cancelled")
+        ));
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(suffix(&path, ".lock"));
+        let _ = fs::remove_file(suffix(&path, ".bak"));
+    }
+
+    #[test]
+    fn late_anchor_compare_and_set_is_reconciled_before_reporting_success() {
+        let path = path();
+        let admin = test_signing_key("late-anchor-cas-admin");
+        let anchor = std::sync::Arc::new(NonCooperativeAnchor {
+            record: Mutex::new(None),
+            load_delay: Duration::ZERO,
+            compare_delay: Duration::from_millis(20),
+            cancel_on_load: None,
+        });
+        let policy = AnchorCallPolicy::new(Duration::from_millis(5)).unwrap();
+
+        let result = DurableDeviceRegistry::open_with_anchor_and_policy(
+            &path,
+            "tenant-a-late-cas",
+            vec![("admin-v1".into(), admin.verifying_key())],
+            DeviceTrustIntegrityKey::new("integrity-v1", test_integrity_key_bytes()),
+            anchor.clone(),
+            policy,
+        );
+        assert!(result.is_ok(), "a committed late CAS must be confirmed by read-back");
+        assert_eq!(
+            anchor
+                .record
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(SnapshotAnchorRecord::generation),
+            Some(1)
+        );
+        drop(result);
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(suffix(&path, ".lock"));
+        let _ = fs::remove_file(suffix(&path, ".bak"));
     }
 
     fn path() -> PathBuf {
