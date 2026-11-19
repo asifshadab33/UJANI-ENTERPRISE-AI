@@ -19,7 +19,7 @@ use crate::model_inventory::{
 };
 use crate::DataClassification;
 use hmac::{Hmac, KeyInit, Mac};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as FmtWrite;
@@ -630,6 +630,46 @@ pub struct OperatorModelInventoryView {
 pub struct OperatorModelTaskMatch {
     pub device_id: String,
     pub result: ModelCapabilityMatch,
+}
+
+/// Stable, bounded, read-only JSON response for the operator task-match service.
+/// This DTO is not a network endpoint; the hosting adapter must authenticate and
+/// audit the request before returning it to the console.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct OperatorModelTaskMatchResponseV1 {
+    pub schema_version: u16,
+    pub device_id: String,
+    pub result: ModelCapabilityMatch,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OperatorModelTaskMatchResponseError {
+    SerializationFailed,
+    ResponseTooLarge,
+}
+
+impl OperatorModelTaskMatch {
+    pub fn to_response_v1(&self) -> OperatorModelTaskMatchResponseV1 {
+        OperatorModelTaskMatchResponseV1 {
+            schema_version: 1,
+            device_id: self.device_id.clone(),
+            result: self.result.clone(),
+        }
+    }
+
+    /// Serialise a response with a hard byte ceiling. It contains only the
+    /// device/model identifiers and conservative match result; no tenant,
+    /// prompts, paths, credentials, raw inventory or execution authorization.
+    pub fn to_json_v1(&self) -> Result<String, OperatorModelTaskMatchResponseError> {
+        const MAX_BYTES: usize = 8 * 1024;
+        let json = serde_json::to_string(&self.to_response_v1())
+            .map_err(|_| OperatorModelTaskMatchResponseError::SerializationFailed)?;
+        if json.len() > MAX_BYTES {
+            return Err(OperatorModelTaskMatchResponseError::ResponseTooLarge);
+        }
+        Ok(json)
+    }
 }
 
 /// Strict JSON body for the future authenticated model-task-match route.
@@ -3861,5 +3901,61 @@ mod session_keyring_negative_tests {
         let rendered = format!("{keyring:?}");
         assert!(rendered.contains("[REDACTED]"));
         assert!(!rendered.contains("165"));
+    }
+}
+
+#[cfg(test)]
+mod operator_model_task_match_response_v1_tests {
+    use super::*;
+    use crate::model_inventory::{ModelFitReason, ModelFitStatus};
+
+    fn sample(status: ModelFitStatus) -> OperatorModelTaskMatch {
+        OperatorModelTaskMatch {
+            device_id: "device-1".into(),
+            result: ModelCapabilityMatch {
+                model_ref: "model-local-1".into(),
+                status,
+                reasons: vec![ModelFitReason::CapabilityEvidenceUnknown],
+                evidence_confidence: EvidenceConfidence::Unknown,
+            },
+        }
+    }
+
+    #[test]
+    fn response_is_versioned_and_preserves_unknown_evidence() {
+        let response = sample(ModelFitStatus::Unknown).to_json_v1().unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&response).unwrap();
+        assert_eq!(parsed["schema_version"], 1);
+        assert_eq!(parsed["device_id"], "device-1");
+        assert_eq!(parsed["result"]["model_ref"], "model-local-1");
+        assert_eq!(parsed["result"]["status"], "unknown");
+        assert_eq!(parsed["result"]["evidence_confidence"], "unknown");
+        assert_eq!(
+            parsed["result"]["reasons"][0],
+            "capability_evidence_unknown"
+        );
+        assert!(!parsed.as_object().unwrap().contains_key("tenant_id"));
+    }
+
+    #[test]
+    fn response_serialization_preserves_incompatible_and_compatible_labels() {
+        for (status, expected) in [
+            (ModelFitStatus::Compatible, "compatible"),
+            (ModelFitStatus::Incompatible, "incompatible"),
+        ] {
+            let json = sample(status).to_json_v1().unwrap();
+            let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+            assert_eq!(parsed["result"]["status"], expected);
+        }
+    }
+
+    #[test]
+    fn response_size_ceiling_fails_closed() {
+        let mut value = sample(ModelFitStatus::Unknown);
+        value.result.reasons = vec![ModelFitReason::CapabilityEvidenceUnknown; 2_000];
+        assert_eq!(
+            value.to_json_v1(),
+            Err(OperatorModelTaskMatchResponseError::ResponseTooLarge)
+        );
     }
 }

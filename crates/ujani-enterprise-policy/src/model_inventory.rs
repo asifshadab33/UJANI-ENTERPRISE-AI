@@ -5,7 +5,7 @@
 //! The versioned JSON Schema remains the wire-format contract; callers must validate
 //! schema-required field presence before deserializing this in-process representation.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
 pub const MODEL_RUNTIME_INVENTORY_SCHEMA_VERSION: u16 = 1;
@@ -78,7 +78,7 @@ pub enum EvidenceSource {
     Unknown,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EvidenceConfidence {
     Verified,
@@ -406,14 +406,16 @@ pub struct ModelTaskRequirements {
     pub minimum_memory_mb: Option<u64>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ModelFitStatus {
     Compatible,
     Incompatible,
     Unknown,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ModelFitReason {
     ModelNotInstalled,
     RuntimeUnavailable,
@@ -432,7 +434,8 @@ pub enum ModelFitReason {
     HardwareMemoryBelowRequirement,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ModelCapabilityMatch {
     pub model_ref: String,
     pub status: ModelFitStatus,
