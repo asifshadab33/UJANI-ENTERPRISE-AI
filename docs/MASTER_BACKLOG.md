@@ -1,6 +1,6 @@
 # UJANI Consolidated Master Backlog — Enterprise AI
 
-**Snapshot:** 2026-11-19 evening. Current main: `9603c9c5f52d8ac176f7d48f50b1a11037b96175`. Post-merge CI/security checks are still running; this is not a production-readiness claim.
+**Snapshot:** 2026-11-19 evening. Enterprise main at snapshot: `9603c9c5f52d8ac176f7d48f50b1a11037b96175`. Post-merge CI/security checks are still running; this is not a production-readiness claim.
 
 ## Product boundary
 
@@ -32,12 +32,12 @@
 1. Multi-site scheduling, fairness, priorities and energy-aware optimisation.
 2. Optional customer-selected IDS/network/security integrations with controlled-lab validation.
 
-## Current evidence and PR state
+## Evidence snapshot (verify live GitHub refs before acting)
 
 - Today's earlier merges: #281 catalogue parity/master ledger, #288 concurrent telemetry/lease admission regression and #290 bounded projection semantics.
 - This run merged #289 inventory-v2 preflight boundary tests, #293 oversized authenticated lease-body rejection tests and #292 accessible responsive operator inventory tables.
-- Current main CI is pending, RustSec is in progress and CodeQL is queued on `9603c9c5...`; previous main `bf512837...` passed those checks but does not prove the new SHA.
-- PR #291 remains open for CSS hover/focus/reduced-motion validation; its latest head is `6e38357f...` and exact-head checks are pending.
+- At snapshot time, main CI was pending, RustSec was in progress and CodeQL was queued on `9603c9c5...`; previous main `bf512837...` passed those checks but does not prove the new SHA.
+- At snapshot time, PR #291 was open for CSS hover/focus/reduced-motion validation; its then-current head was `6e38357f...` and exact-head checks are pending.
 - Remote execution and automated containment remain disabled. Physical-device, production KMS, deployment, rollback, backup/DR and independent penetration tests require external infrastructure and access.
 
 **Completion rule:** no contract, fixture, demo view or policy primitive is counted as a live production service. Merge only exact-head, current-base PRs with all required checks and review blockers resolved.
