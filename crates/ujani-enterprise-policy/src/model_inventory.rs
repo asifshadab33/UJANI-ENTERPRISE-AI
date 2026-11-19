@@ -78,7 +78,7 @@ pub enum EvidenceSource {
     Unknown,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EvidenceConfidence {
     Verified,
