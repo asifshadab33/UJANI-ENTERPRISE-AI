@@ -750,7 +750,7 @@ impl DurableDeviceRegistry {
                 let context = policy.call_context();
                 load_anchor_record(anchor.as_ref(), namespace, &context)
                     .map_err(DurableDeviceTrustError::AnchorUnavailable)?
-            },
+            }
             (None, None, None) => None,
             _ => return Err(DurableDeviceTrustError::AnchorMismatch),
         };
@@ -811,7 +811,7 @@ impl DurableDeviceRegistry {
                 let context = policy.call_context();
                 load_anchor_record(anchor.as_ref(), namespace, &context)
                     .map_err(DurableDeviceTrustError::AnchorUnavailable)?
-            },
+            }
             (None, None, None) => None,
             _ => return Err(DurableDeviceTrustError::AnchorMismatch),
         };
@@ -838,12 +838,8 @@ impl DurableDeviceRegistry {
                 snapshot_sha256: snapshot_sha256(&bytes),
             };
             let call_context = policy.call_context();
-            let compare_result = anchor.compare_and_set(
-                namespace,
-                expected_generation,
-                next.clone(),
-                &call_context,
-            );
+            let compare_result =
+                anchor.compare_and_set(namespace, expected_generation, next.clone(), &call_context);
             // Do not trust an adapter's reported success if it returned after its
             // deadline or after cancellation. The write may nevertheless have
             // committed, so reconcile through the anchor's quiescent read before
@@ -1452,7 +1448,10 @@ mod tests {
             anchor.clone(),
             policy,
         );
-        assert!(result.is_ok(), "a committed late CAS must be confirmed by read-back");
+        assert!(
+            result.is_ok(),
+            "a committed late CAS must be confirmed by read-back"
+        );
         assert_eq!(
             anchor
                 .record
