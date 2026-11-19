@@ -1,0 +1,417 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ujani:operator:model-runtime-inventory-v2-projection:v1",
+  "title": "UJANI Operator Model/Runtime Inventory v2 Projection",
+  "description": "Bounded, privacy-minimised read-only projection. Not authorization, scheduling, installation, or execution authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "projection_version",
+    "status",
+    "generated_at_unix_ms",
+    "total_devices",
+    "returned_devices",
+    "total_models",
+    "returned_models",
+    "records"
+  ],
+  "properties": {
+    "projection_version": {
+      "const": 1
+    },
+    "status": {
+      "enum": [
+        "complete",
+        "partial_response_budget",
+        "disabled_by_policy",
+        "unavailable",
+        "not_supported"
+      ]
+    },
+    "generated_at_unix_ms": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "total_devices": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+    },
+    "returned_devices": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 64
+    },
+    "total_models": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 10000000
+    },
+    "returned_models": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 512
+    },
+    "records": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "$ref": "#/$defs/device_record"
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "complete"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "total_devices": {
+            "maximum": 64
+          },
+          "returned_devices": {
+            "maximum": 64
+          },
+          "total_models": {
+            "maximum": 512
+          },
+          "returned_models": {
+            "maximum": 512
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "enum": [
+              "disabled_by_policy",
+              "unavailable",
+              "not_supported"
+            ]
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "records": {
+            "maxItems": 0
+          },
+          "returned_devices": {
+            "const": 0
+          },
+          "returned_models": {
+            "const": 0
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "confidence",
+        "observed_at_unix_ms",
+        "freshness"
+      ],
+      "properties": {
+        "source": {
+          "enum": [
+            "runtime_api",
+            "os_api",
+            "runtime_metadata",
+            "signed_catalogue",
+            "published_catalogue",
+            "estimate",
+            "unknown"
+          ]
+        },
+        "confidence": {
+          "enum": [
+            "verified",
+            "reported",
+            "estimated",
+            "unknown"
+          ]
+        },
+        "observed_at_unix_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "freshness": {
+          "enum": [
+            "current",
+            "stale",
+            "unknown"
+          ]
+        }
+      }
+    },
+    "device_record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "device_ref",
+        "inventory_generated_at_unix_ms",
+        "platform",
+        "hardware",
+        "runtimes",
+        "models"
+      ],
+      "properties": {
+        "device_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "inventory_generated_at_unix_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "platform": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "os",
+            "architecture",
+            "evidence"
+          ],
+          "properties": {
+            "os": {
+              "enum": [
+                "windows",
+                "linux",
+                "macos",
+                "other",
+                "unknown"
+              ]
+            },
+            "architecture": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 32
+            },
+            "evidence": {
+              "$ref": "#/$defs/evidence"
+            }
+          }
+        },
+        "hardware": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "cpu_threads",
+            "memory_total_mb",
+            "accelerators",
+            "evidence"
+          ],
+          "properties": {
+            "cpu_threads": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1,
+              "maximum": 4096
+            },
+            "memory_total_mb": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 256,
+              "maximum": 4194304
+            },
+            "accelerators": {
+              "type": "array",
+              "maxItems": 16,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "memory_mb",
+                  "evidence"
+                ],
+                "properties": {
+                  "kind": {
+                    "enum": [
+                      "gpu",
+                      "npu",
+                      "other",
+                      "unknown"
+                    ]
+                  },
+                  "memory_mb": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "minimum": 1,
+                    "maximum": 4194304
+                  },
+                  "evidence": {
+                    "$ref": "#/$defs/evidence"
+                  }
+                }
+              }
+            },
+            "evidence": {
+              "$ref": "#/$defs/evidence"
+            }
+          }
+        },
+        "runtimes": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "runtime_ref",
+              "name",
+              "version",
+              "capabilities",
+              "evidence"
+            ],
+            "properties": {
+              "runtime_ref": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[A-Za-z0-9._:-]+$"
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "version": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 128
+              },
+              "capabilities": {
+                "type": "array",
+                "maxItems": 64,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                }
+              },
+              "evidence": {
+                "$ref": "#/$defs/evidence"
+              }
+            }
+          }
+        },
+        "models": {
+          "type": "array",
+          "maxItems": 512,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "model_ref",
+              "name",
+              "version",
+              "family",
+              "runtime_ref",
+              "capabilities",
+              "estimated_ram_mb",
+              "estimated_storage_mb",
+              "evidence"
+            ],
+            "properties": {
+              "model_ref": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[A-Za-z0-9._:-]+$"
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "version": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 128
+              },
+              "family": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 128
+              },
+              "runtime_ref": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 128
+              },
+              "capabilities": {
+                "type": "array",
+                "maxItems": 64,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                }
+              },
+              "estimated_ram_mb": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 1,
+                "maximum": 4194304
+              },
+              "estimated_storage_mb": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 1,
+                "maximum": 4194304
+              },
+              "evidence": {
+                "$ref": "#/$defs/evidence"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
