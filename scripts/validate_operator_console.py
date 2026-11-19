@@ -198,10 +198,10 @@ def _validate_css_rule_parser() -> None:
     assert _css_rule_matches(
         fixture, (".table-wrap:focus-visible",), ("outline",)
     ), "Nested screen keyboard-focus rules must be recognised."
-    assert not _css_rule_matches(
+    assert _css_rule_matches(
         fixture, ("td", "th"), ("transition",), ("none",),
         "prefers-reduced-motion: reduce",
-    ) is False, "The positive reduced-motion fixture must pass."
+    ), "The positive reduced-motion fixture must pass."
     negative = "@media (prefers-reduced-motion: no-preference) { td { transition: none; } }"
     assert not _css_rule_matches(
         negative, ("td",), ("transition",), ("none",),
