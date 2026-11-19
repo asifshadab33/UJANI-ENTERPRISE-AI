@@ -163,27 +163,13 @@ $block$;
 COMMIT;
 RESET ROLE;
 
--- Both consent layers are independently rechecked by the transaction.
-UPDATE ujani_control.devices SET owner_consent_state='paused'
-WHERE tenant_id='authenticated-telemetry-test' AND device_id='telemetry-device';
-SET ROLE ujani_runtime;
-BEGIN;
-SET LOCAL ujani.tenant_id='authenticated-telemetry-test';
-DO $block$
-DECLARE accepted boolean;
-BEGIN
- accepted := ujani_control.accept_authenticated_device_telemetry_v2(
-  'authenticated-telemetry-test','telemetry-device','telemetry-key-v1',
-  1,1,1,2,0,decode(repeat('b6',16),'hex'),
-  pg_catalog.floor(pg_catalog.date_part('epoch',pg_catalog.clock_timestamp())*1000)::bigint+20000,
-  pg_catalog.clock_timestamp(),decode(repeat('b7',32),'hex'),4000,8192,'cool','ac','idle');
- IF accepted IS DISTINCT FROM false THEN RAISE EXCEPTION 'owner pause did not block telemetry'; END IF;
-END;
-$block$;
-COMMIT;
-RESET ROLE;
-UPDATE ujani_control.devices SET owner_consent_state='granted',admin_approval_state='rejected'
-WHERE tenant_id='authenticated-telemetry-test' AND device_id='telemetry-device';
+-- A real owner pause/re-consent advances the server-issued consent generation.
+-- A report with the paused generation is rejected; the new grant requires generation 3.
+INSERT INTO ujani_control.owner_consents
+ (tenant_id,device_id,consent_generation,state,actor_ref,evidence_digest)
+VALUES
+ ('authenticated-telemetry-test','telemetry-device',2,'paused','telemetry-owner',
+  decode(repeat('b6',32),'hex'));
 
 SET ROLE ujani_runtime;
 BEGIN;
@@ -193,9 +179,36 @@ DECLARE accepted boolean;
 BEGIN
  accepted := ujani_control.accept_authenticated_device_telemetry_v2(
   'authenticated-telemetry-test','telemetry-device','telemetry-key-v1',
-  1,1,1,2,0,decode(repeat('b8',16),'hex'),
+  1,2,1,2,0,decode(repeat('b7',16),'hex'),
   pg_catalog.floor(pg_catalog.date_part('epoch',pg_catalog.clock_timestamp())*1000)::bigint+20000,
-  pg_catalog.clock_timestamp(),decode(repeat('b9',32),'hex'),4000,8192,'cool','ac','idle');
+  pg_catalog.clock_timestamp(),decode(repeat('b8',32),'hex'),4000,8192,'cool','ac','idle');
+ IF accepted IS DISTINCT FROM false THEN
+  RAISE EXCEPTION 'owner pause did not block telemetry at the current consent generation';
+ END IF;
+END;
+$block$;
+COMMIT;
+RESET ROLE;
+
+INSERT INTO ujani_control.owner_consents
+ (tenant_id,device_id,consent_generation,state,actor_ref,evidence_digest)
+VALUES
+ ('authenticated-telemetry-test','telemetry-device',3,'granted','telemetry-owner',
+  decode(repeat('b9',32),'hex'));
+
+UPDATE ujani_control.devices SET admin_approval_state='rejected'
+WHERE tenant_id='authenticated-telemetry-test' AND device_id='telemetry-device';
+SET ROLE ujani_runtime;
+BEGIN;
+SET LOCAL ujani.tenant_id='authenticated-telemetry-test';
+DO $block$
+DECLARE accepted boolean;
+BEGIN
+ accepted := ujani_control.accept_authenticated_device_telemetry_v2(
+  'authenticated-telemetry-test','telemetry-device','telemetry-key-v1',
+  1,3,1,2,0,decode(repeat('ba',16),'hex'),
+  pg_catalog.floor(pg_catalog.date_part('epoch',pg_catalog.clock_timestamp())*1000)::bigint+20000,
+  pg_catalog.clock_timestamp(),decode(repeat('bb',32),'hex'),4000,8192,'cool','ac','idle');
  IF accepted IS DISTINCT FROM false THEN RAISE EXCEPTION 'organisation denial did not block telemetry'; END IF;
 END;
 $block$;
@@ -231,7 +244,7 @@ BEGIN
  BEGIN
   PERFORM ujani_control.accept_authenticated_device_telemetry_v2(
    'authenticated-telemetry-test','telemetry-device','telemetry-key-v1',
-   1,1,1,2,0,decode(repeat('bc',16),'hex'),
+   1,3,1,2,0,decode(repeat('bc',16),'hex'),
    pg_catalog.floor(pg_catalog.date_part('epoch',pg_catalog.clock_timestamp())*1000)::bigint+20000,
    pg_catalog.clock_timestamp(),decode(repeat('bd',32),'hex'),
    4000,8192,'cool','ac','idle');
@@ -261,7 +274,8 @@ BEGIN
  FROM ujani_control.devices
  WHERE tenant_id='authenticated-telemetry-test' AND device_id='telemetry-device';
  SELECT count(*) INTO v_samples FROM ujani_control.device_telemetry_samples
- WHERE tenant_id='authenticated-telemetry-test' AND device_id='telemetry-device';
+ WHERE tenant_id='authenticated-telemetry-test' AND device_id='telemetry-device'
+   AND consent_generation=1;
  SELECT count(*) INTO v_replays FROM ujani_control.request_replays
  WHERE tenant_id='authenticated-telemetry-test' AND device_id='telemetry-device'
    AND request_id=decode(repeat('bc',16),'hex');
