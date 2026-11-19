@@ -395,3 +395,20 @@ test("model catalogue task filter is explicit and uses only declared catalogue m
   assert.doesNotMatch(collectText(getElement("model-catalogue")), /Small Chat/);
   assert.match(collectText(getElement("model-catalogue")), /not verified runtime capability/);
 });
+
+
+test("operator console styles preserve keyboard focus and responsive inventory navigation", async () => {
+  const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
+  const html = await readFile(new URL("../index.html", import.meta.url), "utf8");
+  assert.match(css, /:where\(a,button,input,select,textarea,summary,\[tabindex\]\):focus-visible/);
+  assert.match(html, /class="table-wrap" tabindex="0" role="region" aria-label="Device inventory table"/);
+  assert.match(html, /class="table-wrap" tabindex="0" role="region" aria-label="Security provider inventory table"/);
+  assert.match(html, /class="table-wrap" tabindex="0" role="region" aria-label="Installed model and runtime inventory table"/);
+  assert.match(css, /\.table-wrap\s*\{[^}]*max-height:26rem[^}]*overflow-x:auto[^}]*overflow-y:auto/s);
+  assert.match(css, /\.table-wrap:focus-visible/);
+  assert.match(css, /table thead th\s*\{[^}]*position:sticky/s);
+  const narrowLayout = css.slice(css.lastIndexOf("@media(max-width:700px){"));
+  assert.match(narrowLayout, /\.topbar\s*\{[^}]*flex-wrap:wrap/s);
+  assert.match(narrowLayout, /\.section-title\s*\{[^}]*flex-direction:column/s);
+  assert.match(css, /@media\(prefers-reduced-motion:reduce\)/);
+});
