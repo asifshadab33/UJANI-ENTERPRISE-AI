@@ -1,6 +1,6 @@
 # Operator Model/Runtime Inventory v2 Projection (Draft Contract)
 
-**Status:** design-only draft. This document does not authorize runtime execution, workload dispatch, device scheduling, model installation, or changes to consent.
+**Status:** the bounded v1 projection schema, synthetic fixture and validator are implemented. The authenticated tenant-scoped projection source, read API and live console feed remain design-only and are not deployed. This document does not authorize runtime execution, workload dispatch, device scheduling, model installation, or changes to consent.
 
 ## Purpose
 
