@@ -32,18 +32,18 @@
 
 ## Live evidence
 
-- Enterprise main: `6c8b905855144e6b654a5f2f70852f405dbca6ff`; PR #268 backlog refresh merged. Current-main CI (Linux/Windows/macOS and customer-hosted PostgreSQL tenant-isolation), RustSec and CodeQL all passed.
-- Public main: `585330e094f415d4d0cf3ec42ac0e009516d8bb0`. PR #340 history/cache consent protections and PR #348 hash-bound file-scan evidence are merged. Post-merge CI and CodeQL are currently running on this exact main head; do not claim post-merge validation until those runs finish.
-- Public PR #347 clock reliability is on corrected exact head `880b79953c02494438d60b65568deea52c0b2bc5`; it restores the Android-only command delimiter removed in the original patch. CI/native tests, Android compile, installers and CodeQL are running. The earlier failed head had a syntax error; only the corrected head is eligible for merge.
-- Public PR #344 Ollama non-streaming cancellation is rebased onto current main. Desktop CI passed on its inspected head; Android compatibility failed at Gradle dependency resolution (Kotlin artifacts unavailable), so this remains unresolved and requires a clean rerun/diagnosis.
-- Public PR #349 was closed as an unnecessary duplicate after confirming main already had the closing delimiter. PRs #345 and #346 were closed as stale backlog snapshots after main advanced; no code branches were deleted.
-- Enterprise PR #269 adds a bounded, versioned JSON response contract for the existing evidence-qualified model/task matcher. It is still draft and all exact-head checks are pending. It does not create an HTTP listener, UI or execution pathway.
-- Enterprise model/task matching remains advisory; remote execution, dispatch and automated containment remain disabled.
+- Enterprise main: `d695ac7b916f9c3f1c50d89acb6bab320c152f41`. PR #269 (bounded/versioned operator model-task-match JSON response) merged after exact-head CI on Linux/macOS/Windows, PostgreSQL tenant-isolation, CodeQL, RustSec and security-sensitive checks passed. Post-merge CI/CodeQL/RustSec are running on this main SHA.
+- Public main: `d34c47e2e9dc52c544a33626db9bb46caeea2712`. PR #336 freshness warning, #338 release gates, #340 history/cache consent and #348 hash-bound scan evidence are merged. PR #347 clock reliability also merged after exact-head CI, CodeQL, Android compile, Linux/macOS/Windows native tests and all three installer-size jobs passed; unsigned previews were skipped.
+- Public post-merge CI/CodeQL are running on `d34c47e2e9dc52c544a33626db9bb46caeea2712`; do not claim integration verification until complete.
+- Public PR #351 (`ef4b98d5c0a2ac16f09ccf057a689758dc76ff55`) is the current-main Ollama non-streaming cancellation regression. Frontend/Rust audit, native matrix, Android, installers, CodeQL and security watch are pending; exact-head checks required.
+- Public PR #350 was closed as stale/superseded by #351; #344 and #324 were closed as stale. PRs #345/#346/#349 were closed as outdated docs or unnecessary duplicate; branches retained.
+- Enterprise PR #269 establishes a bounded 8 KiB versioned response contract for the evidence-qualified task matcher. It is still **not** an HTTP listener, UI integration, task dispatch or remote execution pathway. The actual authenticated adapter remains a backlog item.
+- Remote execution, automated containment and production public release remain disabled pending their separate evidence gates.
 
 ## Current dependency evidence
-- Public frontend dependency audit reports 0 vulnerabilities on the newer exact-head PR #349 workflow; post-merge main audit is still running.
-- Public Rust dependency audit has not yet been verified clean; do not conflate a successful job with allowed RustSec warnings until the full log is reviewed.
-- Enterprise current-main CI, CodeQL and RustSec pass on `6c8b905855144e6b654a5f2f70852f405dbca6ff`.
+- Public frontend and Rust dependency audits passed on exact-head PR #347; Public main checks after merge are still running.
+- Enterprise RustSec audit and CodeQL passed on exact-head PR #269; post-merge checks are still running.
+- Physical-device behaviour, production signing/updater rollback and independent external security review remain unverified release gates.
 
 
 ## External gates
