@@ -38,6 +38,10 @@ jobs:
         run: python -m pip install --disable-pip-version-check --no-input --requirement scripts/requirements-schema.txt
       - name: Validate collective-defence event schema contract
         run: python scripts/validate_security_event_schema.py
+      - name: Check model catalogue mirror parity
+        run: python3 scripts/check_model_catalogue_parity.py
+      - name: Test model catalogue parity guard
+        run: python3 -m unittest discover -s scripts -p 'test_model_catalogue_parity.py' -v
       - name: Validate model/runtime inventory v1 schema
         run: python scripts/validate_model_runtime_inventory_schema.py
       - name: Validate Personal-to-Enterprise task contract v1
