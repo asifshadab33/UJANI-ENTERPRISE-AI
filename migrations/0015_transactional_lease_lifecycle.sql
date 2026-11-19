@@ -408,14 +408,9 @@ REVOKE ALL ON FUNCTION ujani_control.expire_device_leases(text,text,integer) FRO
 DO $block$
 BEGIN
  IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'ujani_runtime') THEN
-  GRANT EXECUTE ON FUNCTION ujani_control.renew_device_lease(
-   text,text,text,text,bigint,bigint,bytea,bytea,bytea,timestamptz,uuid
-  ) TO ujani_runtime;
-  GRANT EXECUTE ON FUNCTION ujani_control.release_device_lease(
-   text,text,text,text,bigint,bytea,bytea,bytea,uuid
-  ) TO ujani_runtime;
-  GRANT EXECUTE ON FUNCTION ujani_control.expire_device_leases(text,text,integer)
-   TO ujani_runtime;
+  EXECUTE 'GRANT EXECUTE ON FUNCTION ujani_control.renew_device_lease(text,text,text,text,bigint,bigint,bytea,bytea,bytea,timestamptz,uuid) TO ujani_runtime';
+  EXECUTE 'GRANT EXECUTE ON FUNCTION ujani_control.release_device_lease(text,text,text,text,bigint,bytea,bytea,bytea,uuid) TO ujani_runtime';
+  EXECUTE 'GRANT EXECUTE ON FUNCTION ujani_control.expire_device_leases(text,text,integer) TO ujani_runtime';
  END IF;
 END;
 $block$;
