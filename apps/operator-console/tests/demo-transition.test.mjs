@@ -59,8 +59,10 @@ test("live refresh clears synthetic demo data before the API request resolves", 
 
   let resolveLiveRequest;
   const requestedUrls = [];
-  const fetchMock = (url) => {
+  const requestOptions = [];
+  const fetchMock = (url, options = {}) => {
     requestedUrls.push(url);
+    requestOptions.push({ url, options });
     if (url === "./model-catalog.json") {
       return Promise.reject(new Error("test fixture: catalogue not loaded"));
     }
@@ -102,6 +104,14 @@ test("live refresh clears synthetic demo data before the API request resolves", 
   const refreshPromise = vm.runInContext("refreshOverview()", context);
   assert.equal(typeof resolveLiveRequest, "function");
   assert.ok(requestedUrls.includes("/api/v1/operator/overview"));
+  const liveRequest = requestOptions.find((request) => request.url === "/api/v1/operator/overview");
+  assert.ok(liveRequest, "the live overview request must be observable in the test");
+  assert.equal(liveRequest.options.method, "GET");
+  assert.equal(liveRequest.options.credentials, "same-origin", "operator session credentials must stay same-origin");
+  assert.equal(liveRequest.options.cache, "no-store", "fleet snapshots must not be served from a browser cache");
+  assert.equal(liveRequest.options.redirect, "error", "the authenticated overview request must not follow redirects");
+  assert.equal(liveRequest.options.headers.Accept, "application/json");
+  assert.ok(liveRequest.options.signal instanceof AbortSignal, "the live request must be cancellable");
 
   // refreshOverview executes synchronously through clearOverview() before
   // awaiting fetch(). Synthetic records must already be gone at this point.
