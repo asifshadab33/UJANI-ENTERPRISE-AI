@@ -358,8 +358,9 @@ impl DeviceTelemetryServiceError {
     }
 }
 
-/// The production implementation must map this single call to
-/// ujani_control.accept_authenticated_device_telemetry_v2 inside one
+/// The production implementation is called while the durable registry lock is
+/// held and must not call back into that registry. It must map this single call
+/// to ujani_control.accept_authenticated_device_telemetry_v2 inside one
 /// tenant-scoped PostgreSQL transaction. It must derive tenant/device/key
 /// identity from authenticated, pass the signed request ID/expiry and the
 /// server-issued SQL consent/reservation generations (not the local key-bound
@@ -407,16 +408,31 @@ impl<'a, R: DeviceTelemetryAdmissionRepository> DeviceTelemetryAdmissionService<
             now_unix_ms,
         )
         .map_err(DeviceTelemetryServiceError::Intake)?;
-        self.repository
-            .admit_authenticated_telemetry(&authenticated, &sample)
-            .map_err(|error| match error {
-                DeviceTelemetryRepositoryError::Rejected => {
-                    DeviceTelemetryServiceError::AdmissionRejected
+        // Hold the durable device-trust lock across the database transaction.
+        // An owner opt-out or key rotation through this registry therefore cannot
+        // commit between the final local-consent check and the telemetry commit.
+        // Lock order is durable registry first, then the tenant-scoped database.
+        self.registry
+            .with_authenticated_device_status_for_request(&authenticated, |_, owner_opted_in| {
+                if !owner_opted_in {
+                    return Err(DeviceTelemetryServiceError::Intake(
+                        DeviceTelemetryIntakeError::OwnerConsentMissing,
+                    ));
                 }
-                DeviceTelemetryRepositoryError::Unavailable => {
-                    DeviceTelemetryServiceError::RepositoryUnavailable
-                }
+                self.repository
+                    .admit_authenticated_telemetry(&authenticated, &sample)
+                    .map_err(|error| match error {
+                        DeviceTelemetryRepositoryError::Rejected => {
+                            DeviceTelemetryServiceError::AdmissionRejected
+                        }
+                        DeviceTelemetryRepositoryError::Unavailable => {
+                            DeviceTelemetryServiceError::RepositoryUnavailable
+                        }
+                    })
             })
+            .map_err(|error| {
+                DeviceTelemetryServiceError::Intake(map_device_trust_error(error))
+            })?
     }
 }
 
