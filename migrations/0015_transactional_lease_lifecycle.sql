@@ -420,8 +420,30 @@ REVOKE ALL ON FUNCTION ujani_control.expire_device_leases(text,text,integer) FRO
 -- Grant only when the customer has provisioned the documented runtime role.
 -- Production deployments must keep that role non-owner and non-BYPASSRLS.
 DO $block$
+DECLARE
+ v_runtime_role_oid oid;
 BEGIN
- IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'ujani_runtime') THEN
+ SELECT oid INTO v_runtime_role_oid
+ FROM pg_catalog.pg_roles WHERE rolname = 'ujani_runtime';
+ IF v_runtime_role_oid IS NOT NULL THEN
+  IF EXISTS (
+   SELECT 1 FROM pg_catalog.pg_roles
+   WHERE oid = v_runtime_role_oid AND (rolsuper IS TRUE OR rolbypassrls IS TRUE)
+  ) THEN
+   RAISE EXCEPTION 'ujani_runtime must not be superuser or BYPASSRLS'
+    USING ERRCODE = '42501';
+  END IF;
+  IF EXISTS (
+   SELECT 1 FROM pg_catalog.pg_namespace
+   WHERE nspname = 'ujani_control' AND nspowner = v_runtime_role_oid
+  ) OR EXISTS (
+   SELECT 1 FROM pg_catalog.pg_class c
+   JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+   WHERE n.nspname = 'ujani_control' AND c.relowner = v_runtime_role_oid
+  ) THEN
+   RAISE EXCEPTION 'ujani_runtime must not own the control schema or its objects'
+    USING ERRCODE = '42501';
+  END IF;
   EXECUTE 'GRANT USAGE ON SCHEMA ujani_control TO ujani_runtime';
   EXECUTE 'GRANT SELECT ON ujani_control.devices,ujani_control.device_keys,ujani_control.device_owner_bindings,ujani_control.owner_consents,ujani_control.operator_subjects,ujani_control.workloads,ujani_control.approvals,ujani_control.leases,ujani_control.request_replays,ujani_control.audit_events TO ujani_runtime';
   -- Row-lock privileges are column-scoped. Admission evidence remains
