@@ -138,10 +138,21 @@ BEGIN
   RETURN false;
  END IF;
 
+ -- Authority row locks above may wait. Re-evaluate lease/approval freshness
+ -- after those waits, then again after locking the lease row.
+ v_now := pg_catalog.clock_timestamp();
+ IF v_lease.expires_at <= v_now
+    OR v_approval_expires_at <= v_now
+    OR p_new_expires_at <= v_now
+    OR p_new_expires_at > v_now + interval '5 minutes' THEN
+  RETURN false;
+ END IF;
+
  SELECT * INTO v_lease
  FROM ujani_control.leases
  WHERE tenant_id = p_tenant_id AND lease_id = p_lease_id
  FOR UPDATE;
+ v_now := pg_catalog.clock_timestamp();
  IF NOT FOUND OR v_lease.device_id IS DISTINCT FROM p_device_id
     OR v_lease.workload_id IS DISTINCT FROM p_workload_id
     OR v_lease.manifest_digest IS DISTINCT FROM p_manifest_digest
@@ -149,6 +160,9 @@ BEGIN
     OR v_lease.consent_generation <> p_consent_generation
     OR v_lease.state NOT IN ('reserved','active')
     OR v_lease.expires_at <= v_now
+    OR v_approval_expires_at <= v_now
+    OR p_new_expires_at <= v_now
+    OR p_new_expires_at > v_now + interval '5 minutes'
     OR p_new_expires_at <= v_lease.expires_at THEN
   RETURN false;
  END IF;
