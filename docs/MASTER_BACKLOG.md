@@ -34,7 +34,7 @@
 - Enterprise main: `197bf007411b3c4aab10e9ed620a9b6e0f3671be`; PR #266 model/task matcher merged.
 - Main post-merge exact SHA `197bf007411b3c4aab10e9ed620a9b6e0f3671be`: CI #44451175579 passed Linux/Windows/macOS policy tests and customer-hosted PostgreSQL tenant isolation; RustSec #44451175518 and CodeQL #44451175833 passed.
 - #267 closed as superseded by current-main PR #268; original branch retained.
-- #268 `3348c723fb4230ebba328515e203a54c722e5ed3`: current-main backlog snapshot; CI/CodeQL/security-sensitive checks queued, RustSec in progress. Draft.
+- #268: current-main backlog snapshot PR; CI, CodeQL and security-sensitive checks queued, RustSec in progress. Draft.
 - Remote execution remains disabled.
 
 ## External gates
