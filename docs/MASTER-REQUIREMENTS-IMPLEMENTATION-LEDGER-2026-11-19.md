@@ -57,3 +57,16 @@ Reconciles retrieved project discussions and repository evidence. Historical cha
 
 ## Completion rule
 Complete only when code is on main, exact merged SHA CI is green and evidence scope is explicit. Contracts/demo projections do not prove live production functionality.
+
+## Open PR reconciliation (2026-11-19)
+| PR | Scope | Disposition |
+|---|---|---|
+| #275 | Adaptive capability architecture | Keep as architecture guidance; ensure no authority conflation |
+| #276 | Backlog/evidence reconciliation | Keep; reconcile with this ledger |
+| #277 | Atomic telemetry/lease concurrency tests | Keep; exact-head CI and test coverage review |
+| #278 | Owner-consent withdrawal lease revocation tests | Keep; exact-head CI and revocation race review |
+| #279 | Operator inventory v2 projection contract | Keep; review against authenticated-source boundary |
+| #280 | Bounded inventory v2 projection schema | Keep; exact-head CI/schema test review |
+| #281 | Master ledger + catalogue parity CI | New audit batch; exact-head CI pending |
+
+Candidate sequence after CI: #277/#278 safety tests, #280 schema, #279 design contract, #276 evidence doc, #275 architecture doc, #281 ledger/parity. This is not approval to merge.
