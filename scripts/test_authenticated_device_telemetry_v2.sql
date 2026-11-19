@@ -305,7 +305,7 @@ BEGIN
  SELECT count(*) INTO v_audits FROM ujani_control.audit_events
  WHERE tenant_id='authenticated-telemetry-test'
    AND event_type='device.telemetry.accepted'
-   AND object_ref='telemetry-device';
+   AND object_ref LIKE 'telemetry-device:telemetry:%';
  IF v_generation <> 1 OR v_sequence <> 1 OR v_consent_generation <> 3
     OR v_consent_state <> 'granted' OR v_samples <> 1 OR v_replays <> 0 OR v_audits <> 1 THEN
   RAISE EXCEPTION 'audit rollback left partial telemetry: generation %, sequence %, samples %, replay %, audit %',
