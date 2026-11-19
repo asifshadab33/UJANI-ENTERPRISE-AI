@@ -37,8 +37,10 @@
 }
 .table-wrap{
   max-width:100%;
+  max-height:26rem;
   overflow-x:auto;
-  overscroll-behavior-inline:contain;
+  overflow-y:auto;
+  overscroll-behavior:contain;
   scrollbar-gutter:stable;
 }
 .table-wrap:focus-visible{
