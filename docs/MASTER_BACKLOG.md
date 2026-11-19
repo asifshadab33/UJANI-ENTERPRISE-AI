@@ -32,19 +32,18 @@
 
 ## Live evidence
 
-- Enterprise main: `d695ac7b916f9c3f1c50d89acb6bab320c152f41`. PR #269 (bounded/versioned operator model-task-match JSON response) merged after exact-head CI on Linux/macOS/Windows, PostgreSQL tenant-isolation, CodeQL, RustSec and security-sensitive checks passed. Post-merge CI/CodeQL/RustSec are running on this main SHA.
-- Public main: `d34c47e2e9dc52c544a33626db9bb46caeea2712`. PR #336 freshness warning, #338 release gates, #340 history/cache consent and #348 hash-bound scan evidence are merged. PR #347 clock reliability also merged after exact-head CI, CodeQL, Android compile, Linux/macOS/Windows native tests and all three installer-size jobs passed; unsigned previews were skipped.
-- Public post-merge CI/CodeQL are running on `d34c47e2e9dc52c544a33626db9bb46caeea2712`; do not claim integration verification until complete.
-- Public PR #351 (`ef4b98d5c0a2ac16f09ccf057a689758dc76ff55`) is the current-main Ollama non-streaming cancellation regression. Frontend/Rust audit, native matrix, Android, installers, CodeQL and security watch are pending; exact-head checks required.
+- Enterprise main: `fbf4a3735dc233e6fff92ebb518dbe5cc012166d`. PR #269 (bounded/versioned operator model-task-match JSON response) and PR #272 (pre-serialization identifier/reason-count bounds) are merged. PR #272 exact-head CI on Linux/macOS/Windows, PostgreSQL tenant-isolation, CodeQL, RustSec and security-sensitive change watch all passed. Post-merge CI, CodeQL and dependency audit are running on this main SHA; no post-merge result is claimed yet.
+- Public main: `d34c47e2e9dc52c544a33626db9bb46caeea2712`. PR #336 freshness warning, #338 release gates, #340 history/cache consent, #348 hash-bound scan evidence and #347 clock reliability are merged. PR #347 exact-head CI, CodeQL, Android compile, native tests on Linux/macOS/Windows and all three installer-size jobs passed; unsigned previews were skipped.
+- Public post-merge main CI and CodeQL on `d34c47e2e9dc52c544a33626db9bb46caeea2712`: **passed**.
+- Public PR #351 (`ef4b98d5c0a2ac16f09ccf057a689758dc76ff55`) is the current-main Ollama non-streaming cancellation regression. Rust lint/core tests, frontend/Rust dependency audits, TypeScript build, workflow lint, both CodeQL analyses, Android compile, security watch and macOS installer passed; Linux/Windows/macOS native tests and Linux/Windows installers were still in progress at the last poll. Exact-head checks required.
 - Public PR #350 was closed as stale/superseded by #351; #344 and #324 were closed as stale. PRs #345/#346/#349 were closed as outdated docs or unnecessary duplicate; branches retained.
-- Enterprise PR #269 establishes a bounded 8 KiB versioned response contract for the evidence-qualified task matcher. It is still **not** an HTTP listener, UI integration, task dispatch or remote execution pathway. The actual authenticated adapter remains a backlog item.
+- Enterprise PR #269/#272 establishes bounded, versioned, read-only task-match response contracts. This is still **not** an authenticated HTTP listener, UI integration, task dispatch or remote execution pathway. The authenticated adapter remains backlog work.
 - Remote execution, automated containment and production public release remain disabled pending their separate evidence gates.
 
 ## Current dependency evidence
-- Public frontend and Rust dependency audits passed on exact-head PR #347; Public main checks after merge are still running.
-- Enterprise RustSec audit and CodeQL passed on exact-head PR #269; post-merge checks are still running.
+- Public main CI and CodeQL after #347 passed. PR #351 exact-head dependency audits passed.
+- Enterprise PR #272 exact-head RustSec audit and CodeQL passed. Post-merge main dependency audit/CI/CodeQL are running.
 - Physical-device behaviour, production signing/updater rollback and independent external security review remain unverified release gates.
-
 
 ## External gates
 Production identity/OIDC, KMS/HSM/TPM, device physical trust, OS sandbox enforcement, signing, backup/restore, rollback, deployment and independent penetration tests require external access/manual validation.
