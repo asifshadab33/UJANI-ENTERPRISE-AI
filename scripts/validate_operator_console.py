@@ -30,7 +30,7 @@ def _css_block_end(css: str, opening: int) -> int | None:
 
 
 def _css_rules(css: str, conditions: tuple[str, ...] = ()) -> list[dict]:
-    """Return active CSS rules with their enclosing at-rules; ignore comments."""
+    """Return CSS rules with their enclosing at-rules; comments are not rules."""
     source = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
     rules = []
     cursor = 0
@@ -83,52 +83,138 @@ def _css_rules(css: str, conditions: tuple[str, ...] = ()) -> list[dict]:
     return rules
 
 
-def _css_rule_matches(
-    css: str,
-    selectors: tuple[str, ...],
-    property_pattern: str,
-    value_pattern: str,
-    required_condition: str | None = None,
-) -> bool:
-    """Match a declaration only in a real rule, not a comment or print-only block."""
-    for rule in _css_rules(css):
-        if not set(selectors).intersection(rule["selectors"]):
+def _media_query_applies_to_screen(query_list: str) -> bool:
+    """Conservatively evaluate media-type alternatives for screen applicability."""
+    for alternative in query_list.split(","):
+        query = alternative.strip().casefold()
+        if not query:
             continue
-        conditions = " ".join(rule["conditions"])
-        if "print" in conditions:
-            continue
-        if required_condition and required_condition not in conditions:
-            continue
-        if re.search(
-            rf"\b{property_pattern}\s*:\s*{value_pattern}",
-            rule["declarations"],
-            flags=re.I,
-        ):
+        if query.startswith("only "):
+            query = query[5:].strip()
+        negated = query.startswith("not ")
+        if negated:
+            query = query[4:].strip()
+        media_type = re.split(r"\band\b|(?=\()", query, maxsplit=1)[0].strip()
+        if media_type in ("", "all", "screen"):
+            applies = True
+        elif media_type in ("print", "speech"):
+            applies = False
+        else:
+            applies = False
+        if negated:
+            applies = not applies
+        if applies:
             return True
     return False
 
 
+def _rule_applies_to_screen(rule: dict) -> bool:
+    for condition in rule["conditions"]:
+        if condition.startswith("@media"):
+            query_list = condition[len("@media"):].strip()
+            if not _media_query_applies_to_screen(query_list):
+                return False
+    return True
+
+
+def _rule_selects_reduced_motion(rule: dict) -> bool:
+    for condition in rule["conditions"]:
+        if not condition.startswith("@media"):
+            continue
+        query_list = condition[len("@media"):].strip()
+        for alternative in query_list.split(","):
+            query = alternative.casefold()
+            if (
+                "prefers-reduced-motion" in query
+                and "no-preference" not in query
+                and re.search(r"prefers-reduced-motion\s*:\s*reduce\b", query)
+                and not query.strip().startswith("not ")
+            ):
+                return True
+    return False
+
+
+def _css_declarations(block: str) -> list[tuple[str, str]]:
+    """Parse declaration names exactly so --custom properties cannot impersonate CSS."""
+    result = []
+    for declaration in block.split(";"):
+        if ":" not in declaration:
+            continue
+        name, value = declaration.split(":", 1)
+        name = name.strip().casefold()
+        value = value.strip().casefold()
+        if name and not name.startswith("--") and value:
+            result.append((name, value))
+    return result
+
+
+def _css_rule_matches(
+    css: str,
+    selectors: tuple[str, ...],
+    properties: tuple[str, ...],
+    allowed_values: tuple[str, ...] | None = None,
+    required_condition: str | None = None,
+) -> bool:
+    """Match an exact CSS property in a rule that can apply to the screen."""
+    for rule in _css_rules(css):
+        if not set(selectors).intersection(rule["selectors"]):
+            continue
+        if not _rule_applies_to_screen(rule):
+            continue
+        if required_condition == "prefers-reduced-motion: reduce" and not _rule_selects_reduced_motion(rule):
+            continue
+        for name, value in _css_declarations(rule["declarations"]):
+            if name not in properties:
+                continue
+            normalized = value.replace("!important", "").strip()
+            if allowed_values is None or normalized in allowed_values:
+                return True
+    return False
+
+
 def _validate_css_rule_parser() -> None:
-    """Prove comment removal, enclosing media conditions and nested rules work."""
+    """Cover media alternatives, negation, exact properties and reduced-motion values."""
     fixture = """
         /* tbody tr:hover td { background: red; } */
         @media print { tbody tr:hover td { background: red; } }
+        @media screen, print { tbody tr:hover td { background: red; } }
+        @media not screen { tbody tr:focus-within td { background: blue; } }
         @media screen {
             @supports (display: grid) {
-                tbody tr:focus-within td { background: blue; }
+                .table-wrap:focus-visible { outline: 3px solid blue; }
             }
         }
+        @media (prefers-reduced-motion: no-preference) { td, th { transition: none; } }
         @media (prefers-reduced-motion: reduce) { td, th { transition: none; } }
+        @media (prefers-reduced-motion: reduce) { td, th { transition-duration: .01ms!important; } }
+        @media (prefers-reduced-motion: reduce) { td, th { --background: red; } }
     """
+    assert _css_rule_matches(
+        fixture, ("tbody tr:hover td",), ("background", "background-color")
+    ), "A screen-applicable alternative must satisfy the hover rule."
     assert not _css_rule_matches(
-        fixture, ("tbody tr:hover td",), r"background(?:-color)?", r"[^;}]+"
-    ), "Commented or print-only hover rules must not satisfy screen styling."
+        fixture, ("tbody tr:focus-within td",), ("background", "background-color")
+    ), "A not-screen rule must not satisfy a screen requirement."
     assert _css_rule_matches(
-        fixture, ("tbody tr:focus-within td",), r"background(?:-color)?", r"[^;}]+"
-    ), "Nested screen focus rules must be recognised."
+        fixture, (".table-wrap:focus-visible",), ("outline",)
+    ), "Nested screen keyboard-focus rules must be recognised."
+    assert not _css_rule_matches(
+        fixture, ("td", "th"), ("transition",), ("none",),
+        "prefers-reduced-motion: reduce",
+    ) is False, "The positive reduced-motion fixture must pass."
+    negative = "@media (prefers-reduced-motion: no-preference) { td { transition: none; } }"
+    assert not _css_rule_matches(
+        negative, ("td",), ("transition",), ("none",),
+        "prefers-reduced-motion: reduce",
+    ), "No-preference must not satisfy a reduced-motion requirement."
+    custom = "tbody tr:focus-within td { --background: red; }"
+    assert not _css_rule_matches(
+        custom, ("tbody tr:focus-within td",), ("background", "background-color")
+    ), "A custom property must not impersonate a background declaration."
     assert _css_rule_matches(
-        fixture, ("td", "th"), "transition", "none", "prefers-reduced-motion"
-    ), "Reduced-motion declarations must be scoped to their actual media block."
+        fixture, ("td", "th"), ("transition-duration",), (".01ms",),
+        "prefers-reduced-motion: reduce",
+    ), "The checked-in .01ms duration form must be accepted."
 
 
 
@@ -209,6 +295,17 @@ def main():
     assert "Load demo data" in readme and "synthetic devices" in readme, "Demo/live separation must be documented."
     assert "unavailable state by default" in readme, "The initial console state must not imply live fleet connectivity."
     assert ".demo-banner" in css and "[hidden]" in css, "Demo warning and hidden initial state must be styled."
+    _validate_css_rule_parser()
+    assert _css_rule_matches(
+        css, ("tbody tr:hover td",), ("background", "background-color")
+    ), "Hovered inventory rows must have a visible screen background."
+    assert _css_rule_matches(
+        css, (".table-wrap:focus-visible",), ("outline",)
+    ) and 'class="table-wrap" tabindex="0" role="region"' in html, "The table region must be keyboard reachable with a visible focus outline."
+    assert _css_rule_matches(
+        css, ("td", "th", "*"), ("transition-duration",), (".01ms",),
+        "prefers-reduced-motion: reduce",
+    ), "Table transitions must be reduced under the actual reduced-motion preference."
     _validate_css_rule_parser()
     assert _css_rule_matches(
         css, ("tbody tr:hover td",), r"background(?:-color)?", r"[^;}]+"
