@@ -154,6 +154,7 @@ def _css_rule_matches(
     properties: tuple[str, ...],
     allowed_values: tuple[str, ...] | None = None,
     required_condition: str | None = None,
+    required_substring: str | None = None,
 ) -> bool:
     """Match an exact CSS property in a rule that can apply to the screen."""
     for rule in _css_rules(css):
@@ -167,8 +168,11 @@ def _css_rule_matches(
             if name not in properties:
                 continue
             normalized = value.replace("!important", "").strip()
-            if allowed_values is None or normalized in allowed_values:
-                return True
+            if allowed_values is not None and normalized not in allowed_values:
+                continue
+            if required_substring and required_substring not in normalized:
+                continue
+            return True
     return False
 
 
@@ -196,12 +200,25 @@ def _validate_css_rule_parser() -> None:
         fixture, ("tbody tr:focus-within td",), ("background", "background-color")
     ), "A not-screen rule must not satisfy a screen requirement."
     assert _css_rule_matches(
-        fixture, (".table-wrap:focus-visible",), ("outline",)
-    ), "Nested screen keyboard-focus rules must be recognised."
+        fixture, (".table-wrap:focus-visible",), ("outline",),
+        required_substring="solid",
+    ), "Nested screen keyboard-focus rules must have a visible outline."
     assert _css_rule_matches(
         fixture, ("td", "th"), ("transition",), ("none",),
         "prefers-reduced-motion: reduce",
     ), "The positive reduced-motion fixture must pass."
+    assert not _css_rule_matches(
+        "/* tbody tr:hover td { background: red; } */",
+        ("tbody tr:hover td",), ("background", "background-color"),
+    ), "Comments must not satisfy a CSS rule assertion."
+    assert not _css_rule_matches(
+        "@media print { tbody tr:hover td { background: red; } }",
+        ("tbody tr:hover td",), ("background", "background-color"),
+    ), "Print-only styles must not satisfy a screen assertion."
+    assert _css_rule_matches(
+        "@media not print { tbody tr:hover td { background: red; } }",
+        ("tbody tr:hover td",), ("background", "background-color"),
+    ), "A negated print media type must remain screen-applicable."
     negative = "@media (prefers-reduced-motion: no-preference) { td { transition: none; } }"
     assert not _css_rule_matches(
         negative, ("td",), ("transition",), ("none",),
@@ -300,7 +317,8 @@ def main():
         css, ("tbody tr:hover td",), ("background", "background-color")
     ), "Hovered inventory rows must have a visible screen background."
     assert _css_rule_matches(
-        css, (".table-wrap:focus-visible",), ("outline",)
+        css, (".table-wrap:focus-visible",), ("outline",),
+        required_substring="solid",
     ) and 'class="table-wrap" tabindex="0" role="region"' in html, "The table region must be keyboard reachable with a visible focus outline."
     assert _css_rule_matches(
         css, ("td", "th", "*"), ("transition-duration",), (".01ms",),
