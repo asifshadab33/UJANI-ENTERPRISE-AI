@@ -446,7 +446,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(directory);
     }
 
-
     #[test]
     fn authenticated_intake_rejects_body_substitution_without_consuming_valid_request() {
         let (registry, device, directory, unique_id) = signed_registry(true);
@@ -454,7 +453,10 @@ mod tests {
         let signed = signed_telemetry_request(&device, &raw, "device-1", unique_id);
         let substituted = String::from_utf8(raw.clone())
             .expect("test telemetry is UTF-8")
-            .replace("\"cpu_available_millis\":1200", "\"cpu_available_millis\":1201");
+            .replace(
+                "\"cpu_available_millis\":1200",
+                "\"cpu_available_millis\":1201",
+            );
         assert_ne!(substituted.as_bytes(), raw.as_slice());
 
         assert_eq!(
