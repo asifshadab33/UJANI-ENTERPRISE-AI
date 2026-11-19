@@ -213,7 +213,8 @@ BEGIN
   (tenant_id, event_id, actor_ref, actor_role, event_type, outcome, object_ref)
  VALUES
   (p_tenant_id, pg_catalog.gen_random_uuid(), p_device_id, 'device',
-   'device.telemetry.accepted', 'accepted', p_device_id);
+   'device.telemetry.accepted', 'accepted',
+   p_device_id || ':telemetry:' || p_generation::text || ':' || p_sequence::text || ':' || pg_catalog.encode(p_payload_digest,'hex'));
 
  -- Audit append can be slow. Do not commit a sample whose request or observation
  -- expired while the durable receipt was being recorded.
