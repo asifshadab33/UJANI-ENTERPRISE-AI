@@ -93,7 +93,9 @@ pub fn authenticate_model_inventory_v2_request(
 
     let payload: Value =
         serde_json::from_slice(raw_body).map_err(|_| ModelInventoryV2IntakeError::InvalidJson)?;
-    // Canonical route is /api/v1/devices/{device_id}/model-inventory;\n    // resolve_route has already validated the prefix and device segment.\n    let path_device_id = model_inventory_device_id(path).unwrap_or_default();
+    // resolve_route above validates the canonical prefix and endpoint.
+    let path_device_id = model_inventory_device_id(path)
+        .ok_or(ModelInventoryV2IntakeError::InvalidRoute)?;
     if path_device_id != signed_request.claims.device_id
         || signed_request.claims.method != MODEL_INVENTORY_REQUEST_METHOD
         || signed_request.claims.resource_id != MODEL_INVENTORY_REQUEST_RESOURCE
