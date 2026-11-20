@@ -149,7 +149,7 @@ fn parse_strict_json(raw: &[u8]) -> Result<Value, serde_json::Error> {
     Ok(value)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModelInventoryV2IntakeError {
     InvalidRoute,
     BodyTooLarge,
