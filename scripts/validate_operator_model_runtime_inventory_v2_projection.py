@@ -6,8 +6,24 @@ from pathlib import Path
 import jsonschema
 
 ROOT = Path(__file__).resolve().parents[1]
-SCHEMA = json.loads((ROOT / "schemas/operator-model-runtime-inventory-v2-projection.schema.json").read_text())
-FIXTURE = json.loads((ROOT / "schemas/test-vectors/operator-model-runtime-inventory-v2-projection.json").read_text())
+
+
+def reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    """Reject duplicate JSON object keys at any nesting depth."""
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON key: {key}")
+        result[key] = value
+    return result
+
+
+def load_json_strict(path: Path) -> object:
+    return json.loads(path.read_text(), object_pairs_hook=reject_duplicate_keys)
+
+
+SCHEMA = load_json_strict(ROOT / "schemas/operator-model-runtime-inventory-v2-projection.schema.json")
+FIXTURE = load_json_strict(ROOT / "schemas/test-vectors/operator-model-runtime-inventory-v2-projection.json")
 
 
 def semantic_errors(projection: dict) -> list[str]:
@@ -50,6 +66,21 @@ def semantic_errors(projection: dict) -> list[str]:
 
 
 def main() -> None:
+    # Python's default decoder silently keeps the last duplicate key. Reject
+    # repeated fields recursively so validation has one unambiguous meaning.
+    duplicate_key_cases = [
+        '{"projection_version":1,"projection_version":1}',
+        '{"record":{"device_ref":"first","device_ref":"second"}}',
+        '{"records":[{"models":[{"capabilities":{"chat":true,"chat":false}}]}]}',
+    ]
+    for raw in duplicate_key_cases:
+        try:
+            json.loads(raw, object_pairs_hook=reject_duplicate_keys)
+        except ValueError as error:
+            assert "duplicate JSON key" in str(error)
+        else:
+            raise AssertionError("duplicate JSON keys unexpectedly accepted")
+
     jsonschema.Draft202012Validator.check_schema(SCHEMA)
     validator = jsonschema.Draft202012Validator(SCHEMA)
     validator.validate(FIXTURE)
