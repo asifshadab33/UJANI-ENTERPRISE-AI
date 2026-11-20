@@ -808,5 +808,4 @@ mod tests {
             Err(IntegrityKeyProviderError::KeyAlreadyExists)
         );
     }
-
 }
