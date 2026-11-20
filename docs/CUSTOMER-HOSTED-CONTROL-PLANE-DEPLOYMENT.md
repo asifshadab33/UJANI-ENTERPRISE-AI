@@ -65,3 +65,14 @@ These functions are `SECURITY INVOKER` database primitives, not HTTP endpoints. 
 8. Independent security review and controlled lab tests.
 
 Remote dispatch remains disabled until all trust, isolation, lease, audit, consent and independent-review gates are complete.
+
+
+## Authenticated telemetry v3 (migration 0016)
+
+Migration `0016_authenticated_device_telemetry_v3.sql` adds the host-facing, tenant-scoped PostgreSQL admission primitive `ujani_control.accept_authenticated_device_telemetry_v3`. The telemetry body is schema version 2 and includes `reservation_revision` in the exact bytes authenticated by the enrolled device signature. The policy parser rejects v1 payloads and validates that generation, sequence, reservation revision and timestamp values fit the database/I-JSON bounds.
+
+The host must call `authenticate_device_telemetry_request` with the raw origin-form `/api/v1/devices/{device_id}/telemetry` path, signed request and exact raw body. It then maps only the returned authenticated principal and parsed sample into the SQL function, sets transaction-local tenant context from the authenticated tenant, and uses the authenticated request ID plus exact-body digest. The SQL function rechecks active key ID/generation, enrolled trust, administrator approval, active owner binding, enabled owner and current owner-consent grant under the audit-lock/device-row lock order. It rejects replay, stale/future or regressed samples and reservation watermarks outside the server revision, then writes replay, sample, device watermark and a digest-only audit receipt atomically.
+
+The runtime role receives only EXECUTE on the new function in addition to the narrow table/column privileges established by migration 0015. The function is `SECURITY INVOKER`, requires no replay-row DELETE privilege, does not verify signatures itself, and never dispatches work. The host must not trust caller-supplied tenant/device/key identity or infer the signed reservation watermark from a database read.
+
+This is a database admission milestone only. A deployable Axum/Tokio listener, OIDC/RBAC identity adapter, SQLx repository/transaction wrapper, production protected-key adapters and external monotonic-anchor integration remain unfinished. Do not enable worker dispatch.
