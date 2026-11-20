@@ -420,7 +420,7 @@ mod tests {
         let (registry, device, directory, unique_id) = signed_registry(true);
         let raw = body(250);
         let signed = signed_telemetry_request(&device, &raw, "device-1", unique_id);
-        let path = "/v1/devices/device-1/telemetry";
+        let path = "/api/v1/devices/device-1/telemetry";
         let first = authenticate_device_telemetry_request(
             &registry,
             HttpMethod::Post,
@@ -463,7 +463,7 @@ mod tests {
             authenticate_device_telemetry_request(
                 &registry,
                 HttpMethod::Post,
-                "/v1/devices/device-1/telemetry",
+                "/api/v1/devices/device-1/telemetry",
                 &signed,
                 substituted.as_bytes(),
                 250,
@@ -475,7 +475,7 @@ mod tests {
         let accepted = authenticate_device_telemetry_request(
             &registry,
             HttpMethod::Post,
-            "/v1/devices/device-1/telemetry",
+            "/api/v1/devices/device-1/telemetry",
             &signed,
             &raw,
             250,
@@ -497,7 +497,7 @@ mod tests {
             authenticate_device_telemetry_request(
                 &registry,
                 HttpMethod::Post,
-                "/v1/devices/device-1/telemetry",
+                "/api/v1/devices/device-1/telemetry",
                 &signed,
                 &raw,
                 250,
@@ -517,7 +517,7 @@ mod tests {
             authenticate_device_telemetry_request(
                 &registry,
                 HttpMethod::Post,
-                "/v1/devices/device-1/telemetry",
+                "/api/v1/devices/device-1/telemetry",
                 &signed,
                 &raw,
                 250,
@@ -537,7 +537,7 @@ mod tests {
         let error = authenticate_device_telemetry_request(
             &registry,
             HttpMethod::Post,
-            "/v1/devices/device-1/telemetry",
+            "/api/v1/devices/device-1/telemetry",
             &signed,
             &raw,
             250,
@@ -568,7 +568,7 @@ mod tests {
         let error = authenticate_device_telemetry_request(
             &registry,
             HttpMethod::Post,
-            "/v1/devices/device-1/telemetry",
+            "/api/v1/devices/device-1/telemetry",
             &signed,
             &oversized,
             250,
