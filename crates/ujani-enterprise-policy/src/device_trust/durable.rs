@@ -2587,6 +2587,78 @@ mod tests {
     }
 
     #[test]
+    fn protected_integrity_key_rotation_preserves_enrolled_devices_after_old_key_retirement() {
+        use crate::integrity_key_provider::{IntegrityKeyPurpose, TestIntegrityKeyProvider};
+
+        let path = path();
+        let admin = test_signing_key("provider-rotation-preserve-admin");
+        let device = test_signing_key("provider-rotation-preserve-device");
+        let provider = Arc::new(TestIntegrityKeyProvider::default());
+        let purpose = IntegrityKeyPurpose::DeviceTrustRegistry;
+        provider.provision_key(purpose, "registry-v1").unwrap();
+        provider.activate_key(purpose, "registry-v1").unwrap();
+
+        let registry = DurableDeviceRegistry::open_with_key_provider(
+            &path,
+            vec![("admin-v1".into(), admin.verifying_key())],
+            provider.clone(),
+        )
+        .unwrap();
+        registry
+            .apply_admin_command(&enroll(&admin, &device), 200)
+            .unwrap();
+        assert_eq!(registry.device_count().unwrap(), 1);
+        drop(registry);
+
+        provider.provision_key(purpose, "registry-v2").unwrap();
+        provider.activate_key(purpose, "registry-v2").unwrap();
+        // Opening with v2 verifies the v1 snapshot, then persists it under v2.
+        let rotated = DurableDeviceRegistry::open_with_key_provider(
+            &path,
+            vec![("admin-v1".into(), admin.verifying_key())],
+            provider.clone(),
+        )
+        .unwrap();
+        assert_eq!(rotated.device_count().unwrap(), 1);
+        drop(rotated);
+
+        provider.retire_key(purpose, "registry-v1").unwrap();
+        let reopened = DurableDeviceRegistry::open_with_key_provider(
+            &path,
+            vec![("admin-v1".into(), admin.verifying_key())],
+            provider,
+        )
+        .unwrap();
+        assert_eq!(reopened.device_count().unwrap(), 1);
+
+        let body = b"lease request after integrity key rotation";
+        let claims = DeviceRequestClaims {
+            tenant_id: "tenant-a".into(),
+            device_id: "device-1".into(),
+            key_id: "device-key-v1".into(),
+            key_generation: 1,
+            request_id: test_nonce("request-after-integrity-key-retirement"),
+            issued_at_unix_ms: 300,
+            expires_at_unix_ms: 500,
+            method: "POST".into(),
+            resource_id: "lease:renew".into(),
+            workload_id: "workload-1".into(),
+            manifest_sha256: Sha256::digest(b"manifest-v1").into(),
+            body_sha256: Sha256::digest(body).into(),
+        };
+        let signed = SignedDeviceRequest {
+            signature: device.sign(&device_request_bytes(&claims)).to_bytes(),
+            claims,
+        };
+        assert!(reopened.authenticate_request(&signed, body, 350).is_ok());
+
+        drop(reopened);
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(suffix(&path, ".bak"));
+        let _ = fs::remove_file(suffix(&path, ".lock"));
+    }
+
+    #[test]
     fn protected_key_provider_unavailable_fails_closed_on_first_snapshot() {
         use crate::integrity_key_provider::TestIntegrityKeyProvider;
 
