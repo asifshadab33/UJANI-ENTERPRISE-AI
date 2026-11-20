@@ -36,7 +36,7 @@ impl<'de> Deserialize<'de> for StrictJsonValue {
     where
         D: serde::Deserializer<'de>,
     {
-        deserializer.deserialize_any(StrictJsonValueVisitor)
+        serde::Deserializer::deserialize_any(deserializer, StrictJsonValueVisitor)
     }
 }
 
