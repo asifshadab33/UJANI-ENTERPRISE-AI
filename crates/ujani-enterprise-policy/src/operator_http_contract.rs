@@ -202,6 +202,19 @@ pub fn resolve_route(method: HttpMethod, path: &str) -> Option<RouteContract> {
 /// The hosting adapter must enforce `RouteContract::max_body_bytes` against the
 /// raw request body before parsing. Signature, expiry, generation, tenant and
 /// replay checks are performed by the durable registry.
+fn owner_consent_device_id(path: &str) -> Option<&str> {
+    let contract = resolve_route(HttpMethod::Post, path)?;
+    if contract.route != OperatorHttpRoute::DeviceOwnerConsent
+        || contract.principal != RoutePrincipal::EnrolledDeviceSignature
+    {
+        return None;
+    }
+    path.split('/')
+        .nth(4)
+        .filter(|device_id| valid_path_segment(device_id))
+}
+
+/// Dispatch a parsed owner-consent command only for its device-authenticated route.
 pub fn dispatch_owner_consent_command(
     method: HttpMethod,
     path: &str,
@@ -209,15 +222,10 @@ pub fn dispatch_owner_consent_command(
     command: &super::device_trust::SignedOwnerConsentCommand,
     now_unix_ms: u64,
 ) -> Result<Option<u64>, super::device_trust::durable::DurableDeviceTrustError> {
-    let Some(contract) = resolve_route(method, path) else {
-        return Ok(None);
-    };
-    if contract.route != OperatorHttpRoute::DeviceOwnerConsent
-        || contract.principal != RoutePrincipal::EnrolledDeviceSignature
-    {
+    if method != HttpMethod::Post {
         return Ok(None);
     }
-    let Some(device_id) = path.split('/').nth(4) else {
+    let Some(device_id) = owner_consent_device_id(path) else {
         return Ok(None);
     };
     if device_id != command.device_id {
@@ -457,7 +465,23 @@ mod strict_path_canonicalization_regressions {
 
 #[cfg(test)]
 mod path_segment_boundary_regressions {
-    use super::valid_path_segment;
+    use super::{owner_consent_device_id, valid_path_segment};
+
+    #[test]
+    fn owner_consent_path_extracts_only_the_canonical_api_v1_device_segment() {
+        assert_eq!(
+            owner_consent_device_id("/api/v1/devices/device-01/owner-consent"),
+            Some("device-01")
+        );
+        assert_eq!(
+            owner_consent_device_id("/v1/devices/device-01/owner-consent"),
+            None
+        );
+        assert_eq!(
+            owner_consent_device_id("/api/v1/devices/../owner-consent"),
+            None
+        );
+    }
 
     #[test]
     fn accepts_only_bounded_ascii_device_and_lease_identifiers() {
