@@ -627,6 +627,19 @@ def validate_model_runtime_inventory_v2() -> None:
     unknown_model_field = copy.deepcopy(fixture)
     unknown_model_field["models"][0]["private_prompt"] = "must-not-be-present"
     assert list(validator.iter_errors(unknown_model_field))
+
+    # Capability names are a closed v2 vocabulary; future names require a schema version.
+    unknown_capability_name = copy.deepcopy(fixture)
+    unknown_capability_name["models"][0]["capabilities"][0]["name"] = "future_vendor_capability"
+    assert list(validator.iter_errors(unknown_capability_name))
+
+    # Future runtime providers may be represented, but are not selectable until supported.
+    unsupported_provider = copy.deepcopy(fixture)
+    unsupported_provider["runtimes"][0]["provider"] = "future-runtime"
+    validator.validate(unsupported_provider)
+    assert _v2_select_explicit_model(
+        unsupported_provider, "example/model:1.0", "chat", now, 5_000
+    ) is None
     duplicate_capability = copy.deepcopy(fixture)
     duplicate_capability["models"][0]["capabilities"].append(
         copy.deepcopy(duplicate_capability["models"][0]["capabilities"][0])

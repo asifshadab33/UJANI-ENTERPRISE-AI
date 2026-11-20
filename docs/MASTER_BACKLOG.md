@@ -1,6 +1,6 @@
 # UJANI Consolidated Master Backlog — Enterprise AI
 
-**Snapshot:** 2026-11-19 evening. Enterprise main at snapshot: `9603c9c5f52d8ac176f7d48f50b1a11037b96175`. Post-merge CI/security checks are still running; this is not a production-readiness claim.
+**Snapshot:** 20 November 2026. Enterprise main after tenant-isolation PR #309: `b556baba6afea8d939c023cc43afd1706376cab2`. This is an implementation/evidence snapshot, not a production-readiness claim.
 
 ## Product boundary
 
@@ -34,10 +34,10 @@
 
 ## Evidence snapshot (verify live GitHub refs before acting)
 
-- Today's earlier merges: #281 catalogue parity/master ledger, #288 concurrent telemetry/lease admission regression and #290 bounded projection semantics.
-- This run merged #289 inventory-v2 preflight boundary tests, #293 oversized authenticated lease-body rejection tests and #292 accessible responsive operator inventory tables.
-- At snapshot time, main CI was pending, RustSec was in progress and CodeQL was queued on `9603c9c5...`; previous main `bf512837...` passed those checks but does not prove the new SHA.
-- At snapshot time, PR #291 was open for CSS hover/focus/reduced-motion validation; its then-current head was `6e38357f...` and exact-head checks are pending.
-- Remote execution and automated containment remain disabled. Physical-device, production KMS, deployment, rollback, backup/DR and independent penetration tests require external infrastructure and access.
+- Today's earlier merges: #304 canonical API-v1 route alignment; #307 generation-bound authenticated telemetry v3 admission (including PostgreSQL fixture-collision and digest-decoding corrections); #308 fail-closed model-match audit-outage regression. This pass merged #309 tenant-isolation coverage for operator model matching.
+- Post-merge main checks for `b556baba...` were queued/in progress at the time of this snapshot; do not transfer the previous `f48bf4ab...` green CI/CodeQL/RustSec state to the new main SHA.
+- PR #310 clarifies model-inventory v2 runtime-provider and capability-name semantics. Its exact head `f8b8c8b9...` passed Enterprise CI, CodeQL, RustSec and security-watch checks, but it is one commit behind main after #309 and must be revalidated against the current base before merge.
+- Enterprise model-inventory v2 remains a database admission primitive plus authenticated request/preflight boundary, not a deployed hosting adapter or live operator read API. The operator projection is still draft/read-only.
+- Remote execution and automated containment remain disabled. Physical-device, production KMS/HSM/TPM custody, external anti-rollback, deployment, rollback, backup/DR and independent penetration tests require external infrastructure and access.
 
 **Completion rule:** no contract, fixture, demo view or policy primitive is counted as a live production service. Merge only exact-head, current-base PRs with all required checks and review blockers resolved.

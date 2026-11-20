@@ -10,7 +10,7 @@ model-runtime-inventory-v2 is a language-neutral, read-only descriptor for local
 
 ## Descriptor semantics
 
-schema_version is exactly 2. Runtime IDs and provider names are open strings within strict bounds; this permits future runtimes without vendor-specific assumptions. Unknown providers and unknown capabilities may be represented, but they are never treated as supported or usable.
+schema_version is exactly 2. Runtime IDs and provider names are open strings within strict bounds, so future runtimes can be represented without vendor-specific assumptions. Each consumer still applies an explicit supported-provider/adapter allowlist; an unknown or unsupported provider may be retained as metadata but is never selectable until that runtime is deliberately supported. Capability names are a closed v2 vocabulary: a known capability may have status `unknown`, but a new capability name requires a schema-version change and is rejected by v2.
 
 Platform and aggregate host-hardware measurements, every capability and metadata group, and each accelerator carry an evidence record with source, confidence and observation time. Host platform and resource facts are accepted only with fresh OS evidence; model resource estimates remain separately identified as estimates. Preserve the distinction between OS-observed facts, runtime-reported facts, signed/published catalogue claims, estimates and unknown values. Estimates must not be promoted to verified facts. Consumers apply a local freshness window to generated_at_unix_ms and each evidence timestamp; stale or future-dated evidence is not usable for placement or model selection.
 
