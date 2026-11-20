@@ -50,6 +50,15 @@ impl ModelInventoryV2IntakeError {
     }
 }
 
+/// Extract the device identifier only from the canonical API-v1 model-inventory route.
+fn model_inventory_device_id(path: &str) -> Option<&str> {
+    let route = resolve_route(HttpMethod::Post, path)?;
+    if route.route != OperatorHttpRoute::DeviceModelInventory {
+        return None;
+    }
+    path.split('/').nth(4)
+}
+
 /// Domain-separated manifest digest selected by the server-side route.
 pub fn model_inventory_v2_request_manifest_digest() -> [u8; 32] {
     Sha256::digest(MODEL_INVENTORY_BINDING_DOMAIN).into()
@@ -84,7 +93,9 @@ pub fn authenticate_model_inventory_v2_request(
 
     let payload: Value =
         serde_json::from_slice(raw_body).map_err(|_| ModelInventoryV2IntakeError::InvalidJson)?;
-    let path_device_id = path.split('/').nth(3).unwrap_or_default();
+    // resolve_route above validates the canonical prefix and endpoint.
+    let path_device_id =
+        model_inventory_device_id(path).ok_or(ModelInventoryV2IntakeError::InvalidRoute)?;
     if path_device_id != signed_request.claims.device_id
         || signed_request.claims.method != MODEL_INVENTORY_REQUEST_METHOD
         || signed_request.claims.resource_id != MODEL_INVENTORY_REQUEST_RESOURCE
@@ -167,6 +178,26 @@ mod tests {
             Sha256::digest(b"UJANI-ENTERPRISE-DEVICE-TELEMETRY-REQUEST-V1\\0").into();
         assert_eq!(model_inventory_v2_request_manifest_digest(), expected);
         assert_ne!(model_inventory_v2_request_manifest_digest(), telemetry);
+    }
+
+    #[test]
+    fn model_inventory_path_extracts_only_the_canonical_api_v1_device_segment() {
+        assert_eq!(
+            model_inventory_device_id("/api/v1/devices/device-01/model-inventory"),
+            Some("device-01")
+        );
+        assert_eq!(
+            model_inventory_device_id("/v1/devices/device-01/model-inventory"),
+            None
+        );
+        assert_eq!(
+            model_inventory_device_id("/api/v1/devices/../model-inventory"),
+            None
+        );
+        assert_eq!(
+            model_inventory_device_id("/api/v1/devices/device-01/telemetry"),
+            None
+        );
     }
 
     #[test]
