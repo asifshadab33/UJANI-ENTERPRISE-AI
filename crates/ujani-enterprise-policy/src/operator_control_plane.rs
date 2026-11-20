@@ -3851,6 +3851,7 @@ mod tests {
             Err(OperatorServiceError::AuditUnavailable)
         );
     }
+
     #[test]
     fn model_task_match_does_not_cross_tenant_inventory_boundaries() {
         let auth = auth();
@@ -3870,9 +3871,7 @@ mod tests {
             remaining_memory_mb: Some(4096),
             last_seen_unix_ms: 10_100,
         });
-        tenant_b_overview
-            .model_inventory
-            .push(sample_model_inventory("tenant-b-device", 10_100));
+        tenant_b_overview.model_inventory.push(sample_model_inventory("tenant-b-device", 10_100));
         let repo = Arc::new(TestRepo {
             values: Mutex::new(HashMap::from([
                 ("tenant-a".into(), tenant_a_overview),
