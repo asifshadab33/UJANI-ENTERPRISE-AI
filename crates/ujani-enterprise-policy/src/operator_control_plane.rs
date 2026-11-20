@@ -3799,7 +3799,7 @@ mod tests {
             Err(OperatorServiceError::AuditUnavailable)
         );
     }
-}
+
 
     #[test]
     fn model_task_match_fails_closed_when_audit_sink_is_unavailable() {
@@ -3852,6 +3852,8 @@ mod tests {
             Err(OperatorServiceError::AuditUnavailable)
         );
     }
+
+}
 
 // Negative vectors ensure key selection and every token component are authenticated.
 #[cfg(test)]
