@@ -448,3 +448,37 @@ mod strict_path_canonicalization_regressions {
         assert!(resolve_route(HttpMethod::Post, &path).is_none());
     }
 }
+
+#[cfg(test)]
+mod path_segment_boundary_regressions {
+    use super::valid_path_segment;
+
+    #[test]
+    fn accepts_only_bounded_ascii_device_and_lease_identifiers() {
+        assert!(valid_path_segment("device-01"));
+        assert!(valid_path_segment("tenant:device_01.v2"));
+        assert!(valid_path_segment(&"a".repeat(128)));
+
+        for invalid in [
+            "",
+            ".",
+            "..",
+            "device/other",
+            "device\\other",
+            "device%2Fother",
+            "device name",
+            "device?tenant=other",
+            "device#fragment",
+            "device\nheader",
+            "dévïce",
+        ] {
+            assert!(
+                !valid_path_segment(invalid),
+                "unsafe path segment must be rejected: {invalid:?}"
+            );
+        }
+
+        assert!(!valid_path_segment(&"a".repeat(129)));
+    }
+}
+
