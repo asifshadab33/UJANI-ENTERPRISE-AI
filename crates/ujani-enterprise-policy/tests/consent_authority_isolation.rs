@@ -213,3 +213,48 @@ fn tenant_records_and_individual_consents_do_not_cross_tenant_boundaries() {
         Err(AuthorityError::IndividualNotEnabled)
     );
 }
+
+/// Verifies individual opt-out invalidates the active consent and re-enable requires
+/// a strictly newer generation; the audit chain covers both committed decisions.
+#[test]
+fn individual_withdrawal_and_reenable_advance_generation_and_audit() {
+    let authority = MemoryConsentAuthority::default();
+    authority
+        .put_tenant(tenant("tenant-a", true, 1, 100), None, "tenant-enable")
+        .unwrap();
+    authority
+        .put_individual(
+            individual("tenant-a", "user-a", "device-a", 1, 1, 101),
+            None,
+            "user-enable-1",
+        )
+        .unwrap();
+    assert!(authority
+        .authorization_snapshot("tenant-a", "user-a", "device-a", 102)
+        .is_ok());
+
+    let mut withdrawn = individual("tenant-a", "user-a", "device-a", 1, 2, 103);
+    withdrawn.enabled = false;
+    authority
+        .put_individual(withdrawn, Some(1), "user-withdraw-2")
+        .unwrap();
+    assert_eq!(
+        authority.authorization_snapshot("tenant-a", "user-a", "device-a", 104),
+        Err(AuthorityError::IndividualNotEnabled)
+    );
+
+    authority
+        .put_individual(
+            individual("tenant-a", "user-a", "device-a", 1, 3, 105),
+            Some(2),
+            "user-enable-3",
+        )
+        .unwrap();
+    let current = authority
+        .authorization_snapshot("tenant-a", "user-a", "device-a", 106)
+        .unwrap();
+    assert_eq!(current.individual.generation, 3);
+    let audit = authority.audit_log().unwrap();
+    assert_eq!(audit.len(), 3);
+    assert!(ujani_enterprise_policy::collective_defence_authority::verify_audit_chain(&audit));
+}
