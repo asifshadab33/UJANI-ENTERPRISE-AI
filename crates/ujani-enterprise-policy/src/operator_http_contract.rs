@@ -481,4 +481,3 @@ mod path_segment_boundary_regressions {
         assert!(!valid_path_segment(&"a".repeat(129)));
     }
 }
-
