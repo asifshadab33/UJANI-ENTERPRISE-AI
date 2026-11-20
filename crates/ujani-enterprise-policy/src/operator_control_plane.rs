@@ -3924,7 +3924,10 @@ mod tests {
             ),
             Err(OperatorServiceError::ModelInventoryUnavailable)
         );
-        assert_eq!(*repo.loaded_tenants.lock().unwrap(), vec!["tenant-a".to_string()]);
+        assert_eq!(
+            *repo.loaded_tenants.lock().unwrap(),
+            vec!["tenant-a".to_string()]
+        );
 
         // Positive control: the same inventory is valid and compatible when
         // accessed through a session issued to tenant B.
