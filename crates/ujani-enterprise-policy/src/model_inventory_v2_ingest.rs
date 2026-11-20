@@ -132,7 +132,7 @@ impl<'de> Visitor<'de> for StrictJsonValueVisitor {
         let mut values = Map::new();
         while let Some(key) = object.next_key::<String>()? {
             if values.contains_key(&key) {
-                return Err(A::Error::custom(format!("duplicate JSON object key: {key}")));
+                return Err(<A::Error as de::Error>::custom(format!("duplicate JSON object key: {key}")));
             }
             values.insert(key, object.next_value::<StrictJsonValue>()?.0);
         }
