@@ -50,6 +50,15 @@ impl ModelInventoryV2IntakeError {
     }
 }
 
+/// Extract the device identifier only from the canonical API-v1 model-inventory route.
+fn model_inventory_device_id(path: &str) -> Option<&str> {
+    let route = resolve_route(HttpMethod::Post, path)?;
+    if route.route != OperatorHttpRoute::DeviceModelInventory {
+        return None;
+    }
+    path.split('/').nth(4)
+}
+
 /// Domain-separated manifest digest selected by the server-side route.
 pub fn model_inventory_v2_request_manifest_digest() -> [u8; 32] {
     Sha256::digest(MODEL_INVENTORY_BINDING_DOMAIN).into()
@@ -167,6 +176,26 @@ mod tests {
             Sha256::digest(b"UJANI-ENTERPRISE-DEVICE-TELEMETRY-REQUEST-V1\\0").into();
         assert_eq!(model_inventory_v2_request_manifest_digest(), expected);
         assert_ne!(model_inventory_v2_request_manifest_digest(), telemetry);
+    }
+
+    #[test]
+    fn model_inventory_path_extracts_only_the_canonical_api_v1_device_segment() {
+        assert_eq!(
+            model_inventory_device_id("/api/v1/devices/device-01/model-inventory"),
+            Some("device-01")
+        );
+        assert_eq!(
+            model_inventory_device_id("/v1/devices/device-01/model-inventory"),
+            None
+        );
+        assert_eq!(
+            model_inventory_device_id("/api/v1/devices/../model-inventory"),
+            None
+        );
+        assert_eq!(
+            model_inventory_device_id("/api/v1/devices/device-01/telemetry"),
+            None
+        );
     }
 
     #[test]
