@@ -555,7 +555,7 @@ def main() -> None:
     # audit_events.event_id is globally unique, so fixed UUID fixtures must not
     # collide with any earlier SQL test executed in the same CI database.
     event_id_pattern = re.compile(
-        r"(?m)^\\s*[^,\\n]*'([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})'\\s*\\);$"
+        r"(?m)^\s*.*'([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})'\s*\);$"
     )
     telemetry_v3_event_ids = event_id_pattern.findall(authenticated_telemetry_v3_test)
     if not telemetry_v3_event_ids or len(set(telemetry_v3_event_ids)) != len(telemetry_v3_event_ids):
@@ -565,7 +565,7 @@ def main() -> None:
             continue
         other_event_ids = set(
             re.findall(
-                r"(?m)^\\s*[^,\\n]*'([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})'\\s*\\);$",
+                r"(?m)^\s*.*'([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})'\s*\);$",
                 sql_test_path.read_text(encoding="utf-8"),
             )
         )
