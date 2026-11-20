@@ -2343,6 +2343,25 @@ mod tests {
                 .ok_or(OperatorRepositoryError::Unavailable)
         }
     }
+    struct RecordingRepo {
+        values: Mutex<HashMap<String, OperatorOverview>>,
+        loaded_tenants: Mutex<Vec<String>>,
+    }
+    impl OperatorOverviewRepository for RecordingRepo {
+        fn load_tenant_overview(
+            &self,
+            tenant: &str,
+            _: u64,
+        ) -> Result<OperatorOverview, OperatorRepositoryError> {
+            self.loaded_tenants.lock().unwrap().push(tenant.to_owned());
+            self.values
+                .lock()
+                .unwrap()
+                .get(tenant)
+                .cloned()
+                .ok_or(OperatorRepositoryError::Unavailable)
+        }
+    }
     #[derive(Default)]
     struct TestAudit {
         events: Mutex<Vec<OperatorAuditEvent>>,
@@ -3849,6 +3868,88 @@ mod tests {
                 10_100,
             ),
             Err(OperatorServiceError::AuditUnavailable)
+        );
+    }
+
+    #[test]
+    fn model_task_match_does_not_cross_tenant_inventory_boundaries() {
+        let authenticator = auth();
+        let token = authenticator
+            .mint_after_identity_verification(&claims("tenant-a"), 10_000)
+            .unwrap();
+        let tenant_a_overview = empty_overview("tenant-a");
+        let mut tenant_b_overview = empty_overview("tenant-b");
+        tenant_b_overview.generated_at_unix_ms = 10_100;
+        tenant_b_overview.devices.push(OperatorDeviceView {
+            device_id: "tenant-b-device".into(),
+            display_name: "Tenant B workstation".into(),
+            platform: "linux".into(),
+            trust_state: "enrolled".into(),
+            availability: "schedulable".into(),
+            remaining_cpu_millis: Some(1500),
+            remaining_memory_mb: Some(4096),
+            last_seen_unix_ms: 10_100,
+        });
+        tenant_b_overview.fleet = OperatorFleetCounts {
+            registered_devices: 1,
+            trusted_consented_devices: 1,
+            online_fresh_devices: 1,
+            schedulable_devices: 1,
+        };
+        tenant_b_overview
+            .model_inventory
+            .push(sample_model_inventory("tenant-b-device", 10_100));
+        let repo = Arc::new(RecordingRepo {
+            values: Mutex::new(HashMap::from([
+                ("tenant-a".into(), tenant_a_overview),
+                ("tenant-b".into(), tenant_b_overview),
+            ])),
+            loaded_tenants: Mutex::new(vec![]),
+        });
+        let audit = Arc::new(TestAudit::default());
+        let service = OperatorControlPlane::new(authenticator, repo.clone(), audit);
+        let requirements = ModelTaskRequirements {
+            required_capabilities: vec![ModelCapability::Chat],
+            minimum_context_length_tokens: Some(4096),
+            minimum_memory_mb: None,
+        };
+        // A tenant-A session is evaluated only against tenant-A's overview.
+        assert_eq!(
+            service.match_model_for_task(
+                &token,
+                "tenant-b-device",
+                "llama3.2:latest",
+                &requirements,
+                10_100,
+            ),
+            Err(OperatorServiceError::ModelInventoryUnavailable)
+        );
+        assert_eq!(
+            *repo.loaded_tenants.lock().unwrap(),
+            vec!["tenant-a".to_string()]
+        );
+
+        // Positive control: the same inventory is valid and compatible when
+        // accessed through a session issued to tenant B.
+        let tenant_b_token = auth()
+            .mint_after_identity_verification(&claims("tenant-b"), 10_000)
+            .unwrap();
+        let tenant_b_match = service
+            .match_model_for_task(
+                &tenant_b_token,
+                "tenant-b-device",
+                "llama3.2:latest",
+                &requirements,
+                10_100,
+            )
+            .unwrap();
+        assert_eq!(
+            tenant_b_match.result.status,
+            crate::model_inventory::ModelFitStatus::Compatible
+        );
+        assert_eq!(
+            *repo.loaded_tenants.lock().unwrap(),
+            vec!["tenant-a".to_string(), "tenant-b".to_string()]
         );
     }
 }
