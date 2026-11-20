@@ -140,10 +140,10 @@ if [[ "$renew_status" -ne 0 || "$withdraw_status" -ne 0 || "$withdraw_waiting" !
 fi
 if ! grep -qx 't' "$renew_out"; then echo "renewal should complete before the waiting withdrawal commits" >&2; cat "$renew_out" >&2; exit 1; fi
 
-state="$("${PSQL[@]}" -c "SELECT CASE WHEN d.owner_consent_state='withdrawn' AND d.consent_generation=2 AND l.state='revoked' AND (SELECT count(*) FROM ujani_control.audit_events a WHERE a.tenant_id=l.tenant_id AND a.object_ref=l.lease_id AND a.event_type IN ('device.lease.renewed','device.lease.revoked'))=2 THEN 'ok' ELSE 'bad' END FROM ujani_control.devices d JOIN ujani_control.leases l USING (tenant_id,device_id) WHERE d.tenant_id=:'tenant' AND d.device_id='race-device' AND l.lease_id='race-lease'")"
+state="$("${PSQL[@]}" -c "SELECT CASE WHEN d.owner_consent_state='withdrawn' AND d.consent_generation=2 AND l.state='revoked' AND (SELECT count(*) FROM ujani_control.audit_events a WHERE a.tenant_id=l.tenant_id AND a.object_ref=l.lease_id AND a.event_type IN ('device.lease.renewed','device.lease.revoked'))=2 THEN 'ok' ELSE 'bad' END FROM ujani_control.devices d JOIN ujani_control.leases l USING (tenant_id,device_id) WHERE d.tenant_id='$tenant' AND d.device_id='race-device' AND l.lease_id='race-lease'")"
 if [[ "$state" != "ok" ]]; then
  echo "withdrawal did not revoke the renewed lease and preserve both audit events: $state" >&2
- "${PSQL[@]}" -c "SELECT owner_consent_state,consent_generation,l.state,l.revision FROM ujani_control.devices d JOIN ujani_control.leases l USING (tenant_id,device_id) WHERE d.tenant_id=:'tenant' AND l.lease_id='race-lease'" >&2
+ "${PSQL[@]}" -c "SELECT owner_consent_state,consent_generation,l.state,l.revision FROM ujani_control.devices d JOIN ujani_control.leases l USING (tenant_id,device_id) WHERE d.tenant_id='$tenant' AND l.lease_id='race-lease'" >&2
  exit 1
 fi
 echo "Owner-consent withdrawal serialized against renewal and revoked the renewed lease."
