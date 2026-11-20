@@ -4,6 +4,8 @@
 
 **Project state:** pre-alpha policy/control-plane prototype. No production endpoint agent, live fleet scheduler, general remote execution or production identity/network service is enabled. Read [Release Gates](RELEASE-GATES.md) and [Operator Control Plane](OPERATOR-CONTROL-PLANE.md) before any pilot.
 
+**Cross-project planning baseline:** [UJANI Master Delivery Plan](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/blob/main/docs/PROJECT_STATUS_AND_RELEASE_GATES.md#ujani-master-delivery-plan--consolidated-cross-project-baseline). This is the single Public/Enterprise planning index; this Enterprise handbook, roadmap, threat model and release gates remain authoritative for technical implementation and deployment details.
+
 ## Contents
 
 1. [Start here](#1-start-here)
