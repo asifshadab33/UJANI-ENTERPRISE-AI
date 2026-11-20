@@ -35,7 +35,10 @@ AS $function$
 DECLARE
  v_device ujani_control.devices%ROWTYPE;
  v_owner_subject_id text;
- v_accepted boolean;
+ v_previous_reservation_revision bigint;
+ v_now timestamptz;
+ v_inserted_request_id bytea;
+ v_updated_rows integer;
 BEGIN
  IF p_tenant_id IS NULL OR p_tenant_id = ''
     OR p_tenant_id IS DISTINCT FROM pg_catalog.current_setting('ujani.tenant_id', true) THEN
@@ -51,7 +54,12 @@ BEGIN
     OR p_request_id IS NULL OR pg_catalog.octet_length(p_request_id) <> 16
     OR p_observed_at IS NULL
     OR p_payload_digest IS NULL OR pg_catalog.octet_length(p_payload_digest) <> 32
-    OR p_event_id IS NULL THEN
+    OR p_event_id IS NULL
+    OR (p_cpu_available_millis IS NOT NULL AND p_cpu_available_millis NOT BETWEEN 0 AND 65535000)
+    OR (p_memory_available_mb IS NOT NULL AND p_memory_available_mb NOT BETWEEN 0 AND 16777216)
+    OR p_thermal_state IS NULL OR p_thermal_state NOT IN ('cool','warm','hot','critical','unknown')
+    OR p_power_state IS NULL OR p_power_state NOT IN ('ac','battery','low_battery','unknown')
+    OR p_participation_state IS NULL OR p_participation_state NOT IN ('idle','interactive','paused','disabled','unknown') THEN
   RETURN false;
  END IF;
 
@@ -127,27 +135,61 @@ BEGIN
   RETURN false;
  END IF;
 
- -- The existing v2 function owns replay, monotonic generation/sequence,
- -- non-decreasing observation time, reservation-watermark and sample writes.
- -- It runs under the same transaction and the device row lock held above.
- v_accepted := ujani_control.accept_device_telemetry_v2(
-  p_tenant_id,
-  p_device_id,
-  p_generation,
-  p_sequence,
-  p_reservation_revision,
-  p_request_id,
-  p_observed_at,
-  p_payload_digest,
-  p_cpu_available_millis,
-  p_memory_available_mb,
-  p_thermal_state,
-  p_power_state,
-  p_participation_state
- );
- IF v_accepted IS DISTINCT FROM true THEN
+ -- Recheck freshness after acquiring the device lock. The watermark must be
+ -- strictly newer and non-decreasing, and capacity evidence cannot claim a
+ -- reservation snapshot older than the latest accepted sample or newer than
+ -- the server's current reservation revision.
+ v_now := pg_catalog.clock_timestamp();
+ IF p_observed_at < v_now - interval '5 minutes'
+    OR p_observed_at > v_now + interval '60 seconds'
+    OR (v_device.last_seen_at IS NOT NULL AND p_observed_at < v_device.last_seen_at)
+    OR NOT (
+      p_generation > v_device.telemetry_generation
+      OR (p_generation = v_device.telemetry_generation AND p_sequence > v_device.telemetry_sequence)
+    ) THEN
   RETURN false;
  END IF;
+
+ SELECT max(reservation_revision) INTO v_previous_reservation_revision
+ FROM ujani_control.device_telemetry_samples
+ WHERE tenant_id = p_tenant_id AND device_id = p_device_id;
+ IF v_previous_reservation_revision IS NOT NULL
+    AND p_reservation_revision < v_previous_reservation_revision THEN
+  RETURN false;
+ END IF;
+
+ -- Claim replay only after all authority, freshness and ordering checks. There
+ -- is no compensating DELETE privilege: every later failure raises and rolls
+ -- back this claim, sample, watermark and audit as one SQL statement.
+ INSERT INTO ujani_control.request_replays
+  (tenant_id,device_id,request_id,expires_at,operation_digest)
+ VALUES
+  (p_tenant_id,p_device_id,p_request_id,v_now + interval '10 minutes',p_payload_digest)
+ ON CONFLICT (tenant_id,device_id,request_id) DO NOTHING
+ RETURNING request_id INTO v_inserted_request_id;
+ IF v_inserted_request_id IS NULL THEN
+  RETURN false;
+ END IF;
+
+ UPDATE ujani_control.devices
+ SET telemetry_generation = p_generation,
+     telemetry_sequence = p_sequence,
+     last_seen_at = p_observed_at,
+     updated_at = pg_catalog.clock_timestamp()
+ WHERE tenant_id = p_tenant_id AND device_id = p_device_id;
+ GET DIAGNOSTICS v_updated_rows = ROW_COUNT;
+ IF v_updated_rows <> 1 THEN
+  RAISE EXCEPTION 'authenticated telemetry device checkpoint update failed';
+ END IF;
+
+ INSERT INTO ujani_control.device_telemetry_samples
+  (tenant_id,device_id,generation,sequence,request_id,observed_at,
+   payload_digest,reservation_revision,cpu_available_millis,memory_available_mb,
+   thermal_state,power_state,participation_state)
+ VALUES
+  (p_tenant_id,p_device_id,p_generation,p_sequence,p_request_id,p_observed_at,
+   p_payload_digest,p_reservation_revision,p_cpu_available_millis,p_memory_available_mb,
+   p_thermal_state,p_power_state,p_participation_state);
 
  -- Audit contains identifiers, sequence/watermark and a short digest prefix
  -- only; never persist raw telemetry, prompts, process data or file paths.
@@ -183,4 +225,4 @@ $grant$;
 COMMENT ON FUNCTION ujani_control.accept_authenticated_device_telemetry_v3(
  text,text,text,bigint,bigint,bigint,bigint,bytea,timestamptz,bytea,integer,bigint,text,text,text,uuid
 ) IS
- 'SECURITY INVOKER authenticated telemetry v3 admission. The host verifies exact raw bytes and derives tenant/device/key/request identity from the enrolled-device signature. The function locks tenant audit then device, rechecks active key generation, organisation approval, active owner binding, enabled owner and current explicit consent, then delegates replay/monotonic/freshness/reservation-watermark checks and sample persistence to accept_device_telemetry_v2. Audit and sample commit together. No workload is admitted or dispatched.';
+ 'SECURITY INVOKER authenticated telemetry v3 admission. The host verifies exact raw bytes and derives tenant/device/key/request identity from the enrolled-device signature. The function locks tenant audit then device, rechecks active key generation, organisation approval, active owner binding, enabled owner and current explicit consent, then enforces replay, monotonic sequence/time and reservation-watermark rules before atomically committing the sample and audit. No workload is admitted or dispatched.';
