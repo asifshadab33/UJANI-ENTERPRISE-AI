@@ -2250,6 +2250,93 @@ mod tests {
     }
 
     #[test]
+    fn device_key_rotation_and_stale_key_rejection_survive_registry_restart() {
+        let path = path();
+        let admin = test_signing_key("rotation-restart-admin");
+        let old_device = test_signing_key("rotation-restart-old-device");
+        let new_device = test_signing_key("rotation-restart-new-device");
+        let store = open(&path, &admin);
+        store
+            .apply_admin_command(&enroll(&admin, &old_device), 200)
+            .unwrap();
+
+        let body = b"lease renewal request signed by the previous device key";
+        let stale_claims = DeviceRequestClaims {
+            tenant_id: "tenant-a".into(),
+            device_id: "device-1".into(),
+            key_id: "device-key-v1".into(),
+            key_generation: 1,
+            request_id: test_nonce("old-key-request-after-restart"),
+            issued_at_unix_ms: 210,
+            expires_at_unix_ms: 500,
+            method: "POST".into(),
+            resource_id: "lease:renew".into(),
+            workload_id: "workload-1".into(),
+            manifest_sha256: Sha256::digest(b"manifest-v1").into(),
+            body_sha256: Sha256::digest(body).into(),
+        };
+        let stale_request = SignedDeviceRequest {
+            signature: old_device.sign(&device_request_bytes(&stale_claims)).to_bytes(),
+            claims: stale_claims,
+        };
+
+        let mut rotate = SignedDeviceAdminCommand {
+            action: DeviceCommandAction::RotateKey,
+            tenant_id: "tenant-a".into(),
+            device_id: "device-1".into(),
+            admin_key_id: "admin-v1".into(),
+            target_key_id: "device-key-v2".into(),
+            target_public_key: Some(new_device.verifying_key().to_bytes()),
+            issued_at_unix_ms: 300,
+            expires_at_unix_ms: 1_000,
+            nonce: test_nonce("rotation-restart-admin-command"),
+            signature: [0; 64],
+            old_device_signature: None,
+            new_device_signature: None,
+        };
+        rotate.old_device_signature =
+            Some(old_device.sign(&rotation_proof_bytes(&rotate)).to_bytes());
+        rotate.new_device_signature =
+            Some(new_device.sign(&enrollment_proof_bytes(&rotate)).to_bytes());
+        rotate.signature = admin.sign(&admin_command_bytes(&rotate)).to_bytes();
+        assert_eq!(store.apply_admin_command(&rotate, 350), Ok(2));
+        drop(store);
+
+        let reopened = open(&path, &admin);
+        assert_eq!(
+            reopened.authenticate_request(&stale_request, body, 370),
+            Err(DurableDeviceTrustError::Trust(
+                DeviceTrustError::StaleKeyGeneration
+            ))
+        );
+
+        let fresh_claims = DeviceRequestClaims {
+            tenant_id: "tenant-a".into(),
+            device_id: "device-1".into(),
+            key_id: "device-key-v2".into(),
+            key_generation: 2,
+            request_id: test_nonce("new-key-request-after-restart"),
+            issued_at_unix_ms: 360,
+            expires_at_unix_ms: 500,
+            method: "POST".into(),
+            resource_id: "lease:renew".into(),
+            workload_id: "workload-1".into(),
+            manifest_sha256: Sha256::digest(b"manifest-v1").into(),
+            body_sha256: Sha256::digest(body).into(),
+        };
+        let fresh_request = SignedDeviceRequest {
+            signature: new_device.sign(&device_request_bytes(&fresh_claims)).to_bytes(),
+            claims: fresh_claims,
+        };
+        assert!(reopened.authenticate_request(&fresh_request, body, 370).is_ok());
+
+        drop(reopened);
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(suffix(&path, ".bak"));
+        let _ = fs::remove_file(suffix(&path, ".lock"));
+    }
+
+    #[test]
     fn concurrent_handles_consume_a_request_nonce_once() {
         let path = path();
         let admin = SigningKey::from_bytes(&[7; 32]);
