@@ -293,6 +293,12 @@ jobs:
           PGPASSWORD: postgres
         run: |
           "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < scripts/test_transactional_lease_lifecycle.sql
+      - name: Verify owner-consent withdrawal serializes against lease renewal
+        env:
+          PGPASSWORD: postgres
+          PGUSER: postgres
+          PGDATABASE: ujani_test
+        run: bash scripts/test_owner_consent_renewal_concurrency.sh
       - name: Verify concurrent lease expiry reconciliation
         env:
           PGPASSWORD: postgres
