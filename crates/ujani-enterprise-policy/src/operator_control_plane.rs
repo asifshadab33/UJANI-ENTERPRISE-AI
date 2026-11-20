@@ -3874,7 +3874,7 @@ mod tests {
     #[test]
     fn model_task_match_does_not_cross_tenant_inventory_boundaries() {
         let authenticator = auth();
-        let token = auth
+        let token = authenticator
             .mint_after_identity_verification(&claims("tenant-a"), 10_000)
             .unwrap();
         let tenant_a_overview = empty_overview("tenant-a");
