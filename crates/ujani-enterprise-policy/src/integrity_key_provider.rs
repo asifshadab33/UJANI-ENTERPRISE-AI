@@ -791,7 +791,8 @@ mod tests {
             header,
             aad,
             &sealed_v2,
-        ).is_err());
+        )
+        .is_err());
 
         provider.retire_key(purpose, "ledger-sealed-v1").unwrap();
         assert_eq!(
