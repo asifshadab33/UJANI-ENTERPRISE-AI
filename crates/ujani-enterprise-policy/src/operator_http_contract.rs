@@ -400,7 +400,6 @@ mod tests {
     }
 }
 
-
 #[cfg(test)]
 mod strict_path_canonicalization_regressions {
     use super::*;
