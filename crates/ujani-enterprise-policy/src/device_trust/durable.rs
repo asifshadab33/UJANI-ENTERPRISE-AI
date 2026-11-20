@@ -2276,7 +2276,9 @@ mod tests {
             body_sha256: Sha256::digest(body).into(),
         };
         let stale_request = SignedDeviceRequest {
-            signature: old_device.sign(&device_request_bytes(&stale_claims)).to_bytes(),
+            signature: old_device
+                .sign(&device_request_bytes(&stale_claims))
+                .to_bytes(),
             claims: stale_claims,
         };
 
@@ -2325,10 +2327,14 @@ mod tests {
             body_sha256: Sha256::digest(body).into(),
         };
         let fresh_request = SignedDeviceRequest {
-            signature: new_device.sign(&device_request_bytes(&fresh_claims)).to_bytes(),
+            signature: new_device
+                .sign(&device_request_bytes(&fresh_claims))
+                .to_bytes(),
             claims: fresh_claims,
         };
-        assert!(reopened.authenticate_request(&fresh_request, body, 370).is_ok());
+        assert!(reopened
+            .authenticate_request(&fresh_request, body, 370)
+            .is_ok());
 
         drop(reopened);
         let _ = fs::remove_file(&path);
