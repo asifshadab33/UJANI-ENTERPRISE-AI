@@ -59,7 +59,7 @@ BEGIN
  accepted := ujani_control.accept_authenticated_device_telemetry_v3(
   'telemetry-v3-test','telemetry-device','telemetry-key',1,1,1,0,
   decode(repeat('01',16),'hex'),clock_timestamp(),decode(repeat('b1',32),'hex'),
-  1200,4096,'cool','ac','idle','00000000-0000-4000-8000-000000000301');
+  1200,4096,'cool','ac','idle','00000000-0000-4000-8000-000000001601');
  IF accepted IS DISTINCT FROM true THEN
   RAISE EXCEPTION 'fresh authenticated telemetry with both consents should be accepted';
  END IF;
@@ -68,43 +68,43 @@ BEGIN
  accepted := ujani_control.accept_authenticated_device_telemetry_v3(
   'telemetry-v3-test','telemetry-device','telemetry-key',1,1,2,0,
   decode(repeat('01',16),'hex'),clock_timestamp(),decode(repeat('b2',32),'hex'),
-  1200,4096,'cool','ac','idle','00000000-0000-4000-8000-000000000302');
+  1200,4096,'cool','ac','idle','00000000-0000-4000-8000-000000001602');
  IF accepted THEN RAISE EXCEPTION 'replayed request ID was accepted'; END IF;
 
  accepted := ujani_control.accept_authenticated_device_telemetry_v3(
   'telemetry-v3-test','telemetry-device','telemetry-key',1,1,1,0,
   decode(repeat('02',16),'hex'),clock_timestamp(),decode(repeat('b3',32),'hex'),
-  1200,4096,'cool','ac','idle','00000000-0000-4000-8000-000000000303');
+  1200,4096,'cool','ac','idle','00000000-0000-4000-8000-000000001603');
  IF accepted THEN RAISE EXCEPTION 'duplicate generation/sequence was accepted'; END IF;
 
  accepted := ujani_control.accept_authenticated_device_telemetry_v3(
   'telemetry-v3-test','telemetry-device','telemetry-key',1,1,2,0,
   decode(repeat('03',16),'hex'),clock_timestamp()-interval '6 minutes',decode(repeat('b4',32),'hex'),
-  1200,4096,'cool','ac','idle','00000000-0000-4000-8000-000000000304');
+  1200,4096,'cool','ac','idle','00000000-0000-4000-8000-000000001604');
  IF accepted THEN RAISE EXCEPTION 'stale observation was accepted'; END IF;
 
  accepted := ujani_control.accept_authenticated_device_telemetry_v3(
   'telemetry-v3-test','telemetry-device','telemetry-key',1,1,2,0,
   decode(repeat('04',16),'hex'),clock_timestamp()+interval '2 minutes',decode(repeat('b5',32),'hex'),
-  1200,4096,'cool','ac','idle','00000000-0000-4000-8000-000000000305');
+  1200,4096,'cool','ac','idle','00000000-0000-4000-8000-000000001605');
  IF accepted THEN RAISE EXCEPTION 'future observation was accepted'; END IF;
 
  accepted := ujani_control.accept_authenticated_device_telemetry_v3(
   'telemetry-v3-test','telemetry-device','telemetry-key',1,1,2,1,
   decode(repeat('05',16),'hex'),clock_timestamp(),decode(repeat('b6',32),'hex'),
-  1200,4096,'cool','ac','idle','00000000-0000-4000-8000-000000000306');
+  1200,4096,'cool','ac','idle','00000000-0000-4000-8000-000000001606');
  IF accepted THEN RAISE EXCEPTION 'future reservation watermark was accepted'; END IF;
 
  accepted := ujani_control.accept_authenticated_device_telemetry_v3(
   'telemetry-v3-test','telemetry-device','other-key',1,1,2,0,
   decode(repeat('06',16),'hex'),clock_timestamp(),decode(repeat('b7',32),'hex'),
-  1200,4096,'cool','ac','idle','00000000-0000-4000-8000-000000000307');
+  1200,4096,'cool','ac','idle','00000000-0000-4000-8000-000000001607');
  IF accepted THEN RAISE EXCEPTION 'mismatched active key identifier was accepted'; END IF;
 
  accepted := ujani_control.accept_authenticated_device_telemetry_v3(
   'telemetry-v3-test','telemetry-device','telemetry-key',2,1,2,0,
   decode(repeat('07',16),'hex'),clock_timestamp(),decode(repeat('b8',32),'hex'),
-  1200,4096,'cool','ac','idle','00000000-0000-4000-8000-000000000308');
+  1200,4096,'cool','ac','idle','00000000-0000-4000-8000-000000001608');
  IF accepted THEN RAISE EXCEPTION 'stale key generation was accepted'; END IF;
 
  SELECT count(*) INTO sample_count FROM ujani_control.device_telemetry_samples
@@ -134,7 +134,7 @@ BEGIN
  accepted := ujani_control.accept_authenticated_device_telemetry_v3(
   'telemetry-v3-test','telemetry-device','telemetry-key',1,1,2,0,
   decode(repeat('08',16),'hex'),clock_timestamp(),decode(repeat('b9',32),'hex'),
-  1200,4096,'cool','ac','idle','00000000-0000-4000-8000-000000000309');
+  1200,4096,'cool','ac','idle','00000000-0000-4000-8000-000000001609');
  IF accepted THEN RAISE EXCEPTION 'paused owner consent did not block telemetry'; END IF;
 END;
 $paused$;
@@ -152,7 +152,7 @@ BEGIN
  accepted := ujani_control.accept_authenticated_device_telemetry_v3(
   'telemetry-v3-test','telemetry-device','telemetry-key',1,1,2,0,
   decode(repeat('09',16),'hex'),clock_timestamp(),decode(repeat('ba',32),'hex'),
-  1200,4096,'cool','ac','idle','00000000-0000-4000-8000-000000000310');
+  1200,4096,'cool','ac','idle','00000000-0000-4000-8000-000000001610');
  IF accepted IS DISTINCT FROM true THEN
   RAISE EXCEPTION 'fresh owner re-consent should restore telemetry admission';
  END IF;
@@ -174,7 +174,7 @@ BEGIN
  accepted := ujani_control.accept_authenticated_device_telemetry_v3(
   'telemetry-v3-test','telemetry-device','telemetry-key',1,1,3,0,
   decode(repeat('0a',16),'hex'),clock_timestamp(),decode(repeat('bb',32),'hex'),
-  1200,4096,'cool','ac','idle','00000000-0000-4000-8000-000000000311');
+  1200,4096,'cool','ac','idle','00000000-0000-4000-8000-000000001611');
  IF accepted THEN RAISE EXCEPTION 'previous owner consent survived owner replacement'; END IF;
 END;
 $replaced$;
@@ -190,7 +190,7 @@ BEGIN
  accepted := ujani_control.accept_authenticated_device_telemetry_v3(
   'telemetry-v3-test','telemetry-device','telemetry-key',1,1,3,0,
   decode(repeat('0b',16),'hex'),clock_timestamp(),decode(repeat('bc',32),'hex'),
-  1200,4096,'cool','ac','idle','00000000-0000-4000-8000-000000000312');
+  1200,4096,'cool','ac','idle','00000000-0000-4000-8000-000000001612');
  IF accepted IS DISTINCT FROM true THEN
   RAISE EXCEPTION 'new owner explicit consent should restore admission';
  END IF;
@@ -208,7 +208,7 @@ BEGIN
  accepted := ujani_control.accept_authenticated_device_telemetry_v3(
   'telemetry-v3-test','telemetry-device','telemetry-key',1,1,4,0,
   decode(repeat('0c',16),'hex'),clock_timestamp(),decode(repeat('bd',32),'hex'),
-  1200,4096,'cool','ac','idle','00000000-0000-4000-8000-000000000313');
+  1200,4096,'cool','ac','idle','00000000-0000-4000-8000-000000001613');
  IF accepted THEN RAISE EXCEPTION 'organisation denial did not block telemetry'; END IF;
 END;
 $admin_denial$;
@@ -223,7 +223,7 @@ BEGIN
  accepted := ujani_control.accept_authenticated_device_telemetry_v3(
   'telemetry-v3-test','telemetry-device','telemetry-key',1,1,4,0,
   decode(repeat('0d',16),'hex'),clock_timestamp(),decode(repeat('be',32),'hex'),
-  1200,4096,'cool','ac','idle','00000000-0000-4000-8000-000000000314');
+  1200,4096,'cool','ac','idle','00000000-0000-4000-8000-000000001614');
  IF accepted THEN RAISE EXCEPTION 'revoked device was admitted'; END IF;
 END;
 $revoked$;
@@ -240,7 +240,7 @@ BEGIN
  accepted := ujani_control.accept_authenticated_device_telemetry_v3(
   'telemetry-v3-test','telemetry-device','telemetry-key',1,1,4,0,
   decode(repeat('0e',16),'hex'),clock_timestamp(),decode(repeat('bf',32),'hex'),
-  1200,4096,'cool','ac','idle','00000000-0000-4000-8000-000000000315');
+  1200,4096,'cool','ac','idle','00000000-0000-4000-8000-000000001615');
  IF accepted IS DISTINCT FROM true THEN
   RAISE EXCEPTION 'fresh telemetry should be accepted before caller rollback';
  END IF;
@@ -260,7 +260,7 @@ BEGIN
    AND request_id=decode(repeat('0e',16),'hex');
  SELECT count(*) INTO audit_count FROM ujani_control.audit_events
  WHERE tenant_id='telemetry-v3-test'
-   AND event_id='00000000-0000-4000-8000-000000000315';
+   AND event_id='00000000-0000-4000-8000-000000001615';
  SELECT telemetry_sequence INTO current_sequence FROM ujani_control.devices
  WHERE tenant_id='telemetry-v3-test' AND device_id='telemetry-device';
  IF sample_count <> 3 OR replay_count <> 0 OR audit_count <> 0 OR current_sequence <> 3 THEN
