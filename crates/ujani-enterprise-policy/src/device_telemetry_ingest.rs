@@ -203,7 +203,9 @@ pub fn authenticate_device_telemetry_request(
     }
 
     let sample = validate_device_telemetry_body(raw_body, now_unix_ms)?;
-    let path_device_id = path.split('/').nth(3).unwrap_or_default();
+    // Canonical route is /api/v1/devices/{device_id}/telemetry; resolve_route has
+    // already validated the fixed prefix and the device segment.
+    let path_device_id = path.split('/').nth(4).unwrap_or_default();
     if path_device_id != sample.device_id
         || signed_request.claims.device_id != sample.device_id
         || signed_request.claims.method != DEVICE_TELEMETRY_REQUEST_METHOD
