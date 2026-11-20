@@ -601,9 +601,10 @@ mod tests {
 
     #[test]
     fn telemetry_watermarks_must_fit_postgres_bigint_and_ijson_timestamp_bounds() {
-        let too_large_revision = String::from_utf8(body(1_000))
-            .unwrap()
-            .replace("\"reservation_revision\":0", "\"reservation_revision\":9223372036854775808");
+        let too_large_revision = String::from_utf8(body(1_000)).unwrap().replace(
+            "\"reservation_revision\":0",
+            "\"reservation_revision\":9223372036854775808",
+        );
         assert_eq!(
             validate_device_telemetry_body(too_large_revision.as_bytes(), 1_000),
             Err(DeviceTelemetryIntakeError::InvalidReservationRevision)
@@ -617,9 +618,10 @@ mod tests {
             Err(DeviceTelemetryIntakeError::InvalidGenerationOrSequence)
         );
 
-        let unsafe_timestamp = String::from_utf8(body(1_000))
-            .unwrap()
-            .replace("\"observed_at_unix_ms\":1000", "\"observed_at_unix_ms\":9007199254740992");
+        let unsafe_timestamp = String::from_utf8(body(1_000)).unwrap().replace(
+            "\"observed_at_unix_ms\":1000",
+            "\"observed_at_unix_ms\":9007199254740992",
+        );
         assert_eq!(
             validate_device_telemetry_body(unsafe_timestamp.as_bytes(), 1_000),
             Err(DeviceTelemetryIntakeError::InvalidResourceMeasurement)
