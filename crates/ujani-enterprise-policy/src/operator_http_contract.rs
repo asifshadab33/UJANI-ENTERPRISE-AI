@@ -97,7 +97,7 @@ pub fn resolve_route(method: HttpMethod, path: &str) -> Option<RouteContract> {
             max_body_bytes: 0,
         });
     }
-    if path == "/v1/operator/overview" && method == HttpMethod::Get {
+    if path == "/api/v1/operator/overview" && method == HttpMethod::Get {
         return Some(RouteContract {
             route: OperatorHttpRoute::OperatorOverview,
             principal: RoutePrincipal::Operator {
@@ -106,7 +106,7 @@ pub fn resolve_route(method: HttpMethod, path: &str) -> Option<RouteContract> {
             max_body_bytes: 0,
         });
     }
-    if path == "/v1/operator/model-task-match" && method == HttpMethod::Post {
+    if path == "/api/v1/operator/model-task-match" && method == HttpMethod::Post {
         return Some(RouteContract {
             route: OperatorHttpRoute::OperatorModelTaskMatch,
             principal: RoutePrincipal::Operator {
@@ -115,7 +115,7 @@ pub fn resolve_route(method: HttpMethod, path: &str) -> Option<RouteContract> {
             max_body_bytes: MAX_MODEL_TASK_MATCH_BODY_BYTES,
         });
     }
-    if path == "/v1/devices/enroll" && method == HttpMethod::Post {
+    if path == "/api/v1/devices/enroll" && method == HttpMethod::Post {
         return Some(RouteContract {
             route: OperatorHttpRoute::DeviceEnrollment,
             principal: RoutePrincipal::Operator {
@@ -124,7 +124,7 @@ pub fn resolve_route(method: HttpMethod, path: &str) -> Option<RouteContract> {
             max_body_bytes: MAX_DEVICE_ENROLLMENT_BODY_BYTES,
         });
     }
-    if path == "/v1/leases/acquire" && method == HttpMethod::Post {
+    if path == "/api/v1/leases/acquire" && method == HttpMethod::Post {
         return Some(RouteContract {
             route: OperatorHttpRoute::LeaseAcquire,
             principal: RoutePrincipal::EnrolledDeviceSignature,
@@ -133,12 +133,13 @@ pub fn resolve_route(method: HttpMethod, path: &str) -> Option<RouteContract> {
     }
 
     // Bound allocation even if a hostile request target contains many segments.
-    let parts: Vec<&str> = path.splitn(6, '/').collect();
-    if parts.len() == 5
-        && parts[1] == "v1"
-        && parts[2] == "devices"
-        && valid_path_segment(parts[3])
-        && parts[4] == "telemetry"
+    let parts: Vec<&str> = path.splitn(7, '/').collect();
+    if parts.len() == 6
+        && parts[1] == "api"
+        && parts[2] == "v1"
+        && parts[3] == "devices"
+        && valid_path_segment(parts[4])
+        && parts[5] == "telemetry"
         && method == HttpMethod::Post
     {
         return Some(RouteContract {
@@ -147,11 +148,12 @@ pub fn resolve_route(method: HttpMethod, path: &str) -> Option<RouteContract> {
             max_body_bytes: MAX_DEVICE_INGEST_BODY_BYTES,
         });
     }
-    if parts.len() == 5
-        && parts[1] == "v1"
-        && parts[2] == "devices"
-        && valid_path_segment(parts[3])
-        && parts[4] == "model-inventory"
+    if parts.len() == 6
+        && parts[1] == "api"
+        && parts[2] == "v1"
+        && parts[3] == "devices"
+        && valid_path_segment(parts[4])
+        && parts[5] == "model-inventory"
         && method == HttpMethod::Post
     {
         return Some(RouteContract {
@@ -160,11 +162,12 @@ pub fn resolve_route(method: HttpMethod, path: &str) -> Option<RouteContract> {
             max_body_bytes: MAX_MODEL_INVENTORY_BODY_BYTES,
         });
     }
-    if parts.len() == 5
-        && parts[1] == "v1"
-        && parts[2] == "devices"
-        && valid_path_segment(parts[3])
-        && parts[4] == "owner-consent"
+    if parts.len() == 6
+        && parts[1] == "api"
+        && parts[2] == "v1"
+        && parts[3] == "devices"
+        && valid_path_segment(parts[4])
+        && parts[5] == "owner-consent"
         && method == HttpMethod::Post
     {
         return Some(RouteContract {
@@ -173,13 +176,14 @@ pub fn resolve_route(method: HttpMethod, path: &str) -> Option<RouteContract> {
             max_body_bytes: MAX_OWNER_CONSENT_BODY_BYTES,
         });
     }
-    if parts.len() == 5
-        && parts[1] == "v1"
-        && parts[2] == "leases"
-        && valid_path_segment(parts[3])
+    if parts.len() == 6
+        && parts[1] == "api"
+        && parts[2] == "v1"
+        && parts[3] == "leases"
+        && valid_path_segment(parts[4])
         && method == HttpMethod::Post
     {
-        let route = match parts[4] {
+        let route = match parts[5] {
             "renew" => OperatorHttpRoute::LeaseRenew,
             "release" => OperatorHttpRoute::LeaseRelease,
             _ => return None,
@@ -213,7 +217,7 @@ pub fn dispatch_owner_consent_command(
     {
         return Ok(None);
     }
-    let Some(device_id) = path.split('/').nth(3) else {
+    let Some(device_id) = path.split('/').nth(4) else {
         return Ok(None);
     };
     if device_id != command.device_id {
@@ -263,7 +267,7 @@ mod tests {
 
     #[test]
     fn overview_is_read_only_and_available_to_viewers() {
-        let route = resolve_route(HttpMethod::Get, "/v1/operator/overview").unwrap();
+        let route = resolve_route(HttpMethod::Get, "/api/v1/operator/overview").unwrap();
         assert_eq!(route.route, OperatorHttpRoute::OperatorOverview);
         assert!(route.permits_operator_role(OperatorRole::Viewer));
         assert!(route.permits_operator_role(OperatorRole::Administrator));
@@ -272,18 +276,18 @@ mod tests {
 
     #[test]
     fn model_task_match_is_read_only_operator_route_with_bounded_request() {
-        let route = resolve_route(HttpMethod::Post, "/v1/operator/model-task-match").unwrap();
+        let route = resolve_route(HttpMethod::Post, "/api/v1/operator/model-task-match").unwrap();
         assert_eq!(route.route, OperatorHttpRoute::OperatorModelTaskMatch);
         assert!(route.permits_operator_role(OperatorRole::Viewer));
         assert!(route.permits_operator_role(OperatorRole::Administrator));
         assert!(route.permits_body_size(MAX_MODEL_TASK_MATCH_BODY_BYTES));
         assert!(!route.permits_body_size(MAX_MODEL_TASK_MATCH_BODY_BYTES + 1));
-        assert!(resolve_route(HttpMethod::Get, "/v1/operator/model-task-match").is_none());
+        assert!(resolve_route(HttpMethod::Get, "/api/v1/operator/model-task-match").is_none());
     }
 
     #[test]
     fn enrollment_requires_administrator_and_is_bounded() {
-        let route = resolve_route(HttpMethod::Post, "/v1/devices/enroll").unwrap();
+        let route = resolve_route(HttpMethod::Post, "/api/v1/devices/enroll").unwrap();
         assert!(!route.permits_operator_role(OperatorRole::Viewer));
         assert!(!route.permits_operator_role(OperatorRole::Operator));
         assert!(route.permits_operator_role(OperatorRole::Administrator));
@@ -295,17 +299,17 @@ mod tests {
     fn device_ingest_and_lease_routes_require_device_signatures() {
         for (path, expected) in [
             (
-                "/v1/devices/device-1/telemetry",
+                "/api/v1/devices/device-1/telemetry",
                 OperatorHttpRoute::DeviceTelemetry,
             ),
             (
-                "/v1/devices/device-1/model-inventory",
+                "/api/v1/devices/device-1/model-inventory",
                 OperatorHttpRoute::DeviceModelInventory,
             ),
-            ("/v1/leases/acquire", OperatorHttpRoute::LeaseAcquire),
-            ("/v1/leases/lease-1/renew", OperatorHttpRoute::LeaseRenew),
+            ("/api/v1/leases/acquire", OperatorHttpRoute::LeaseAcquire),
+            ("/api/v1/leases/lease-1/renew", OperatorHttpRoute::LeaseRenew),
             (
-                "/v1/leases/lease-1/release",
+                "/api/v1/leases/lease-1/release",
                 OperatorHttpRoute::LeaseRelease,
             ),
         ] {
@@ -318,37 +322,37 @@ mod tests {
     #[test]
     fn model_inventory_requires_device_signature_and_has_a_bounded_body() {
         let route =
-            resolve_route(HttpMethod::Post, "/v1/devices/device-1/model-inventory").unwrap();
+            resolve_route(HttpMethod::Post, "/api/v1/devices/device-1/model-inventory").unwrap();
         assert_eq!(route.route, OperatorHttpRoute::DeviceModelInventory);
         assert_eq!(route.principal, RoutePrincipal::EnrolledDeviceSignature);
         assert!(route.permits_body_size(MAX_MODEL_INVENTORY_BODY_BYTES));
         assert!(!route.permits_body_size(MAX_MODEL_INVENTORY_BODY_BYTES + 1));
-        assert!(resolve_route(HttpMethod::Get, "/v1/devices/device-1/model-inventory").is_none());
+        assert!(resolve_route(HttpMethod::Get, "/api/v1/devices/device-1/model-inventory").is_none());
     }
 
     #[test]
     fn owner_consent_requires_device_signature_and_has_a_bounded_body() {
-        let route = resolve_route(HttpMethod::Post, "/v1/devices/device-1/owner-consent").unwrap();
+        let route = resolve_route(HttpMethod::Post, "/api/v1/devices/device-1/owner-consent").unwrap();
         assert_eq!(route.route, OperatorHttpRoute::DeviceOwnerConsent);
         assert_eq!(route.principal, RoutePrincipal::EnrolledDeviceSignature);
         assert!(route.permits_body_size(MAX_OWNER_CONSENT_BODY_BYTES));
         assert!(!route.permits_body_size(MAX_OWNER_CONSENT_BODY_BYTES + 1));
-        assert!(resolve_route(HttpMethod::Get, "/v1/devices/device-1/owner-consent").is_none());
+        assert!(resolve_route(HttpMethod::Get, "/api/v1/devices/device-1/owner-consent").is_none());
     }
 
     #[test]
     fn unknown_methods_paths_and_unsafe_segments_fail_closed() {
-        assert!(resolve_route(HttpMethod::Post, "/v1/operator/overview").is_none());
-        assert!(resolve_route(HttpMethod::Get, "/v1/leases/acquire").is_none());
-        assert!(resolve_route(HttpMethod::Post, "/v1/devices/../telemetry").is_none());
-        assert!(resolve_route(HttpMethod::Post, "/v1/devices/%2fetc/telemetry").is_none());
+        assert!(resolve_route(HttpMethod::Post, "/api/v1/operator/overview").is_none());
+        assert!(resolve_route(HttpMethod::Get, "/api/v1/leases/acquire").is_none());
+        assert!(resolve_route(HttpMethod::Post, "/api/v1/devices/../telemetry").is_none());
+        assert!(resolve_route(HttpMethod::Post, "/api/v1/devices/%2fetc/telemetry").is_none());
         assert!(resolve_route(
             HttpMethod::Post,
-            "/v1/devices/device-1/owner-consent/extra/segments"
+            "/api/v1/devices/device-1/owner-consent/extra/segments"
         )
         .is_none());
-        assert!(resolve_route(HttpMethod::Post, "/v1/leases/lease-1/execute").is_none());
-        assert!(resolve_route(HttpMethod::Post, "/v1/workloads/execute").is_none());
+        assert!(resolve_route(HttpMethod::Post, "/api/v1/leases/lease-1/execute").is_none());
+        assert!(resolve_route(HttpMethod::Post, "/api/v1/workloads/execute").is_none());
         assert!(resolve_route(HttpMethod::Post, "prefix/v1/devices/device-1/telemetry").is_none());
         assert!(resolve_route(HttpMethod::Post, "prefix/v1/leases/lease-1/renew").is_none());
         assert!(resolve_route(HttpMethod::Post, "//v1/devices/device-1/telemetry").is_none());
@@ -357,14 +361,14 @@ mod tests {
     #[test]
     fn rejects_non_canonical_or_ambiguous_request_targets() {
         for path in [
-            "/v1/devices/device-1/telemetry?override=1",
-            "/v1/devices/device-1/telemetry#fragment",
-            "/v1/devices/device-1%2Fother/telemetry",
-            "/v1/devices/device-1\\telemetry",
-            "/v1/devices/device-1/telemetry\r\nX-Injected: yes",
-            "/v1/devices/device-1/telemetry\tX-Injected: yes",
-            "/v1/devices/device-1/telemetry\0X-Injected: yes",
-            "/v1/devices/device-1//telemetry",
+            "/api/v1/devices/device-1/telemetry?override=1",
+            "/api/v1/devices/device-1/telemetry#fragment",
+            "/api/v1/devices/device-1%2Fother/telemetry",
+            "/api/v1/devices/device-1\\telemetry",
+            "/api/v1/devices/device-1/telemetry\r\nX-Injected: yes",
+            "/api/v1/devices/device-1/telemetry\tX-Injected: yes",
+            "/api/v1/devices/device-1/telemetry\0X-Injected: yes",
+            "/api/v1/devices/device-1//telemetry",
         ] {
             assert!(
                 resolve_route(HttpMethod::Post, path).is_none(),
@@ -411,15 +415,15 @@ mod strict_path_canonicalization_regressions {
             "healthz",
             "https://ujani.example/healthz",
             "//v1/operator/overview",
-            "/v1/operator/overview?tenant=other",
-            "/v1/operator/overview#fragment",
-            "/v1/operator/%6fverview",
-            "/v1/operator\\\\overview",
-            "/v1/devices/device-1/telemetry/",
-            "/v1/devices/device-1/telemetry/extra",
-            "/v1/devices//telemetry",
-            "/v1/devices/../telemetry",
-            "/v1/devices/device-1/owner-consent?confirm=true",
+            "/api/v1/operator/overview?tenant=other",
+            "/api/v1/operator/overview#fragment",
+            "/api/v1/operator/%6fverview",
+            "/api/v1/operator\\\\overview",
+            "/api/v1/devices/device-1/telemetry/",
+            "/api/v1/devices/device-1/telemetry/extra",
+            "/api/v1/devices//telemetry",
+            "/api/v1/devices/../telemetry",
+            "/api/v1/devices/device-1/owner-consent?confirm=true",
         ] {
             assert!(
                 resolve_route(HttpMethod::Get, path).is_none()
@@ -431,18 +435,20 @@ mod strict_path_canonicalization_regressions {
 
     #[test]
     fn route_resolution_is_method_specific_and_does_not_accept_body_on_get_routes() {
-        let overview = resolve_route(HttpMethod::Get, "/v1/operator/overview").unwrap();
+        let overview = resolve_route(HttpMethod::Get, "/api/v1/operator/overview").unwrap();
         assert_eq!(overview.route, OperatorHttpRoute::OperatorOverview);
         assert_eq!(overview.max_body_bytes, 0);
         assert!(overview.permits_body_size(0));
         assert!(!overview.permits_body_size(1));
 
-        assert!(resolve_route(HttpMethod::Post, "/v1/operator/overview").is_none());
-        assert!(resolve_route(HttpMethod::Get, "/v1/devices/device-1/telemetry").is_none());
+        assert!(resolve_route(HttpMethod::Post, "/api/v1/operator/overview").is_none());
+        assert!(resolve_route(HttpMethod::Get, "/api/v1/devices/device-1/telemetry").is_none());
     }
 
     #[test]
     fn rejects_overlong_targets_before_route_matching() {
+        assert!(resolve_route(HttpMethod::Get, "/v1/operator/overview").is_none());
+        assert!(resolve_route(HttpMethod::Post, "/v1/devices/device-1/telemetry").is_none());
         let path = format!("/{}", "a".repeat(2048));
         assert!(resolve_route(HttpMethod::Get, &path).is_none());
         assert!(resolve_route(HttpMethod::Post, &path).is_none());
