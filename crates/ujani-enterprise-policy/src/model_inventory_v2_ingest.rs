@@ -132,7 +132,9 @@ impl<'de> Visitor<'de> for StrictJsonValueVisitor {
         let mut values = Map::new();
         while let Some(key) = object.next_key::<String>()? {
             if values.contains_key(&key) {
-                return Err(<A::Error as de::Error>::custom(format!("duplicate JSON object key: {key}")));
+                return Err(<A::Error as de::Error>::custom(format!(
+                    "duplicate JSON object key: {key}"
+                )));
             }
             values.insert(key, object.next_value::<StrictJsonValue>()?.0);
         }
@@ -147,8 +149,7 @@ fn parse_strict_json(raw: &[u8]) -> Result<Value, serde_json::Error> {
     Ok(value)
 }
 
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)
 pub enum ModelInventoryV2IntakeError {
     InvalidRoute,
     BodyTooLarge,
@@ -291,7 +292,8 @@ mod tests {
 
     #[test]
     fn strict_json_decoder_accepts_valid_nested_payload_and_rejects_trailing_data() {
-        let value = parse_strict_json(br#"{"schema_version":2,"models":[{"name":"local"}]}"#).unwrap();
+        let value =
+            parse_strict_json(br#"{"schema_version":2,"models":[{"name":"local"}]}"#).unwrap();
         assert_eq!(value["schema_version"], 2);
         assert_eq!(value["models"][0]["name"], "local");
         assert!(parse_strict_json(br#"{"schema_version":2} trailing"#).is_err());
