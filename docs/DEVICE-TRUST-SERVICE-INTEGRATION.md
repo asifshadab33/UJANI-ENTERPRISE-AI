@@ -93,6 +93,22 @@ Acquire, renew, release and cancel must be idempotent and transactionally couple
 - lease acquire/renew/release/cancel is atomic and idempotent under races;
 - audit event and state mutation are transactionally consistent.
 
+## Authenticated telemetry v3 database boundary
+
+The policy crate now defines a version-2 telemetry body. In addition to the existing privacy-minimised resource and participation fields, the exact signed JSON body must carry a non-negative `reservation_revision`. The parser rejects legacy body version 1, unknown fields, watermarks that cannot fit PostgreSQL `bigint`, unsafe I-JSON timestamps, stale/future observations and oversized resources. This revision is necessary because a capacity sample must identify the reservation snapshot against which it was measured; the host must never infer that watermark from a later database read.
+
+After `authenticate_device_telemetry_request` verifies the exact raw bytes and current local device-owner opt-in, the host must derive all identity fields from the returned `AuthenticatedDeviceRequest`:
+- tenant and device IDs;
+- active key ID and key generation;
+- replay request ID;
+- payload digest and telemetry fields from the returned `DeviceTelemetrySample`, including its signed reservation revision.
+
+The host sets transaction-local `ujani.tenant_id` from the authenticated tenant and calls `ujani_control.accept_authenticated_device_telemetry_v3` in the same PostgreSQL transaction. The database function is `SECURITY INVOKER`; it rechecks the current active key ID/generation, enrolled trust, administrator approval, active owner binding, enabled owner, and the current granted consent row for that owner. It serializes on the tenant audit lock and device row, then enforces replay uniqueness, monotonic generation/sequence, non-decreasing observation time, freshness, and reservation-watermark bounds before atomically writing the sample, replay claim, device watermark and digest-only audit event. It does not require replay-delete privileges and does not persist raw telemetry or private content.
+
+The database function does not verify Ed25519 signatures. Only call it after the Rust exact-body/device-signature boundary has succeeded; never accept tenant, device, key or request identity from untrusted request fields. The host integration must also map the authenticated timestamp safely to PostgreSQL `timestamptz` and generate a unique audit event UUID.
+
+CI now applies migration 0016 and exercises active-key mismatch, key-generation mismatch, owner pause/re-grant, owner replacement, organisation denial, trust revocation, replay, ordering, stale/future samples, reservation watermark bounds, rollback and concurrent duplicate-watermark serialization. These tests validate the database admission primitive, not a deployed HTTP service.
+
 ## Explicit non-goals of the current library layer
 
 The policy and persistence crates do not provide authenticated HTTP endpoints, tenant RBAC/IdP integration, production KMS/HSM/TPM key custody, a separately hosted monotonic anchor, a transactional audit sink, or cross-store atomicity between device registry and lease ledger. Signed telemetry proves which enrolled key asserted the reported values; it does not prove that the values are accurate or measured by a tamper-resistant sensor. A trusted agent, authenticated service boundary, OS-enforced quotas and independent security review remain required. Passing unit tests is necessary but not sufficient to enable remote worker dispatch.
