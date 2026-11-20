@@ -16,13 +16,137 @@ use crate::model_inventory_v2_preflight::{
     validate_enterprise_inventory_v2_preflight, InventoryV2PreflightError,
 };
 use crate::operator_http_contract::{resolve_route, HttpMethod, OperatorHttpRoute};
-use serde_json::Value;
+use serde::de::{self, MapAccess, SeqAccess, Visitor};
+use serde::Deserialize;
+use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
+use std::fmt;
 
 pub const MODEL_INVENTORY_REQUEST_METHOD: &str = "POST";
 pub const MODEL_INVENTORY_REQUEST_RESOURCE: &str = "model-inventory:ingest";
 pub const MODEL_INVENTORY_REQUEST_WORKLOAD: &str = "model-inventory";
 const MODEL_INVENTORY_BINDING_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-MODEL-INVENTORY-V2-REQUEST\0";
+
+/// JSON value decoder that rejects duplicate object keys recursively.
+/// The default Value decoder otherwise silently keeps the last value.
+struct StrictJsonValue(Value);
+
+impl<'de> Deserialize<'de> for StrictJsonValue {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_any(StrictJsonValueVisitor)
+    }
+}
+
+struct StrictJsonValueVisitor;
+
+impl<'de> Visitor<'de> for StrictJsonValueVisitor {
+    type Value = StrictJsonValue;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a JSON value without duplicate object keys")
+    }
+
+    fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(StrictJsonValue(Value::Bool(value)))
+    }
+
+    fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(StrictJsonValue(Value::Number(value.into())))
+    }
+
+    fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(StrictJsonValue(Value::Number(value.into())))
+    }
+
+    fn visit_f64<E>(self, value: f64) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        let number = serde_json::Number::from_f64(value)
+            .ok_or_else(|| E::custom("non-finite JSON number"))?;
+        Ok(StrictJsonValue(Value::Number(number)))
+    }
+
+    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(StrictJsonValue(Value::String(value.to_owned())))
+    }
+
+    fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(StrictJsonValue(Value::String(value)))
+    }
+
+    fn visit_none<E>(self) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(StrictJsonValue(Value::Null))
+    }
+
+    fn visit_unit<E>(self) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(StrictJsonValue(Value::Null))
+    }
+
+    fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        StrictJsonValue::deserialize(deserializer)
+    }
+
+    fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        let mut values = Vec::new();
+        while let Some(value) = sequence.next_element::<StrictJsonValue>()? {
+            values.push(value.0);
+        }
+        Ok(StrictJsonValue(Value::Array(values)))
+    }
+
+    fn visit_map<A>(self, mut object: A) -> Result<Self::Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        let mut values = Map::new();
+        while let Some(key) = object.next_key::<String>()? {
+            if values.contains_key(&key) {
+                return Err(A::Error::custom(format!("duplicate JSON object key: {key}")));
+            }
+            values.insert(key, object.next_value::<StrictJsonValue>()?.0);
+        }
+        Ok(StrictJsonValue(Value::Object(values)))
+    }
+}
+
+fn parse_strict_json(raw: &[u8]) -> Result<Value, serde_json::Error> {
+    let mut deserializer = serde_json::Deserializer::from_slice(raw);
+    let value = StrictJsonValue::deserialize(&mut deserializer)?.0;
+    deserializer.end()?;
+    Ok(value)
+}
+
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModelInventoryV2IntakeError {
@@ -91,8 +215,8 @@ pub fn authenticate_model_inventory_v2_request(
         );
     }
 
-    let payload: Value =
-        serde_json::from_slice(raw_body).map_err(|_| ModelInventoryV2IntakeError::InvalidJson)?;
+    let payload =
+        parse_strict_json(raw_body).map_err(|_| ModelInventoryV2IntakeError::InvalidJson)?;
     // resolve_route above validates the canonical prefix and endpoint.
     let path_device_id =
         model_inventory_device_id(path).ok_or(ModelInventoryV2IntakeError::InvalidRoute)?;
@@ -152,6 +276,26 @@ pub fn map_device_trust_error(error: DurableDeviceTrustError) -> ModelInventoryV
 mod tests {
     use super::*;
     use crate::operator_http_contract::MAX_MODEL_INVENTORY_BODY_BYTES;
+
+    #[test]
+    fn strict_json_decoder_rejects_duplicate_keys_at_all_nesting_levels() {
+        for raw in [
+            br#"{"schema_version":2,"schema_version":2}"# as &[u8],
+            br#"{"collection_context":{"scope":"organisation_enrolled","scope":"personal_local_only"}}"#,
+            br#"{"models":[{"model_id":"one","model_id":"two"}]}"#,
+        ] {
+            let error = parse_strict_json(raw).unwrap_err();
+            assert!(error.to_string().contains("duplicate JSON object key"));
+        }
+    }
+
+    #[test]
+    fn strict_json_decoder_accepts_valid_nested_payload_and_rejects_trailing_data() {
+        let value = parse_strict_json(br#"{"schema_version":2,"models":[{"name":"local"}]}"#).unwrap();
+        assert_eq!(value["schema_version"], 2);
+        assert_eq!(value["models"][0]["name"], "local");
+        assert!(parse_strict_json(br#"{"schema_version":2} trailing"#).is_err());
+    }
 
     #[test]
     fn intake_errors_have_generic_non_leaky_statuses() {
