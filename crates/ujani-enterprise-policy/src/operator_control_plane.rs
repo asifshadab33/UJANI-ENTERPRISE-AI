@@ -3873,7 +3873,7 @@ mod tests {
 
     #[test]
     fn model_task_match_does_not_cross_tenant_inventory_boundaries() {
-        let auth = auth();
+        let authenticator = auth();
         let token = auth
             .mint_after_identity_verification(&claims("tenant-a"), 10_000)
             .unwrap();
@@ -3907,7 +3907,7 @@ mod tests {
             loaded_tenants: Mutex::new(vec![]),
         });
         let audit = Arc::new(TestAudit::default());
-        let service = OperatorControlPlane::new(auth, repo.clone(), audit);
+        let service = OperatorControlPlane::new(authenticator, repo.clone(), audit);
         let requirements = ModelTaskRequirements {
             required_capabilities: vec![ModelCapability::Chat],
             minimum_context_length_tokens: Some(4096),
