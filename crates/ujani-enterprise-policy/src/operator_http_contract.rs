@@ -399,3 +399,53 @@ mod tests {
         );
     }
 }
+
+
+#[cfg(test)]
+mod strict_path_canonicalization_regressions {
+    use super::*;
+
+    #[test]
+    fn rejects_non_origin_form_and_ambiguous_path_spellings() {
+        for path in [
+            "",
+            "healthz",
+            "https://ujani.example/healthz",
+            "//v1/operator/overview",
+            "/v1/operator/overview?tenant=other",
+            "/v1/operator/overview#fragment",
+            "/v1/operator/%6fverview",
+            "/v1/operator\\\\overview",
+            "/v1/devices/device-1/telemetry/",
+            "/v1/devices/device-1/telemetry/extra",
+            "/v1/devices//telemetry",
+            "/v1/devices/../telemetry",
+            "/v1/devices/device-1/owner-consent?confirm=true",
+        ] {
+            assert!(
+                resolve_route(HttpMethod::Get, path).is_none()
+                    && resolve_route(HttpMethod::Post, path).is_none(),
+                "ambiguous or non-canonical path must fail closed: {path:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn route_resolution_is_method_specific_and_does_not_accept_body_on_get_routes() {
+        let overview = resolve_route(HttpMethod::Get, "/v1/operator/overview").unwrap();
+        assert_eq!(overview.route, OperatorHttpRoute::OperatorOverview);
+        assert_eq!(overview.max_body_bytes, 0);
+        assert!(overview.permits_body_size(0));
+        assert!(!overview.permits_body_size(1));
+
+        assert!(resolve_route(HttpMethod::Post, "/v1/operator/overview").is_none());
+        assert!(resolve_route(HttpMethod::Get, "/v1/devices/device-1/telemetry").is_none());
+    }
+
+    #[test]
+    fn rejects_overlong_targets_before_route_matching() {
+        let path = format!("/{}", "a".repeat(2048));
+        assert!(resolve_route(HttpMethod::Get, &path).is_none());
+        assert!(resolve_route(HttpMethod::Post, &path).is_none());
+    }
+}
