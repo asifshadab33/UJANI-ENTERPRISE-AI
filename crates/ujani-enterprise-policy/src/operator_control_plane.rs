@@ -3799,6 +3799,58 @@ mod tests {
             Err(OperatorServiceError::AuditUnavailable)
         );
     }
+
+    #[test]
+    fn model_task_match_fails_closed_when_audit_sink_is_unavailable() {
+        let auth = auth();
+        let token = auth
+            .mint_after_identity_verification(&claims("tenant-a"), 10_000)
+            .unwrap();
+        let mut overview = empty_overview("tenant-a");
+        overview.generated_at_unix_ms = 10_100;
+        overview.devices.push(OperatorDeviceView {
+            device_id: "device-1".into(),
+            display_name: "Lab workstation".into(),
+            platform: "linux".into(),
+            trust_state: "enrolled".into(),
+            availability: "schedulable".into(),
+            remaining_cpu_millis: Some(1500),
+            remaining_memory_mb: Some(4096),
+            last_seen_unix_ms: 10_100,
+        });
+        overview.fleet = OperatorFleetCounts {
+            registered_devices: 1,
+            trusted_consented_devices: 1,
+            online_fresh_devices: 1,
+            schedulable_devices: 1,
+        };
+        overview
+            .model_inventory
+            .push(sample_model_inventory("device-1", 10_100));
+        let repo = Arc::new(TestRepo {
+            values: Mutex::new(HashMap::from([("tenant-a".into(), overview)])),
+        });
+        let audit = Arc::new(TestAudit {
+            events: Mutex::new(vec![]),
+            fail: true,
+        });
+        let service = OperatorControlPlane::new(auth, repo, audit);
+        let requirements = ModelTaskRequirements {
+            required_capabilities: vec![ModelCapability::Chat],
+            minimum_context_length_tokens: Some(4096),
+            minimum_memory_mb: None,
+        };
+        assert_eq!(
+            service.match_model_for_task(
+                &token,
+                "device-1",
+                "llama3.2:latest",
+                &requirements,
+                10_100,
+            ),
+            Err(OperatorServiceError::AuditUnavailable)
+        );
+    }
 }
 
 // Negative vectors ensure key selection and every token component are authenticated.
