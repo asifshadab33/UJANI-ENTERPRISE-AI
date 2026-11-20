@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Static safety checks for the customer-hosted PostgreSQL migration."""
 from pathlib import Path
+import re
 
 ROOT = Path(__file__).resolve().parents[1]
 SQL_PATH = ROOT / "migrations" / "0001_customer_hosted_control_plane.sql"
@@ -24,6 +25,9 @@ LEASE_AUDIT_VIEW_SQL_PATH = ROOT / "migrations" / "0012_lease_audit_evidence_vie
 OWNER_CONSENT_REVOCATION_SQL_PATH = ROOT / "migrations" / "0013_revoke_leases_on_owner_consent_change.sql"
 MODEL_INVENTORY_V2_ADMISSION_SQL_PATH = ROOT / "migrations" / "0014_atomic_model_inventory_v2_admission.sql"
 MODEL_INVENTORY_V2_ADMISSION_TEST_PATH = ROOT / "scripts" / "test_model_inventory_v2_admission.sql"
+AUTHENTICATED_TELEMETRY_V3_SQL_PATH = ROOT / "migrations" / "0016_authenticated_device_telemetry_v3.sql"
+AUTHENTICATED_TELEMETRY_V3_TEST_PATH = ROOT / "scripts" / "test_authenticated_device_telemetry_v3.sql"
+AUTHENTICATED_TELEMETRY_V3_CONCURRENCY_PATH = ROOT / "scripts" / "test_authenticated_device_telemetry_v3_concurrency.sh"
 TENANT_TEST_SQL_PATH = ROOT / "scripts" / "test_customer_hosted_migration.sql"
 
 
@@ -523,7 +527,84 @@ def main() -> None:
     ):
         raise SystemExit("model inventory v2 admission test must run after migration 0013")
 
-    print("Customer-hosted, task-contract, Self-Evolution approval replay, monotonic telemetry, atomic lease admission and model inventory v2 transaction checks passed.")
+    authenticated_telemetry_v3_sql = AUTHENTICATED_TELEMETRY_V3_SQL_PATH.read_text(encoding="utf-8")
+    for required in (
+        "CREATE OR REPLACE FUNCTION ujani_control.accept_authenticated_device_telemetry_v3",
+        "SECURITY INVOKER",
+        "pg_advisory_xact_lock",
+        "v_device.active_key_id IS DISTINCT FROM p_device_key_id",
+        "v_device.key_generation IS DISTINCT FROM p_device_key_generation",
+        "v_device.admin_approval_state <> 'approved'",
+        "v_device.owner_consent_state <> 'granted'",
+        "device_owner_bindings",
+        "owner_consents",
+        "consent_generation = v_device.consent_generation",
+        "device_keys",
+        "ON CONFLICT (tenant_id,device_id,request_id) DO NOTHING",
+        "p_generation > v_device.telemetry_generation",
+        "p_reservation_revision > v_device.reservation_revision",
+        "device.telemetry.accepted",
+        "REVOKE ALL ON FUNCTION",
+    ):
+        if required not in authenticated_telemetry_v3_sql:
+            raise SystemExit("authenticated telemetry v3 migration is missing invariant: " + required)
+    if "SECURITY DEFINER" in authenticated_telemetry_v3_sql or "DELETE FROM ujani_control.request_replays" in authenticated_telemetry_v3_sql:
+        raise SystemExit("authenticated telemetry v3 must preserve caller RLS and avoid replay-delete privileges")
+
+    authenticated_telemetry_v3_test = AUTHENTICATED_TELEMETRY_V3_TEST_PATH.read_text(encoding="utf-8")
+    # audit_events.event_id is globally unique, so fixed UUID fixtures must not
+    # collide with any earlier SQL test executed in the same CI database.
+    event_id_pattern = re.compile(
+        r"(?m)^\s*.*'([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})'\s*\);$"
+    )
+    telemetry_v3_event_ids = event_id_pattern.findall(authenticated_telemetry_v3_test)
+    if not telemetry_v3_event_ids or len(set(telemetry_v3_event_ids)) != len(telemetry_v3_event_ids):
+        raise SystemExit("authenticated telemetry v3 audit event fixtures must be present and unique")
+    for sql_test_path in ROOT.glob("scripts/test_*.sql"):
+        if sql_test_path == AUTHENTICATED_TELEMETRY_V3_TEST_PATH:
+            continue
+        other_event_ids = set(
+            re.findall(
+                r"(?m)^\s*.*'([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})'\s*\);$",
+                sql_test_path.read_text(encoding="utf-8"),
+            )
+        )
+        if set(telemetry_v3_event_ids) & other_event_ids:
+            raise SystemExit(
+                "authenticated telemetry v3 audit event fixtures collide with " + sql_test_path.name
+            )
+    for required in (
+        "replayed request ID was accepted",
+        "duplicate generation/sequence was accepted",
+        "stale observation was accepted",
+        "future observation was accepted",
+        "future reservation watermark was accepted",
+        "mismatched active key identifier was accepted",
+        "paused owner consent did not block telemetry",
+        "previous owner consent survived owner replacement",
+        "organisation denial did not block telemetry",
+        "caller rollback did not restore telemetry, replay, watermark and audit atomically",
+    ):
+        if required not in authenticated_telemetry_v3_test:
+            raise SystemExit("authenticated telemetry v3 regression is missing: " + required)
+    authenticated_telemetry_v3_concurrency = AUTHENTICATED_TELEMETRY_V3_CONCURRENCY_PATH.read_text(encoding="utf-8")
+    for required in (
+        "pg_sleep(1)",
+        "accept_authenticated_device_telemetry_v3",
+        "concurrent duplicate watermark was accepted",
+        "concurrent telemetry admission was not serialized",
+    ):
+        if required not in authenticated_telemetry_v3_concurrency:
+            raise SystemExit("authenticated telemetry v3 concurrency test is missing: " + required)
+    if not (
+        ci_workflow.index("migrations/0015_transactional_lease_lifecycle.sql")
+        < ci_workflow.index("migrations/0016_authenticated_device_telemetry_v3.sql")
+        < ci_workflow.index("scripts/test_authenticated_device_telemetry_v3.sql")
+        < ci_workflow.index("scripts/test_authenticated_device_telemetry_v3_concurrency.sh")
+    ):
+        raise SystemExit("authenticated telemetry v3 tests must run after lease lifecycle migration 0015")
+
+    print("Customer-hosted, task-contract, Self-Evolution approval replay, monotonic telemetry, atomic lease admission, model inventory v2 and authenticated telemetry v3 transaction checks passed.")
 
 
 if __name__ == "__main__":

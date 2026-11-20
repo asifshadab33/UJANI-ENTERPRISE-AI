@@ -1,8 +1,8 @@
 //! Authenticated, bounded device telemetry intake boundary.
 //!
-//! This module validates the privacy-minimised telemetry body, verifies the
-//! exact raw bytes against the enrolled device key without consuming replay
-//! state, and rechecks current owner consent. The caller must pass
+//! This module validates the version-2 privacy-minimised telemetry body, including
+//! the reservation watermark bound to the exact signed bytes, verifies the
+//! enrolled device key without consuming replay state, and rechecks owner consent. The caller must pass
 //! the returned tenant/device identity and sample fields to the tenant-scoped
 //! database transaction; this module does not persist samples or consume replay
 //! state. The database transaction must atomically claim the authenticated
@@ -22,6 +22,8 @@ pub const DEVICE_TELEMETRY_REQUEST_RESOURCE: &str = "device-telemetry:ingest";
 pub const DEVICE_TELEMETRY_REQUEST_WORKLOAD: &str = "device-telemetry";
 pub const MAX_DEVICE_TELEMETRY_AGE_MS: u64 = 5 * 60 * 1000;
 pub const MAX_DEVICE_TELEMETRY_FUTURE_SKEW_MS: u64 = 60 * 1000;
+pub const MAX_DEVICE_TELEMETRY_UNIX_MS: u64 = 9_007_199_254_740_991;
+const MAX_POSTGRES_BIGINT: u64 = i64::MAX as u64;
 const TELEMETRY_BINDING_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-DEVICE-TELEMETRY-REQUEST-V1\0";
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
@@ -63,6 +65,7 @@ struct DeviceTelemetryBody {
     device_id: String,
     generation: u64,
     sequence: u64,
+    reservation_revision: u64,
     observed_at_unix_ms: u64,
     cpu_available_millis: Option<u32>,
     memory_available_mb: Option<u64>,
@@ -76,6 +79,7 @@ pub struct DeviceTelemetrySample {
     pub device_id: String,
     pub generation: u64,
     pub sequence: u64,
+    pub reservation_revision: u64,
     pub observed_at_unix_ms: u64,
     pub cpu_available_millis: Option<u32>,
     pub memory_available_mb: Option<u64>,
@@ -90,6 +94,7 @@ pub enum DeviceTelemetryIntakeError {
     UnsupportedVersion,
     InvalidDeviceId,
     InvalidGenerationOrSequence,
+    InvalidReservationRevision,
     InvalidResourceMeasurement,
     BodyTooLarge,
     StaleOrFutureSample,
@@ -142,14 +147,24 @@ pub fn validate_device_telemetry_body(
     }
     let body: DeviceTelemetryBody = serde_json::from_slice(raw_body)
         .map_err(|_| DeviceTelemetryIntakeError::InvalidResourceMeasurement)?;
-    if body.schema_version != 1 {
+    if body.schema_version != 2 {
         return Err(DeviceTelemetryIntakeError::UnsupportedVersion);
     }
     if !valid_device_id(&body.device_id) {
         return Err(DeviceTelemetryIntakeError::InvalidDeviceId);
     }
-    if body.generation == 0 || body.sequence == 0 {
+    if body.generation == 0
+        || body.sequence == 0
+        || body.generation > MAX_POSTGRES_BIGINT
+        || body.sequence > MAX_POSTGRES_BIGINT
+    {
         return Err(DeviceTelemetryIntakeError::InvalidGenerationOrSequence);
+    }
+    if body.reservation_revision > MAX_POSTGRES_BIGINT {
+        return Err(DeviceTelemetryIntakeError::InvalidReservationRevision);
+    }
+    if body.observed_at_unix_ms > MAX_DEVICE_TELEMETRY_UNIX_MS {
+        return Err(DeviceTelemetryIntakeError::InvalidResourceMeasurement);
     }
     if body
         .cpu_available_millis
@@ -169,6 +184,7 @@ pub fn validate_device_telemetry_body(
         device_id: body.device_id,
         generation: body.generation,
         sequence: body.sequence,
+        reservation_revision: body.reservation_revision,
         observed_at_unix_ms: body.observed_at_unix_ms,
         cpu_available_millis: body.cpu_available_millis,
         memory_available_mb: body.memory_available_mb,
@@ -274,7 +290,7 @@ mod tests {
 
     fn body(observed_at: u64) -> Vec<u8> {
         format!(
-            r#"{{"schema_version":1,"device_id":"device-1","generation":2,"sequence":7,"observed_at_unix_ms":{observed_at},"cpu_available_millis":1200,"memory_available_mb":4096,"thermal_state":"cool","power_state":"ac","participation_state":"idle"}}"#
+            r#"{{"schema_version":2,"device_id":"device-1","generation":2,"sequence":7,"reservation_revision":0,"observed_at_unix_ms":{observed_at},"cpu_available_millis":1200,"memory_available_mb":4096,"thermal_state":"cool","power_state":"ac","participation_state":"idle"}}"#
         )
         .into_bytes()
     }
@@ -556,10 +572,60 @@ mod tests {
         assert_eq!(sample.device_id, "device-1");
         assert_eq!(sample.generation, 2);
         assert_eq!(sample.sequence, 7);
+        assert_eq!(sample.reservation_revision, 0);
         assert_eq!(sample.cpu_available_millis, Some(1_200));
         assert_eq!(sample.memory_available_mb, Some(4_096));
         let expected_digest: [u8; 32] = Sha256::digest(&raw).into();
         assert_eq!(sample.payload_digest, expected_digest);
+    }
+
+    #[test]
+    fn telemetry_v2_requires_a_signed_reservation_watermark_and_rejects_legacy_v1() {
+        let raw = body(1_000);
+        let missing_revision = String::from_utf8(raw.clone())
+            .unwrap()
+            .replace("\"reservation_revision\":0,", "");
+        assert_eq!(
+            validate_device_telemetry_body(missing_revision.as_bytes(), 1_000),
+            Err(DeviceTelemetryIntakeError::InvalidResourceMeasurement)
+        );
+
+        let legacy = String::from_utf8(raw)
+            .unwrap()
+            .replace("\"schema_version\":2", "\"schema_version\":1");
+        assert_eq!(
+            validate_device_telemetry_body(legacy.as_bytes(), 1_000),
+            Err(DeviceTelemetryIntakeError::UnsupportedVersion)
+        );
+    }
+
+    #[test]
+    fn telemetry_watermarks_must_fit_postgres_bigint_and_ijson_timestamp_bounds() {
+        let too_large_revision = String::from_utf8(body(1_000)).unwrap().replace(
+            "\"reservation_revision\":0",
+            "\"reservation_revision\":9223372036854775808",
+        );
+        assert_eq!(
+            validate_device_telemetry_body(too_large_revision.as_bytes(), 1_000),
+            Err(DeviceTelemetryIntakeError::InvalidReservationRevision)
+        );
+
+        let too_large_generation = String::from_utf8(body(1_000))
+            .unwrap()
+            .replace("\"generation\":2", "\"generation\":9223372036854775808");
+        assert_eq!(
+            validate_device_telemetry_body(too_large_generation.as_bytes(), 1_000),
+            Err(DeviceTelemetryIntakeError::InvalidGenerationOrSequence)
+        );
+
+        let unsafe_timestamp = String::from_utf8(body(1_000)).unwrap().replace(
+            "\"observed_at_unix_ms\":1000",
+            "\"observed_at_unix_ms\":9007199254740992",
+        );
+        assert_eq!(
+            validate_device_telemetry_body(unsafe_timestamp.as_bytes(), 1_000),
+            Err(DeviceTelemetryIntakeError::InvalidResourceMeasurement)
+        );
     }
 
     #[test]
@@ -594,7 +660,7 @@ mod tests {
 
     #[test]
     fn rejects_unknown_fields_including_private_content() {
-        let raw = br#"{"schema_version":1,"device_id":"device-1","generation":1,"sequence":1,"observed_at_unix_ms":1000,"cpu_available_millis":1,"memory_available_mb":1,"thermal_state":"cool","power_state":"ac","participation_state":"idle","prompt":"must-not-be-collected"}"#;
+        let raw = br#"{"schema_version":2,"device_id":"device-1","generation":1,"sequence":1,"reservation_revision":0,"observed_at_unix_ms":1000,"cpu_available_millis":1,"memory_available_mb":1,"thermal_state":"cool","power_state":"ac","participation_state":"idle","prompt":"must-not-be-collected"}"#;
         assert_eq!(
             validate_device_telemetry_body(raw, 1_000),
             Err(DeviceTelemetryIntakeError::InvalidResourceMeasurement)
