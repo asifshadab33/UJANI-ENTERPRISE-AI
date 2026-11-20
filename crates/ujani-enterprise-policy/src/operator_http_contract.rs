@@ -315,7 +315,10 @@ mod tests {
                 OperatorHttpRoute::DeviceModelInventory,
             ),
             ("/api/v1/leases/acquire", OperatorHttpRoute::LeaseAcquire),
-            ("/api/v1/leases/lease-1/renew", OperatorHttpRoute::LeaseRenew),
+            (
+                "/api/v1/leases/lease-1/renew",
+                OperatorHttpRoute::LeaseRenew,
+            ),
             (
                 "/api/v1/leases/lease-1/release",
                 OperatorHttpRoute::LeaseRelease,
@@ -335,12 +338,15 @@ mod tests {
         assert_eq!(route.principal, RoutePrincipal::EnrolledDeviceSignature);
         assert!(route.permits_body_size(MAX_MODEL_INVENTORY_BODY_BYTES));
         assert!(!route.permits_body_size(MAX_MODEL_INVENTORY_BODY_BYTES + 1));
-        assert!(resolve_route(HttpMethod::Get, "/api/v1/devices/device-1/model-inventory").is_none());
+        assert!(
+            resolve_route(HttpMethod::Get, "/api/v1/devices/device-1/model-inventory").is_none()
+        );
     }
 
     #[test]
     fn owner_consent_requires_device_signature_and_has_a_bounded_body() {
-        let route = resolve_route(HttpMethod::Post, "/api/v1/devices/device-1/owner-consent").unwrap();
+        let route =
+            resolve_route(HttpMethod::Post, "/api/v1/devices/device-1/owner-consent").unwrap();
         assert_eq!(route.route, OperatorHttpRoute::DeviceOwnerConsent);
         assert_eq!(route.principal, RoutePrincipal::EnrolledDeviceSignature);
         assert!(route.permits_body_size(MAX_OWNER_CONSENT_BODY_BYTES));
