@@ -3853,6 +3853,53 @@ mod tests {
     }
 }
 
+#[test]
+    fn model_task_match_does_not_cross_tenant_inventory_boundaries() {
+        let auth = auth();
+        let token = auth
+            .mint_after_identity_verification(&claims("tenant-a"), 10_000)
+            .unwrap();
+        let tenant_a_overview = empty_overview("tenant-a");
+        let mut tenant_b_overview = empty_overview("tenant-b");
+        tenant_b_overview.generated_at_unix_ms = 10_100;
+        tenant_b_overview.devices.push(OperatorDeviceView {
+            device_id: "tenant-b-device".into(),
+            display_name: "Tenant B workstation".into(),
+            platform: "linux".into(),
+            trust_state: "enrolled".into(),
+            availability: "schedulable".into(),
+            remaining_cpu_millis: Some(1500),
+            remaining_memory_mb: Some(4096),
+            last_seen_unix_ms: 10_100,
+        });
+        tenant_b_overview.model_inventory.push(sample_model_inventory("tenant-b-device", 10_100));
+        let repo = Arc::new(TestRepo {
+            values: Mutex::new(HashMap::from([
+                ("tenant-a".into(), tenant_a_overview),
+                ("tenant-b".into(), tenant_b_overview),
+            ])),
+        });
+        let audit = Arc::new(TestAudit::default());
+        let service = OperatorControlPlane::new(auth, repo, audit);
+        let requirements = ModelTaskRequirements {
+            required_capabilities: vec![ModelCapability::Chat],
+            minimum_context_length_tokens: Some(4096),
+            minimum_memory_mb: None,
+        };
+        // The tenant-A session is evaluated only against tenant-A's overview.
+        // A valid device/model inventory under tenant B must not be discoverable.
+        assert_eq!(
+            service.match_model_for_task(
+                &token,
+                "tenant-b-device",
+                "llama3.2:latest",
+                &requirements,
+                10_100,
+            ),
+            Err(OperatorServiceError::ModelInventoryUnavailable)
+        );
+    }
+
 // Negative vectors ensure key selection and every token component are authenticated.
 #[cfg(test)]
 mod session_keyring_negative_tests {
