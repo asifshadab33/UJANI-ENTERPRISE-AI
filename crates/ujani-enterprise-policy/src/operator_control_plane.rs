@@ -3851,9 +3851,7 @@ mod tests {
             Err(OperatorServiceError::AuditUnavailable)
         );
     }
-}
-
-#[test]
+    #[test]
     fn model_task_match_does_not_cross_tenant_inventory_boundaries() {
         let auth = auth();
         let token = auth
@@ -3872,7 +3870,9 @@ mod tests {
             remaining_memory_mb: Some(4096),
             last_seen_unix_ms: 10_100,
         });
-        tenant_b_overview.model_inventory.push(sample_model_inventory("tenant-b-device", 10_100));
+        tenant_b_overview
+            .model_inventory
+            .push(sample_model_inventory("tenant-b-device", 10_100));
         let repo = Arc::new(TestRepo {
             values: Mutex::new(HashMap::from([
                 ("tenant-a".into(), tenant_a_overview),
@@ -3886,8 +3886,7 @@ mod tests {
             minimum_context_length_tokens: Some(4096),
             minimum_memory_mb: None,
         };
-        // The tenant-A session is evaluated only against tenant-A's overview.
-        // A valid device/model inventory under tenant B must not be discoverable.
+        // A tenant-A session is evaluated only against tenant-A's overview.
         assert_eq!(
             service.match_model_for_task(
                 &token,
@@ -3899,6 +3898,7 @@ mod tests {
             Err(OperatorServiceError::ModelInventoryUnavailable)
         );
     }
+}
 
 // Negative vectors ensure key selection and every token component are authenticated.
 #[cfg(test)]
