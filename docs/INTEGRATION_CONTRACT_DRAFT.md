@@ -12,7 +12,7 @@ The legacy formats described below remain non-wire-compatible: Public peer proto
 
 A separate language-neutral Personal-to-Enterprise task-contract v1 is now present in both repositories, with pinned schemas/reference vectors and native decoders/verifiers. Its existence establishes schema-level compatibility only. It does **not** make the legacy peer envelope or WorkloadManifest interchangeable with v1, nor does it establish authenticated transport, production key-to-principal enrollment, atomic consent/replay/lease admission, live service integration, dispatch or execution. The shared v1 boundary remains disabled for remote execution until those gates are independently satisfied.
 
-| Concern | Public legacy peer protocol v2 | Enterprise legacy WorkloadManifest v1 | Shared task-contract v1 status |
+| Concern | Public legacy peer protocol v2 | Enterprise legacy WorkloadManifest v1 | Demonstrated gap / shared-v1 status |
 |---|---|---|---|
 | Envelope and version | `peer_protocol::TaskEnvelope`, protocol version **2** | `WorkloadManifest` schema version **1**, plus a separate signed admin-approval claim | Different messages, versions and signing domains; neither can be deserialised as the other |
 | Task and sender identity | Task ID and recipient device fingerprint; no sender principal, organisation audience or signed key ID in the envelope | Workload ID and target device in approval claims; approver key ID | No common sender, tenant/audience or worker identity envelope |
