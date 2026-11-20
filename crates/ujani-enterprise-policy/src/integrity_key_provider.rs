@@ -761,4 +761,51 @@ mod tests {
             Err(IntegrityKeyProviderError::KeyAlreadyExists)
         );
     }
+    #[test]
+    fn sealed_snapshot_rotation_keeps_previous_key_until_retirement() {
+        let provider = TestIntegrityKeyProvider::default();
+        let purpose = IntegrityKeyPurpose::ReservationLedger;
+        let header = "UJANI-TEST-LEDGER-ENC-V1";
+        let aad = b"tenant-a:reservation-ledger";
+        let original_v1 = b"synthetic ledger snapshot generation one";
+        provider.provision_key(purpose, "ledger-sealed-v1").unwrap();
+        provider.activate_key(purpose, "ledger-sealed-v1").unwrap();
+        let sealed_v1 = seal_snapshot(&provider, purpose, header, aad, original_v1).unwrap();
+
+        provider.provision_key(purpose, "ledger-sealed-v2").unwrap();
+        provider.activate_key(purpose, "ledger-sealed-v2").unwrap();
+        let original_v2 = b"synthetic ledger snapshot generation two";
+        let sealed_v2 = seal_snapshot(&provider, purpose, header, aad, original_v2).unwrap();
+
+        assert_eq!(
+            open_snapshot(&provider, purpose, header, aad, &sealed_v1).unwrap(),
+            original_v1
+        );
+        assert_eq!(
+            open_snapshot(&provider, purpose, header, aad, &sealed_v2).unwrap(),
+            original_v2
+        );
+        assert!(open_snapshot(
+            &provider,
+            IntegrityKeyPurpose::DeviceTrustRegistry,
+            header,
+            aad,
+            &sealed_v2,
+        ).is_err());
+
+        provider.retire_key(purpose, "ledger-sealed-v1").unwrap();
+        assert_eq!(
+            open_snapshot(&provider, purpose, header, aad, &sealed_v1),
+            Err(IntegrityKeyProviderError::UnknownKey)
+        );
+        assert_eq!(
+            open_snapshot(&provider, purpose, header, aad, &sealed_v2).unwrap(),
+            original_v2
+        );
+        assert_eq!(
+            provider.provision_key(purpose, "ledger-sealed-v1"),
+            Err(IntegrityKeyProviderError::KeyAlreadyExists)
+        );
+    }
+
 }
