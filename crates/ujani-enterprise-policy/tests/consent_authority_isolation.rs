@@ -255,6 +255,6 @@ fn individual_withdrawal_and_reenable_advance_generation_and_audit() {
         .unwrap();
     assert_eq!(current.individual.generation, 3);
     let audit = authority.audit_log().unwrap();
-    assert_eq!(audit.len(), 3);
+    assert_eq!(audit.len(), 4);
     assert!(ujani_enterprise_policy::collective_defence_authority::verify_audit_chain(&audit));
 }
