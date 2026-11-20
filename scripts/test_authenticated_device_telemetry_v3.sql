@@ -126,7 +126,7 @@ RESET ROLE;
 INSERT INTO ujani_control.owner_consents
  (tenant_id,device_id,consent_generation,state,actor_ref,evidence_digest)
 VALUES
- ('telemetry-v3-test','telemetry-device',2,'paused','telemetry-owner',decode(repeat('a5',32)));
+ ('telemetry-v3-test','telemetry-device',2,'paused','telemetry-owner',decode(repeat('a5',32),'hex'));
 SET LOCAL ROLE ujani_runtime;
 DO $paused$
 DECLARE accepted boolean;
