@@ -659,6 +659,28 @@ mod tests {
     }
 
     #[test]
+    fn rejects_duplicate_fields_in_authenticated_telemetry_body() {
+        let original = String::from_utf8(body(1_000)).unwrap();
+        let cases = [
+            ("schema_version", "\"schema_version\":2", "\"schema_version\":2,\"schema_version\":2"),
+            ("generation", "\"generation\":2", "\"generation\":2,\"generation\":3"),
+            ("sequence", "\"sequence\":7", "\"sequence\":7,\"sequence\":8"),
+            ("reservation_revision", "\"reservation_revision\":0", "\"reservation_revision\":0,\"reservation_revision\":0"),
+            ("memory_available_mb", "\"memory_available_mb\":4096", "\"memory_available_mb\":4096,\"memory_available_mb\":4096"),
+        ];
+
+        for (field, needle, duplicate) in cases {
+            let raw = original.replacen(needle, duplicate, 1);
+            assert_ne!(raw, original, "test fixture did not duplicate {field}");
+            assert_eq!(
+                validate_device_telemetry_body(raw.as_bytes(), 1_000),
+                Err(DeviceTelemetryIntakeError::InvalidResourceMeasurement),
+                "duplicate telemetry field {field} must be rejected"
+            );
+        }
+    }
+
+    #[test]
     fn rejects_unknown_fields_including_private_content() {
         let raw = br#"{"schema_version":2,"device_id":"device-1","generation":1,"sequence":1,"reservation_revision":0,"observed_at_unix_ms":1000,"cpu_available_millis":1,"memory_available_mb":1,"thermal_state":"cool","power_state":"ac","participation_state":"idle","prompt":"must-not-be-collected"}"#;
         assert_eq!(
