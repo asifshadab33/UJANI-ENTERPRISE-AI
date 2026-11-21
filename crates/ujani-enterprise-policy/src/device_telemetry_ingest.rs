@@ -662,11 +662,31 @@ mod tests {
     fn rejects_duplicate_fields_in_authenticated_telemetry_body() {
         let original = String::from_utf8(body(1_000)).unwrap();
         let cases = [
-            ("schema_version", "\"schema_version\":2", "\"schema_version\":2,\"schema_version\":2"),
-            ("generation", "\"generation\":2", "\"generation\":2,\"generation\":3"),
-            ("sequence", "\"sequence\":7", "\"sequence\":7,\"sequence\":8"),
-            ("reservation_revision", "\"reservation_revision\":0", "\"reservation_revision\":0,\"reservation_revision\":0"),
-            ("memory_available_mb", "\"memory_available_mb\":4096", "\"memory_available_mb\":4096,\"memory_available_mb\":4096"),
+            (
+                "schema_version",
+                "\"schema_version\":2",
+                "\"schema_version\":2,\"schema_version\":2",
+            ),
+            (
+                "generation",
+                "\"generation\":2",
+                "\"generation\":2,\"generation\":3",
+            ),
+            (
+                "sequence",
+                "\"sequence\":7",
+                "\"sequence\":7,\"sequence\":8",
+            ),
+            (
+                "reservation_revision",
+                "\"reservation_revision\":0",
+                "\"reservation_revision\":0,\"reservation_revision\":0",
+            ),
+            (
+                "memory_available_mb",
+                "\"memory_available_mb\":4096",
+                "\"memory_available_mb\":4096,\"memory_available_mb\":4096",
+            ),
         ];
 
         for (field, needle, duplicate) in cases {
