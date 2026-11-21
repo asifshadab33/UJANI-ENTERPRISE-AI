@@ -7,7 +7,7 @@
 - **Enterprise main:** `864b0a029637eba320ef99649685f2ea812e8989` (PR #314 merge commit). No post-merge workflow runs were returned in this audit.
 - **PR #314 head:** `2ffb17cf706e41d1089f7b0c857519fbcffc9ebe`. Exact-head CI [#44896423107](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/actions/runs/44896423107), CodeQL [#44896423072](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/actions/runs/44896423072), RustSec [#44896423039](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/actions/runs/44896423039), and security watch [#44896423064](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/actions/runs/44896423064) passed before merge. The change is test-only duplicate-field rejection coverage; it does not deploy the authenticated HTTP host, production key provider, service integration, or worker dispatch.
 - **Public main:** `6ec7f950b4e41c4061d356a762e0858829f1d379`; #410 is a documentation-only merge atop functional code `baf75d0f57bd0d85e61d9df946a077f64a80feab`. PR-head checks passed, but post-merge runs for `6ec7f950...` are pending/not returned.
-- **Open PRs:** Enterprise none; Public #396 remains draft and blocked by root/descendant filesystem TOCTOU issue #408.
+- **Open PRs:** Enterprise #315 is a documentation-only status refresh with CI/Rust audit queued; Public #396 remains draft and blocked by root/descendant filesystem TOCTOU issue #408, and #411 is a documentation-only evidence correction with security-watch in progress.
 - **Shared artifacts:** Independently fetched the manifest plus seven listed schema/catalogue/vector artifacts from both current mains; every Git blob SHA matches. The task contract and inventory v2 are schema-compatible, not production-interoperable.
 
 ## Cross-product boundary
