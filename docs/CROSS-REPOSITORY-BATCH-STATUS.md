@@ -14,7 +14,7 @@
 
 Public legacy peer protocol v2 and Enterprise legacy `WorkloadManifest` v1 remain incompatible in envelope shape and signature/approval domains. Shared task-contract v1 is a separate, strict schema with envelope, status and receipt shapes; it does not translate legacy formats or establish transport/authorization.
 
-Remaining end-to-end gaps: authenticated sender/tenant/worker identity binding; server-side owner consent plus organisation approval checked live and revocably; one transactional task-digest/nonce/expiry/replay/lease admission; common state/cancellation acknowledgement; signed receipt ingestion binding task/input/output and consent to durable lease/ledger outcomes; isolation/egress, protected key custody, rollback and recovery. Keep remote execution disabled.
+Remaining end-to-end gaps are tracked in [Public issue #412](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/issues/412): authenticated sender/tenant/worker identity binding; server-side owner consent plus organisation approval checked live and revocably; one transactional task-digest/nonce/expiry/replay/lease admission; common state/cancellation acknowledgement; signed receipt ingestion binding task/input/output and consent to durable lease/ledger outcomes; isolation/egress, protected key custody, rollback and recovery. Keep remote execution disabled.
 
 ## Model/runtime inventory
 
@@ -25,6 +25,6 @@ Inventory v2 parity is verified. It carries runtime/model identity/version, evid
 1. **P0:** Enterprise #20/#90 trusted enrollment, current-state revocation, tenant RBAC, authenticated service, protected key custody and transactional replay/lease lifecycle; production integration is incomplete.
 2. **P1:** real enrolled-device inventory/telemetry and service-backed operator workflows; keep synthetic data clearly labelled.
 3. **P0 before execution:** OS isolation, signed verifiable receipts, exact output binding, recovery and independent security review.
-4. Continue the scheduled sequence without duplicating the canonical backlog: Day 2 Public #120 authorization matrix; Day 3 Public #408 handle-relative filesystem safety; Day 4 Public model catalogue; Day 5 Enterprise trust/dual-consent/lease lifecycle; Day 6 Enterprise resource admission/recovery.
+4. Continue the scheduled sequence without duplicating the canonical backlog: Day 2 Public #120 authorization matrix; Day 3 Public #408 handle-relative filesystem safety; Day 4 Public model catalogue; Day 5 Enterprise trust/dual-consent/lease lifecycle; Day 6 Enterprise resource admission/recovery; Day 7 cross-repository contract tests in Public #412.
 
 Enterprise remains pre-alpha. No live worker execution, autonomous containment, release signing or deployment is authorized by this evidence. Physical-device, KMS/HSM/TPM, production service, rollback/backup and independent penetration testing remain external/manual gates.
