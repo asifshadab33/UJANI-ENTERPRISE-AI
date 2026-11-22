@@ -471,6 +471,13 @@ test("device inventory search, state filters and pagination are bounded and acce
   assert.equal(getElement("device-availability-filter").value, "all");
   assert.equal(getElement("devices").children.length, 50);
   assert.equal(getElement("device-page-status").textContent, "Page 1 of 2");
+
+  getElement("device-trust-filter").value = "revoked";
+  getElement("device-trust-filter").listeners.change();
+  vm.runInContext("renderDevices(devices)", context);
+  assert.equal(getElement("device-trust-filter").value, "all", "a new snapshot must clear stale filters");
+  assert.equal(getElement("device-search").value, "");
+  assert.equal(getElement("devices").children.length, 50);
 });
 
 test("operator console styles preserve keyboard focus and responsive inventory navigation", async () => {
