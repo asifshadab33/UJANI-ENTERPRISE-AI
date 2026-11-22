@@ -456,8 +456,8 @@ test("device inventory search, state filters and pagination are bounded and acce
   getElement("device-trust-filter").listeners.change();
   getElement("device-availability-filter").value = "schedulable";
   getElement("device-availability-filter").listeners.change();
-  assert.equal(getElement("devices").children.length, 1, "combined filters must match the same device");
-  assert.match(collectText(getElement("devices")), /device-52/);
+  assert.equal(getElement("devices").children.length, 1, "search by device ID and combined filters must match the same record");
+  assert.match(collectText(getElement("devices")), /Office workstation 52/);
 
   getElement("device-availability-filter").value = "paused";
   getElement("device-availability-filter").listeners.change();
