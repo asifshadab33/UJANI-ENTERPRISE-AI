@@ -136,3 +136,8 @@ CI should test shared policy/protocol code on Windows, Linux and macOS, and sepa
 6. Only then consider a tightly scoped, opt-in lab workload pilot. Remote execution remains disabled until every release gate in [RELEASE-GATES.md](RELEASE-GATES.md) and [ARCHITECTURE.md](ARCHITECTURE.md) is independently satisfied.
 
 A customer may deploy the control plane centrally while enrolling only selected endpoint platforms. Unsupported endpoints remain visible as unsupported or un-enrolled; they are never silently treated as schedulable resources.
+
+
+## Production authority reference
+
+The accepted production persistence and admission boundary is documented in [`ARCHITECTURE.md`](ARCHITECTURE.md#production-authority-and-admission-boundary). This platform contract does not create a separate authority or service implementation.
