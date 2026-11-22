@@ -62,6 +62,7 @@ The server must not expose secrets, prompts, local paths, employee activity deta
 Serve this directory with any static file server and open `index.html`.
 
 - The page starts with no fleet records and does not invent live data.
+- Device inventory supports case-insensitive search by device name, ID or platform and exact filters for observed trust/availability states. It renders at most 50 rows per page; the filters are presentation-only and do not alter policy or admission. Filters reset when a new snapshot is loaded so stale criteria cannot hide a changed fleet view.
 - Select **Load demo data** to explore the read-only layout. The **DEMO DATA** view uses synthetic devices, model inventory, workloads and approvals only; every record is visibly labelled synthetic and cannot trigger a control-plane action.
 - Select **Refresh live data** to leave demo mode and request the authenticated same-origin API. If the service is unavailable, the console clears the demo records and returns to the unavailable state.
 - The model catalogue remains descriptive only; demo data never installs, approves or dispatches a model. Its same-origin JSON fetch rejects redirects, has a five-second timeout, and enforces a 256 KiB streaming response limit.

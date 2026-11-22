@@ -43,7 +43,25 @@
     </section>
     <section class="panel" aria-labelledby="devices-heading">
       <div class="section-title"><div><p class="eyebrow">TRUST AND AVAILABILITY</p><h2 id="devices-heading">Device inventory</h2></div><span id="device-count" class="muted">No records</span></div>
+      <div class="device-filters" aria-label="Device inventory filters">
+        <label class="device-filter" for="device-search">Search devices
+          <input id="device-search" type="search" placeholder="Name, ID or platform" autocomplete="off">
+        </label>
+        <label class="device-filter" for="device-trust-filter">Trust state
+          <select id="device-trust-filter"><option value="all">All trust states</option></select>
+        </label>
+        <label class="device-filter" for="device-availability-filter">Availability
+          <select id="device-availability-filter"><option value="all">All availability states</option></select>
+        </label>
+        <button id="device-filter-reset" class="button button-secondary" type="button">Reset filters</button>
+      </div>
+      <p id="device-filter-summary" class="muted" role="status" aria-live="polite">No device records available.</p>
       <div class="table-wrap" tabindex="0" role="region" aria-label="Device inventory table"><table><thead><tr><th>Device</th><th>Platform</th><th>Trust</th><th>Availability</th><th>CPU free</th><th>RAM free</th><th>Last seen</th></tr></thead><tbody id="devices"><tr><td colspan="7" class="empty">No live device inventory available.</td></tr></tbody></table></div>
+      <div class="inventory-pagination" aria-label="Device inventory pagination">
+        <button id="device-page-previous" class="button button-secondary" type="button" disabled>Previous</button>
+        <span id="device-page-status" class="muted" role="status" aria-live="polite">Page 1 of 1</span>
+        <button id="device-page-next" class="button button-secondary" type="button" disabled>Next</button>
+      </div>
     </section>
     <section class="panel" aria-labelledby="security-providers-heading">
       <div class="section-title"><div><p class="eyebrow">EXISTING ENDPOINT PROTECTION</p><h2 id="security-providers-heading">Security-provider posture</h2></div><span id="security-provider-count" class="muted">No records</span></div>
