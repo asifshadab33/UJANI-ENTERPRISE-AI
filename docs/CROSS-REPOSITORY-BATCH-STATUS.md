@@ -1,40 +1,28 @@
 # Cross-repository batch status — Enterprise AI
 
-**Evidence snapshot: 22 November 2026 (integration refresh).** This is the Enterprise-specific status pointer for the coordinated 14-day plan. The canonical deduplicated backlog and release evidence register is [Public AI's cross-repository register](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/blob/main/docs/CROSS-REPOSITORY-BATCH-STATUS.md); detailed Enterprise issue tracking remains in [MASTER_BACKLOG.md](MASTER_BACKLOG.md) and the [requirements ledger](MASTER-REQUIREMENTS-IMPLEMENTATION-LEDGER-2026-11-19.md). This file is not a security certification.
+**Evidence snapshot: 22 November 2026 (integration pass).** This is the Enterprise-specific pointer for the coordinated 14-day programme. The canonical deduplicated priority/evidence register is [Public AI's cross-repository status document](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/blob/main/docs/CROSS-REPOSITORY-BATCH-STATUS.md). Enterprise detail remains in [MASTER_BACKLOG.md](MASTER_BACKLOG.md) and the [requirements ledger](MASTER-REQUIREMENTS-IMPLEMENTATION-LEDGER-2026-11-19.md). This is not a security certification.
 
-## Live refresh — 22 November 2026 (supersedes stale rows above)
+## Live main and PR evidence
 
-- **Enterprise main:** `5b99a290468938661f69bc6444010550e6b147c5` (PR #315 documentation-only merge). **Public main:** `d4567ee6843799dae118a64e2b417d59bac1b4f2` (PR #413 merge).
-- PR #315 is merged; Enterprise has no open code PRs. Documentation-refresh PR #316 is the current pointer update and remains open pending exact-head checks. Public documentation-refresh PR #414 is also open pending checks. PR #413 is merged on Public after exact-head CI, CodeQL, Android compatibility, security-sensitive change watch and installer-size audit passed. Preview installers were skipped. No post-merge workflow evidence is available for either current main SHA.
-- The latest independent shared-contract/schema parity check remains 21 Nov. The intervening merges were docs/status-only (#315, #411) and a Public cache implementation (#413); none changed shared contract/catalogue/schema/vector artifacts. This is not a new parity run or protocol interoperability proof.
-- Day 2 Public IPC audit found 45 default commands and 7 feature-gated peer-preview commands represented in the existing security map; the parity guard remains inventory-only. Public #120 remains open for runtime authorization/denial-before-side-effect proof. Public #408 remains a filesystem identity race blocker; Public PR #396 is draft, stale-base and not mergeable.
+- **Enterprise main:** `6d9305f6e671ab15c21acfa3ced10829adf625c2`. Post-merge CI [#45043397417](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/actions/runs/45043397417), CodeQL [#45043397397](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/actions/runs/45043397397) and Rust dependency audit [#45043397407](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/actions/runs/45043397407) are in progress.
+- **Merged PR #318** at `81c406121021db99da0ab33b6f31aaab744048b5`: documents PostgreSQL as the single production authority and prohibits split-brain authorization by the Rust file ledger.
+- **Merged PR #319** at `682c0ce83fbe0ebca9a168429f736bfaee6c67f`: read-only device inventory search/filter/pagination, bounded to 50 rows/page and reset on new snapshot. Exact-head policy tests on Ubuntu/Windows/macOS, PostgreSQL tenant-isolation job, Rust analysis, CodeQL, RustSec and sensitive-change inspection passed; post-merge CI [#45043096606](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/actions/runs/45043096606) passed on that merge SHA. It does not change trust, admission, policy or execution.
+- **Merged PR #320** at `6d9305f6e671ab15c21acfa3ced10829adf625c2`: cross-platform device-agent architecture/packaging contract, documentation only. Exact-head CI, CodeQL, RustSec, PostgreSQL tenant-isolation and security-sensitive change watch passed. The duplicate authority ADR was removed; the document references existing `ARCHITECTURE.md`.
+- **Open Enterprise PRs:** none. Merged branches were retained; no branch deletion is claimed.
+- **Public main:** `bc31ddbf5c874dd651ff4303a595424de398c1c5`; post-merge CI [#45043277205](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/actions/runs/45043277205) and CodeQL [#45043277182](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/actions/runs/45043277182) are in progress. Public #396 remains draft/blocked by #408's directory-enumeration TOCTOU issue.
 
-**Release posture unchanged:** Enterprise is pre-alpha and remote worker execution remains disabled until authenticated enrollment/trust, live dual consent/revocation, replay-resistant transactional leases, protected key custody, isolation, signed receipts and recovery are verified end-to-end. No signing/deployment or physical-device evidence is claimed.
+## Cross-product and model-inventory boundary
 
+- Public legacy peer envelope v2 and Enterprise legacy `WorkloadManifest` v1 remain incompatible; neither is relabelled as shared task-contract v1.
+- Shared task-contract v1 schema, model/runtime inventory v2 schema, consent vector, inventory vector and model catalogue are byte-identical on both current main branches. This is artifact parity only: no real cross-language JCS/Ed25519 vector, live sender/tenant/consent/revocation, transactional replay/lease admission, cancellation/state acknowledgement or signed-receipt-to-ledger interoperability is proven.
+- Public's model inventory is personal-local-only, currently Ollama-based and not transmitted by default. Enterprise requires an enrolled-device context, current owner consent and administrator authorization. Enterprise inventory intake/preflight and PostgreSQL admission tests exist, but there is no deployed authenticated HTTP service, live inventory feed or service-backed operator projection. Catalogue licence/provenance claims remain advisory; exact artifact licence/digest and storage facts require verification.
 
-## Current main and exact evidence
+## Ordered Enterprise priorities
 
-- **Enterprise main:** `864b0a029637eba320ef99649685f2ea812e8989` (PR #314 merge commit). No post-merge workflow runs were returned in this audit.
-- **PR #314 head:** `2ffb17cf706e41d1089f7b0c857519fbcffc9ebe`. Exact-head CI [#44896423107](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/actions/runs/44896423107), CodeQL [#44896423072](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/actions/runs/44896423072), RustSec [#44896423039](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/actions/runs/44896423039), and security watch [#44896423064](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/actions/runs/44896423064) passed before merge. The change is test-only duplicate-field rejection coverage; it does not deploy the authenticated HTTP host, production key provider, service integration, or worker dispatch.
-- **Public main:** `6ec7f950b4e41c4061d356a762e0858829f1d379`; #410 is a documentation-only merge atop functional code `baf75d0f57bd0d85e61d9df946a077f64a80feab`. PR-head checks passed, but post-merge runs for `6ec7f950...` are pending/not returned.
-- **Open PRs:** Enterprise #315 is a documentation-only status refresh with CI/Rust audit queued; Public #396 remains draft and blocked by root/descendant filesystem TOCTOU issue #408, and #411 is a documentation-only evidence correction with security-watch in progress.
-- **Shared artifacts:** Independently fetched the manifest plus seven listed schema/catalogue/vector artifacts from both current mains; every Git blob SHA matches. The task contract and inventory v2 are schema-compatible, not production-interoperable.
+1. **P0 — #20 trust/enrollment/lease lifecycle:** authoritative tenant/device identity, key provisioning/rotation/revocation/recovery, owner opt-in AND administrator policy, replay/freshness, authenticated lease admission, transactional reservations/audit and adversarial restart/revocation/concurrency tests.
+2. **P0 — #90 authenticated control-plane host:** HTTPS/TLS identity, OIDC or mTLS, tenant RBAC, bounded requests, CSRF/origin protections, live tenant-scoped repositories and audit; no demo/live mixing.
+3. **P0 before execution:** OS-enforced isolation/egress/resource limits, signed task/output receipts, protected anti-rollback, backup/restore, crash/partition reconciliation and independent security review.
+4. **P1 — read-only operator/resource intelligence:** real service-backed inventory, evidence freshness/confidence, unknown/unsupported states, resource/capacity and reservations. The merged filters are presentation-only and operate on the current snapshot.
+5. **Day 5–6 targets:** trust/dual-consent/lease lifecycle then resource admission/concurrency/recovery. Do not pre-empt Public Day 3 #408 filesystem safety or enable dispatch.
 
-## Cross-product boundary
-
-Public legacy peer protocol v2 and Enterprise legacy `WorkloadManifest` v1 remain incompatible in envelope shape and signature/approval domains. Shared task-contract v1 is a separate, strict schema with envelope, status and receipt shapes; it does not translate legacy formats or establish transport/authorization.
-
-Remaining end-to-end gaps are tracked in [Public issue #412](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/issues/412): authenticated sender/tenant/worker identity binding; server-side owner consent plus organisation approval checked live and revocably; one transactional task-digest/nonce/expiry/replay/lease admission; common state/cancellation acknowledgement; signed receipt ingestion binding task/input/output and consent to durable lease/ledger outcomes; isolation/egress, protected key custody, rollback and recovery. Keep remote execution disabled.
-
-## Model/runtime inventory
-
-Inventory v2 parity is verified. It carries runtime/model identity/version, evidence-qualified capabilities, context/tool-use/vision/embedding metadata, resource estimates, platform/accelerator compatibility, freshness and privacy/consent context. Public's live producer is currently Ollama-based and personal-local-only; Enterprise's parser/preflight/matching is not a live authenticated fleet feed or operator projection. Catalogue licence/provenance claims are advisory; exact artifact licence/digest and storage facts remain unverified. Inventory must never grant trust or execution permission.
-
-## Priorities and release posture
-
-1. **P0:** Enterprise #20/#90 trusted enrollment, current-state revocation, tenant RBAC, authenticated service, protected key custody and transactional replay/lease lifecycle; production integration is incomplete.
-2. **P1:** real enrolled-device inventory/telemetry and service-backed operator workflows; keep synthetic data clearly labelled.
-3. **P0 before execution:** OS isolation, signed verifiable receipts, exact output binding, recovery and independent security review.
-4. Continue the scheduled sequence without duplicating the canonical backlog: Day 2 Public #120 authorization matrix; Day 3 Public #408 handle-relative filesystem safety; Day 4 Public model catalogue; Day 5 Enterprise trust/dual-consent/lease lifecycle; Day 6 Enterprise resource admission/recovery; Day 7 cross-repository contract tests in Public #412.
-
-Enterprise remains pre-alpha. No live worker execution, autonomous containment, release signing or deployment is authorized by this evidence. Physical-device, KMS/HSM/TPM, production service, rollback/backup and independent penetration testing remain external/manual gates.
+**Release posture:** Enterprise remains pre-alpha, not production worker-ready. Remote execution, model distribution and autonomous containment remain disabled. No production HTTP service, endpoint agent, KMS/HSM/TPM integration, physical-device test, signed release or deployment is claimed.
