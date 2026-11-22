@@ -317,6 +317,9 @@ def main():
         css, ("tbody tr:hover td",), ("background", "background-color")
     ), "Hovered inventory rows must have a visible screen background."
     assert _css_rule_matches(
+        css, ("tbody tr:focus-within td",), ("background", "background-color")
+    ), "Keyboard-focused inventory rows must have a visible screen background."
+    assert _css_rule_matches(
         css, (".table-wrap:focus-visible",), ("outline",),
         required_substring="solid",
     ) and 'class="table-wrap" tabindex="0" role="region"' in html, "The table region must be keyboard reachable with a visible focus outline."
