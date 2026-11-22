@@ -1,6 +1,16 @@
 # Cross-repository batch status — Enterprise AI
 
-**Evidence snapshot: 21 November 2026.** This is the Enterprise-specific status pointer for the coordinated 14-day plan. The canonical deduplicated backlog and release evidence register is [Public AI's cross-repository register](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/blob/main/docs/CROSS-REPOSITORY-BATCH-STATUS.md); detailed Enterprise issue tracking remains in [MASTER_BACKLOG.md](MASTER_BACKLOG.md) and the [requirements ledger](MASTER-REQUIREMENTS-IMPLEMENTATION-LEDGER-2026-11-19.md). This file is not a security certification.
+**Evidence snapshot: 22 November 2026 (integration refresh).** This is the Enterprise-specific status pointer for the coordinated 14-day plan. The canonical deduplicated backlog and release evidence register is [Public AI's cross-repository register](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/blob/main/docs/CROSS-REPOSITORY-BATCH-STATUS.md); detailed Enterprise issue tracking remains in [MASTER_BACKLOG.md](MASTER_BACKLOG.md) and the [requirements ledger](MASTER-REQUIREMENTS-IMPLEMENTATION-LEDGER-2026-11-19.md). This file is not a security certification.
+
+## Live refresh — 22 November 2026 (supersedes stale rows above)
+
+- **Enterprise main:** `5b99a290468938661f69bc6444010550e6b147c5` (PR #315 documentation-only merge). **Public main:** `d4567ee6843799dae118a64e2b417d59bac1b4f2` (PR #413 merge).
+- PR #315 is merged; Enterprise has **no open PRs**. PR #413 is merged on Public after exact-head CI, CodeQL, Android compatibility, security-sensitive change watch and installer-size audit passed. Preview installers were skipped. No post-merge workflow evidence is available for either current main SHA.
+- The latest independent shared-contract/schema parity check remains 21 Nov. The intervening merges were docs/status-only (#315, #411) and a Public cache implementation (#413); none changed shared contract/catalogue/schema/vector artifacts. This is not a new parity run or protocol interoperability proof.
+- Day 2 Public IPC audit found 45 default commands and 7 feature-gated peer-preview commands represented in the existing security map; the parity guard remains inventory-only. Public #120 remains open for runtime authorization/denial-before-side-effect proof. Public #408 remains a filesystem identity race blocker; Public PR #396 is draft, stale-base and not mergeable.
+
+**Release posture unchanged:** Enterprise is pre-alpha and remote worker execution remains disabled until authenticated enrollment/trust, live dual consent/revocation, replay-resistant transactional leases, protected key custody, isolation, signed receipts and recovery are verified end-to-end. No signing/deployment or physical-device evidence is claimed.
+
 
 ## Current main and exact evidence
 
