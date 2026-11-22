@@ -74,3 +74,38 @@ Employees should be able to see when a device is participating and how to pause 
 ## Integration with UJANI Public AI
 
 Share versioned task schemas, capability vocabulary and result/provenance formats. Enterprise adds identity, organisation policy, scheduling and audit. Personal UJANI must not depend on the enterprise control plane.
+
+
+## Production authority and admission boundary
+
+The production control plane has one authoritative persistence and transaction boundary: PostgreSQL. Tenant identity, operator/device ownership, consent generations, replay state, reservation revisions, lease admission/lifecycle and their audit records must be evaluated and committed through the same authenticated tenant-scoped transaction boundary.
+
+The Rust ledger is not a second production authority and must never independently authorize a production lease. It may be used as a development/test adapter or for a separately scoped local purpose, provided that it cannot issue or validate production dispatch authority. Do not dual-write independent authoritative state or accept disagreement between two stores as a valid state.
+
+The HTTP/service adapter is responsible for authenticating the caller and verifying signed requests and administrator approval before invoking database admission functions. Tenant and subject identifiers must come from the authenticated server-side identity context, not caller-controlled request fields. Database functions recheck mutable tenant, device, owner-binding, consent, approval, freshness, capacity and reservation facts transactionally. Audit failure, missing identity, stale consent, replay, revoked trust, or an inconsistent reservation must fail closed.
+
+## Remote-execution release gate
+
+Remote execution and dispatch remain disabled until all of the following are implemented and independently verified:
+
+- Production HTTP hosting with TLS/server identity and a real OIDC or mTLS authentication boundary, including issuer/audience/state/nonce validation where OIDC is used.
+- Server-side tenant membership and role resolution; tenant identity is never trusted from browser input.
+- Protected device-key provisioning, custody, rotation, revocation, backup and recovery, with anti-rollback protection.
+- Owner-bound enrollment and current owner opt-in, plus explicit organisation administrator approval.
+- Single-transaction replay protection, lease admission, reservation updates and durable audit using PostgreSQL as the only production authority.
+- Worker-side OS-enforced isolation, least privilege, resource limits and explicit network-egress policy. Scheduler selection alone is not a security boundary.
+- Integration tests for restart, replay, clock skew, stale/revoked keys, owner-consent changes, cross-tenant access, concurrency, audit failure and recovery.
+- Operational evidence for backup/restore, monitoring, incident response and key recovery.
+
+Until that gate is met, the control plane may develop and test authenticated read-only inventory and overview workflows, but it must not dispatch workloads, enable remote execution, or represent demo/fixture data as live tenant data.
+
+## Evidence and release terminology
+
+Use these terms precisely in implementation reports:
+
+- **Implemented:** code exists on a named branch or commit.
+- **Tested:** the relevant test suite passed against that exact commit; identify platform and test scope.
+- **Security reviewed:** threat cases and negative tests for the relevant boundary were examined; passing general CI is insufficient.
+- **Release ready:** integration, supported-platform, packaging, operational recovery, documentation and acceptance gates are all satisfied.
+
+A green CI result is evidence for the checks that actually ran; it is not by itself a security review or release approval.
