@@ -158,6 +158,9 @@ function renderDevicePage() {
 function renderDevices(records) {
   deviceRecords = Array.isArray(records) ? records : [];
   devicePage = 0;
+  byId("device-search").value = "";
+  byId("device-trust-filter").value = "all";
+  byId("device-availability-filter").value = "all";
   populateDeviceStateFilter("device-trust-filter", deviceRecords, "trust_state", "All trust states");
   populateDeviceStateFilter("device-availability-filter", deviceRecords, "availability", "All availability states");
   renderDevicePage();
