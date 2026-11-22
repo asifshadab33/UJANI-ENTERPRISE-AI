@@ -5,7 +5,7 @@
 ## Live refresh — 22 November 2026 (supersedes stale rows above)
 
 - **Enterprise main:** `5b99a290468938661f69bc6444010550e6b147c5` (PR #315 documentation-only merge). **Public main:** `d4567ee6843799dae118a64e2b417d59bac1b4f2` (PR #413 merge).
-- PR #315 is merged; Enterprise has **no open PRs**. PR #413 is merged on Public after exact-head CI, CodeQL, Android compatibility, security-sensitive change watch and installer-size audit passed. Preview installers were skipped. No post-merge workflow evidence is available for either current main SHA.
+- PR #315 is merged; Enterprise has no open code PRs. Documentation-refresh PR #316 is the current pointer update and remains open pending exact-head checks. Public documentation-refresh PR #414 is also open pending checks. PR #413 is merged on Public after exact-head CI, CodeQL, Android compatibility, security-sensitive change watch and installer-size audit passed. Preview installers were skipped. No post-merge workflow evidence is available for either current main SHA.
 - The latest independent shared-contract/schema parity check remains 21 Nov. The intervening merges were docs/status-only (#315, #411) and a Public cache implementation (#413); none changed shared contract/catalogue/schema/vector artifacts. This is not a new parity run or protocol interoperability proof.
 - Day 2 Public IPC audit found 45 default commands and 7 feature-gated peer-preview commands represented in the existing security map; the parity guard remains inventory-only. Public #120 remains open for runtime authorization/denial-before-side-effect proof. Public #408 remains a filesystem identity race blocker; Public PR #396 is draft, stale-base and not mergeable.
 
