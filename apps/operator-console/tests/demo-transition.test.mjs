@@ -397,11 +397,94 @@ test("model catalogue task filter is explicit and uses only declared catalogue m
 });
 
 
+test("device inventory search, state filters and pagination are bounded and accessible", async () => {
+  const source = await readAppSource();
+  const elements = new Map();
+  const getElement = (id) => {
+    if (!elements.has(id)) elements.set(id, new FakeElement());
+    return elements.get(id);
+  };
+  const context = vm.createContext({
+    document: {
+      getElementById: getElement,
+      createElement: () => new FakeElement(),
+      addEventListener: () => {},
+      hidden: false
+    },
+    window: { setTimeout: () => 1, clearTimeout: () => {}, addEventListener: () => {} },
+    fetch: async (url) => url === "./model-catalog.json"
+      ? Promise.reject(new Error("test fixture: catalogue unavailable"))
+      : ({ ok: false, status: 404 }),
+    AbortController,
+    console
+  });
+  vm.runInContext(source, context);
+  await new Promise((resolve) => setImmediate(resolve));
+  context.devices = Array.from({ length: 53 }, (_, index) => ({
+    device_id: "device-" + String(index + 1).padStart(2, "0"),
+    display_name: index === 50 ? "GPU workstation" : "Office workstation " + (index + 1),
+    platform: index % 2 ? "Windows" : "Linux",
+    trust_state: index === 51 ? "revoked" : "enrolled",
+    availability: index === 52 ? "paused" : "schedulable",
+    remaining_cpu_millis: 2000,
+    remaining_memory_mb: 4096,
+    last_seen_unix_ms: 1_000_000
+  }));
+  vm.runInContext("renderDevices(devices)", context);
+  assert.equal(getElement("devices").children.length, 50, "only the first 50 inventory rows should be rendered");
+  assert.equal(getElement("device-page-status").textContent, "Page 1 of 2");
+  assert.equal(getElement("device-page-previous").disabled, true);
+  assert.equal(getElement("device-page-next").disabled, false);
+  assert.match(getElement("device-filter-summary").textContent, /Showing 1–50 of 53 matching devices/);
+
+  getElement("device-page-next").listeners.click();
+  assert.equal(getElement("devices").children.length, 3, "the second page contains only the remaining records");
+  assert.equal(getElement("device-page-status").textContent, "Page 2 of 2");
+  assert.equal(getElement("device-page-next").disabled, true);
+  getElement("device-page-previous").listeners.click();
+  assert.equal(getElement("device-page-status").textContent, "Page 1 of 2");
+
+  getElement("device-search").value = "GPU";
+  getElement("device-search").listeners.input();
+  assert.equal(getElement("devices").children.length, 1);
+  assert.match(collectText(getElement("devices")), /GPU workstation/);
+  assert.match(getElement("device-filter-summary").textContent, /1 matching devices/);
+
+  getElement("device-search").value = "device-52";
+  getElement("device-search").listeners.input();
+  getElement("device-trust-filter").value = "revoked";
+  getElement("device-trust-filter").listeners.change();
+  getElement("device-availability-filter").value = "schedulable";
+  getElement("device-availability-filter").listeners.change();
+  assert.equal(getElement("devices").children.length, 1, "combined filters must match the same device");
+  assert.match(collectText(getElement("devices")), /device-52/);
+
+  getElement("device-availability-filter").value = "paused";
+  getElement("device-availability-filter").listeners.change();
+  assert.equal(getElement("devices").children.length, 1);
+  assert.match(collectText(getElement("devices")), /No devices match the current filters/);
+  assert.match(getElement("device-filter-summary").textContent, /No devices match/);
+
+  getElement("device-filter-reset").listeners.click();
+  assert.equal(getElement("device-search").value, "");
+  assert.equal(getElement("device-trust-filter").value, "all");
+  assert.equal(getElement("device-availability-filter").value, "all");
+  assert.equal(getElement("devices").children.length, 50);
+  assert.equal(getElement("device-page-status").textContent, "Page 1 of 2");
+});
+
 test("operator console styles preserve keyboard focus and responsive inventory navigation", async () => {
   const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
   const html = await readFile(new URL("../index.html", import.meta.url), "utf8");
   assert.match(css, /:where\(a,button,input,select,textarea,summary,\[tabindex\]\):focus-visible/);
   assert.match(html, /class="table-wrap" tabindex="0" role="region" aria-label="Device inventory table"/);
+  assert.match(html, /for="device-search"/);
+  assert.match(html, /id="device-trust-filter"/);
+  assert.match(html, /id="device-availability-filter"/);
+  assert.match(html, /id="device-filter-summary"[^>]*aria-live="polite"/);
+  assert.match(html, /id="device-page-status"[^>]*aria-live="polite"/);
+  assert.match(css, /\.device-filters\s*\{[^}]*display:grid/s);
+  assert.match(css, /@media\(max-width:520px\)\s*\{[^}]*\.device-filters\s*\{[^}]*grid-template-columns:1fr/s);
   assert.match(html, /class="table-wrap" tabindex="0" role="region" aria-label="Security provider inventory table"/);
   assert.match(html, /class="table-wrap" tabindex="0" role="region" aria-label="Installed model and runtime inventory table"/);
   assert.match(css, /\.table-wrap\s*\{[^}]*max-height:26rem[^}]*overflow-x:auto[^}]*overflow-y:auto/s);
