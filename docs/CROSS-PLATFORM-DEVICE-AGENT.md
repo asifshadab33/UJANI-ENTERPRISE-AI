@@ -24,6 +24,43 @@ Public AI remains independently usable. Enterprise may consume versioned capabil
 
 These are integration candidates, not promises that every facility exists on every edition, hardware model, distribution or customer configuration. The agent must report capability availability and failure explicitly; it must never silently downgrade to weaker isolation or key custody.
 
+
+## Modular packaging and optional platform integration
+
+Cross-platform support must not make every Enterprise installation carry or install every operating-system integration. The control plane and endpoint agent are separate deployment roles. Platform-specific adapters are optional, separately versioned packages, selected by the organisation.
+
+### Installation choices
+
+The organisation administrator chooses one of three explicit modes during deployment:
+
+1. **Core only:** install the control plane/operator components or the minimal shared endpoint bootstrap, as applicable. Do not install platform adapters, hardware SDKs, model runtimes or optional isolation backends.
+2. **Select packages:** choose Windows, Linux and/or macOS agent packages. The installer presents package purpose, download size, dependencies, supported OS/architecture, privileges, service behaviour and update channel before installation.
+3. **Discover and offer:** the installer may detect the host OS and architecture and preselect the matching signed package, but it must show the selection and obtain administrator confirmation. It must not silently download or install other platform packages. Fleet deployment tools may explicitly enable unattended installation under organisation policy.
+
+A small bootstrap/installer may retrieve the selected package on demand from an organisation-approved source. Alternatively, administrators can download packages separately and provide them through an offline repository, internal mirror, MDM or software-distribution system. Network retrieval is never mandatory for offline or restricted environments.
+
+### Package boundaries
+
+- The **control-plane package** contains service/API, policy, database integration and operator UI dependencies. It does not bundle endpoint-specific native agents.
+- The **shared endpoint core** contains the versioned protocol client, device identity integration points, consent UX/state handling, policy evaluation needed locally and bounded telemetry transport. Keep it small and transport/protocol compatible.
+- Each **platform adapter package** contains only that OS's discovery and service-lifecycle implementation, plus its declared dependencies. A Windows-only fleet need not download Linux or macOS adapters.
+- **Capability extensions** (GPU/NPU vendor integrations, optional runtime detectors and isolation backends) are separate opt-in packages. Do not bundle large vendor SDKs or model runtimes into the base agent.
+- Model weights and model downloads are not part of Enterprise agent installation. Model installation remains an explicit device-owner action subject to organisation policy.
+
+Where technically practical, the installer should support a shared signed package manifest and a thin OS-specific installer. The manifest records package ID, semantic version, protocol compatibility range, supported OS releases and architectures, dependency constraints, size, publisher/signing identity, cryptographic digest, release channel and revocation status. The package manager verifies signature and digest before installation and rejects incompatible or revoked packages. A digest alone is not publisher authentication.
+
+### Fleet rollout, updates and removal
+
+- Administrators may deploy only the platform package matching an enrolled endpoint's OS/architecture. A homogeneous fleet receives one platform package; a mixed fleet receives only the packages represented in its approved inventory.
+- Do not install an adapter on a device merely because the control plane can see that OS family in the organisation. Enrollment, administrator policy and endpoint-owner consent remain separate gates.
+- Package installation, service enablement, upgrades, rollback and removal must be explicit, auditable and reversible. Never change firewall rules or enable remote execution as an installer side effect.
+- Use signed, versioned releases, staged rollout rings, compatibility checks, health checks and rollback to the last known-good package. Do not auto-upgrade across a protocol-breaking boundary.
+- Support administrator-managed update windows, pinned versions, offline mirrors and package revocation. Report update status and failure without collecting unrelated endpoint activity.
+- Uninstalling or disabling an agent must stop participation, revoke or invalidate its device credentials through the authenticated lifecycle, release/reconcile outstanding reservations and leases server-side, and preserve required audit records under retention policy.
+- A missing or failed optional extension must reduce reported capability to unavailable/unknown; it must not prevent the base OS or local Public AI runtime from working.
+
+This packaging model keeps the default installation small, avoids shipping irrelevant OS dependencies, and lets an organisation opt into only the platform integrations it actually operates. The package boundary does not weaken shared authentication, consent, replay protection, admission or release gates.
+
 ## Common device protocol
 
 Every platform adapter emits the same bounded, versioned inventory and telemetry contracts. Platform-specific detail belongs in explicitly versioned capability extensions, not ambiguous free-form strings.
