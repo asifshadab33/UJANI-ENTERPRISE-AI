@@ -2,7 +2,10 @@ import { readBoundedJson as readBoundedCatalogueJson } from "./boundedJson.js";
 
 const API_PATH = "/api/v1/operator/overview";
 const MAX_MODEL_CATALOGUE_BYTES = 256 * 1024;
+const DEVICE_PAGE_SIZE = 50;
 const byId = (id) => document.getElementById(id);
+let deviceRecords = [];
+let devicePage = 0;
 const connection = byId("connection");
 const notice = byId("notice");
 const refreshButton = byId("refresh");
@@ -78,16 +81,69 @@ function pill(value) {
   if (["revoked", "rejected", "ineligible", "offline", "out_of_date", "alert"].includes(normalized)) node.classList.add("pill-bad");
   return node;
 }
-function renderDevices(records) {
+function deviceFilterState(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : "unknown";
+}
+function populateDeviceStateFilter(selectId, records, field, allLabel) {
+  const select = byId(selectId);
+  const selected = select.value || "all";
+  select.replaceChildren();
+  const allOption = document.createElement("option");
+  allOption.value = "all";
+  allOption.textContent = allLabel;
+  select.append(allOption);
+  const states = [...new Set(records.map((record) => deviceFilterState(record[field])))].sort();
+  for (const state of states) {
+    const option = document.createElement("option");
+    option.value = state;
+    option.textContent = state.replaceAll("_", " ");
+    select.append(option);
+  }
+  select.value = states.includes(selected) ? selected : "all";
+}
+function filteredDeviceRecords() {
+  const query = byId("device-search").value.trim().toLowerCase();
+  const trustFilter = byId("device-trust-filter").value;
+  const availabilityFilter = byId("device-availability-filter").value;
+  return deviceRecords.filter((device) => {
+    const searchFields = [device.display_name, device.device_id, device.platform]
+      .filter((value) => typeof value === "string").join(" ").toLowerCase();
+    return (!query || searchFields.includes(query))
+      && (trustFilter === "all" || deviceFilterState(device.trust_state) === trustFilter)
+      && (availabilityFilter === "all" || deviceFilterState(device.availability) === availabilityFilter);
+  });
+}
+function renderDevicePage() {
   const body = byId("devices");
   body.replaceChildren();
-  byId("device-count").textContent = records.length + " records";
-  if (!records.length) {
+  const filtered = filteredDeviceRecords();
+  const totalPages = Math.max(1, Math.ceil(filtered.length / DEVICE_PAGE_SIZE));
+  devicePage = Math.min(Math.max(0, devicePage), totalPages - 1);
+  byId("device-count").textContent = filtered.length + " matching · " + deviceRecords.length + " total";
+  byId("device-page-status").textContent = "Page " + (devicePage + 1) + " of " + totalPages;
+  byId("device-page-previous").disabled = devicePage === 0;
+  byId("device-page-next").disabled = devicePage >= totalPages - 1;
+
+  if (!deviceRecords.length) {
     const row = document.createElement("tr");
     const cell = textCell("No live device inventory available.");
-    cell.colSpan = 7; cell.className = "empty"; row.append(cell); body.append(row); return;
+    cell.colSpan = 7; cell.className = "empty"; row.append(cell); body.append(row);
+    byId("device-filter-summary").textContent = "No device records available.";
+    return;
   }
-  for (const device of records) {
+  if (!filtered.length) {
+    const row = document.createElement("tr");
+    const cell = textCell("No devices match the current filters.");
+    cell.colSpan = 7; cell.className = "empty"; row.append(cell); body.append(row);
+    byId("device-filter-summary").textContent = "No devices match the current filters (" + deviceRecords.length + " total).";
+    return;
+  }
+  const start = devicePage * DEVICE_PAGE_SIZE;
+  const pageRecords = filtered.slice(start, start + DEVICE_PAGE_SIZE);
+  const end = start + pageRecords.length;
+  byId("device-filter-summary").textContent = "Showing " + (start + 1) + "–" + end + " of "
+    + filtered.length + " matching devices (" + deviceRecords.length + " total).";
+  for (const device of pageRecords) {
     const row = document.createElement("tr");
     row.append(textCell(device.display_name || device.device_id));
     row.append(textCell(device.platform));
@@ -98,6 +154,13 @@ function renderDevices(records) {
     row.append(textCell(formatAge(device.last_seen_unix_ms)));
     body.append(row);
   }
+}
+function renderDevices(records) {
+  deviceRecords = Array.isArray(records) ? records : [];
+  devicePage = 0;
+  populateDeviceStateFilter("device-trust-filter", deviceRecords, "trust_state", "All trust states");
+  populateDeviceStateFilter("device-availability-filter", deviceRecords, "availability", "All availability states");
+  renderDevicePage();
 }
 function renderDemoModelInventory() {
   const body = byId("model-inventory");
@@ -874,6 +937,33 @@ function refreshAfterResume() {
   if (demoMode || refreshInFlight) return;
   void refreshOverview();
 }
+byId("device-search").addEventListener("input", () => {
+  devicePage = 0;
+  renderDevicePage();
+});
+byId("device-trust-filter").addEventListener("change", () => {
+  devicePage = 0;
+  renderDevicePage();
+});
+byId("device-availability-filter").addEventListener("change", () => {
+  devicePage = 0;
+  renderDevicePage();
+});
+byId("device-filter-reset").addEventListener("click", () => {
+  byId("device-search").value = "";
+  byId("device-trust-filter").value = "all";
+  byId("device-availability-filter").value = "all";
+  devicePage = 0;
+  renderDevicePage();
+});
+byId("device-page-previous").addEventListener("click", () => {
+  devicePage = Math.max(0, devicePage - 1);
+  renderDevicePage();
+});
+byId("device-page-next").addEventListener("click", () => {
+  devicePage = Math.min(Math.ceil(filteredDeviceRecords().length / DEVICE_PAGE_SIZE) - 1, devicePage + 1);
+  renderDevicePage();
+});
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden) refreshAfterResume();
 });
