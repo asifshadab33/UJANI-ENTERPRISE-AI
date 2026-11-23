@@ -517,3 +517,60 @@ mod path_segment_boundary_regressions {
         assert!(!valid_path_segment(&"a".repeat(129)));
     }
 }
+
+#[cfg(test)]
+mod strict_request_body_boundary_regressions {
+    use super::*;
+
+    #[test]
+    fn device_ingest_and_lease_routes_enforce_exact_body_limits() {
+        let cases = [
+            (
+                "/api/v1/devices/device-1/telemetry",
+                MAX_DEVICE_INGEST_BODY_BYTES,
+            ),
+            (
+                "/api/v1/devices/device-1/model-inventory",
+                MAX_MODEL_INVENTORY_BODY_BYTES,
+            ),
+            (
+                "/api/v1/leases/lease-1/renew",
+                MAX_OPERATOR_ACTION_BODY_BYTES,
+            ),
+            (
+                "/api/v1/leases/lease-1/release",
+                MAX_OPERATOR_ACTION_BODY_BYTES,
+            ),
+        ];
+        for (path, maximum) in cases {
+            let route = resolve_route(HttpMethod::Post, path)
+                .unwrap_or_else(|| panic!("expected exact supported route: {path}"));
+            assert_eq!(route.principal, RoutePrincipal::EnrolledDeviceSignature);
+            assert!(
+                route.permits_body_size(maximum),
+                "exact limit must be accepted: {path}"
+            );
+            assert!(
+                !route.permits_body_size(maximum + 1),
+                "one byte over limit must be rejected: {path}"
+            );
+        }
+    }
+
+    #[test]
+    fn device_path_identity_is_not_loosened_by_extra_or_ambiguous_segments() {
+        for path in [
+            "/api/v1/devices/device-1/telemetry/extra",
+            "/api/v1/devices/device-1//telemetry",
+            "/api/v1/devices/device-1%2Fother/telemetry",
+            "/api/v1/devices/device-1/telemetry?device=device-2",
+            "/api/v1/devices/device-1/telemetry#device-2",
+        ] {
+            assert!(
+                resolve_route(HttpMethod::Post, path).is_none(),
+                "must reject: {path}"
+            );
+        }
+        assert!(resolve_route(HttpMethod::Post, "/api/v1/devices/device-1/telemetry").is_some());
+    }
+}
