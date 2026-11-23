@@ -507,7 +507,7 @@ test("untrusted operator and model-catalogue text is rendered as text, never par
   const source = await readAppSource();
   assert.doesNotMatch(
     source,
-    /\\.innerHTML\\s*=|insertAdjacentHTML\\s*\\(/u,
+    /\.innerHTML\s*=|insertAdjacentHTML\s*\(/u,
     "untrusted API/catalogue values must not enter an HTML parsing sink"
   );
 
