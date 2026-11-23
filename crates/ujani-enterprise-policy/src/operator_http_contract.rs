@@ -534,8 +534,14 @@ mod strict_request_body_boundary_regressions {
             let route = resolve_route(HttpMethod::Post, path)
                 .unwrap_or_else(|| panic!("expected exact supported route: {path}"));
             assert_eq!(route.principal, RoutePrincipal::EnrolledDeviceSignature);
-            assert!(route.permits_body_size(maximum), "exact limit must be accepted: {path}");
-            assert!(!route.permits_body_size(maximum + 1), "one byte over limit must be rejected: {path}");
+            assert!(
+                route.permits_body_size(maximum),
+                "exact limit must be accepted: {path}"
+            );
+            assert!(
+                !route.permits_body_size(maximum + 1),
+                "one byte over limit must be rejected: {path}"
+            );
         }
     }
 
@@ -548,7 +554,10 @@ mod strict_request_body_boundary_regressions {
             "/api/v1/devices/device-1/telemetry?device=device-2",
             "/api/v1/devices/device-1/telemetry#device-2",
         ] {
-            assert!(resolve_route(HttpMethod::Post, path).is_none(), "must reject: {path}");
+            assert!(
+                resolve_route(HttpMethod::Post, path).is_none(),
+                "must reject: {path}"
+            );
         }
         assert!(resolve_route(HttpMethod::Post, "/api/v1/devices/device-1/telemetry").is_some());
     }
