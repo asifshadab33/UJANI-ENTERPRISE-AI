@@ -575,3 +575,44 @@ test("untrusted operator and model-catalogue text is rendered as text, never par
     "device values must not create executable DOM elements"
   );
 });
+
+
+test("authentication and server errors never substitute synthetic fleet data", async () => {
+  const source = await readAppSource();
+  for (const status of [401, 403, 500, 502]) {
+    const elements = new Map();
+    const getElement = (id) => {
+      if (!elements.has(id)) elements.set(id, new FakeElement());
+      return elements.get(id);
+    };
+    const heading = new FakeElement();
+    const message = new FakeElement();
+    getElement("notice").querySelector = (selector) => selector === "strong" ? heading : message;
+    const context = vm.createContext({
+      document: {
+        getElementById: getElement,
+        createElement: () => new FakeElement(),
+        addEventListener: () => {},
+        hidden: false
+      },
+      window: { setTimeout: () => 1, clearTimeout: () => {}, addEventListener: () => {} },
+      fetch: async (url) => url === "./model-catalog.json"
+        ? Promise.reject(new Error("test fixture: catalogue not loaded"))
+        : ({ ok: false, status }),
+      AbortController,
+      console
+    });
+    vm.runInContext(source, context);
+    await new Promise((resolve) => setImmediate(resolve));
+    await vm.runInContext("refreshOverview()", context);
+    assert.equal(getElement("demo-banner").hidden, true, `HTTP ${status} must not silently enter demo mode`);
+    assert.doesNotMatch(collectText(getElement("devices")), /DEMO/);
+    assert.doesNotMatch(collectText(getElement("model-inventory")), /DEMO/);
+    assert.doesNotMatch(collectText(getElement("workloads")), /DEMO/);
+    assert.doesNotMatch(collectText(getElement("approvals")), /DEMO/);
+    assert.equal(getElement("demo").disabled, false, "demo mode must remain a separate explicit user action");
+    assert.match(message.textContent, status === 401 || status === 403
+      ? /authorized Enterprise operator account/
+      : new RegExp(`HTTP ${status}`));
+  }
+});
