@@ -525,10 +525,22 @@ mod strict_request_body_boundary_regressions {
     #[test]
     fn device_ingest_and_lease_routes_enforce_exact_body_limits() {
         let cases = [
-            ("/api/v1/devices/device-1/telemetry", MAX_DEVICE_INGEST_BODY_BYTES),
-            ("/api/v1/devices/device-1/model-inventory", MAX_MODEL_INVENTORY_BODY_BYTES),
-            ("/api/v1/leases/lease-1/renew", MAX_OPERATOR_ACTION_BODY_BYTES),
-            ("/api/v1/leases/lease-1/release", MAX_OPERATOR_ACTION_BODY_BYTES),
+            (
+                "/api/v1/devices/device-1/telemetry",
+                MAX_DEVICE_INGEST_BODY_BYTES,
+            ),
+            (
+                "/api/v1/devices/device-1/model-inventory",
+                MAX_MODEL_INVENTORY_BODY_BYTES,
+            ),
+            (
+                "/api/v1/leases/lease-1/renew",
+                MAX_OPERATOR_ACTION_BODY_BYTES,
+            ),
+            (
+                "/api/v1/leases/lease-1/release",
+                MAX_OPERATOR_ACTION_BODY_BYTES,
+            ),
         ];
         for (path, maximum) in cases {
             let route = resolve_route(HttpMethod::Post, path)
