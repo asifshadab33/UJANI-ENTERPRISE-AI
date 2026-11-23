@@ -26,3 +26,21 @@
 5. **Day 5–6 targets:** trust/dual-consent/lease lifecycle then resource admission/concurrency/recovery. Do not pre-empt Public #408 filesystem safety or enable dispatch.
 
 **Release posture:** Enterprise remains pre-alpha, not production worker-ready. Remote execution, model distribution and autonomous containment remain disabled. No production HTTP service, endpoint agent, KMS/HSM/TPM integration, physical-device test, signed release or deployment is claimed.
+
+
+## Control-plane roadmap and pending work (23 Nov 2026)
+
+Enterprise's mission remains customer-controlled use of enrolled organisation resources, not a heavyweight replacement security product. Security integrations are optional/customer-selected and secondary.
+
+**Foundations present (not a live deployment):** transport-independent operator service/session validation; tenant-scoped overview validation; read-only UI contract; advisory model/task matching; inventory filters/search/pagination; PostgreSQL/RLS and admission primitives. **Production gaps:** HTTP listener/host, OIDC adapter/callback, protected key providers, live tenant repository and operator projection, durable audit sink, deployment wizard, endpoint agent/real telemetry, customer backup/restore and live service connection.
+
+**Safe next batches:**
+1. Read-only operator UX acceptance/state coverage for trusted vs enrolled vs consented vs online/fresh vs schedulable vs paused/offline/unknown; source/freshness visible; no demo/live mixing; tenant filtering server-side.
+2. Authenticated host and OIDC test-provider integration, RBAC, safe HTTPS/cookies/CSRF/Origin, bounded requests, health/readiness; tenant isolation and audit fail-closed tests.
+3. Full inventory-v2 projection preserving source/confidence/freshness/runtime/accelerator/unknown fields, with real service-backed resource view; inventory must not imply scheduling authority.
+4. Trust and lease lifecycle: owner opt-in AND admin policy, protected key provisioning/rotation/revocation/recovery, atomic reservation/lease/audit, replay/freshness/concurrency/crash/partition tests.
+5. Execution prerequisites only as a separately gated future phase: receiver-side OS isolation, quotas/egress, signed receipts and independent rollback protection plus controlled lab and review. Remote dispatch/execution remains disabled.
+
+**Other pending:** approved model distribution with provenance/digest/licence/size/integrity/rollback/owner consent; resource admission accounts for OS reserve, current leases, participation, interactive load, power/thermal and freshness per device (never pooled RAM); customer setup/accessibility/diagnostics, redacted logs, metrics, retention/deletion, backup/restore and runbooks. Optional IDS/Security Centre/collective defence/containment are deferred, opt-in and never autonomous by default.
+
+Current PR inventory: Enterprise #321 draft documentation refresh; Public #418 dependency security fix (checks passed, awaiting review), #417 draft evidence/roadmap refresh (checks running), #396 draft feature blocked by #408. No PR should merge or branch be deleted without exact-head checks, review and its prerequisites.
