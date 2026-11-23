@@ -502,3 +502,76 @@ test("operator console styles preserve keyboard focus and responsive inventory n
   assert.match(narrowLayout, /\.section-title\s*\{[^}]*flex-direction:column/s);
   assert.match(css, /@media\(prefers-reduced-motion:reduce\)/);
 });
+
+test("untrusted operator and model-catalogue text is rendered as text, never parsed as HTML", async () => {
+  const source = await readAppSource();
+  assert.doesNotMatch(
+    source,
+    /\.innerHTML\s*=|insertAdjacentHTML\s*\(/u,
+    "untrusted API/catalogue values must not enter an HTML parsing sink"
+  );
+
+  const elements = new Map();
+  const getElement = (id) => {
+    if (!elements.has(id)) elements.set(id, new FakeElement());
+    return elements.get(id);
+  };
+  const context = vm.createContext({
+    document: {
+      getElementById: getElement,
+      createElement: () => new FakeElement(),
+      addEventListener: () => {},
+      hidden: false
+    },
+    window: { setTimeout: () => 1, clearTimeout: () => {}, addEventListener: () => {} },
+    fetch: async () => ({ ok: false, status: 404 }),
+    AbortController,
+    console
+  });
+  vm.runInContext(source, context);
+
+  const hostile = '<img src=x onerror="alert(1)">';
+  context.catalogue = {
+    schema_version: 1,
+    models: [{
+      id: "model-safe-id",
+      display_name: hostile,
+      publisher: hostile,
+      purpose: hostile,
+      tasks: ["chat"],
+      limitations: [hostile],
+      planning_ram_gib: { minimum: 4, recommended: 8 },
+      license: hostile
+    }],
+    specialist_tools: []
+  };
+  vm.runInContext("renderModelCatalogue(catalogue)", context);
+  const catalogueText = collectText(getElement("model-catalogue"));
+  assert.ok(catalogueText.includes(hostile), "catalogue text should remain visible literally");
+  assert.equal(
+    getElement("model-catalogue").children.some((node) => node.tagName === "IMG"),
+    false,
+    "catalogue values must not create executable DOM elements"
+  );
+
+  context.devices = [{
+    device_id: "device-1",
+    display_name: hostile,
+    platform: hostile,
+    trust_state: hostile,
+    availability: "unknown",
+    remaining_cpu_millis: null,
+    remaining_memory_mb: null,
+    last_seen_unix_ms: null
+  }];
+  vm.runInContext("renderDevices(devices)", context);
+  const deviceText = collectText(getElement("devices"));
+  assert.ok(deviceText.includes(hostile), "device values should remain visible literally");
+  assert.equal(
+    getElement("devices").children.some((row) =>
+      row.children.some((cell) => cell.tagName === "IMG")
+    ),
+    false,
+    "device values must not create executable DOM elements"
+  );
+});
