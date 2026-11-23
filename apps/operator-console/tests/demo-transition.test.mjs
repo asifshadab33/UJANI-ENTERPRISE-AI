@@ -519,7 +519,7 @@ test("untrusted operator and model-catalogue text is rendered as text, never par
   const context = vm.createContext({
     document: {
       getElementById: getElement,
-      createElement: () => new FakeElement(),
+      createElement: (tag) => Object.assign(new FakeElement(), { tagName: String(tag).toUpperCase() }),
       addEventListener: () => {},
       hidden: false
     },
@@ -530,6 +530,7 @@ test("untrusted operator and model-catalogue text is rendered as text, never par
   });
   vm.runInContext(source, context);
 
+  const allNodes = (node) => [node, ...node.children.flatMap(allNodes)];
   const hostile = '<img src=x onerror="alert(1)">';
   context.catalogue = {
     schema_version: 1,
@@ -549,7 +550,7 @@ test("untrusted operator and model-catalogue text is rendered as text, never par
   const catalogueText = collectText(getElement("model-catalogue"));
   assert.ok(catalogueText.includes(hostile), "catalogue text should remain visible literally");
   assert.equal(
-    getElement("model-catalogue").children.some((node) => node.tagName === "IMG"),
+    allNodes(getElement("model-catalogue")).some((node) => node.tagName === "IMG"),
     false,
     "catalogue values must not create executable DOM elements"
   );
@@ -568,9 +569,7 @@ test("untrusted operator and model-catalogue text is rendered as text, never par
   const deviceText = collectText(getElement("devices"));
   assert.ok(deviceText.includes(hostile), "device values should remain visible literally");
   assert.equal(
-    getElement("devices").children.some((row) =>
-      row.children.some((cell) => cell.tagName === "IMG")
-    ),
+    allNodes(getElement("devices")).some((node) => node.tagName === "IMG"),
     false,
     "device values must not create executable DOM elements"
   );
