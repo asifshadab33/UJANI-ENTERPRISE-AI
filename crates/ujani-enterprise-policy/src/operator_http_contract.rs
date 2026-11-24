@@ -608,3 +608,45 @@ mod model_task_match_route_compatibility_regressions {
         assert!(resolve_route(HttpMethod::Get, "/api/v1/operator/model-task-match").is_none());
     }
 }
+
+#[cfg(test)]
+mod dynamic_route_identifier_boundary_regressions {
+    use super::*;
+
+    #[test]
+    fn dynamic_device_and_lease_routes_reject_invalid_identifiers() {
+        for path in [
+            "/api/v1/devices//telemetry",
+            "/api/v1/devices/../telemetry",
+            "/api/v1/devices/device/other/telemetry",
+            "/api/v1/devices/device%2Fother/telemetry",
+            "/api/v1/leases//renew",
+            "/api/v1/leases/../release",
+            "/api/v1/leases/lease/other/renew",
+            "/api/v1/leases/lease%2Fother/release",
+            &format!("/api/v1/devices/{}/telemetry", "d".repeat(129)),
+            &format!("/api/v1/leases/{}/renew", "l".repeat(129)),
+        ] {
+            assert!(
+                resolve_route(HttpMethod::Post, path).is_none(),
+                "dynamic route must reject invalid identifier: {path:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn dynamic_device_and_lease_routes_accept_bounded_canonical_identifiers() {
+        for path in [
+            "/api/v1/devices/device-01/telemetry",
+            "/api/v1/devices/tenant:device_01.v2/model-inventory",
+            "/api/v1/devices/device-01/owner-consent",
+            "/api/v1/leases/lease-01/renew",
+            "/api/v1/leases/tenant:lease_01.v2/release",
+        ] {
+            assert!(
+                resolve_route(HttpMethod::Post, path).is_some(),
+                "canonical bounded identifier should route: {path:?}"
+            );
+        }
+    }
+}
