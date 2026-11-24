@@ -321,3 +321,15 @@ jobs:
           PGUSER: postgres
           PGDATABASE: ujani_test
         run: bash scripts/test_authenticated_device_telemetry_v3_concurrency.sh
+
+      - name: Apply atomic telemetry-plus-lease lock-order correction
+        env:
+          PGPASSWORD: postgres
+        run: |
+          "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < migrations/0017_atomic_telemetry_lease_lock_order.sql
+      - name: Verify owner-consent withdrawal serializes against atomic admission
+        env:
+          PGPASSWORD: postgres
+          PGUSER: postgres
+          PGDATABASE: ujani_test
+        run: bash scripts/test_owner_consent_admission_concurrency.sh
