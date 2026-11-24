@@ -203,3 +203,68 @@ No adapter may invent missing sender, tenant, device-trust or consent evidence. 
 5. **External validation:** physical Windows/Linux/macOS installation and launch, real Ollama/model-selection flows, PDF and isolation tests, production signing/updater/rollback, and customer KMS/database/deployment validation still require the relevant devices, credentials and deployment environment. Automated CI is not a substitute for these tests.
 
 No third repository or shared runtime dependency is required. Keep the existing schemas and product-local adapters; extend them only when a demonstrated compatibility gap is closed.
+
+## Current cross-repository evidence — 24 November 2026
+
+This is the current evidence snapshot and supersedes earlier date-stamped status snapshots above. A passing PR-head workflow is not transferred to a later default-branch SHA; a schema or unit test is not evidence of a deployed service.
+
+### Default branches and exact workflow evidence
+
+- **Public AI main:** `af60e5015a760e2fc1c2503acb8c5f41c471364b`. CI [45421350103](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/actions/runs/45421350103) and CodeQL [45421350235](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/actions/runs/45421350235) both completed successfully on this exact SHA. CI jobs passed for Rust core tests, Rust lint, Rust dependency audit, frontend dependency audit, React/TypeScript build, workflow lint, and Tauri native tests on Windows, Ubuntu 24.04 and macOS. This is hosted CI evidence, not installed-device verification.
+- **Enterprise AI main:** `adfb12f04083026dd0652185784d98eec3a937a5`. Post-merge CI [45433858535](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/actions/runs/45433858535) completed successfully on this exact SHA. Post-merge CodeQL [45433858587](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/actions/runs/45433858587) and Rust dependency audit [45433858600](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/actions/runs/45433858600) were still in progress at this snapshot. The earlier parent SHA `dab478751ef78172f6c092ee9c4c42a97be5cbe9` had its CI run cancelled when the PR merge advanced main; do not report that parent run as the post-merge result.
+- **Public PR #433** is still open at head `04c4232749da0d519977b2e1c1e419e7f3606808`. Its change is a security-boundary comment in `safe_fs.rs`, not a handle-relative traversal fix. Exact-head CodeQL and Android compatibility passed; CI and installer-size audit were still in progress; unsigned preview-installer workflow was skipped; security-sensitive change watch passed. No review submissions or inline review threads were recorded. Do not merge or describe issue #408 as fixed from this documentation change.
+- **Enterprise PR #336** was merged after exact-head verification. Head `240693646e8f661fd2e7a515d3cfc8730a6b4051` passed CI [45432702948](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/actions/runs/45432702948), including PostgreSQL tenant-isolation and Windows, macOS and Ubuntu policy tests; CodeQL [45432702558](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/actions/runs/45432702558), RustSec [45432702455](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/actions/runs/45432702455), and security-sensitive change watch [45432702340](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/actions/runs/45432702340) also passed. Squash merge commit: `adfb12f04083026dd0652185784d98eec3a937a5`. The change adds dynamic device/lease route-identifier regression tests; it does not change route policy or enable workload execution.
+
+### Changes already delivered by today's earlier workstreams
+
+- Public: reminder agenda/snooze regression tests (#420), shared Ed25519 vector test (#424), explicit local reminder JSON export (#425, commit `96df8d75a75bef57ba7b5693a0c00230a87ee12e`), model-catalogue publisher/licence provenance (#429, commit `503d47c7bf5fb04208883d5773a3428966b83d3c`), integration evidence refresh (#431, commit `d753847368e6fb451d4262021f36c2856b175d23`), and fail-closed PDF capability reporting (#432, commit `af60e5015a760e2fc1c2503acb8c5f41c471364b`). PRs #428 and #430 were closed unmerged; they are not delivered changes.
+- Enterprise: shared Ed25519 vector (#330, commit `9f7f59ed4b2866cb61b7ea6c0060887a406f3cf1`), fail-closed resource-request boundary tests (#331, commit `8377c2a1e7a3a96ea938eea335a486d55479b77a`), model-catalogue provenance parity (#332, commit `2c8e8fbb90de11d43eebd4a98c5f12daf38eec4d`), and model-match route contract documentation (#334, commit `852a09dab5091e096c45ea9349fa5e02729e29b1`) are on main. The consent-withdrawal/atomic telemetry-plus-lease lock-order correction is also on main at `86d7951b83c71c6e472350e5bfecd14d1fdaa555`; its exact push CI, CodeQL and RustSec runs passed. This fixes a database lock-order race and adds concurrency coverage; it does not create a live authenticated lease service.
+
+### Model/runtime inventory v2 — compatible descriptor, separate product authorities
+
+The following artifacts are byte-identical on both current default branches:
+
+| Artifact | Git blob SHA |
+|---|---|
+| Shared contract manifest | `3115010d11953e6b8de4a454139070e475551da5` |
+| Local model catalogue | `ef3689ee15d3ac52f98f915491f21feb337c13d9` |
+| Model/runtime inventory v1 schema | `8ff1a1db4700214ba687cd806c449bc1ea7dfdb4` |
+| Model/runtime inventory v2 schema | `6f1d5a6dd3b70a4b5e78203a20a67b71ed35a489` |
+| Task-contract v1 schema | `566a0d72babd58636a3ef40e55b5c44168776522` |
+| Consent-binding vector | `593348db1bfc1d7d03844aa6e2de826f0852c39b` |
+| Model inventory v1 vector | `543d645d0154c9263ff7784ba4e203f54e498c3c` |
+| Model inventory v2 vector | `7d3bc7b6990d0572547e2312a97032f5486539a8` |
+| Task-contract Python validator (before this run's regression addition) | `fc23baed7bc6af06eb99a4a763da81f7b6615692` |
+
+- Public's v2 producer (`apps/desktop/src-tauri/src/model_inventory_v2.rs`, blob `c05fe7ea6264d2bbf5cab183a67ce40e1edd99bd`) emits a personal-local-only descriptor from bounded OS and loopback Ollama observations, without an Enterprise device reference or automatic inventory transmission. Evidence and explicit model choice are retained. Runtime discovery remains Ollama-specific until another provider adapter is deliberately supported.
+- Enterprise's v2 preflight (`14ee37ef55de72d15a2647db08d0eec3d2edbed5`) and authenticated raw-request intake (`3bfdfac8d99a4ce3e2122888d112ef58e820e194`) enforce enrolled-device binding, owner consent, organisation authorisation, bounded collections, strict JSON parsing and request authentication. PostgreSQL migration 0014 supplies an atomic snapshot-admission primitive. The customer-hosted HTTP adapter still must run full Draft 2020-12 validation and bind raw-body authentication, current key/consent/policy generations, replay, persistence and audit in one authoritative request flow. This is not a deployed hosting service.
+- The Enterprise v2 operator projection schema/validator is present, but the authenticated read API and live console feed are not. Synthetic fixtures are not live fleet data.
+- The v2 schema rejects unknown fields (including nested fields). Runtime/provider identifiers are open strings so future providers can be represented; an unsupported provider is not selectable. Capability names are a closed vocabulary and require a schema-version change to extend. Empty inventories are valid. Freshness, evidence source/confidence, resource estimates, platform/accelerator compatibility, owner consent and organisation authorisation remain explicit; unknown/stale/estimated evidence cannot become verified capacity.
+- Catalogue publisher/licence provenance identifies upstream publisher metadata, not the exact Ollama registry manifest, quantized derivative, installed bytes or redistributable artifact. The exact runtime artifact remains unpinned/unverified and size depends on quantization. Do not treat catalogue provenance as redistribution approval or an exact download-size/RAM guarantee.
+- The small generic `LocalModelAdapter` in Public's `model_runtime.rs` is explicitly a deterministic mock. A release claim still needs an end-to-end test showing the user's selected installed model is the one used by the real local runtime, with truthful capability/resource checks, visible progress/errors and a matching receipt. The descriptor/catalogue alone does not prove real inference.
+
+### Task-contract v1 — target schema exists; legacy wire formats remain incompatible
+
+The shared task-contract v1 schema and validator define task envelope, status and execution-receipt messages with task/version identity, sender and organisation/service audience, exact payload digest/length/media type, data and privacy classification, separate access scopes and model/task capabilities, CPU/MiB/runtime/output limits, user/admin/worker-owner consent, device trust, millisecond expiry, nonce/replay identity, monotonic status/receipt sequences and Ed25519 signatures.
+
+The legacy wire formats are not interchangeable:
+
+- Public `peer_protocol::TaskEnvelope` v2 uses a recipient fingerprint, seconds-based issue/expiry, a 16-byte nonce encoded as 32 lowercase hex characters, operation/input digest, legacy scopes and a boolean user-consent claim. Its signature uses a domain-separated length-prefixed Serde JSON profile; its in-memory replay guard is not durable.
+- Enterprise `WorkloadManifest` v1 carries workload/class/model, CPU millis, memory MiB, max runtime, data classification and a boolean network-access request. It has no task sender/audience, nonce, user-consent record, worker-owner consent, privacy classification, required-capability list, signature or interoperable receipt. Administrator approval and device-owner consent are separate Enterprise controls, not fields in the manifest.
+- Public execution receipt v3 is a local hash-chained SQLite metadata record, not a signed, organisation-bound worker receipt. Enterprise's durable replay tables/functions and lease primitives are not yet bound to a production authenticated task-intake, dual-consent and lease transaction. The shared v1 receipt is not yet emitted and verified by a production worker.
+
+This run adds identical validator regressions in both repositories to reject the exact legacy Public envelope/wrapper and Enterprise manifest, and to reject a minimal relabel that adds only shared message/version labels. These tests prevent accidental schema acceptance; they do not translate or authenticate the legacy messages. The change is being prepared in paired reviewable PRs and is not yet on main.
+
+### Ordered master backlog and release state
+
+1. **Public P0 — filesystem identity/TOCTOU (#408):** replace path-based directory enumeration/metadata with pinned-root, handle-relative traversal; add deterministic replacement, symlink/reparse, cancellation and resource-limit tests. PR #433 only documents the current limitation.
+2. **Public P0 — native IPC authorization (#120):** finish command-by-command runtime capability/consent checks and denial-before-side-effect/receipt tests, prioritising filesystem/document, selected-folder, PDF, history/cache and cloud-dispatch paths.
+3. **Public P0 — PDF and reliability (#70):** keep extraction unavailable/unknown until worker isolation is verified; complete installed-package B-01–B-10 and navigation/recovery D-01–D-07 tests, plus Windows/macOS/Linux isolation and cancellation verification.
+4. **Enterprise P0 — trusted device/dual consent/leases (#20):** complete authoritative enrollment, protected key custody/rotation/revocation, current owner+admin consent, replay-resistant telemetry, transactional lease acquire/renew/release and failure recovery.
+5. **Enterprise P0 — authenticated control plane (#90):** customer-hosted HTTPS/OIDC/RBAC service, tenant-scoped persistence, fail-closed audit and live service-backed operator reads; the current console/projection remains read-only/prototype until connected.
+6. **Enterprise model inventory:** connect authenticated intake and the v2 operator projection to a live service, with trusted freshness policy, per-field evidence and current consent/policy revalidation. Never expose prompts or private content.
+7. **Cross-product P1 — task-contract integration (#412):** after trust/transport prerequisites, implement an explicit reviewed adapter from legacy formats to v1; atomically bind identity, consent, policy, resource admission, durable replay and lease; then prove cancellation, signed receipt/output verification and recovery. Do not create a third repository or runtime dependency.
+8. **Public model workflow:** complete the selected-model-to-real-local-inference vertical slice without silent fallback or cloud transmission. Keep user choice and optional installation.
+9. **External release gates:** physical Windows/macOS/Linux install/launch and PDF/isolation tests, real Ollama/model-selection trials, production signing/notarisation, updater rollback, protected KMS/HSM/TPM validation and customer deployment/backup/restore tests.
+
+**Release posture:** Public is not release-candidate ready while P0 filesystem, IPC, PDF/Ollama, platform-install and regression gates remain. Enterprise remote worker execution remains disabled; no end-to-end authenticated trust, lease, isolation and signed-receipt lifecycle is proven. Neither product has been released or signed by this work.
