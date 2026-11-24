@@ -539,6 +539,37 @@ mod tests {
             Err(ExtendedResourceRejection::InvalidRequest)
         );
         ask = request();
+        ask.gpu_compute_units = 1;
+        assert_eq!(
+            evaluate_extended_resource_placement(&snapshot(), ask, NOW, 5_000),
+            Err(ExtendedResourceRejection::InvalidRequest)
+        );
+        ask = request();
+        ask.npu_memory_mb = 1;
+        assert_eq!(
+            evaluate_extended_resource_placement(&snapshot(), ask, NOW, 5_000),
+            Err(ExtendedResourceRejection::InvalidRequest)
+        );
+        ask = request();
+        ask.npu_compute_units = 1;
+        assert_eq!(
+            evaluate_extended_resource_placement(&snapshot(), ask, NOW, 5_000),
+            Err(ExtendedResourceRejection::InvalidRequest)
+        );
+        ask = request();
+        ask.network_bandwidth_kbps = 1;
+        assert_eq!(
+            evaluate_extended_resource_placement(&snapshot(), ask, NOW, 5_000),
+            Err(ExtendedResourceRejection::InvalidRequest)
+        );
+        ask = request();
+        ask.network_access = true;
+        assert_eq!(
+            evaluate_extended_resource_placement(&snapshot(), ask, NOW, 5_000),
+            Err(ExtendedResourceRejection::InvalidRequest)
+        );
+        ask = request();
+        ask.network_access = false;
         ask.network_bandwidth_kbps = 1;
         assert_eq!(
             evaluate_extended_resource_placement(&snapshot(), ask, NOW, 5_000),
