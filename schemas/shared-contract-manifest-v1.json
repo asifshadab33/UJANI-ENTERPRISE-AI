@@ -2,7 +2,7 @@
   "manifest_version": 1,
   "hash_algorithm": "git_blob_sha1",
   "artifacts": {
-    "catalogs/local-model-catalog-v1.json": "8f97eeb59d5c6cdf6c07df027eaf587a64184ba6",
+    "catalogs/local-model-catalog-v1.json": "ef3689ee15d3ac52f98f915491f21feb337c13d9",
     "schemas/model-runtime-inventory-v1.schema.json": "8ff1a1db4700214ba687cd806c449bc1ea7dfdb4",
     "schemas/personal-enterprise-task-contract-v1.schema.json": "566a0d72babd58636a3ef40e55b5c44168776522",
     "schemas/test-vectors/consent-binding-v1.json": "593348db1bfc1d7d03844aa6e2de826f0852c39b",

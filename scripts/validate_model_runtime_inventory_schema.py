@@ -29,7 +29,7 @@ V2_SCHEMA_PATH = ROOT / "schemas/model-runtime-inventory-v2.schema.json"
 
 
 EXPECTED_SHARED_ARTIFACTS = {
-    "catalogs/local-model-catalog-v1.json": "8f97eeb59d5c6cdf6c07df027eaf587a64184ba6",
+    "catalogs/local-model-catalog-v1.json": "ef3689ee15d3ac52f98f915491f21feb337c13d9",
     "schemas/model-runtime-inventory-v1.schema.json": "8ff1a1db4700214ba687cd806c449bc1ea7dfdb4",
     "schemas/model-runtime-inventory-v2.schema.json": "6f1d5a6dd3b70a4b5e78203a20a67b71ed35a489",
     "schemas/personal-enterprise-task-contract-v1.schema.json": "566a0d72babd58636a3ef40e55b5c44168776522",

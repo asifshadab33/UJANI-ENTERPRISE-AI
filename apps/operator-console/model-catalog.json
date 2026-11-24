@@ -39,9 +39,20 @@
         "recommended": 4
       },
       "size": "quantization_and_manifest_dependent",
-      "license": "Verify the exact upstream model licence and terms before distribution.",
+      "license": "Apache License 2.0 (upstream Qwen3 publisher metadata; exact Ollama artifact still requires verification).",
       "runtime_status": "desktop_ollama_candidate",
-      "download_requires_confirmation": true
+      "download_requires_confirmation": true,
+      "provenance": {
+        "publisher_model_card_url": "https://huggingface.co/Qwen/Qwen3-0.6B",
+        "license_source_url": "https://huggingface.co/Qwen/Qwen3-0.6B/blob/main/LICENSE",
+        "license_name": "Apache License 2.0",
+        "license_identifier": "Apache-2.0",
+        "license_type": "spdx",
+        "publisher_metadata_checked_at": "2026-11-24",
+        "exact_runtime_artifact_verified": false,
+        "artifact_identity_status": "not_pinned",
+        "artifact_note": "Publisher metadata identifies the upstream model family, not the exact Ollama registry manifest or quantized derivative. UJANI does not pin the tag digest, final installed bytes or derivative licence; verify the exact artifact before installing or redistributing it."
+      }
     },
     {
       "id": "smollm2-1.7b",
@@ -64,9 +75,20 @@
         "recommended": 6
       },
       "size": "quantization_and_manifest_dependent",
-      "license": "Verify the exact upstream model licence and terms before distribution.",
+      "license": "Apache License 2.0 (upstream SmolLM2 publisher metadata; exact Ollama artifact still requires verification).",
       "runtime_status": "desktop_ollama_candidate",
-      "download_requires_confirmation": true
+      "download_requires_confirmation": true,
+      "provenance": {
+        "publisher_model_card_url": "https://huggingface.co/HuggingFaceTB/SmolLM2-1.7B-Instruct",
+        "license_source_url": "https://huggingface.co/HuggingFaceTB/SmolLM2-1.7B-Instruct",
+        "license_name": "Apache License 2.0",
+        "license_identifier": "Apache-2.0",
+        "license_type": "spdx",
+        "publisher_metadata_checked_at": "2026-11-24",
+        "exact_runtime_artifact_verified": false,
+        "artifact_identity_status": "not_pinned",
+        "artifact_note": "Publisher metadata identifies the upstream model family, not the exact Ollama registry manifest or quantized derivative. UJANI does not pin the tag digest, final installed bytes or derivative licence; verify the exact artifact before installing or redistributing it."
+      }
     },
     {
       "id": "llama-3.2-1b",
@@ -88,9 +110,20 @@
         "recommended": 6
       },
       "size": "quantization_and_manifest_dependent",
-      "license": "Meta Llama Community Licence; verify current version and obligations.",
+      "license": "Llama 3.2 Community License Agreement; custom terms and Meta's acceptable-use policy apply.",
       "runtime_status": "desktop_ollama_candidate",
-      "download_requires_confirmation": true
+      "download_requires_confirmation": true,
+      "provenance": {
+        "publisher_model_card_url": "https://huggingface.co/meta-llama/Llama-3.2-1B-Instruct",
+        "license_source_url": "https://github.com/meta-llama/llama-models/blob/main/models/llama3_2/LICENSE",
+        "license_name": "Llama 3.2 Community License Agreement",
+        "license_identifier": null,
+        "license_type": "custom_terms",
+        "publisher_metadata_checked_at": "2026-11-24",
+        "exact_runtime_artifact_verified": false,
+        "artifact_identity_status": "not_pinned",
+        "artifact_note": "Publisher metadata identifies the upstream model family, not the exact Ollama registry manifest or quantized derivative. UJANI does not pin the tag digest, final installed bytes or derivative licence; verify the exact artifact before installing or redistributing it."
+      }
     },
     {
       "id": "qwen3-1.7b",
@@ -114,9 +147,20 @@
         "recommended": 6
       },
       "size": "quantization_and_manifest_dependent",
-      "license": "Verify the exact upstream model licence and terms before distribution.",
+      "license": "Apache License 2.0 (upstream Qwen3 publisher metadata; exact Ollama artifact still requires verification).",
       "runtime_status": "desktop_ollama_candidate",
-      "download_requires_confirmation": true
+      "download_requires_confirmation": true,
+      "provenance": {
+        "publisher_model_card_url": "https://huggingface.co/Qwen/Qwen3-1.7B",
+        "license_source_url": "https://huggingface.co/Qwen/Qwen3-1.7B/blob/main/LICENSE",
+        "license_name": "Apache License 2.0",
+        "license_identifier": "Apache-2.0",
+        "license_type": "spdx",
+        "publisher_metadata_checked_at": "2026-11-24",
+        "exact_runtime_artifact_verified": false,
+        "artifact_identity_status": "not_pinned",
+        "artifact_note": "Publisher metadata identifies the upstream model family, not the exact Ollama registry manifest or quantized derivative. UJANI does not pin the tag digest, final installed bytes or derivative licence; verify the exact artifact before installing or redistributing it."
+      }
     },
     {
       "id": "gemma-3-1b",
@@ -139,9 +183,20 @@
         "recommended": 6
       },
       "size": "quantization_and_manifest_dependent",
-      "license": "Gemma Terms of Use; verify current terms and redistribution conditions.",
+      "license": "Gemma Terms of Use; custom terms and the current prohibited-use policy apply.",
       "runtime_status": "desktop_ollama_candidate",
-      "download_requires_confirmation": true
+      "download_requires_confirmation": true,
+      "provenance": {
+        "publisher_model_card_url": "https://huggingface.co/google/gemma-3-1b-it",
+        "license_source_url": "https://gemma.ai/resources/terms/",
+        "license_name": "Gemma Terms of Use (custom terms)",
+        "license_identifier": null,
+        "license_type": "custom_terms",
+        "publisher_metadata_checked_at": "2026-11-24",
+        "exact_runtime_artifact_verified": false,
+        "artifact_identity_status": "not_pinned",
+        "artifact_note": "Publisher metadata identifies the upstream model family, not the exact Ollama registry manifest or quantized derivative. UJANI does not pin the tag digest, final installed bytes or derivative licence; verify the exact artifact before installing or redistributing it."
+      }
     },
     {
       "id": "llama-3.2-3b",
@@ -164,9 +219,20 @@
         "recommended": 8
       },
       "size": "quantization_and_manifest_dependent",
-      "license": "Meta Llama Community Licence; verify current version and obligations.",
+      "license": "Llama 3.2 Community License Agreement; custom terms and Meta's acceptable-use policy apply.",
       "runtime_status": "desktop_ollama_candidate",
-      "download_requires_confirmation": true
+      "download_requires_confirmation": true,
+      "provenance": {
+        "publisher_model_card_url": "https://huggingface.co/meta-llama/Llama-3.2-3B-Instruct",
+        "license_source_url": "https://github.com/meta-llama/llama-models/blob/main/models/llama3_2/LICENSE",
+        "license_name": "Llama 3.2 Community License Agreement",
+        "license_identifier": null,
+        "license_type": "custom_terms",
+        "publisher_metadata_checked_at": "2026-11-24",
+        "exact_runtime_artifact_verified": false,
+        "artifact_identity_status": "not_pinned",
+        "artifact_note": "Publisher metadata identifies the upstream model family, not the exact Ollama registry manifest or quantized derivative. UJANI does not pin the tag digest, final installed bytes or derivative licence; verify the exact artifact before installing or redistributing it."
+      }
     },
     {
       "id": "qwen3-4b",
@@ -190,9 +256,20 @@
         "recommended": 12
       },
       "size": "quantization_and_manifest_dependent",
-      "license": "Verify the exact upstream model licence and terms before distribution.",
+      "license": "Apache License 2.0 (upstream Qwen3 publisher metadata; exact Ollama artifact still requires verification).",
       "runtime_status": "desktop_ollama_candidate",
-      "download_requires_confirmation": true
+      "download_requires_confirmation": true,
+      "provenance": {
+        "publisher_model_card_url": "https://huggingface.co/Qwen/Qwen3-4B",
+        "license_source_url": "https://huggingface.co/Qwen/Qwen3-4B/blob/main/LICENSE",
+        "license_name": "Apache License 2.0",
+        "license_identifier": "Apache-2.0",
+        "license_type": "spdx",
+        "publisher_metadata_checked_at": "2026-11-24",
+        "exact_runtime_artifact_verified": false,
+        "artifact_identity_status": "not_pinned",
+        "artifact_note": "Publisher metadata identifies the upstream model family, not the exact Ollama registry manifest or quantized derivative. UJANI does not pin the tag digest, final installed bytes or derivative licence; verify the exact artifact before installing or redistributing it."
+      }
     },
     {
       "id": "phi-4-mini",
@@ -215,9 +292,20 @@
         "recommended": 12
       },
       "size": "quantization_and_manifest_dependent",
-      "license": "Verify the exact upstream model licence and terms before distribution.",
+      "license": "MIT License (upstream Microsoft publisher metadata; exact Ollama artifact still requires verification).",
       "runtime_status": "desktop_ollama_candidate",
-      "download_requires_confirmation": true
+      "download_requires_confirmation": true,
+      "provenance": {
+        "publisher_model_card_url": "https://huggingface.co/microsoft/Phi-4-mini-instruct",
+        "license_source_url": "https://huggingface.co/microsoft/Phi-4-mini-instruct/blob/main/LICENSE",
+        "license_name": "MIT License",
+        "license_identifier": "MIT",
+        "license_type": "spdx",
+        "publisher_metadata_checked_at": "2026-11-24",
+        "exact_runtime_artifact_verified": false,
+        "artifact_identity_status": "not_pinned",
+        "artifact_note": "Publisher metadata identifies the upstream model family, not the exact Ollama registry manifest or quantized derivative. UJANI does not pin the tag digest, final installed bytes or derivative licence; verify the exact artifact before installing or redistributing it."
+      }
     },
     {
       "id": "qwen3-8b",
@@ -241,9 +329,20 @@
         "recommended": 24
       },
       "size": "quantization_and_manifest_dependent",
-      "license": "Apache License 2.0; verify the exact artifact and accompanying terms before distribution.",
+      "license": "Apache License 2.0 (upstream Qwen3 publisher metadata; exact Ollama artifact still requires verification).",
       "runtime_status": "desktop_ollama_candidate",
-      "download_requires_confirmation": true
+      "download_requires_confirmation": true,
+      "provenance": {
+        "publisher_model_card_url": "https://huggingface.co/Qwen/Qwen3-8B",
+        "license_source_url": "https://huggingface.co/Qwen/Qwen3-8B/blob/main/LICENSE",
+        "license_name": "Apache License 2.0",
+        "license_identifier": "Apache-2.0",
+        "license_type": "spdx",
+        "publisher_metadata_checked_at": "2026-11-24",
+        "exact_runtime_artifact_verified": false,
+        "artifact_identity_status": "not_pinned",
+        "artifact_note": "Publisher metadata identifies the upstream model family, not the exact Ollama registry manifest or quantized derivative. UJANI does not pin the tag digest, final installed bytes or derivative licence; verify the exact artifact before installing or redistributing it."
+      }
     }
   ],
   "specialist_tools": [
@@ -353,6 +452,17 @@
       "Use one concurrent inference by default on low-memory devices.",
       "Start with the listed short context; increase only after device-specific benchmarks.",
       "Never auto-download, silently switch models, or fall back to cloud."
+    ]
+  },
+  "provenance_policy": {
+    "publisher_metadata_checked_at": "2026-11-24",
+    "scope": "Publisher model-card and upstream licence metadata only; not the exact quantized Ollama registry artifact.",
+    "exact_runtime_artifact_verified": false,
+    "redistribution_approved": false,
+    "required_before_managed_download_or_redistribution": [
+      "Resolve and pin the exact upstream runtime manifest and immutable digest.",
+      "Verify quantization, download size and installed size against the exact artifact.",
+      "Review the exact artifact's licence, derivative terms and redistribution obligations."
     ]
   }
 }
