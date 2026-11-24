@@ -98,7 +98,7 @@ SELECT ujani_control.admit_device_lease_with_telemetry(
  'race-workload','race-approval','race-lease',
  decode(repeat('53',16),'hex'),decode(repeat('54',32),'hex'),
  decode(repeat('45',32),'hex'),500,512,decode(repeat('55',32),'hex'),
- clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000401');
+ clock_timestamp()+interval '4 minutes',pg_catalog.gen_random_uuid());
 \! for i in $(seq 1 300); do [ -f "$UJANI_TELEMETRY_RELEASE_FILE" ] && exit 0; sleep 0.05; done; exit 1
 COMMIT;
 RESET ROLE;
