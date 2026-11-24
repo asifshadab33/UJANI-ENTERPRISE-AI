@@ -1328,4 +1328,47 @@ mod tests {
             Err(ContractError::InvalidSignature)
         );
     }
+
+    #[test]
+    fn native_decoder_rejects_legacy_public_and_enterprise_wire_formats() {
+        let legacy_public = br#"{"protocol_version":2,"task_id":"task-42","recipient_device_id":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","issued_at":1000,"expires_at":1120,"nonce":"0123456789abcdef0123456789abcdef","operation":"document.summarize","input_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","requested_scopes":["document.read","result.write"],"user_consent":true}"#;
+        let legacy_enterprise = br#"{"schema_version":1,"workload_id":"job-001","class":"inference","model":"qwen2.5:7b","requested_cpu_millis":2000,"requested_memory_mb":4096,"max_runtime_ms":60000,"data_classification":"internal","network_access":false}"#;
+
+        let legacy_public_value: Value = serde_json::from_slice(legacy_public).unwrap();
+        let signed_wrapper = serde_json::to_vec(&serde_json::json!({
+            "envelope": legacy_public_value,
+            "signature": vec![7u8; 64]
+        }))
+        .unwrap();
+
+        let mut legacy_public_relabelled: Value =
+            serde_json::from_slice(legacy_public).unwrap();
+        legacy_public_relabelled["message_type"] = Value::String("task_envelope".into());
+        legacy_public_relabelled["schema_version"] = Value::from(1);
+        let legacy_public_relabelled =
+            serde_json::to_vec(&legacy_public_relabelled).unwrap();
+
+        let mut legacy_enterprise_relabelled: Value =
+            serde_json::from_slice(legacy_enterprise).unwrap();
+        legacy_enterprise_relabelled["message_type"] = Value::String("task_envelope".into());
+        let legacy_enterprise_relabelled =
+            serde_json::to_vec(&legacy_enterprise_relabelled).unwrap();
+
+        let messages: [(&str, &[u8]); 5] = [
+            ("Public peer TaskEnvelope v2", legacy_public),
+            ("Public SignedTaskEnvelope v2 wrapper", &signed_wrapper),
+            ("Public v2 with only shared message/version labels", &legacy_public_relabelled),
+            ("Enterprise WorkloadManifest v1", legacy_enterprise),
+            ("Enterprise manifest with only a shared message label", &legacy_enterprise_relabelled),
+        ];
+
+        for (name, message) in messages {
+            assert_eq!(
+                TaskEnvelopeV1::parse(message),
+                Err(ContractError::InvalidJson),
+                "legacy format must not be accepted as task-contract v1: {name}"
+            );
+        }
+    }
+
 }
