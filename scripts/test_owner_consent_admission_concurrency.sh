@@ -155,10 +155,10 @@ if ! grep -qx 't' "$first_out"; then
  exit 1
 fi
 
-state="$("${PSQL[@]}" -c "SELECT CASE WHEN d.owner_consent_state='withdrawn' AND d.consent_generation=2 AND l.state='revoked' AND l.revision=2 AND (SELECT count(*) FROM ujani_control.audit_events a WHERE a.tenant_id=l.tenant_id AND a.object_ref=l.lease_id AND a.event_type IN ('device.lease.admitted','device.lease.revoked'))=2 AND (SELECT count(*) FROM ujani_control.device_telemetry_samples s WHERE s.tenant_id=l.tenant_id AND s.device_id=l.device_id AND s.generation=1 AND s.sequence=1)=1 AND (SELECT count(*) FROM ujani_control.request_replays r WHERE r.tenant_id=l.tenant_id AND r.device_id=l.device_id AND r.request_id IN (decode(repeat('51',16),'hex'),decode(repeat('53',16),'hex')))=2 THEN 'ok' ELSE 'bad' END FROM ujani_control.devices d JOIN ujani_control.leases l USING (tenant_id,device_id) WHERE d.tenant_id=:'tenant' AND d.device_id='race-device' AND l.lease_id='race-lease'")"
+state="$("${PSQL[@]}" -c "SELECT CASE WHEN d.owner_consent_state='withdrawn' AND d.consent_generation=2 AND l.state='revoked' AND l.revision=2 AND (SELECT count(*) FROM ujani_control.audit_events a WHERE a.tenant_id=l.tenant_id AND a.object_ref=l.lease_id AND a.event_type IN ('device.lease.admitted','device.lease.revoked'))=2 AND (SELECT count(*) FROM ujani_control.device_telemetry_samples s WHERE s.tenant_id=l.tenant_id AND s.device_id=l.device_id AND s.generation=1 AND s.sequence=1)=1 AND (SELECT count(*) FROM ujani_control.request_replays r WHERE r.tenant_id=l.tenant_id AND r.device_id=l.device_id AND r.request_id IN (decode(repeat('51',16),'hex'),decode(repeat('53',16),'hex')))=2 THEN 'ok' ELSE 'bad' END FROM ujani_control.devices d JOIN ujani_control.leases l USING (tenant_id,device_id) WHERE d.tenant_id='${tenant}' AND d.device_id='race-device' AND l.lease_id='race-lease'")"
 if [[ "$state" != "ok" ]]; then
  echo "withdrawal did not revoke the admitted lease atomically with consent and audit: $state" >&2
- "${PSQL[@]}" -c "SELECT d.owner_consent_state,d.consent_generation,l.state,l.revision FROM ujani_control.devices d JOIN ujani_control.leases l USING (tenant_id,device_id) WHERE d.tenant_id=:'tenant' AND l.lease_id='race-lease'" >&2
+ "${PSQL[@]}" -c "SELECT d.owner_consent_state,d.consent_generation,l.state,l.revision FROM ujani_control.devices d JOIN ujani_control.leases l USING (tenant_id,device_id) WHERE d.tenant_id='${tenant}' AND l.lease_id='race-lease'" >&2
  exit 1
 fi
 
