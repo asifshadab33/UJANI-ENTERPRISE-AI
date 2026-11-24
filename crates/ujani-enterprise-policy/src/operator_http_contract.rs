@@ -605,8 +605,6 @@ mod model_task_match_route_compatibility_regressions {
                 "unsupported spelling must fail closed: {unsupported}"
             );
         }
-        assert!(
-            resolve_route(HttpMethod::Get, "/api/v1/operator/model-task-match").is_none()
-        );
+        assert!(resolve_route(HttpMethod::Get, "/api/v1/operator/model-task-match").is_none());
     }
 }
