@@ -2,11 +2,14 @@
 """Validate the shared Public/Enterprise task-contract v1 schema boundary."""
 from __future__ import annotations
 
+import base64
 import copy
 import hashlib
 import json
 from pathlib import Path
 from typing import Any
+
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_PATH = ROOT / "schemas/personal-enterprise-task-contract-v1.schema.json"
@@ -110,6 +113,32 @@ def _validate_consent_binding_vector() -> None:
     assert canonical.decode("utf-8") == vector["canonical_preimage_utf8"]
     assert envelope["consent"]["user"]["binding_sha256"] == expected
     assert _consent_binding_sha256(envelope) == expected
+
+    # Verify a fixed Ed25519 vector in Python as well as the independent Rust decoders.
+    # The signature covers the complete message except its top-level signature object.
+    signature = envelope["signature"]
+    unsigned = copy.deepcopy(envelope)
+    unsigned.pop("signature")
+    signed_message = json.dumps(
+        unsigned, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+    ).encode("utf-8")
+    signature_preimage = (
+        b"UJANI-PERSONAL-ENTERPRISE-TASK-V1\0"
+        + envelope["message_type"].encode("ascii")
+        + b"\0ed25519\0"
+        + signature["key_id"].encode("ascii")
+        + b"\0"
+        + signed_message
+    )
+    public_key = base64.b64decode(
+        vector["verification_public_key"] + "=", altchars=b"-_", validate=True
+    )
+    signature_bytes = base64.b64decode(
+        signature["value"] + "==", altchars=b"-_", validate=True
+    )
+    Ed25519PublicKey.from_public_bytes(public_key).verify(
+        signature_bytes, signature_preimage
+    )
 
     changed = copy.deepcopy(envelope)
     changed["resource_limits"]["memory_mb"] += 1
