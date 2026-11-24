@@ -1341,12 +1341,10 @@ mod tests {
         }))
         .unwrap();
 
-        let mut legacy_public_relabelled: Value =
-            serde_json::from_slice(legacy_public).unwrap();
+        let mut legacy_public_relabelled: Value = serde_json::from_slice(legacy_public).unwrap();
         legacy_public_relabelled["message_type"] = Value::String("task_envelope".into());
         legacy_public_relabelled["schema_version"] = Value::from(1);
-        let legacy_public_relabelled =
-            serde_json::to_vec(&legacy_public_relabelled).unwrap();
+        let legacy_public_relabelled = serde_json::to_vec(&legacy_public_relabelled).unwrap();
 
         let mut legacy_enterprise_relabelled: Value =
             serde_json::from_slice(legacy_enterprise).unwrap();
@@ -1357,9 +1355,15 @@ mod tests {
         let messages: [(&str, &[u8]); 5] = [
             ("Public peer TaskEnvelope v2", legacy_public),
             ("Public SignedTaskEnvelope v2 wrapper", &signed_wrapper),
-            ("Public v2 with only shared message/version labels", &legacy_public_relabelled),
+            (
+                "Public v2 with only shared message/version labels",
+                &legacy_public_relabelled,
+            ),
             ("Enterprise WorkloadManifest v1", legacy_enterprise),
-            ("Enterprise manifest with only a shared message label", &legacy_enterprise_relabelled),
+            (
+                "Enterprise manifest with only a shared message label",
+                &legacy_enterprise_relabelled,
+            ),
         ];
 
         for (name, message) in messages {
@@ -1370,4 +1374,5 @@ mod tests {
             );
         }
     }
+
 }
