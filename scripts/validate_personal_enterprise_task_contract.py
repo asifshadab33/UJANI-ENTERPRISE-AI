@@ -626,6 +626,7 @@ def main() -> None:
     check_integer_safe_bounds(definitions)
     _validate_instance_fixtures(schema)
     print("Personal-to-Enterprise task-contract v1 structural checks passed.")
+    print("Legacy Public peer-envelope v2 and Enterprise WorkloadManifest v1 remain rejected as shared v1.")
 
 
 if __name__ == "__main__":
