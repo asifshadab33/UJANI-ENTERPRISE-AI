@@ -575,7 +575,6 @@ mod strict_request_body_boundary_regressions {
     }
 }
 
-
 #[cfg(test)]
 mod model_task_match_route_compatibility_regressions {
     use super::*;
@@ -585,7 +584,12 @@ mod model_task_match_route_compatibility_regressions {
         let route = resolve_route(HttpMethod::Post, "/api/v1/operator/model-task-match")
             .expect("canonical documented route must resolve");
         assert_eq!(route.route, OperatorHttpRoute::OperatorModelTaskMatch);
-        assert_eq!(route.principal, RoutePrincipal::Operator { minimum_role: OperatorRole::Viewer });
+        assert_eq!(
+            route.principal,
+            RoutePrincipal::Operator {
+                minimum_role: OperatorRole::Viewer
+            }
+        );
         assert_eq!(route.max_body_bytes, MAX_MODEL_TASK_MATCH_BODY_BYTES);
         assert!(route.permits_body_size(MAX_MODEL_TASK_MATCH_BODY_BYTES));
         assert!(!route.permits_body_size(MAX_MODEL_TASK_MATCH_BODY_BYTES + 1));
@@ -596,9 +600,13 @@ mod model_task_match_route_compatibility_regressions {
             "/api/v1/operator/model-task-match?device=device-1",
             "/api/v1/operator/model-task-match#fragment",
         ] {
-            assert!(resolve_route(HttpMethod::Post, unsupported).is_none(),
-                "unsupported spelling must fail closed: {unsupported}");
+            assert!(
+                resolve_route(HttpMethod::Post, unsupported).is_none(),
+                "unsupported spelling must fail closed: {unsupported}"
+            );
         }
-        assert!(resolve_route(HttpMethod::Get, "/api/v1/operator/model-task-match").is_none());
+        assert!(
+            resolve_route(HttpMethod::Get, "/api/v1/operator/model-task-match").is_none()
+        );
     }
 }
