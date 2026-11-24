@@ -966,6 +966,7 @@ mod tests {
         envelope: TaskEnvelopeV1,
         canonical_preimage_utf8: String,
         expected_binding_sha256: String,
+        verification_public_key: String,
     }
 
     const CONSENT_FIXTURE: &str =
@@ -1002,6 +1003,18 @@ mod tests {
             String::from_utf8(fixture.envelope.consent_binding_preimage().unwrap()).unwrap(),
             fixture.canonical_preimage_utf8
         );
+    }
+
+    #[test]
+    fn shared_ed25519_signature_matches_the_cross_language_vector() {
+        let fixture: ConsentFixture = serde_json::from_str(CONSENT_FIXTURE).unwrap();
+        let key_bytes = decode_base64url(&fixture.verification_public_key, 32).unwrap();
+        let key_array: [u8; 32] = key_bytes.try_into().unwrap();
+        let verifying_key = VerifyingKey::from_bytes(&key_array).unwrap();
+        fixture
+            .envelope
+            .verify_signature("sender-key-1", &verifying_key)
+            .unwrap();
     }
 
     #[test]
