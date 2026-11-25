@@ -14,8 +14,7 @@
 //! cross-process create-if-absent transaction.
 
 use crate::integrity_key_provider::{
-    valid_integrity_key_id, IntegrityKeyProvider, IntegrityKeyProviderError,
-    IntegrityKeyPurpose,
+    valid_integrity_key_id, IntegrityKeyProvider, IntegrityKeyProviderError, IntegrityKeyPurpose,
 };
 use aes_gcm::{
     aead::{Aead, Payload},
@@ -172,8 +171,8 @@ impl<S: ProtectedSecretStore> KeyringIntegrityKeyProvider<S> {
             .store
             .get(&Self::active_name(purpose))?
             .ok_or(IntegrityKeyProviderError::UnknownKey)?;
-        let key_id = String::from_utf8(stored)
-            .map_err(|_| IntegrityKeyProviderError::Unavailable)?;
+        let key_id =
+            String::from_utf8(stored).map_err(|_| IntegrityKeyProviderError::Unavailable)?;
         if !valid_integrity_key_id(&key_id) || self.is_retired(purpose, &key_id)? {
             return Err(IntegrityKeyProviderError::UnknownKey);
         }
@@ -376,16 +375,27 @@ mod tests {
 
     impl ProtectedSecretStore for MemorySecretStore {
         fn get(&self, name: &str) -> Result<Option<Vec<u8>>, IntegrityKeyProviderError> {
-            Ok(self.0.lock().map_err(|_| IntegrityKeyProviderError::LockPoisoned)?.get(name).cloned())
+            Ok(self
+                .0
+                .lock()
+                .map_err(|_| IntegrityKeyProviderError::LockPoisoned)?
+                .get(name)
+                .cloned())
         }
 
         fn put(&self, name: &str, value: &[u8]) -> Result<(), IntegrityKeyProviderError> {
-            self.0.lock().map_err(|_| IntegrityKeyProviderError::LockPoisoned)?.insert(name.to_owned(), value.to_vec());
+            self.0
+                .lock()
+                .map_err(|_| IntegrityKeyProviderError::LockPoisoned)?
+                .insert(name.to_owned(), value.to_vec());
             Ok(())
         }
 
         fn delete(&self, name: &str) -> Result<(), IntegrityKeyProviderError> {
-            self.0.lock().map_err(|_| IntegrityKeyProviderError::LockPoisoned)?.remove(name);
+            self.0
+                .lock()
+                .map_err(|_| IntegrityKeyProviderError::LockPoisoned)?
+                .remove(name);
             Ok(())
         }
     }
@@ -399,18 +409,34 @@ mod tests {
         let provider = provider();
         let purpose = IntegrityKeyPurpose::DeviceTrustRegistry;
         provider.provision_key(purpose, "device-v1").unwrap();
-        assert_eq!(provider.provision_key(purpose, "device-v1"), Err(IntegrityKeyProviderError::KeyAlreadyExists));
+        assert_eq!(
+            provider.provision_key(purpose, "device-v1"),
+            Err(IntegrityKeyProviderError::KeyAlreadyExists)
+        );
         provider.activate_key(purpose, "device-v1").unwrap();
-        let (old_id, old_tag) = provider.sign_active(purpose, b"registry-snapshot-v1").unwrap();
+        let (old_id, old_tag) = provider
+            .sign_active(purpose, b"registry-snapshot-v1")
+            .unwrap();
 
         provider.provision_key(purpose, "device-v2").unwrap();
         provider.activate_key(purpose, "device-v2").unwrap();
-        provider.verify(purpose, &old_id, b"registry-snapshot-v1", &old_tag).unwrap();
-        assert_eq!(provider.retire_key(purpose, "device-v2"), Err(IntegrityKeyProviderError::ActiveKeyCannotBeRetired));
+        provider
+            .verify(purpose, &old_id, b"registry-snapshot-v1", &old_tag)
+            .unwrap();
+        assert_eq!(
+            provider.retire_key(purpose, "device-v2"),
+            Err(IntegrityKeyProviderError::ActiveKeyCannotBeRetired)
+        );
 
         provider.retire_key(purpose, "device-v1").unwrap();
-        assert_eq!(provider.verify(purpose, &old_id, b"registry-snapshot-v1", &old_tag), Err(IntegrityKeyProviderError::UnknownKey));
-        assert_eq!(provider.provision_key(purpose, "device-v1"), Err(IntegrityKeyProviderError::KeyAlreadyExists));
+        assert_eq!(
+            provider.verify(purpose, &old_id, b"registry-snapshot-v1", &old_tag),
+            Err(IntegrityKeyProviderError::UnknownKey)
+        );
+        assert_eq!(
+            provider.provision_key(purpose, "device-v1"),
+            Err(IntegrityKeyProviderError::KeyAlreadyExists)
+        );
     }
 
     #[test]
@@ -419,14 +445,32 @@ mod tests {
         let purpose = IntegrityKeyPurpose::ReservationLedger;
         provider.provision_key(purpose, "ledger-v1").unwrap();
         provider.activate_key(purpose, "ledger-v1").unwrap();
-        let (key_id, sealed) = provider.seal_active(purpose, b"tenant-a:ledger", b"synthetic-ledger").unwrap();
-        assert_eq!(provider.open_sealed(purpose, &key_id, b"tenant-a:ledger", &sealed).unwrap(), b"synthetic-ledger");
-        assert!(provider.open_sealed(purpose, &key_id, b"tenant-b:ledger", &sealed).is_err());
-        assert!(provider.open_sealed(IntegrityKeyPurpose::DeviceTrustRegistry, &key_id, b"tenant-a:ledger", &sealed).is_err());
+        let (key_id, sealed) = provider
+            .seal_active(purpose, b"tenant-a:ledger", b"synthetic-ledger")
+            .unwrap();
+        assert_eq!(
+            provider
+                .open_sealed(purpose, &key_id, b"tenant-a:ledger", &sealed)
+                .unwrap(),
+            b"synthetic-ledger"
+        );
+        assert!(provider
+            .open_sealed(purpose, &key_id, b"tenant-b:ledger", &sealed)
+            .is_err());
+        assert!(provider
+            .open_sealed(
+                IntegrityKeyPurpose::DeviceTrustRegistry,
+                &key_id,
+                b"tenant-a:ledger",
+                &sealed
+            )
+            .is_err());
 
         let mut tampered = sealed.clone();
         *tampered.last_mut().unwrap() ^= 1;
-        assert!(provider.open_sealed(purpose, &key_id, b"tenant-a:ledger", &tampered).is_err());
+        assert!(provider
+            .open_sealed(purpose, &key_id, b"tenant-a:ledger", &tampered)
+            .is_err());
     }
 
     #[test]
@@ -444,13 +488,20 @@ mod tests {
             .unwrap();
 
         assert_eq!(first_key_id, second_key_id);
-        assert_ne!(first, second, "independent encryptions must not reuse the nonce/ciphertext envelope");
+        assert_ne!(
+            first, second,
+            "independent encryptions must not reuse the nonce/ciphertext envelope"
+        );
         assert_eq!(
-            provider.open_sealed(purpose, &first_key_id, b"same-context", &first).unwrap(),
+            provider
+                .open_sealed(purpose, &first_key_id, b"same-context", &first)
+                .unwrap(),
             b"same-plaintext"
         );
         assert_eq!(
-            provider.open_sealed(purpose, &second_key_id, b"same-context", &second).unwrap(),
+            provider
+                .open_sealed(purpose, &second_key_id, b"same-context", &second)
+                .unwrap(),
             b"same-plaintext"
         );
     }
@@ -458,7 +509,18 @@ mod tests {
     #[test]
     fn missing_active_key_and_corrupt_envelopes_fail_closed() {
         let provider = provider();
-        assert_eq!(provider.sign_active(IntegrityKeyPurpose::ReservationLedger, b"x"), Err(IntegrityKeyProviderError::UnknownKey));
-        assert_eq!(provider.open_sealed(IntegrityKeyPurpose::ReservationLedger, "missing", b"", &[0; 4]), Err(IntegrityKeyProviderError::EncryptionFailed));
+        assert_eq!(
+            provider.sign_active(IntegrityKeyPurpose::ReservationLedger, b"x"),
+            Err(IntegrityKeyProviderError::UnknownKey)
+        );
+        assert_eq!(
+            provider.open_sealed(
+                IntegrityKeyPurpose::ReservationLedger,
+                "missing",
+                b"",
+                &[0; 4]
+            ),
+            Err(IntegrityKeyProviderError::EncryptionFailed)
+        );
     }
 }
