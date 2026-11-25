@@ -363,12 +363,9 @@ impl<S: ProtectedSecretStore> IntegrityKeyProvider for KeyringIntegrityKeyProvid
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{collections::HashMap, sync::Arc};
+    use crate::{device_trust::durable::DurableDeviceRegistry, durable_ledger::DurableLedger};
     use ed25519_dalek::SigningKey;
-    use crate::{
-        device_trust::durable::DurableDeviceRegistry,
-        durable_ledger::DurableLedger,
-    };
+    use std::{collections::HashMap, sync::Arc};
 
     #[derive(Default)]
     struct MemorySecretStore(Mutex<HashMap<String, Vec<u8>>>);
@@ -518,7 +515,9 @@ mod tests {
         ));
         std::fs::create_dir_all(&directory).unwrap();
 
-        let provider = Arc::new(KeyringIntegrityKeyProvider::new(MemorySecretStore::default()));
+        let provider = Arc::new(KeyringIntegrityKeyProvider::new(
+            MemorySecretStore::default(),
+        ));
         provider
             .provision_key(IntegrityKeyPurpose::DeviceTrustRegistry, "registry-v1")
             .unwrap();
@@ -550,17 +549,10 @@ mod tests {
         drop(reopened_registry);
 
         let ledger_path = directory.join("reservation-ledger.json");
-        let ledger = DurableLedger::open_with_key_provider(
-            &ledger_path,
-            provider.clone(),
-        )
-        .unwrap();
+        let ledger = DurableLedger::open_with_key_provider(&ledger_path, provider.clone()).unwrap();
         drop(ledger);
-        let reopened_ledger = DurableLedger::open_with_key_provider(
-            &ledger_path,
-            provider,
-        )
-        .unwrap();
+        let reopened_ledger =
+            DurableLedger::open_with_key_provider(&ledger_path, provider).unwrap();
         drop(reopened_ledger);
 
         std::fs::remove_dir_all(directory).unwrap();
