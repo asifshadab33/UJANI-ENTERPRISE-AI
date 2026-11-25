@@ -179,10 +179,10 @@ BEGIN
   RETURN;
  END IF;
 
- SELECT sequence_id, record_hash INTO v_sequence, v_previous_hash
- FROM ujani_control.collective_defence_consent_audit
- WHERE tenant_id = p_tenant_id
- ORDER BY sequence_id DESC LIMIT 1;
+ SELECT audit.sequence_id, audit.record_hash INTO v_sequence, v_previous_hash
+ FROM ujani_control.collective_defence_consent_audit AS audit
+ WHERE audit.tenant_id = p_tenant_id
+ ORDER BY audit.sequence_id DESC LIMIT 1;
  v_sequence := coalesce(v_sequence, 0) + 1;
  v_previous_hash := coalesce(v_previous_hash, decode(repeat('00',32),'hex'));
  v_event_id := gen_random_uuid();
@@ -261,9 +261,9 @@ BEGIN
   RETURN;
  END IF;
 
- SELECT generation INTO v_current_generation
- FROM ujani_control.collective_defence_tenant_consent
- WHERE tenant_id=p_tenant_id FOR UPDATE;
+ SELECT tenant_consent.generation INTO v_current_generation
+ FROM ujani_control.collective_defence_tenant_consent AS tenant_consent
+ WHERE tenant_consent.tenant_id=p_tenant_id FOR UPDATE;
  IF NOT FOUND THEN
   IF p_expected_generation IS NOT NULL THEN
    RAISE EXCEPTION 'tenant consent generation conflict' USING ERRCODE = '40001';
@@ -371,9 +371,11 @@ BEGIN
   RAISE EXCEPTION 'current tenant opt-in is required' USING ERRCODE = '42501';
  END IF;
 
- SELECT generation INTO v_current_generation
- FROM ujani_control.collective_defence_individual_consent
- WHERE tenant_id=p_tenant_id AND principal_id=p_principal_id AND device_id=p_device_id
+ SELECT individual_consent.generation INTO v_current_generation
+ FROM ujani_control.collective_defence_individual_consent AS individual_consent
+ WHERE individual_consent.tenant_id=p_tenant_id
+   AND individual_consent.principal_id=p_principal_id
+   AND individual_consent.device_id=p_device_id
  FOR UPDATE;
  IF NOT FOUND THEN
   IF p_expected_generation IS NOT NULL THEN
