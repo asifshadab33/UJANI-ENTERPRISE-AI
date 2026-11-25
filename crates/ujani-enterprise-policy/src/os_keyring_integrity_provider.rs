@@ -430,6 +430,32 @@ mod tests {
     }
 
     #[test]
+    fn repeated_seals_use_fresh_random_nonces() {
+        let provider = provider();
+        let purpose = IntegrityKeyPurpose::ReservationLedger;
+        provider.provision_key(purpose, "nonce-v1").unwrap();
+        provider.activate_key(purpose, "nonce-v1").unwrap();
+
+        let (first_key_id, first) = provider
+            .seal_active(purpose, b"same-context", b"same-plaintext")
+            .unwrap();
+        let (second_key_id, second) = provider
+            .seal_active(purpose, b"same-context", b"same-plaintext")
+            .unwrap();
+
+        assert_eq!(first_key_id, second_key_id);
+        assert_ne!(first, second, "independent encryptions must not reuse the nonce/ciphertext envelope");
+        assert_eq!(
+            provider.open_sealed(purpose, &first_key_id, b"same-context", &first).unwrap(),
+            b"same-plaintext"
+        );
+        assert_eq!(
+            provider.open_sealed(purpose, &second_key_id, b"same-context", &second).unwrap(),
+            b"same-plaintext"
+        );
+    }
+
+    #[test]
     fn missing_active_key_and_corrupt_envelopes_fail_closed() {
         let provider = provider();
         assert_eq!(provider.sign_active(IntegrityKeyPurpose::ReservationLedger, b"x"), Err(IntegrityKeyProviderError::UnknownKey));
