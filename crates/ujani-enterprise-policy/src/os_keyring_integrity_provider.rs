@@ -9,9 +9,13 @@
 //!
 //! This is OS-protected custody, not an HSM/KMS or an external anti-rollback
 //! anchor. High-assurance deployments should inject a customer KMS/HSM provider.
-//! Provision/activate/retire must be performed by one trusted administrative
-//! process at a time; the platform credential API does not expose a portable
-//! cross-process create-if-absent transaction.
+//! Calls are synchronous and may block on the platform credential service; async
+//! hosts must execute them on a dedicated blocking pool, never on an async worker.
+//! All instances in this process share a mutex because some native stores do not
+//! guarantee ordering across concurrent calls. Provision/activate/retire must
+//! still be performed by one trusted administrative process at a time; the
+//! platform credential API does not expose a portable cross-process
+//! create-if-absent transaction.
 
 use crate::integrity_key_provider::{
     valid_integrity_key_id, IntegrityKeyProvider, IntegrityKeyProviderError, IntegrityKeyPurpose,
@@ -35,6 +39,7 @@ const ENVELOPE_NONCE_BYTES: usize = 12;
 const MIN_ENVELOPE_BYTES: usize = 1 + ENVELOPE_NONCE_BYTES + 16;
 const MAC_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-INTEGRITY-MAC-V1\\0";
 const AEAD_DOMAIN: &[u8] = b"UJANI-ENTERPRISE-INTEGRITY-AEAD-V1\\0";
+static KEYRING_OPERATION_LOCK: Mutex<()> = Mutex::new(());
 
 /// Minimal storage abstraction so lifecycle and cryptographic behavior can be
 /// tested without accessing a developer's real OS credential store.
@@ -83,7 +88,6 @@ impl ProtectedSecretStore for OsKeyringSecretStore {
 /// protected secret store. MAC and AEAD use separate 256-bit subkeys.
 pub struct KeyringIntegrityKeyProvider<S = OsKeyringSecretStore> {
     store: S,
-    operation_lock: Mutex<()>,
 }
 
 impl<S> std::fmt::Debug for KeyringIntegrityKeyProvider<S> {
@@ -103,10 +107,7 @@ impl Default for KeyringIntegrityKeyProvider<OsKeyringSecretStore> {
 
 impl<S: ProtectedSecretStore> KeyringIntegrityKeyProvider<S> {
     pub fn new(store: S) -> Self {
-        Self {
-            store,
-            operation_lock: Mutex::new(()),
-        }
+        Self { store }
     }
 
     fn key_name(purpose: IntegrityKeyPurpose, key_id: &str) -> String {
@@ -121,8 +122,8 @@ impl<S: ProtectedSecretStore> KeyringIntegrityKeyProvider<S> {
         format!("v1:retired:{}:{key_id}", purpose.as_str())
     }
 
-    fn lock(&self) -> Result<std::sync::MutexGuard<'_, ()>, IntegrityKeyProviderError> {
-        self.operation_lock
+    fn lock(&self) -> Result<std::sync::MutexGuard<'static, ()>, IntegrityKeyProviderError> {
+        KEYRING_OPERATION_LOCK
             .lock()
             .map_err(|_| IntegrityKeyProviderError::LockPoisoned)
     }
