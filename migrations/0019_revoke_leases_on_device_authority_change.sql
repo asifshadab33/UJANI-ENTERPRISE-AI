@@ -115,6 +115,18 @@ BEGIN
   v_reason := 'device_key_rotated';
  ELSIF NEW.admin_approval_state IS DISTINCT FROM OLD.admin_approval_state THEN
   v_reason := 'admin_approval_changed';
+ ELSIF EXISTS (
+   SELECT 1
+   FROM ujani_control.device_owner_bindings AS binding
+   JOIN ujani_control.operator_subjects AS owner_subject
+     ON owner_subject.tenant_id = binding.tenant_id
+    AND owner_subject.subject_id = binding.owner_subject_id
+   WHERE binding.tenant_id = NEW.tenant_id
+     AND binding.device_id = NEW.device_id
+     AND binding.active IS TRUE
+     AND owner_subject.enabled IS FALSE
+  ) THEN
+  v_reason := 'owner_subject_disabled';
  ELSIF NEW.owner_consent_state IS DISTINCT FROM OLD.owner_consent_state THEN
   v_reason := 'owner_consent_changed';
  ELSE
@@ -182,6 +194,82 @@ CREATE TRIGGER device_z_revoke_leases_after_authority_change
 
 COMMENT ON FUNCTION ujani_control.revoke_device_leases_after_authority_change() IS
  'Atomically revokes every reserved/active lease when trust, owner consent, administrator approval, owner binding or active device-key authority changes. Rechecks the complete current authority envelope for legacy reconciliation, appends one audit event per revoked lease, and advances reservation_revision by the number of capacity changes. It never creates or dispatches work.';
+
+CREATE OR REPLACE FUNCTION ujani_control.lock_operator_subject_authority_change()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = pg_catalog, ujani_control
+AS $function$
+DECLARE
+ v_tenant_context text;
+BEGIN
+ v_tenant_context := pg_catalog.current_setting('ujani.tenant_id', true);
+ IF v_tenant_context IS NULL OR v_tenant_context = '' THEN
+  RAISE EXCEPTION 'authenticated tenant context is required for operator authority changes'
+   USING ERRCODE = '42501';
+ END IF;
+ PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(v_tenant_context, 0));
+ RETURN NULL;
+END;
+$function$;
+
+DROP TRIGGER IF EXISTS operator_subjects_a_authority_lock ON ujani_control.operator_subjects;
+CREATE TRIGGER operator_subjects_a_authority_lock
+ BEFORE UPDATE OF enabled ON ujani_control.operator_subjects
+ FOR EACH STATEMENT
+ EXECUTE FUNCTION ujani_control.lock_operator_subject_authority_change();
+
+CREATE OR REPLACE FUNCTION ujani_control.revoke_device_leases_for_disabled_owner()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = pg_catalog, ujani_control
+AS $function$
+DECLARE
+ v_tenant_context text;
+BEGIN
+ v_tenant_context := pg_catalog.current_setting('ujani.tenant_id', true);
+ IF v_tenant_context IS NULL OR v_tenant_context = ''
+    OR v_tenant_context IS DISTINCT FROM NEW.tenant_id THEN
+  RAISE EXCEPTION 'authenticated tenant context is required for operator authority changes'
+   USING ERRCODE = '42501';
+ END IF;
+
+ IF OLD.enabled IS DISTINCT FROM NEW.enabled AND NEW.enabled IS FALSE THEN
+  -- The statement-level trigger already holds the tenant audit lock before the
+  -- subject row lock. Invalidate every active owner's device grant; the device
+  -- AFTER trigger revokes reservations and appends per-lease receipts atomically.
+  UPDATE ujani_control.devices AS device
+  SET owner_consent_state = 'unknown',
+      updated_at = pg_catalog.clock_timestamp()
+  FROM ujani_control.device_owner_bindings AS binding
+  WHERE binding.tenant_id = NEW.tenant_id
+    AND binding.owner_subject_id = NEW.subject_id
+    AND binding.active IS TRUE
+    AND device.tenant_id = binding.tenant_id
+    AND device.device_id = binding.device_id
+    AND device.owner_consent_state = 'granted';
+
+  INSERT INTO ujani_control.audit_events
+   (tenant_id,event_id,actor_ref,actor_role,event_type,outcome,object_ref)
+  VALUES
+   (NEW.tenant_id,pg_catalog.gen_random_uuid(),NEW.subject_id,NEW.role,
+    'operator.subject.disabled','disabled',
+    'subject=' || pg_catalog.left(NEW.subject_id,64));
+ END IF;
+ RETURN NEW;
+END;
+$function$;
+
+DROP TRIGGER IF EXISTS operator_subjects_z_revoke_device_leases ON ujani_control.operator_subjects;
+CREATE TRIGGER operator_subjects_z_revoke_device_leases
+ AFTER UPDATE OF enabled ON ujani_control.operator_subjects
+ FOR EACH ROW
+ EXECUTE FUNCTION ujani_control.revoke_device_leases_for_disabled_owner();
+
+COMMENT ON FUNCTION ujani_control.revoke_device_leases_for_disabled_owner() IS
+ 'When an operator subject is disabled, invalidate every active device-owner grant for that subject. Device authority triggers revoke outstanding reservations, append per-lease audit receipts and advance capacity revisions in the same transaction. Re-enabling a subject never restores consent or leases.';
 
 -- Reconcile pre-existing rows before enabling normal operation under this
 -- migration. The migration role must bypass RLS, as required by migration 0008;
