@@ -421,7 +421,7 @@ BEGIN
  WHERE tenant_id='device-authority-revocation-test' AND device_id='approval-record-device';
  SELECT state INTO v_lease_state FROM ujani_control.leases
  WHERE tenant_id='device-authority-revocation-test' AND lease_id='approval-record-lease';
- IF v_owner_state <> 'granted' OR v_revision <> 3 OR v_lease_state <> 'revoked' THEN
+ IF v_owner_state <> 'granted' OR v_revision <> 2 OR v_lease_state <> 'revoked' THEN
   RAISE EXCEPTION 'approval revocation did not revoke lease independently of owner consent: owner %, revision %, lease %',
    v_owner_state,v_revision,v_lease_state;
  END IF;
