@@ -195,7 +195,6 @@ pub enum ModelInventoryValidationError {
     TooManyCapabilities,
     DuplicateCapability,
     PrivacyViolation,
-    MissingPrivacyDeclaration,
     ModelNotFound,
     InvalidRequirements,
 }
@@ -388,15 +387,12 @@ pub fn validate_model_runtime_inventory(
         }
         validate_evidence(&model.evidence, inventory.generated_at_unix_ms, now_unix_ms)?;
     }
-    let privacy = inventory
-        .privacy
-        .as_ref()
-        .ok_or(ModelInventoryValidationError::MissingPrivacyDeclaration)?;
-    if privacy.contains_prompts == Some(true)
-        || privacy.contains_user_files == Some(true)
-        || privacy.contains_local_paths == Some(true)
-        || privacy.contains_credentials == Some(true)
-    {
+    if inventory.privacy.as_ref().is_some_and(|privacy| {
+        privacy.contains_prompts == Some(true)
+            || privacy.contains_user_files == Some(true)
+            || privacy.contains_local_paths == Some(true)
+            || privacy.contains_credentials == Some(true)
+    }) {
         return Err(ModelInventoryValidationError::PrivacyViolation);
     }
     Ok(())
@@ -459,7 +455,10 @@ pub fn match_model_to_task(
     max_age_ms: u64,
 ) -> Result<ModelCapabilityMatch, ModelInventoryValidationError> {
     validate_model_runtime_inventory(inventory, now_unix_ms, max_age_ms)?;
-    if requirements.required_capabilities.len() > MAX_CAPABILITIES {
+    if requirements.required_capabilities.len() > MAX_CAPABILITIES
+        || requirements.minimum_context_length_tokens == Some(0)
+        || requirements.minimum_memory_mb == Some(0)
+    {
         return Err(ModelInventoryValidationError::InvalidRequirements);
     }
     let mut seen_required = HashSet::with_capacity(requirements.required_capabilities.len());
@@ -705,12 +704,21 @@ mod tests {
     }
 
     #[test]
-    fn rejects_inventory_without_required_privacy_declaration() {
-        let mut value = inventory();
-        value.privacy = None;
+    fn rejects_zero_resource_requirements() {
+        let value = inventory();
+
+        let mut zero_context = requirements();
+        zero_context.minimum_context_length_tokens = Some(0);
         assert_eq!(
-            validate_model_runtime_inventory(&value, 1_100, 10_000),
-            Err(ModelInventoryValidationError::MissingPrivacyDeclaration)
+            match_model_to_task(&value, "qwen2.5:7b", &zero_context, 1_100, 10_000),
+            Err(ModelInventoryValidationError::InvalidRequirements)
+        );
+
+        let mut zero_memory = requirements();
+        zero_memory.minimum_memory_mb = Some(0);
+        assert_eq!(
+            match_model_to_task(&value, "qwen2.5:7b", &zero_memory, 1_100, 10_000),
+            Err(ModelInventoryValidationError::InvalidRequirements)
         );
     }
 
