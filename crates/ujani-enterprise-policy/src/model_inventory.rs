@@ -879,6 +879,20 @@ mod tests {
         );
 
         let mut value = inventory();
+        value.hardware.accelerators.push(AcceleratorInfo {
+            kind: AcceleratorKind::Gpu,
+            vendor: None,
+            device_family: None,
+            memory_mb: Some(above_safe_integer),
+            runtime_api: None,
+            evidence: evidence(EvidenceConfidence::Reported),
+        });
+        assert_eq!(
+            validate_model_runtime_inventory(&value, 1_100, 10_000),
+            Err(ModelInventoryValidationError::InvalidHardware)
+        );
+
+        let mut value = inventory();
         value.models[0].size_bytes = Some(above_safe_integer);
         assert_eq!(
             validate_model_runtime_inventory(&value, 1_100, 10_000),
