@@ -14,6 +14,7 @@ use crate::device_trust::{
     AuthenticatedDeviceRequest, SignedDeviceRequest, MAX_DEVICE_REQUEST_BODY_BYTES,
 };
 use crate::operator_http_contract::{resolve_route, HttpMethod, OperatorHttpRoute};
+use crate::strict_json::parse_strict_json;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
@@ -145,7 +146,9 @@ pub fn validate_device_telemetry_body(
     if raw_body.is_empty() {
         return Err(DeviceTelemetryIntakeError::InvalidResourceMeasurement);
     }
-    let body: DeviceTelemetryBody = serde_json::from_slice(raw_body)
+    let payload = parse_strict_json(raw_body)
+        .map_err(|_| DeviceTelemetryIntakeError::InvalidResourceMeasurement)?;
+    let body: DeviceTelemetryBody = serde_json::from_value(payload)
         .map_err(|_| DeviceTelemetryIntakeError::InvalidResourceMeasurement)?;
     if body.schema_version != 2 {
         return Err(DeviceTelemetryIntakeError::UnsupportedVersion);
@@ -577,6 +580,33 @@ mod tests {
         assert_eq!(sample.memory_available_mb, Some(4_096));
         let expected_digest: [u8; 32] = Sha256::digest(&raw).into();
         assert_eq!(sample.payload_digest, expected_digest);
+    }
+
+    #[test]
+    fn telemetry_rejects_duplicate_security_relevant_json_fields() {
+        let duplicate_generation = String::from_utf8(body(1_000))
+            .unwrap()
+            .replace(
+                "\"generation\":2",
+                "\"generation\":1,\"generation\":2",
+            );
+        assert_eq!(
+            validate_device_telemetry_body(duplicate_generation.as_bytes(), 1_000),
+            Err(DeviceTelemetryIntakeError::InvalidResourceMeasurement),
+            "duplicate generation fields must not be interpreted using last-value-wins semantics"
+        );
+
+        let duplicate_device = String::from_utf8(body(1_000))
+            .unwrap()
+            .replace(
+                "\"device_id\":\"device-1\"",
+                "\"device_id\":\"other-device\",\"device_id\":\"device-1\"",
+            );
+        assert_eq!(
+            validate_device_telemetry_body(duplicate_device.as_bytes(), 1_000),
+            Err(DeviceTelemetryIntakeError::InvalidResourceMeasurement),
+            "duplicate identity fields must be rejected before route or principal binding"
+        );
     }
 
     #[test]
