@@ -270,7 +270,7 @@ impl<S: ProtectedSecretStore> IntegrityKeyProvider for KeyringIntegrityKeyProvid
         let _guard = self.lock()?;
         let material = self.read_material(purpose, key_id)?;
         let input = Self::mac_input(purpose, key_id, payload);
-        let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(&material[MAC_KEY_RANGE])
+        let mut mac = <Hmac<Sha256> as HmacKeyInit>::new_from_slice(&material[MAC_KEY_RANGE])
             .map_err(|_| IntegrityKeyProviderError::Unavailable)?;
         mac.update(&input);
         mac.verify_slice(tag)
