@@ -365,7 +365,7 @@ mod tests {
     use super::*;
     use std::{collections::HashMap, sync::Arc};
     use ed25519_dalek::SigningKey;
-    use crate::{device_trust::DurableDeviceRegistry, durable_ledger::DurableReservationLedger};
+    use crate::{device_trust::durable::DurableDeviceRegistry, durable_ledger::DurableLedger};
 
     #[derive(Default)]
     struct MemorySecretStore(Mutex<HashMap<String, Vec<u8>>>);
@@ -545,7 +545,7 @@ mod tests {
         drop(reopened_registry);
 
         let ledger_path = directory.join("reservation-ledger.json");
-        let ledger = DurableReservationLedger::open_with_key_provider(
+        let ledger = DurableLedger::open_with_key_provider(
             &ledger_path,
             provider.clone(),
         )
