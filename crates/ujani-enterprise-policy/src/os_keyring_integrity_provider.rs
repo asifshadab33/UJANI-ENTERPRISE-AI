@@ -298,7 +298,7 @@ impl<S: ProtectedSecretStore> IntegrityKeyProvider for KeyringIntegrityKeyProvid
                 },
             )
             .map_err(|_| IntegrityKeyProviderError::EncryptionFailed)?;
-        let mut envelope = Vec::with_capacity(1 + nonce_bytes.len() + ciphertext.len());
+        let mut envelope = Vec::with_capacity(1 + nonce.len() + ciphertext.len());
         envelope.push(ENVELOPE_VERSION);
         envelope.extend_from_slice(nonce.as_slice());
         envelope.extend_from_slice(&ciphertext);
