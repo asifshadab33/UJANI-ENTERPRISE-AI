@@ -400,6 +400,48 @@ impl<S: ProtectedSecretStore> OperatorSessionMacProvider for KeyringIntegrityKey
     }
 }
 
+/// Reuse the protected key store for the existing operator-session signing
+/// contract. This keeps OIDC-derived session tokens on a distinct key purpose.
+impl<S: ProtectedSecretStore> crate::operator_control_plane::OperatorSessionMacProvider
+    for KeyringIntegrityKeyProvider<S>
+{
+    fn sign_active(
+        &self,
+        payload: &[u8],
+    ) -> Result<(String, Vec<u8>), crate::operator_control_plane::OperatorAuthError> {
+        let (key_id, tag) = IntegrityKeyProvider::sign_active(
+            self,
+            IntegrityKeyPurpose::OperatorSession,
+            payload,
+        )
+        .map_err(|_| crate::operator_control_plane::OperatorAuthError::InvalidKey)?;
+        Ok((key_id, tag.to_vec()))
+    }
+
+    fn verify(
+        &self,
+        key_id: &str,
+        payload: &[u8],
+        signature: &[u8],
+    ) -> Result<(), crate::operator_control_plane::OperatorAuthError> {
+        use crate::operator_control_plane::OperatorAuthError;
+        let tag: [u8; 32] = signature
+            .try_into()
+            .map_err(|_| OperatorAuthError::InvalidSignature)?;
+        match IntegrityKeyProvider::verify(
+            self,
+            IntegrityKeyPurpose::OperatorSession,
+            key_id,
+            payload,
+            &tag,
+        ) {
+            Ok(()) => Ok(()),
+            Err(IntegrityKeyProviderError::UnknownKey) => Err(OperatorAuthError::UnknownKeyId),
+            Err(_) => Err(OperatorAuthError::InvalidSignature),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -639,6 +681,30 @@ mod tests {
             verifier.authenticate(&token, claims.expires_at_unix_ms),
             Err(OperatorAuthError::Expired)
         );
+    }
+
+    #[test]
+    fn operator_sessions_use_the_separate_protected_key_purpose_and_rotate_safely() {
+        let provider = KeyringIntegrityKeyProvider::new(MemorySecretStore::default());
+        provider
+            .provision_key(IntegrityKeyPurpose::OperatorSession, "session-v1")
+            .unwrap();
+        provider
+            .activate_key(IntegrityKeyPurpose::OperatorSession, "session-v1")
+            .unwrap();
+        let verifier = OperatorSessionProviderVerifier::new(provider);
+        let claims = OperatorSessionClaims {
+            subject_id: "operator-1".into(),
+            tenant_id: "tenant-a".into(),
+            role: OperatorRole::Administrator,
+            issued_at_unix_ms: 10_000,
+            expires_at_unix_ms: 20_000,
+            nonce: [7; 16],
+        };
+        let token = verifier
+            .mint_after_identity_verification(&claims, 10_100)
+            .unwrap();
+        assert_eq!(verifier.authenticate(&token, 10_100).unwrap(), claims);
     }
 
     #[test]
