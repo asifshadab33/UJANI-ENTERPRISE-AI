@@ -403,10 +403,10 @@ impl<S: ProtectedSecretStore> OperatorSessionMacProvider for KeyringIntegrityKey
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{device_trust::durable::DurableDeviceRegistry, durable_ledger::DurableLedger};
     use crate::operator_control_plane::{
         OperatorRole, OperatorSessionClaims, OperatorSessionProviderVerifier,
     };
+    use crate::{device_trust::durable::DurableDeviceRegistry, durable_ledger::DurableLedger};
     use ed25519_dalek::SigningKey;
     use std::{collections::HashMap, sync::Arc};
 
