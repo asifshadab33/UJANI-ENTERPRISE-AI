@@ -1,0 +1,84 @@
+name: Enterprise device-authority lease revocation
+
+on:
+  push:
+    branches:
+      - fix/revoke-leases-on-device-authority-change-2026-11-25
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "migrations/**"
+      - "scripts/test_device_authority_lease_revocation.sql"
+      - ".github/workflows/device-authority-lease-revocation.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: enterprise-device-authority-lease-revocation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  postgres-regressions:
+    name: PostgreSQL 16 authority and lease regressions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ujani_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U postgres -d ujani_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Prepare PostgreSQL client from service container
+        shell: bash
+        run: |
+          container_id="$(docker ps --filter "ancestor=postgres:16" --format '{{.ID}}' | head -n1)"
+          test -n "$container_id"
+          cat > "$RUNNER_TEMP/ujani-psql" <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          docker exec -i \
+            -e "PGPASSWORD=${PGPASSWORD:-postgres}" \
+            -e "PGAPPNAME=${PGAPPNAME:-}" \
+            "${POSTGRES_CONTAINER_ID:?}" psql "$@"
+          EOF
+          chmod +x "$RUNNER_TEMP/ujani-psql"
+          echo "POSTGRES_CONTAINER_ID=$container_id" >> "$GITHUB_ENV"
+          echo "PSQL_BIN=$RUNNER_TEMP/ujani-psql" >> "$GITHUB_ENV"
+      - name: Apply all customer-hosted migrations in order
+        env:
+          PGPASSWORD: postgres
+        shell: bash
+        run: |
+          set -euo pipefail
+          for migration in migrations/*.sql; do
+            echo "Applying $migration"
+            "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < "$migration"
+          done
+      - name: Verify tenant isolation and append-only audit invariants
+        env:
+          PGPASSWORD: postgres
+        run: "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < scripts/test_customer_hosted_migration.sql
+      - name: Verify existing owner-consent lease revocation
+        env:
+          PGPASSWORD: postgres
+        run: "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < scripts/test_owner_consent_lease_revocation.sql
+      - name: Verify durable dual-consent persistence
+        env:
+          PGPASSWORD: postgres
+        run: "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < scripts/test_durable_collective_defence_consent.sql
+      - name: Verify device, owner and approver authority revocation
+        env:
+          PGPASSWORD: postgres
+        run: "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < scripts/test_device_authority_lease_revocation.sql
