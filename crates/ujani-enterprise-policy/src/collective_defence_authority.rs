@@ -894,7 +894,9 @@ mod tests {
         store
             .put_tenant(tenant(false, 2, 101), Some(1), "t-2")
             .unwrap();
-        store.put_tenant(tenant(true, 3, 102), Some(2), "t-3").unwrap();
+        store
+            .put_tenant(tenant(true, 3, 102), Some(2), "t-3")
+            .unwrap();
         let audit = store.audit_log().unwrap();
         assert_eq!(audit.len(), 3);
         assert!(verify_audit_chain(&audit));
