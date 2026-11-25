@@ -17,7 +17,7 @@ use crate::integrity_key_provider::{
     valid_integrity_key_id, IntegrityKeyProvider, IntegrityKeyProviderError, IntegrityKeyPurpose,
 };
 use aes_gcm::{
-    aead::{Aead, Payload},
+    aead::{Aead, AeadCore, Payload},
     Aes256Gcm, KeyInit, Nonce,
 };
 use hmac::{Hmac, KeyInit as HmacKeyInit, Mac};
@@ -287,15 +287,11 @@ impl<S: ProtectedSecretStore> IntegrityKeyProvider for KeyringIntegrityKeyProvid
         let material = self.read_material(purpose, &key_id)?;
         let cipher = Aes256Gcm::new_from_slice(&material[AEAD_KEY_RANGE])
             .map_err(|_| IntegrityKeyProviderError::EncryptionFailed)?;
-        let mut nonce_bytes = [0u8; ENVELOPE_NONCE_BYTES];
-        OsRng
-            .try_fill_bytes(&mut nonce_bytes)
-            .map_err(|_| IntegrityKeyProviderError::EncryptionFailed)?;
-        let nonce = Nonce::from_slice(&nonce_bytes);
+        let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
         let authenticated_aad = Self::aead_aad(purpose, &key_id, aad);
         let ciphertext = cipher
             .encrypt(
-                nonce,
+                &nonce,
                 Payload {
                     msg: plaintext,
                     aad: &authenticated_aad,
@@ -304,9 +300,8 @@ impl<S: ProtectedSecretStore> IntegrityKeyProvider for KeyringIntegrityKeyProvid
             .map_err(|_| IntegrityKeyProviderError::EncryptionFailed)?;
         let mut envelope = Vec::with_capacity(1 + nonce_bytes.len() + ciphertext.len());
         envelope.push(ENVELOPE_VERSION);
-        envelope.extend_from_slice(&nonce_bytes);
+        envelope.extend_from_slice(nonce.as_slice());
         envelope.extend_from_slice(&ciphertext);
-        nonce_bytes.zeroize();
         Ok((key_id, envelope))
     }
 
