@@ -14,6 +14,9 @@ const MAX_RUNTIMES: usize = 16;
 const MAX_MODELS: usize = 512;
 const MAX_CAPABILITIES: usize = 16;
 const MAX_MODEL_MEMORY_ESTIMATE_MB: u64 = 16_777_216;
+// JSON consumers commonly use IEEE-754 numbers; reject values that cannot be
+// represented as exact integers before inventory reaches an operator projection.
+const MAX_SAFE_JSON_INTEGER: u64 = 9_007_199_254_740_991;
 const CLOCK_SKEW_TOLERANCE_MS: u64 = 30_000;
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
@@ -293,6 +296,9 @@ pub fn validate_model_runtime_inventory(
     }
     if inventory.hardware.cpu_logical_cores == Some(0)
         || inventory.hardware.memory_total_mb == Some(0)
+        || inventory.hardware.memory_total_mb.is_some_and(|value| value > MAX_SAFE_JSON_INTEGER)
+        || inventory.hardware.memory_available_mb.is_some_and(|value| value > MAX_SAFE_JSON_INTEGER)
+        || inventory.hardware.storage_free_mb.is_some_and(|value| value > MAX_SAFE_JSON_INTEGER)
         || inventory
             .hardware
             .memory_total_mb
@@ -305,6 +311,9 @@ pub fn validate_model_runtime_inventory(
         return Err(ModelInventoryValidationError::TooManyAccelerators);
     }
     for accelerator in &inventory.hardware.accelerators {
+        if accelerator.memory_mb.is_some_and(|value| value > MAX_SAFE_JSON_INTEGER) {
+            return Err(ModelInventoryValidationError::InvalidHardware);
+        }
         for (value, max_bytes) in [
             (accelerator.vendor.as_deref(), 64),
             (accelerator.device_family.as_deref(), 96),
@@ -362,6 +371,8 @@ pub fn validate_model_runtime_inventory(
                 .as_ref()
                 .is_some_and(|value| value.len() > 64 || value.chars().any(char::is_control))
             || model.context_length_tokens == Some(0)
+            || model.size_bytes.is_some_and(|value| value > MAX_SAFE_JSON_INTEGER)
+            || model.context_length_tokens.is_some_and(|value| value > MAX_SAFE_JSON_INTEGER)
             || model
                 .estimated_min_memory_mb
                 .is_some_and(|value| value == 0 || value > MAX_MODEL_MEMORY_ESTIMATE_MB)
@@ -839,6 +850,46 @@ mod tests {
         assert_eq!(
             validate_model_runtime_inventory(&value, 1_100, 10_000),
             Err(ModelInventoryValidationError::InvalidHardware)
+        );
+    }
+
+    #[test]
+    fn rejects_hardware_and_model_values_outside_exact_json_integer_range() {
+        let above_safe_integer = MAX_SAFE_JSON_INTEGER + 1;
+
+        let mut value = inventory();
+        value.hardware.memory_total_mb = Some(above_safe_integer);
+        assert_eq!(
+            validate_model_runtime_inventory(&value, 1_100, 10_000),
+            Err(ModelInventoryValidationError::InvalidHardware)
+        );
+
+        let mut value = inventory();
+        value.hardware.memory_available_mb = Some(above_safe_integer);
+        assert_eq!(
+            validate_model_runtime_inventory(&value, 1_100, 10_000),
+            Err(ModelInventoryValidationError::InvalidHardware)
+        );
+
+        let mut value = inventory();
+        value.hardware.storage_free_mb = Some(above_safe_integer);
+        assert_eq!(
+            validate_model_runtime_inventory(&value, 1_100, 10_000),
+            Err(ModelInventoryValidationError::InvalidHardware)
+        );
+
+        let mut value = inventory();
+        value.models[0].size_bytes = Some(above_safe_integer);
+        assert_eq!(
+            validate_model_runtime_inventory(&value, 1_100, 10_000),
+            Err(ModelInventoryValidationError::InvalidMetadata)
+        );
+
+        let mut value = inventory();
+        value.models[0].context_length_tokens = Some(above_safe_integer);
+        assert_eq!(
+            validate_model_runtime_inventory(&value, 1_100, 10_000),
+            Err(ModelInventoryValidationError::InvalidMetadata)
         );
     }
 
