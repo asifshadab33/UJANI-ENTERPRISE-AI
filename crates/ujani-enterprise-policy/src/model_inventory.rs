@@ -296,9 +296,18 @@ pub fn validate_model_runtime_inventory(
     }
     if inventory.hardware.cpu_logical_cores == Some(0)
         || inventory.hardware.memory_total_mb == Some(0)
-        || inventory.hardware.memory_total_mb.is_some_and(|value| value > MAX_SAFE_JSON_INTEGER)
-        || inventory.hardware.memory_available_mb.is_some_and(|value| value > MAX_SAFE_JSON_INTEGER)
-        || inventory.hardware.storage_free_mb.is_some_and(|value| value > MAX_SAFE_JSON_INTEGER)
+        || inventory
+            .hardware
+            .memory_total_mb
+            .is_some_and(|value| value > MAX_SAFE_JSON_INTEGER)
+        || inventory
+            .hardware
+            .memory_available_mb
+            .is_some_and(|value| value > MAX_SAFE_JSON_INTEGER)
+        || inventory
+            .hardware
+            .storage_free_mb
+            .is_some_and(|value| value > MAX_SAFE_JSON_INTEGER)
         || inventory
             .hardware
             .memory_total_mb
@@ -311,7 +320,10 @@ pub fn validate_model_runtime_inventory(
         return Err(ModelInventoryValidationError::TooManyAccelerators);
     }
     for accelerator in &inventory.hardware.accelerators {
-        if accelerator.memory_mb.is_some_and(|value| value > MAX_SAFE_JSON_INTEGER) {
+        if accelerator
+            .memory_mb
+            .is_some_and(|value| value > MAX_SAFE_JSON_INTEGER)
+        {
             return Err(ModelInventoryValidationError::InvalidHardware);
         }
         for (value, max_bytes) in [
@@ -371,8 +383,12 @@ pub fn validate_model_runtime_inventory(
                 .as_ref()
                 .is_some_and(|value| value.len() > 64 || value.chars().any(char::is_control))
             || model.context_length_tokens == Some(0)
-            || model.size_bytes.is_some_and(|value| value > MAX_SAFE_JSON_INTEGER)
-            || model.context_length_tokens.is_some_and(|value| value > MAX_SAFE_JSON_INTEGER)
+            || model
+                .size_bytes
+                .is_some_and(|value| value > MAX_SAFE_JSON_INTEGER)
+            || model
+                .context_length_tokens
+                .is_some_and(|value| value > MAX_SAFE_JSON_INTEGER)
             || model
                 .estimated_min_memory_mb
                 .is_some_and(|value| value == 0 || value > MAX_MODEL_MEMORY_ESTIMATE_MB)
