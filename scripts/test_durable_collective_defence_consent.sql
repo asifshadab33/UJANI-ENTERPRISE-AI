@@ -279,6 +279,7 @@ SET LOCAL ROLE ujani_runtime;
 DO $owner_change$
 DECLARE
  v_old_owner_denied boolean := false;
+ v_old_owner_idempotent_denied boolean := false;
  v_new_owner_result record;
  v_now timestamptz := clock_timestamp();
 BEGIN
@@ -289,6 +290,19 @@ BEGIN
  IF ujani_control.collective_defence_consent_is_current(
     'collective-consent-test','user-02','device-01') THEN
   RAISE EXCEPTION 'new owner inherited another principal consent';
+ END IF;
+
+ BEGIN
+  PERFORM * FROM ujani_control.record_collective_defence_individual_consent(
+   'collective-consent-test','user-01','device-01',true,3,3,
+   'collective-defence.read-only.v1','notice-v1',decode(repeat('31',32),'hex'),
+   'user-key-1',v_now,v_now+interval '1 hour','individual-enable-1',
+   decode(repeat('41',32),'hex'));
+ EXCEPTION WHEN insufficient_privilege THEN
+  v_old_owner_idempotent_denied := true;
+ END;
+ IF NOT v_old_owner_idempotent_denied THEN
+  RAISE EXCEPTION 'former owner idempotent replay bypassed current owner validation';
  END IF;
 
  BEGIN
