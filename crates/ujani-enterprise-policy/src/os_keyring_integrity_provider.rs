@@ -506,6 +506,8 @@ mod tests {
         );
     }
 
+    /// Exercises both durable adapters through the same provider contract with an
+    /// injected store; platform credential-manager access is validated separately.
     #[test]
     fn protected_provider_reopens_the_durable_registry_and_reservation_ledger() {
         let mut random = [0u8; 8];
