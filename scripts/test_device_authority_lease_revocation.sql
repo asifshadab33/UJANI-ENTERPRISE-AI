@@ -48,7 +48,9 @@ VALUES
  ('device-authority-revocation-test','rollback-device','Rollback Device','linux',
   'enrolled','unknown','approved','rollback-key-v1',1,0,1,1,clock_timestamp(),1),
  ('device-authority-revocation-test','legacy-device','Legacy Invalid Device','linux',
-  'revoked','unknown','approved','legacy-key-v1',1,0,1,1,clock_timestamp(),1)
+  'revoked','unknown','approved','legacy-key-v1',1,0,1,1,clock_timestamp(),1),
+ ('device-authority-revocation-test','subject-device','Owner Subject Disable Device','linux',
+  'enrolled','unknown','approved','subject-key-v1',1,0,1,1,clock_timestamp(),1)
 ON CONFLICT (tenant_id,device_id) DO NOTHING;
 
 INSERT INTO ujani_control.device_keys
@@ -59,7 +61,8 @@ VALUES
  ('device-authority-revocation-test','approval-device','approval-key-v1',decode(repeat('b3',32),'hex'),1,'active'),
  ('device-authority-revocation-test','binding-device','binding-key-v1',decode(repeat('b4',32),'hex'),1,'active'),
  ('device-authority-revocation-test','rollback-device','rollback-key-v1',decode(repeat('b5',32),'hex'),1,'active'),
- ('device-authority-revocation-test','legacy-device','legacy-key-v1',decode(repeat('b6',32),'hex'),1,'active')
+ ('device-authority-revocation-test','legacy-device','legacy-key-v1',decode(repeat('b6',32),'hex'),1,'active'),
+ ('device-authority-revocation-test','subject-device','subject-key-v1',decode(repeat('b7',32),'hex'),1,'active')
 ON CONFLICT (tenant_id,device_id,key_id) DO NOTHING;
 
 INSERT INTO ujani_control.device_owner_bindings
@@ -69,7 +72,8 @@ VALUES
  ('device-authority-revocation-test','key-device','authority-owner','authority-admin',1,true,decode(repeat('c2',32),'hex')),
  ('device-authority-revocation-test','approval-device','authority-owner','authority-admin',1,true,decode(repeat('c3',32),'hex')),
  ('device-authority-revocation-test','binding-device','authority-owner','authority-admin',1,true,decode(repeat('c4',32),'hex')),
- ('device-authority-revocation-test','rollback-device','authority-owner','authority-admin',1,true,decode(repeat('c5',32),'hex'))
+ ('device-authority-revocation-test','rollback-device','authority-owner','authority-admin',1,true,decode(repeat('c5',32),'hex')),
+ ('device-authority-revocation-test','subject-device','authority-owner-2','authority-admin',1,true,decode(repeat('c6',32),'hex'))
 ON CONFLICT (tenant_id,device_id) DO NOTHING;
 
 INSERT INTO ujani_control.owner_consents
@@ -79,7 +83,8 @@ VALUES
  ('device-authority-revocation-test','key-device',1,'granted','authority-owner',decode(repeat('d2',32),'hex')),
  ('device-authority-revocation-test','approval-device',1,'granted','authority-owner',decode(repeat('d3',32),'hex')),
  ('device-authority-revocation-test','binding-device',1,'granted','authority-owner',decode(repeat('d4',32),'hex')),
- ('device-authority-revocation-test','rollback-device',1,'granted','authority-owner',decode(repeat('d5',32),'hex'))
+ ('device-authority-revocation-test','rollback-device',1,'granted','authority-owner',decode(repeat('d5',32),'hex')),
+ ('device-authority-revocation-test','subject-device',1,'granted','authority-owner-2',decode(repeat('d6',32),'hex'))
 ON CONFLICT DO NOTHING;
 
 INSERT INTO ujani_control.leases
@@ -107,7 +112,10 @@ VALUES
   decode(repeat('e6',32),'hex'),1,decode(repeat('f6',16),'hex'),decode(repeat('16',32),'hex')),
  ('device-authority-revocation-test','legacy-lease','legacy-device','authority-workload','authority-approval',
   decode(repeat('a1',32),'hex'),1,'reserved',clock_timestamp()+interval '4 minutes',1,500,512,
-  decode(repeat('e7',32),'hex'),0,decode(repeat('f7',16),'hex'),decode(repeat('17',32),'hex'));
+  decode(repeat('e7',32),'hex'),0,decode(repeat('f7',16),'hex'),decode(repeat('17',32),'hex')),
+ ('device-authority-revocation-test','subject-lease','subject-device','authority-workload','authority-approval',
+  decode(repeat('a1',32),'hex'),1,'reserved',clock_timestamp()+interval '4 minutes',1,500,512,
+  decode(repeat('e8',32),'hex'),1,decode(repeat('f8',16),'hex'),decode(repeat('18',32),'hex'));
 
 DO $privileges$
 BEGIN
@@ -273,6 +281,60 @@ BEGIN
  END IF;
 END;
 $binding_change$;
+
+-- Disabling an owner subject invalidates every active device-owner grant
+-- and revokes its leases. Re-enabling the subject never restores old consent.
+UPDATE ujani_control.operator_subjects
+SET enabled=false
+WHERE tenant_id='device-authority-revocation-test' AND subject_id='authority-owner-2';
+
+DO $owner_subject_disable$
+DECLARE v_owner_state text; v_revision bigint; v_lease_state text;
+BEGIN
+ SELECT owner_consent_state,reservation_revision
+ INTO v_owner_state,v_revision
+ FROM ujani_control.devices
+ WHERE tenant_id='device-authority-revocation-test' AND device_id='subject-device';
+ SELECT state INTO v_lease_state FROM ujani_control.leases
+ WHERE tenant_id='device-authority-revocation-test' AND lease_id='subject-lease';
+ IF v_owner_state <> 'unknown' OR v_revision <> 2 OR v_lease_state <> 'revoked' THEN
+  RAISE EXCEPTION 'disabling owner subject did not invalidate consent and revoke lease: owner %, revision %, lease %',
+   v_owner_state,v_revision,v_lease_state;
+ END IF;
+ IF NOT EXISTS (
+  SELECT 1 FROM ujani_control.audit_events
+  WHERE tenant_id='device-authority-revocation-test'
+    AND event_type='device.lease.revoked'
+    AND outcome='owner_subject_disabled'
+    AND object_ref='subject-lease'
+ ) OR NOT EXISTS (
+  SELECT 1 FROM ujani_control.audit_events
+  WHERE tenant_id='device-authority-revocation-test'
+    AND event_type='operator.subject.disabled'
+    AND object_ref='subject=authority-owner-2'
+ ) THEN
+  RAISE EXCEPTION 'owner subject disablement audit evidence is incomplete';
+ END IF;
+END;
+$owner_subject_disable$;
+
+UPDATE ujani_control.operator_subjects
+SET enabled=true
+WHERE tenant_id='device-authority-revocation-test' AND subject_id='authority-owner-2';
+INSERT INTO ujani_control.owner_consents
+ (tenant_id,device_id,consent_generation,state,actor_ref,evidence_digest)
+VALUES
+ ('device-authority-revocation-test','subject-device',2,'granted','authority-owner-2',decode(repeat('d7',32),'hex'));
+DO $owner_subject_reenable$
+BEGIN
+ IF (SELECT owner_consent_state FROM ujani_control.devices
+     WHERE tenant_id='device-authority-revocation-test' AND device_id='subject-device') <> 'granted'
+    OR (SELECT state FROM ujani_control.leases
+     WHERE tenant_id='device-authority-revocation-test' AND lease_id='subject-lease') <> 'revoked' THEN
+  RAISE EXCEPTION 're-enabling owner subject or fresh consent reactivated an old lease';
+ END IF;
+END;
+$owner_subject_reenable$;
 
 -- Legacy reconciliation is also fail-closed when a no-op authority update
 -- reaches a device that has active leases but no current owner evidence.
