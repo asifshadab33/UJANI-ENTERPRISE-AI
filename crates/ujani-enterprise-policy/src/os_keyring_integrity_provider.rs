@@ -368,7 +368,9 @@ impl<S: ProtectedSecretStore> IntegrityKeyProvider for KeyringIntegrityKeyProvid
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+    use std::{collections::HashMap, sync::Arc};
+    use ed25519_dalek::SigningKey;
+    use crate::{device_trust::DurableDeviceRegistry, durable_ledger::DurableReservationLedger};
 
     #[derive(Default)]
     struct MemorySecretStore(Mutex<HashMap<String, Vec<u8>>>);
@@ -504,6 +506,64 @@ mod tests {
                 .unwrap(),
             b"same-plaintext"
         );
+    }
+
+    #[test]
+    fn protected_provider_reopens_the_durable_registry_and_reservation_ledger() {
+        let mut random = [0u8; 8];
+        OsRng.try_fill_bytes(&mut random).unwrap();
+        let directory = std::env::temp_dir().join(format!(
+            "ujani-enterprise-keyring-integration-{}",
+            u64::from_ne_bytes(random)
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+
+        let provider = Arc::new(KeyringIntegrityKeyProvider::new(MemorySecretStore::default()));
+        provider
+            .provision_key(IntegrityKeyPurpose::DeviceTrustRegistry, "registry-v1")
+            .unwrap();
+        provider
+            .activate_key(IntegrityKeyPurpose::DeviceTrustRegistry, "registry-v1")
+            .unwrap();
+        provider
+            .provision_key(IntegrityKeyPurpose::ReservationLedger, "ledger-v1")
+            .unwrap();
+        provider
+            .activate_key(IntegrityKeyPurpose::ReservationLedger, "ledger-v1")
+            .unwrap();
+
+        let admin = SigningKey::from_bytes(&[0x42; 32]);
+        let registry_path = directory.join("device-trust.json");
+        let registry = DurableDeviceRegistry::open_with_key_provider(
+            &registry_path,
+            vec![("test-admin".to_owned(), admin.verifying_key())],
+            provider.clone(),
+        )
+        .unwrap();
+        drop(registry);
+        let reopened_registry = DurableDeviceRegistry::open_with_key_provider(
+            &registry_path,
+            vec![("test-admin".to_owned(), admin.verifying_key())],
+            provider.clone(),
+        )
+        .unwrap();
+        drop(reopened_registry);
+
+        let ledger_path = directory.join("reservation-ledger.json");
+        let ledger = DurableReservationLedger::open_with_key_provider(
+            &ledger_path,
+            provider.clone(),
+        )
+        .unwrap();
+        drop(ledger);
+        let reopened_ledger = DurableReservationLedger::open_with_key_provider(
+            &ledger_path,
+            provider,
+        )
+        .unwrap();
+        drop(reopened_ledger);
+
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
