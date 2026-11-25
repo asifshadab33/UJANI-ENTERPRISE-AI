@@ -290,6 +290,15 @@ BEGIN
    USING ERRCODE = '42501';
  END IF;
 
+ IF OLD.role IS DISTINCT FROM NEW.role THEN
+  INSERT INTO ujani_control.audit_events
+   (tenant_id,event_id,actor_ref,actor_role,event_type,outcome,object_ref)
+  VALUES
+   (NEW.tenant_id,pg_catalog.gen_random_uuid(),'system','system',
+    'operator.subject.role_changed',OLD.role || '_to_' || NEW.role,
+    'subject=' || pg_catalog.left(NEW.subject_id,64));
+ END IF;
+
  IF NOT (
   (OLD.enabled IS TRUE AND NEW.enabled IS FALSE)
   OR (OLD.role = 'administrator' AND NEW.role IS DISTINCT FROM 'administrator')
@@ -361,15 +370,6 @@ BEGIN
  IF v_device_count <> v_updated_count THEN
   RAISE EXCEPTION 'device reservation revision exhausted while revoking approver leases'
    USING ERRCODE = '22003';
- END IF;
-
- IF OLD.role IS DISTINCT FROM NEW.role THEN
-  INSERT INTO ujani_control.audit_events
-   (tenant_id,event_id,actor_ref,actor_role,event_type,outcome,object_ref)
-  VALUES
-   (NEW.tenant_id,pg_catalog.gen_random_uuid(),'system','system',
-    'operator.subject.role_changed',OLD.role || '_to_' || NEW.role,
-    'subject=' || pg_catalog.left(NEW.subject_id,64));
  END IF;
 
  RETURN NEW;
