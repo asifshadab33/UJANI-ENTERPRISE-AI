@@ -554,7 +554,7 @@ mod tests {
         )
         .unwrap();
         drop(ledger);
-        let reopened_ledger = DurableReservationLedger::open_with_key_provider(
+        let reopened_ledger = DurableLedger::open_with_key_provider(
             &ledger_path,
             provider,
         )
