@@ -480,8 +480,12 @@ mod tests {
                 .0
                 .lock()
                 .map_err(|_| "test anchor lock poisoned".to_owned())?;
-            let current = records.get(registry_id).map(SnapshotAnchorRecord::generation);
-            let expected_next = expected_generation.and_then(|value| value.checked_add(1)).unwrap_or(1);
+            let current = records
+                .get(registry_id)
+                .map(SnapshotAnchorRecord::generation);
+            let expected_next = expected_generation
+                .and_then(|value| value.checked_add(1))
+                .unwrap_or(1);
             if current != expected_generation || next.generation() != expected_next {
                 return Ok(false);
             }
@@ -672,21 +676,32 @@ mod tests {
             MemorySecretStore::default(),
         ));
         provider
-            .provision_key(IntegrityKeyPurpose::DeviceTrustRegistry, "anchored-registry-v1")
+            .provision_key(
+                IntegrityKeyPurpose::DeviceTrustRegistry,
+                "anchored-registry-v1",
+            )
             .unwrap();
         provider
-            .activate_key(IntegrityKeyPurpose::DeviceTrustRegistry, "anchored-registry-v1")
+            .activate_key(
+                IntegrityKeyPurpose::DeviceTrustRegistry,
+                "anchored-registry-v1",
+            )
             .unwrap();
         provider
-            .provision_key(IntegrityKeyPurpose::ReservationLedger, "anchored-ledger-v1")
+            .provision_key(
+                IntegrityKeyPurpose::ReservationLedger,
+                "anchored-ledger-v1",
+            )
             .unwrap();
         provider
-            .activate_key(IntegrityKeyPurpose::ReservationLedger, "anchored-ledger-v1")
+            .activate_key(
+                IntegrityKeyPurpose::ReservationLedger,
+                "anchored-ledger-v1",
+            )
             .unwrap();
 
         let admin = SigningKey::from_bytes(&rand::random());
-        let anchor: Arc<dyn MonotonicSnapshotAnchor> =
-            Arc::new(MemorySnapshotAnchor::default());
+        let anchor: Arc<dyn MonotonicSnapshotAnchor> = Arc::new(MemorySnapshotAnchor::default());
         let policy = AnchorCallPolicy::default();
 
         let registry_path = directory.join("device-trust-anchored.json");
