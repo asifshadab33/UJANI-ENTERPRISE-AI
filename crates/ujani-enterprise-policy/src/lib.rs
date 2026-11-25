@@ -3,6 +3,8 @@
 
 #![forbid(unsafe_code)]
 
+mod strict_json;
+
 pub mod self_evolution;
 pub mod self_evolution_action_gate;
 pub mod self_evolution_approval;
