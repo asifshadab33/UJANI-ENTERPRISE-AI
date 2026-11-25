@@ -20,6 +20,7 @@
 use crate::integrity_key_provider::{
     valid_integrity_key_id, IntegrityKeyProvider, IntegrityKeyProviderError, IntegrityKeyPurpose,
 };
+use crate::operator_control_plane::{OperatorAuthError, OperatorSessionMacProvider};
 use aes_gcm::{
     aead::{Aead, AeadCore, Payload},
     Aes256Gcm, KeyInit, Nonce,
@@ -361,10 +362,51 @@ impl<S: ProtectedSecretStore> IntegrityKeyProvider for KeyringIntegrityKeyProvid
     }
 }
 
+fn map_operator_session_key_error(error: IntegrityKeyProviderError) -> OperatorAuthError {
+    match error {
+        IntegrityKeyProviderError::UnknownKey | IntegrityKeyProviderError::InvalidKeyId => {
+            OperatorAuthError::UnknownKeyId
+        }
+        IntegrityKeyProviderError::VerificationFailed => OperatorAuthError::InvalidSignature,
+        _ => OperatorAuthError::InvalidKey,
+    }
+}
+
+impl<S: ProtectedSecretStore> OperatorSessionMacProvider for KeyringIntegrityKeyProvider<S> {
+    fn sign_active(&self, payload: &[u8]) -> Result<(String, Vec<u8>), OperatorAuthError> {
+        let (key_id, tag) =
+            IntegrityKeyProvider::sign_active(self, IntegrityKeyPurpose::OperatorSession, payload)
+                .map_err(map_operator_session_key_error)?;
+        Ok((key_id, tag.to_vec()))
+    }
+
+    fn verify(
+        &self,
+        key_id: &str,
+        payload: &[u8],
+        signature: &[u8],
+    ) -> Result<(), OperatorAuthError> {
+        let tag: [u8; 32] = signature
+            .try_into()
+            .map_err(|_| OperatorAuthError::InvalidSignature)?;
+        IntegrityKeyProvider::verify(
+            self,
+            IntegrityKeyPurpose::OperatorSession,
+            key_id,
+            payload,
+            &tag,
+        )
+        .map_err(map_operator_session_key_error)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{device_trust::durable::DurableDeviceRegistry, durable_ledger::DurableLedger};
+    use crate::operator_control_plane::{
+        OperatorRole, OperatorSessionClaims, OperatorSessionProviderVerifier,
+    };
     use ed25519_dalek::SigningKey;
     use std::{collections::HashMap, sync::Arc};
 
@@ -557,6 +599,46 @@ mod tests {
         drop(reopened_ledger);
 
         std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn protected_keyring_provider_signs_short_lived_operator_sessions() {
+        let provider = provider();
+        provider
+            .provision_key(IntegrityKeyPurpose::OperatorSession, "operator-session-v1")
+            .unwrap();
+        provider
+            .activate_key(IntegrityKeyPurpose::OperatorSession, "operator-session-v1")
+            .unwrap();
+
+        let verifier = OperatorSessionProviderVerifier::new(provider);
+        let now = 1_000_000;
+        let claims = OperatorSessionClaims {
+            subject_id: "operator-1".to_owned(),
+            tenant_id: "tenant-a".to_owned(),
+            role: OperatorRole::Viewer,
+            issued_at_unix_ms: now,
+            expires_at_unix_ms: now + 60_000,
+            nonce: rand::random(),
+        };
+
+        let token = verifier
+            .mint_after_identity_verification(&claims, now)
+            .unwrap();
+        assert_eq!(verifier.authenticate(&token, now).unwrap(), claims);
+
+        let mut tampered = token.clone();
+        let replacement = if tampered.ends_with('0') { '1' } else { '0' };
+        tampered.pop();
+        tampered.push(replacement);
+        assert_eq!(
+            verifier.authenticate(&tampered, now),
+            Err(OperatorAuthError::InvalidSignature)
+        );
+        assert_eq!(
+            verifier.authenticate(&token, claims.expires_at_unix_ms),
+            Err(OperatorAuthError::Expired)
+        );
     }
 
     #[test]
