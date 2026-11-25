@@ -195,6 +195,7 @@ pub enum ModelInventoryValidationError {
     TooManyCapabilities,
     DuplicateCapability,
     PrivacyViolation,
+    MissingPrivacyDeclaration,
     ModelNotFound,
     InvalidRequirements,
 }
@@ -387,12 +388,15 @@ pub fn validate_model_runtime_inventory(
         }
         validate_evidence(&model.evidence, inventory.generated_at_unix_ms, now_unix_ms)?;
     }
-    if inventory.privacy.as_ref().is_some_and(|privacy| {
-        privacy.contains_prompts == Some(true)
-            || privacy.contains_user_files == Some(true)
-            || privacy.contains_local_paths == Some(true)
-            || privacy.contains_credentials == Some(true)
-    }) {
+    let privacy = inventory
+        .privacy
+        .as_ref()
+        .ok_or(ModelInventoryValidationError::MissingPrivacyDeclaration)?;
+    if privacy.contains_prompts == Some(true)
+        || privacy.contains_user_files == Some(true)
+        || privacy.contains_local_paths == Some(true)
+        || privacy.contains_credentials == Some(true)
+    {
         return Err(ModelInventoryValidationError::PrivacyViolation);
     }
     Ok(())
@@ -697,6 +701,16 @@ mod tests {
         assert_eq!(
             validate_model_runtime_inventory(&value, 1_100, 10_000),
             Err(ModelInventoryValidationError::PrivacyViolation)
+        );
+    }
+
+    #[test]
+    fn rejects_inventory_without_required_privacy_declaration() {
+        let mut value = inventory();
+        value.privacy = None;
+        assert_eq!(
+            validate_model_runtime_inventory(&value, 1_100, 10_000),
+            Err(ModelInventoryValidationError::MissingPrivacyDeclaration)
         );
     }
 
