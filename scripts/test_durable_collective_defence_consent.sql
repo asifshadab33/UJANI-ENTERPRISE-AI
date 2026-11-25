@@ -378,7 +378,7 @@ SET LOCAL ROLE ujani_runtime;
 DO $expiry$
 BEGIN
  IF ujani_control.collective_defence_consent_is_current(
-   'collective-consent-test','user-02','device-01') THEN
+   'collective-consent-test','user-01','device-01') THEN
   RAISE EXCEPTION 'expired tenant consent was treated as current';
  END IF;
 END;
