@@ -372,15 +372,7 @@ BEGIN
  END IF;
  PERFORM pg_advisory_xact_lock(hashtextextended(p_tenant_id,0));
 
- SELECT * INTO v_existing FROM ujani_control.collective_defence_consent_audit
- WHERE tenant_id=p_tenant_id AND scope='individual' AND idempotency_key=p_idempotency_key;
- IF FOUND THEN
-  IF v_existing.request_digest IS DISTINCT FROM p_request_digest THEN
-   RAISE EXCEPTION 'consent idempotency key reused with different request' USING ERRCODE = '23505';
-  END IF;
-  RETURN QUERY SELECT v_existing.sequence_id,v_existing.event_id,v_existing.next_generation;
-  RETURN;
- END IF;
+
 
  SELECT * INTO v_tenant FROM ujani_control.collective_defence_tenant_consent
  WHERE tenant_id=p_tenant_id FOR SHARE;
@@ -411,6 +403,16 @@ BEGIN
  FOR SHARE;
  IF NOT FOUND OR v_owner_enabled IS DISTINCT FROM true THEN
   RAISE EXCEPTION 'current device owner is not an enabled tenant subject' USING ERRCODE = '42501';
+ END IF;
+
+ SELECT * INTO v_existing FROM ujani_control.collective_defence_consent_audit
+ WHERE tenant_id=p_tenant_id AND scope='individual' AND idempotency_key=p_idempotency_key;
+ IF FOUND THEN
+  IF v_existing.request_digest IS DISTINCT FROM p_request_digest THEN
+   RAISE EXCEPTION 'consent idempotency key reused with different request' USING ERRCODE = '23505';
+  END IF;
+  RETURN QUERY SELECT v_existing.sequence_id,v_existing.event_id,v_existing.next_generation;
+  RETURN;
  END IF;
 
  SELECT individual_consent.generation INTO v_current_generation
