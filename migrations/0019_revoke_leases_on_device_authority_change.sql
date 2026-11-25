@@ -216,7 +216,7 @@ $function$;
 
 DROP TRIGGER IF EXISTS operator_subjects_a_authority_lock ON ujani_control.operator_subjects;
 CREATE TRIGGER operator_subjects_a_authority_lock
- BEFORE UPDATE OF enabled ON ujani_control.operator_subjects
+ BEFORE UPDATE OF enabled,role ON ujani_control.operator_subjects
  FOR EACH STATEMENT
  EXECUTE FUNCTION ujani_control.lock_operator_subject_authority_change();
 
@@ -270,6 +270,120 @@ CREATE TRIGGER operator_subjects_z_revoke_device_leases
 
 COMMENT ON FUNCTION ujani_control.revoke_device_leases_for_disabled_owner() IS
  'When an operator subject is disabled, invalidate every active device-owner grant for that subject. Device authority triggers revoke outstanding reservations, append per-lease audit receipts and advance capacity revisions in the same transaction. Re-enabling a subject never restores consent or leases.';
+
+CREATE OR REPLACE FUNCTION ujani_control.revoke_device_leases_for_invalid_approver()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = pg_catalog, ujani_control
+AS $function$
+DECLARE
+ v_tenant_context text;
+ v_reason text;
+ v_device_count bigint;
+ v_updated_count bigint;
+BEGIN
+ v_tenant_context := pg_catalog.current_setting('ujani.tenant_id', true);
+ IF v_tenant_context IS NULL OR v_tenant_context = ''
+    OR v_tenant_context IS DISTINCT FROM NEW.tenant_id THEN
+  RAISE EXCEPTION 'authenticated tenant context is required for approver authority changes'
+   USING ERRCODE = '42501';
+ END IF;
+
+ IF NOT (
+  (OLD.enabled IS TRUE AND NEW.enabled IS FALSE)
+  OR (OLD.role = 'administrator' AND NEW.role IS DISTINCT FROM 'administrator')
+ ) THEN
+  RETURN NEW;
+ END IF;
+
+ IF NEW.enabled IS FALSE THEN
+  v_reason := 'approver_subject_disabled';
+ ELSE
+  v_reason := 'approver_role_changed';
+ END IF;
+
+ -- The statement-level tenant lock is acquired before the subject row lock.
+ -- Lock affected devices in stable order before touching lease rows, preserving
+ -- the common tenant -> device -> lease -> audit order used by admission.
+ PERFORM device.device_id
+ FROM ujani_control.devices AS device
+ JOIN ujani_control.leases AS lease
+   ON lease.tenant_id = device.tenant_id
+  AND lease.device_id = device.device_id
+ JOIN ujani_control.approvals AS approval
+   ON approval.tenant_id = lease.tenant_id
+  AND approval.approval_id = lease.approval_id
+ WHERE device.tenant_id = NEW.tenant_id
+   AND approval.approver_subject_id = NEW.subject_id
+   AND lease.state IN ('reserved','active')
+ ORDER BY device.device_id
+ FOR UPDATE OF device;
+
+ WITH revoked_leases AS (
+  UPDATE ujani_control.leases AS lease
+  SET state = 'revoked', revision = revision + 1
+  FROM ujani_control.approvals AS approval
+  WHERE lease.tenant_id = NEW.tenant_id
+    AND approval.tenant_id = lease.tenant_id
+    AND approval.approval_id = lease.approval_id
+    AND approval.approver_subject_id = NEW.subject_id
+    AND lease.state IN ('reserved','active')
+  RETURNING lease.tenant_id, lease.device_id, lease.lease_id
+ ),
+ revoked_counts AS (
+  SELECT tenant_id, device_id, count(*)::bigint AS revoked_count
+  FROM revoked_leases
+  GROUP BY tenant_id, device_id
+ ),
+ updated_devices AS (
+  UPDATE ujani_control.devices AS device
+  SET reservation_revision = device.reservation_revision + revoked_counts.revoked_count,
+      updated_at = pg_catalog.clock_timestamp()
+  FROM revoked_counts
+  WHERE device.tenant_id = revoked_counts.tenant_id
+    AND device.device_id = revoked_counts.device_id
+    AND device.reservation_revision <= 9007199254740991 - revoked_counts.revoked_count
+  RETURNING device.tenant_id, device.device_id
+ ),
+ audit_receipts AS (
+  INSERT INTO ujani_control.audit_events
+   (tenant_id,event_id,actor_ref,actor_role,event_type,outcome,object_ref)
+  SELECT revoked.tenant_id,pg_catalog.gen_random_uuid(),'system','system',
+   'device.lease.revoked',v_reason,revoked.lease_id
+  FROM revoked_leases AS revoked
+  RETURNING event_id
+ )
+ SELECT (SELECT count(*) FROM revoked_counts),
+        (SELECT count(*) FROM updated_devices)
+ INTO v_device_count, v_updated_count;
+
+ IF v_device_count <> v_updated_count THEN
+  RAISE EXCEPTION 'device reservation revision exhausted while revoking approver leases'
+   USING ERRCODE = '22003';
+ END IF;
+
+ IF OLD.role IS DISTINCT FROM NEW.role THEN
+  INSERT INTO ujani_control.audit_events
+   (tenant_id,event_id,actor_ref,actor_role,event_type,outcome,object_ref)
+  VALUES
+   (NEW.tenant_id,pg_catalog.gen_random_uuid(),'system','system',
+    'operator.subject.role_changed',OLD.role || '_to_' || NEW.role,
+    'subject=' || pg_catalog.left(NEW.subject_id,64));
+ END IF;
+
+ RETURN NEW;
+END;
+$function$;
+
+DROP TRIGGER IF EXISTS operator_subjects_y_revoke_approver_leases ON ujani_control.operator_subjects;
+CREATE TRIGGER operator_subjects_y_revoke_approver_leases
+ AFTER UPDATE OF enabled,role ON ujani_control.operator_subjects
+ FOR EACH ROW
+ EXECUTE FUNCTION ujani_control.revoke_device_leases_for_invalid_approver();
+
+COMMENT ON FUNCTION ujani_control.revoke_device_leases_for_invalid_approver() IS
+ 'Disabling an approver or demoting an administrator invalidates leases backed by that approver. It locks affected devices before lease rows, appends one audit receipt per revoked lease, advances per-device capacity revisions, and never reactivates leases after re-enablement or re-promotion.';
 
 -- Reconcile pre-existing rows before enabling normal operation under this
 -- migration. The migration role must bypass RLS, as required by migration 0008;
