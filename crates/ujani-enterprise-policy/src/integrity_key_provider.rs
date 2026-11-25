@@ -13,6 +13,8 @@ pub enum IntegrityKeyPurpose {
     DeviceTrustRegistry,
     /// Authenticates durable reservations, leases and replay state.
     ReservationLedger,
+    /// Signs short-lived operator sessions after an external identity provider is verified.
+    OperatorSession,
 }
 
 impl IntegrityKeyPurpose {
@@ -21,6 +23,7 @@ impl IntegrityKeyPurpose {
         match self {
             Self::DeviceTrustRegistry => "device-trust-registry",
             Self::ReservationLedger => "reservation-ledger",
+            Self::OperatorSession => "operator-session",
         }
     }
 }
