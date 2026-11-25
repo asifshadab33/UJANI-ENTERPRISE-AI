@@ -400,47 +400,6 @@ impl<S: ProtectedSecretStore> OperatorSessionMacProvider for KeyringIntegrityKey
     }
 }
 
-/// Reuse the protected key store for the existing operator-session signing
-/// contract. This keeps OIDC-derived session tokens on a distinct key purpose.
-impl<S: ProtectedSecretStore> crate::operator_control_plane::OperatorSessionMacProvider
-    for KeyringIntegrityKeyProvider<S>
-{
-    fn sign_active(
-        &self,
-        payload: &[u8],
-    ) -> Result<(String, Vec<u8>), crate::operator_control_plane::OperatorAuthError> {
-        let (key_id, tag) = IntegrityKeyProvider::sign_active(
-            self,
-            IntegrityKeyPurpose::OperatorSession,
-            payload,
-        )
-        .map_err(|_| crate::operator_control_plane::OperatorAuthError::InvalidKey)?;
-        Ok((key_id, tag.to_vec()))
-    }
-
-    fn verify(
-        &self,
-        key_id: &str,
-        payload: &[u8],
-        signature: &[u8],
-    ) -> Result<(), crate::operator_control_plane::OperatorAuthError> {
-        use crate::operator_control_plane::OperatorAuthError;
-        let tag: [u8; 32] = signature
-            .try_into()
-            .map_err(|_| OperatorAuthError::InvalidSignature)?;
-        match IntegrityKeyProvider::verify(
-            self,
-            IntegrityKeyPurpose::OperatorSession,
-            key_id,
-            payload,
-            &tag,
-        ) {
-            Ok(()) => Ok(()),
-            Err(IntegrityKeyProviderError::UnknownKey) => Err(OperatorAuthError::UnknownKeyId),
-            Err(_) => Err(OperatorAuthError::InvalidSignature),
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -496,15 +455,23 @@ mod tests {
             Err(IntegrityKeyProviderError::KeyAlreadyExists)
         );
         provider.activate_key(purpose, "device-v1").unwrap();
-        let (old_id, old_tag) = provider
-            .sign_active(purpose, b"registry-snapshot-v1")
-            .unwrap();
+        let (old_id, old_tag) = IntegrityKeyProvider::sign_active(
+            &provider,
+            purpose,
+            b"registry-snapshot-v1",
+        )
+        .unwrap();
 
         provider.provision_key(purpose, "device-v2").unwrap();
         provider.activate_key(purpose, "device-v2").unwrap();
-        provider
-            .verify(purpose, &old_id, b"registry-snapshot-v1", &old_tag)
-            .unwrap();
+        IntegrityKeyProvider::verify(
+            &provider,
+            purpose,
+            &old_id,
+            b"registry-snapshot-v1",
+            &old_tag,
+        )
+        .unwrap();
         assert_eq!(
             provider.retire_key(purpose, "device-v2"),
             Err(IntegrityKeyProviderError::ActiveKeyCannotBeRetired)
@@ -512,7 +479,13 @@ mod tests {
 
         provider.retire_key(purpose, "device-v1").unwrap();
         assert_eq!(
-            provider.verify(purpose, &old_id, b"registry-snapshot-v1", &old_tag),
+            IntegrityKeyProvider::verify(
+                &provider,
+                purpose,
+                &old_id,
+                b"registry-snapshot-v1",
+                &old_tag,
+            ),
             Err(IntegrityKeyProviderError::UnknownKey)
         );
         assert_eq!(
@@ -711,7 +684,11 @@ mod tests {
     fn missing_active_key_and_corrupt_envelopes_fail_closed() {
         let provider = provider();
         assert_eq!(
-            provider.sign_active(IntegrityKeyPurpose::ReservationLedger, b"x"),
+            IntegrityKeyProvider::sign_active(
+                &provider,
+                IntegrityKeyPurpose::ReservationLedger,
+                b"x",
+            ),
             Err(IntegrityKeyProviderError::UnknownKey)
         );
         assert_eq!(
