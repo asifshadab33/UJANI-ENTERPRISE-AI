@@ -593,9 +593,7 @@ mod tests {
             "duplicate generation fields must not be interpreted using last-value-wins semantics"
         );
 
-        let duplicate_device = String::from_utf8(body(1_000))
-            .unwrap()
-            .replace(
+        let duplicate_device = String::from_utf8(body(1_000)).unwrap().replace(
             "\"device_id\":\"device-1\"",
             "\"device_id\":\"other-device\",\"device_id\":\"device-1\"",
         );
