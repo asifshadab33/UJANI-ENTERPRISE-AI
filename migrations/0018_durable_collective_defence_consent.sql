@@ -21,6 +21,21 @@ BEGIN
 END;
 $role$;
 
+ALTER ROLE ujani_consent_writer
+ NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+
+DO $role_guard$
+BEGIN
+ IF EXISTS (
+  SELECT 1 FROM pg_catalog.pg_auth_members
+  WHERE member = 'ujani_consent_writer'::regrole
+     OR roleid = 'ujani_consent_writer'::regrole
+ ) THEN
+  RAISE EXCEPTION 'ujani_consent_writer must not have or receive role memberships';
+ END IF;
+END;
+$role_guard$;
+
 CREATE TABLE IF NOT EXISTS ujani_control.collective_defence_tenant_consent (
  tenant_id text PRIMARY KEY REFERENCES ujani_control.tenants(tenant_id),
  enabled boolean NOT NULL DEFAULT false,
