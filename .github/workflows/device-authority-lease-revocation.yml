@@ -56,21 +56,38 @@ jobs:
           chmod +x "$RUNNER_TEMP/ujani-psql"
           echo "POSTGRES_CONTAINER_ID=$container_id" >> "$GITHUB_ENV"
           echo "PSQL_BIN=$RUNNER_TEMP/ujani-psql" >> "$GITHUB_ENV"
-      - name: Apply all customer-hosted migrations in order
+      - name: Apply base control-plane migrations
+        env:
+          PGPASSWORD: postgres
+        run: |
+          set -euo pipefail
+          for migration in migrations/0001_customer_hosted_control_plane.sql migrations/0002_task_contract_replay_storage.sql; do
+            echo "Applying $migration"
+            "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < "$migration"
+          done
+      - name: Establish and verify least-privilege runtime role
+        env:
+          PGPASSWORD: postgres
+        run: |
+          "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < scripts/test_customer_hosted_migration.sql
+      - name: Verify task-contract replay base migration
+        env:
+          PGPASSWORD: postgres
+        run: |
+          "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < scripts/test_task_contract_replay_migration.sql
+      - name: Apply remaining customer-hosted migrations in order
         env:
           PGPASSWORD: postgres
         shell: bash
         run: |
           set -euo pipefail
           for migration in migrations/*.sql; do
+            case "$migration" in
+              migrations/0001_customer_hosted_control_plane.sql|migrations/0002_task_contract_replay_storage.sql) continue ;;
+            esac
             echo "Applying $migration"
             "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < "$migration"
           done
-      - name: Verify tenant isolation and append-only audit invariants
-        env:
-          PGPASSWORD: postgres
-        run: |
-          "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < scripts/test_customer_hosted_migration.sql
       - name: Verify existing owner-consent lease revocation
         env:
           PGPASSWORD: postgres
