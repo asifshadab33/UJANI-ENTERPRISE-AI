@@ -403,10 +403,14 @@ impl<S: ProtectedSecretStore> OperatorSessionMacProvider for KeyringIntegrityKey
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::device_trust::durable::{
+        AnchorCallContext, AnchorCallPolicy, DurableDeviceRegistry, MonotonicSnapshotAnchor,
+        SnapshotAnchorRecord,
+    };
+    use crate::durable_ledger::DurableLedger;
     use crate::operator_control_plane::{
         OperatorRole, OperatorSessionClaims, OperatorSessionProviderVerifier,
     };
-    use crate::{device_trust::durable::DurableDeviceRegistry, durable_ledger::DurableLedger};
     use ed25519_dalek::SigningKey;
     use std::{collections::HashMap, sync::Arc};
 
@@ -442,6 +446,49 @@ mod tests {
 
     fn provider() -> KeyringIntegrityKeyProvider<MemorySecretStore> {
         KeyringIntegrityKeyProvider::new(MemorySecretStore::default())
+    }
+
+    #[derive(Default)]
+    struct MemorySnapshotAnchor(Mutex<HashMap<String, SnapshotAnchorRecord>>);
+
+    impl MonotonicSnapshotAnchor for MemorySnapshotAnchor {
+        fn load(
+            &self,
+            registry_id: &str,
+            context: &AnchorCallContext,
+        ) -> Result<Option<SnapshotAnchorRecord>, String> {
+            context.check_active().map_err(|error| error.to_string())?;
+            let record = self
+                .0
+                .lock()
+                .map_err(|_| "test anchor lock poisoned".to_owned())?
+                .get(registry_id)
+                .cloned();
+            context.check_active().map_err(|error| error.to_string())?;
+            Ok(record)
+        }
+
+        fn compare_and_set(
+            &self,
+            registry_id: &str,
+            expected_generation: Option<u64>,
+            next: SnapshotAnchorRecord,
+            context: &AnchorCallContext,
+        ) -> Result<bool, String> {
+            context.check_active().map_err(|error| error.to_string())?;
+            let mut records = self
+                .0
+                .lock()
+                .map_err(|_| "test anchor lock poisoned".to_owned())?;
+            let current = records.get(registry_id).map(SnapshotAnchorRecord::generation);
+            let expected_next = expected_generation.and_then(|value| value.checked_add(1)).unwrap_or(1);
+            if current != expected_generation || next.generation() != expected_next {
+                return Ok(false);
+            }
+            records.insert(registry_id.to_owned(), next);
+            context.check_active().map_err(|error| error.to_string())?;
+            Ok(true)
+        }
     }
 
     #[test]
@@ -606,6 +653,84 @@ mod tests {
         drop(ledger);
         let reopened_ledger =
             DurableLedger::open_with_key_provider(&ledger_path, provider).unwrap();
+        drop(reopened_ledger);
+
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn protected_provider_reopens_anchored_registry_and_ledger() {
+        let mut random = [0u8; 8];
+        OsRng.try_fill_bytes(&mut random).unwrap();
+        let directory = std::env::temp_dir().join(format!(
+            "ujani-enterprise-anchored-keyring-{}",
+            u64::from_ne_bytes(random)
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+
+        let provider = Arc::new(KeyringIntegrityKeyProvider::new(
+            MemorySecretStore::default(),
+        ));
+        provider
+            .provision_key(IntegrityKeyPurpose::DeviceTrustRegistry, "anchored-registry-v1")
+            .unwrap();
+        provider
+            .activate_key(IntegrityKeyPurpose::DeviceTrustRegistry, "anchored-registry-v1")
+            .unwrap();
+        provider
+            .provision_key(IntegrityKeyPurpose::ReservationLedger, "anchored-ledger-v1")
+            .unwrap();
+        provider
+            .activate_key(IntegrityKeyPurpose::ReservationLedger, "anchored-ledger-v1")
+            .unwrap();
+
+        let admin = SigningKey::from_bytes(&rand::random());
+        let anchor: Arc<dyn MonotonicSnapshotAnchor> =
+            Arc::new(MemorySnapshotAnchor::default());
+        let policy = AnchorCallPolicy::default();
+
+        let registry_path = directory.join("device-trust-anchored.json");
+        let registry = DurableDeviceRegistry::open_with_anchor_and_key_provider(
+            &registry_path,
+            "device-registry-test",
+            vec![("test-admin".to_owned(), admin.verifying_key())],
+            provider.clone(),
+            anchor.clone(),
+            policy.clone(),
+        )
+        .unwrap();
+        drop(registry);
+        let reopened_registry = DurableDeviceRegistry::open_with_anchor_and_key_provider(
+            &registry_path,
+            "device-registry-test",
+            vec![("test-admin".to_owned(), admin.verifying_key())],
+            provider.clone(),
+            anchor.clone(),
+            policy.clone(),
+        )
+        .unwrap();
+        drop(reopened_registry);
+
+        let ledger_path = directory.join("reservation-ledger-anchored.json");
+        let ledger = DurableLedger::open_with_anchor_and_key_provider(
+            &ledger_path,
+            "reservation-ledger-test",
+            provider.clone(),
+            anchor.clone(),
+            policy.clone(),
+        )
+        .unwrap();
+        assert_eq!(ledger.snapshot().unwrap().active_jobs, 0);
+        drop(ledger);
+        let reopened_ledger = DurableLedger::open_with_anchor_and_key_provider(
+            &ledger_path,
+            "reservation-ledger-test",
+            provider,
+            anchor,
+            policy,
+        )
+        .unwrap();
+        assert_eq!(reopened_ledger.snapshot().unwrap().active_jobs, 0);
         drop(reopened_ledger);
 
         std::fs::remove_dir_all(directory).unwrap();
