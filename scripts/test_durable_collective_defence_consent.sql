@@ -24,6 +24,9 @@ DECLARE
  v_bad_digest boolean := false;
  v_bad_generation boolean := false;
  v_cross_tenant boolean := false;
+ v_expired_tenant boolean := false;
+ v_expired_individual boolean := false;
+ v_wrong_policy_generation boolean := false;
  v_now timestamptz := clock_timestamp();
 BEGIN
  -- No records means default-off, including for an otherwise valid device.
@@ -145,6 +148,55 @@ BEGIN
     OR NOT ujani_control.collective_defence_consent_is_current(
       'collective-consent-test','user-01','device-01',v_now) THEN
   RAISE EXCEPTION 'fresh individual re-opt-in did not bind to current tenant generation';
+ END IF;
+
+ -- A different principal or device cannot borrow this consent record.
+ IF ujani_control.collective_defence_consent_is_current(
+     'collective-consent-test','other-user','device-01',v_now)
+    OR ujani_control.collective_defence_consent_is_current(
+     'collective-consent-test','user-01','other-device',v_now) THEN
+  RAISE EXCEPTION 'consent was not bound to the exact principal/device tuple';
+ END IF;
+
+ -- A stale tenant policy generation cannot be used for a new individual grant.
+ BEGIN
+  PERFORM * FROM ujani_control.record_collective_defence_individual_consent(
+   'collective-consent-test','user-01','device-01',true,2,3,
+   'collective-defence.read-only.v1','notice-v2',decode(repeat('32',32),'hex'),
+   'user-key-1',v_now,v_now+interval '1 hour','individual-old-policy',
+   decode(repeat('45',32),'hex'));
+ EXCEPTION WHEN insufficient_privilege THEN
+  v_wrong_policy_generation := true;
+ END;
+ IF NOT v_wrong_policy_generation THEN
+  RAISE EXCEPTION 'individual consent using an old tenant policy generation was accepted';
+ END IF;
+
+ -- Expired tenant and individual claims cannot replace current consent.
+ BEGIN
+  PERFORM * FROM ujani_control.record_collective_defence_tenant_consent(
+   'collective-consent-test',true,3,'collective-defence.read-only.v1','1.0',
+   86400,'notice-v3',decode(repeat('13',32),'hex'),'admin-key-1',
+   v_now-interval '2 hours',v_now-interval '1 hour','tenant-expired',
+   decode(repeat('26',32),'hex'));
+ EXCEPTION WHEN invalid_parameter_value THEN
+  v_expired_tenant := true;
+ END;
+ IF NOT v_expired_tenant THEN
+  RAISE EXCEPTION 'expired tenant consent was accepted';
+ END IF;
+
+ BEGIN
+  PERFORM * FROM ujani_control.record_collective_defence_individual_consent(
+   'collective-consent-test','user-01','device-01',true,3,3,
+   'collective-defence.read-only.v1','notice-v2',decode(repeat('32',32),'hex'),
+   'user-key-1',v_now-interval '2 hours',v_now-interval '1 hour','individual-expired',
+   decode(repeat('46',32),'hex'));
+ EXCEPTION WHEN invalid_parameter_value THEN
+  v_expired_individual := true;
+ END;
+ IF NOT v_expired_individual THEN
+  RAISE EXCEPTION 'expired individual consent was accepted';
  END IF;
 
  -- Caller-supplied tenant identity cannot cross the authenticated DB context.
