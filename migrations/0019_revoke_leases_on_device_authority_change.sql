@@ -127,6 +127,10 @@ BEGIN
      AND owner_subject.enabled IS FALSE
   ) THEN
   v_reason := 'owner_subject_disabled';
+ ELSIF NEW.owner_consent_state = 'withdrawn' THEN
+  v_reason := 'owner_consent_withdrawn';
+ ELSIF NEW.owner_consent_state = 'paused' THEN
+  v_reason := 'owner_consent_paused';
  ELSIF NEW.owner_consent_state IS DISTINCT FROM OLD.owner_consent_state THEN
   v_reason := 'owner_consent_changed';
  ELSE
