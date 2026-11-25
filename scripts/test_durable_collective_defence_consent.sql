@@ -372,7 +372,8 @@ RESET ROLE;
 -- The current predicate uses the database clock; callers cannot backdate an
 -- expired consent by supplying an earlier timestamp.
 UPDATE ujani_control.collective_defence_tenant_consent
-SET expires_at=clock_timestamp()-interval '1 second'
+SET issued_at=clock_timestamp()-interval '2 hours',
+    expires_at=clock_timestamp()-interval '1 second'
 WHERE tenant_id='collective-consent-test';
 SET LOCAL ROLE ujani_runtime;
 DO $expiry$
