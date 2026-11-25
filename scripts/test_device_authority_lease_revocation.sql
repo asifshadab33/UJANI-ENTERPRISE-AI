@@ -48,6 +48,8 @@ VALUES
   'enrolled','unknown','approved','key-key-v1',1,0,1,1,clock_timestamp(),1),
  ('device-authority-revocation-test','approval-device','Approval Revocation Device','linux',
   'enrolled','unknown','approved','approval-key-v1',1,0,1,1,clock_timestamp(),1),
+ ('device-authority-revocation-test','approval-record-device','Approval Record Revocation Device','linux',
+  'enrolled','unknown','approved','approval-record-key-v1',1,0,1,1,clock_timestamp(),1),
  ('device-authority-revocation-test','binding-device','Owner Binding Device','linux',
   'enrolled','unknown','approved','binding-key-v1',1,0,1,1,clock_timestamp(),1),
  ('device-authority-revocation-test','rollback-device','Rollback Device','linux',
@@ -66,6 +68,7 @@ VALUES
  ('device-authority-revocation-test','trust-device','trust-key-v1',decode(repeat('b1',32),'hex'),1,'active'),
  ('device-authority-revocation-test','key-device','key-key-v1',decode(repeat('b2',32),'hex'),1,'active'),
  ('device-authority-revocation-test','approval-device','approval-key-v1',decode(repeat('b3',32),'hex'),1,'active'),
+ ('device-authority-revocation-test','approval-record-device','approval-record-key-v1',decode(repeat('ba',32),'hex'),1,'active'),
  ('device-authority-revocation-test','binding-device','binding-key-v1',decode(repeat('b4',32),'hex'),1,'active'),
  ('device-authority-revocation-test','rollback-device','rollback-key-v1',decode(repeat('b5',32),'hex'),1,'active'),
  ('device-authority-revocation-test','legacy-device','legacy-key-v1',decode(repeat('b6',32),'hex'),1,'active'),
@@ -79,6 +82,7 @@ VALUES
  ('device-authority-revocation-test','trust-device','authority-owner','authority-admin',1,true,decode(repeat('c1',32),'hex')),
  ('device-authority-revocation-test','key-device','authority-owner','authority-admin',1,true,decode(repeat('c2',32),'hex')),
  ('device-authority-revocation-test','approval-device','authority-owner','authority-admin',1,true,decode(repeat('c3',32),'hex')),
+ ('device-authority-revocation-test','approval-record-device','authority-owner','authority-admin',1,true,decode(repeat('ca',32),'hex')),
  ('device-authority-revocation-test','binding-device','authority-owner','authority-admin',1,true,decode(repeat('c4',32),'hex')),
  ('device-authority-revocation-test','rollback-device','authority-owner','authority-admin',1,true,decode(repeat('c5',32),'hex')),
  ('device-authority-revocation-test','subject-device','authority-owner-2','authority-admin',1,true,decode(repeat('c6',32),'hex')),
@@ -91,6 +95,7 @@ VALUES
  ('device-authority-revocation-test','trust-device',1,'granted','authority-owner',decode(repeat('d1',32),'hex')),
  ('device-authority-revocation-test','key-device',1,'granted','authority-owner',decode(repeat('d2',32),'hex')),
  ('device-authority-revocation-test','approval-device',1,'granted','authority-owner',decode(repeat('d3',32),'hex')),
+ ('device-authority-revocation-test','approval-record-device',1,'granted','authority-owner',decode(repeat('da',32),'hex')),
  ('device-authority-revocation-test','binding-device',1,'granted','authority-owner',decode(repeat('d4',32),'hex')),
  ('device-authority-revocation-test','rollback-device',1,'granted','authority-owner',decode(repeat('d5',32),'hex')),
  ('device-authority-revocation-test','subject-device',1,'granted','authority-owner-2',decode(repeat('d6',32),'hex')),
@@ -129,7 +134,7 @@ VALUES
  ('device-authority-revocation-test','approver-lease','approver-device','authority-workload','authority-approval-admin2',
   decode(repeat('a1',32),'hex'),1,'reserved',clock_timestamp()+interval '4 minutes',1,500,512,
   decode(repeat('e9',32),'hex'),1,decode(repeat('f9',16),'hex'),decode(repeat('19',32),'hex')),
- ('device-authority-revocation-test','approval-record-lease','approval-device','authority-workload','authority-approval-revocable',
+ ('device-authority-revocation-test','approval-record-lease','approval-record-device','authority-workload','authority-approval-revocable',
   decode(repeat('a2',32),'hex'),1,'reserved',clock_timestamp()+interval '4 minutes',1,500,512,
   decode(repeat('ea',32),'hex'),1,decode(repeat('fa',16),'hex'),decode(repeat('1a',32),'hex'));
 
@@ -413,7 +418,7 @@ BEGIN
  SELECT owner_consent_state,reservation_revision
  INTO v_owner_state,v_revision
  FROM ujani_control.devices
- WHERE tenant_id='device-authority-revocation-test' AND device_id='approval-device';
+ WHERE tenant_id='device-authority-revocation-test' AND device_id='approval-record-device';
  SELECT state INTO v_lease_state FROM ujani_control.leases
  WHERE tenant_id='device-authority-revocation-test' AND lease_id='approval-record-lease';
  IF v_owner_state <> 'granted' OR v_revision <> 3 OR v_lease_state <> 'revoked' THEN
