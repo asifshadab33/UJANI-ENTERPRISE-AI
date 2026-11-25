@@ -21,7 +21,7 @@ use aes_gcm::{
     aead::{Aead, Payload},
     Aes256Gcm, KeyInit, Nonce,
 };
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit as HmacKeyInit, Mac};
 use rand::{rngs::OsRng, RngCore};
 use sha2::Sha256;
 use std::sync::Mutex;
@@ -253,7 +253,7 @@ impl<S: ProtectedSecretStore> IntegrityKeyProvider for KeyringIntegrityKeyProvid
         let key_id = self.active_key_id(purpose)?;
         let material = self.read_material(purpose, &key_id)?;
         let input = Self::mac_input(purpose, &key_id, payload);
-        let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(&material[MAC_KEY_RANGE])
+        let mut mac = <Hmac<Sha256> as HmacKeyInit>::new_from_slice(&material[MAC_KEY_RANGE])
             .map_err(|_| IntegrityKeyProviderError::Unavailable)?;
         mac.update(&input);
         let tag: [u8; 32] = mac.finalize().into_bytes().into();
