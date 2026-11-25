@@ -4,15 +4,9 @@
   "title": "UJANI Operator Model Task Match Response v1",
   "type": "object",
   "additionalProperties": false,
-  "required": [
-    "schema_version",
-    "device_id",
-    "result"
-  ],
+  "required": ["schema_version", "device_id", "result"],
   "properties": {
-    "schema_version": {
-      "const": 1
-    },
+    "schema_version": { "const": 1 },
     "device_id": {
       "type": "string",
       "minLength": 1,
@@ -22,26 +16,10 @@
     "result": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "model_ref",
-        "status",
-        "reasons",
-        "evidence_confidence"
-      ],
+      "required": ["model_ref", "status", "reasons", "evidence_confidence"],
       "properties": {
-        "model_ref": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 160
-        },
-        "status": {
-          "type": "string",
-          "enum": [
-            "compatible",
-            "incompatible",
-            "unknown"
-          ]
-        },
+        "model_ref": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "status": { "type": "string", "enum": ["compatible", "incompatible", "unknown"] },
         "reasons": {
           "type": "array",
           "maxItems": 32,
@@ -68,12 +46,7 @@
         },
         "evidence_confidence": {
           "type": "string",
-          "enum": [
-            "verified",
-            "reported",
-            "estimated",
-            "unknown"
-          ]
+          "enum": ["verified", "reported", "estimated", "unknown"]
         }
       },
       "allOf": [
@@ -81,90 +54,36 @@
           "if": {
             "properties": {
               "evidence_confidence": {
-                "enum": [
-                  "estimated",
-                  "unknown"
-                ]
+                "enum": ["reported", "estimated", "unknown"]
               }
             },
-            "required": [
-              "evidence_confidence"
-            ]
+            "required": ["evidence_confidence"]
           },
           "then": {
             "properties": {
-              "status": {
-                "not": {
-                  "const": "compatible"
-                }
-              }
+              "status": { "not": { "const": "compatible" } }
             }
+          }
+        },
+        {
+          "if": {
+            "properties": { "status": { "const": "compatible" } },
+            "required": ["status"]
+          },
+          "then": {
+            "properties": { "reasons": { "maxItems": 0 } }
+          }
+        },
+        {
+          "if": {
+            "properties": { "status": { "const": "incompatible" } },
+            "required": ["status"]
+          },
+          "then": {
+            "properties": { "reasons": { "minItems": 1 } }
           }
         }
       ]
     }
-  },
-  "allOf": [
-    {
-      "if": {
-        "properties": {
-          "evidence_confidence": {
-            "not": {
-              "const": "verified"
-            }
-          }
-        },
-        "required": [
-          "evidence_confidence"
-        ]
-      },
-      "then": {
-        "properties": {
-          "status": {
-            "not": {
-              "const": "compatible"
-            }
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "status": {
-            "const": "compatible"
-          }
-        },
-        "required": [
-          "status"
-        ]
-      },
-      "then": {
-        "properties": {
-          "reasons": {
-            "maxItems": 0
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "status": {
-            "const": "incompatible"
-          }
-        },
-        "required": [
-          "status"
-        ]
-      },
-      "then": {
-        "properties": {
-          "reasons": {
-            "minItems": 1
-          }
-        }
-      }
-    }
-  ]
+  }
 }
