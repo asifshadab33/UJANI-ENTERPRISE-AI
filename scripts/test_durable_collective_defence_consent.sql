@@ -27,8 +27,33 @@ DECLARE
  v_expired_tenant boolean := false;
  v_expired_individual boolean := false;
  v_wrong_policy_generation boolean := false;
+ v_direct_select_denied boolean := false;
+ v_direct_write_denied boolean := false;
  v_now timestamptz := clock_timestamp();
 BEGIN
+ -- The runtime role can execute only the audited routines, not read or mutate
+ -- consent tables directly.
+ BEGIN
+  PERFORM 1 FROM ujani_control.collective_defence_tenant_consent;
+ EXCEPTION WHEN insufficient_privilege THEN
+  v_direct_select_denied := true;
+ END;
+ IF NOT v_direct_select_denied THEN
+  RAISE EXCEPTION 'runtime role unexpectedly has direct consent-table read access';
+ END IF;
+ BEGIN
+  INSERT INTO ujani_control.collective_defence_tenant_consent
+   (tenant_id,enabled,generation,purpose,event_schema_version,retention_seconds,
+    notice_version,notice_sha256,actor_key_id,issued_at,expires_at)
+  VALUES ('collective-consent-test',false,99,'collective-defence.read-only.v1','1.0',
+   0,'blocked',decode(repeat('51',32),'hex'),'blocked-key',v_now,v_now+interval '1 hour');
+ EXCEPTION WHEN insufficient_privilege THEN
+  v_direct_write_denied := true;
+ END;
+ IF NOT v_direct_write_denied THEN
+  RAISE EXCEPTION 'runtime role unexpectedly has direct consent-table write access';
+ END IF;
+
  -- No records means default-off, including for an otherwise valid device.
  IF ujani_control.collective_defence_consent_is_current(
    'collective-consent-test','user-01','device-01',v_now) THEN
