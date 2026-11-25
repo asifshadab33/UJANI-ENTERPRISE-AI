@@ -12,6 +12,8 @@ INSERT INTO ujani_control.devices
 VALUES ('collective-consent-test','device-01','Consent Test Device','linux','pending','unknown','pending')
 ON CONFLICT (tenant_id,device_id) DO NOTHING;
 
+SET LOCAL ROLE ujani_runtime;
+
 DO $test$
 DECLARE
  tenant_result record;
@@ -158,14 +160,18 @@ BEGIN
   RAISE EXCEPTION 'cross-tenant consent write was accepted';
  END IF;
 
- SELECT count(*) INTO v_count
- FROM ujani_control.collective_defence_consent_audit
- WHERE tenant_id='collective-consent-test';
- IF v_count <> 6 THEN
-  RAISE EXCEPTION 'expected six committed consent audit events, got %',v_count;
+
+END;
+$test$;
+RESET ROLE;
+
+DO $audit$
+BEGIN
+ IF (SELECT count(*) FROM ujani_control.collective_defence_consent_audit
+     WHERE tenant_id='collective-consent-test') <> 6 THEN
+  RAISE EXCEPTION 'expected six committed consent audit events';
  END IF;
 
- -- Verify contiguous sequence, predecessor links and canonical database hashes.
  IF EXISTS (
   SELECT 1
   FROM (
@@ -200,5 +206,5 @@ BEGIN
   IF SQLERRM = 'consent audit update unexpectedly succeeded' THEN RAISE; END IF;
  END;
 END;
-$test$;
+$audit$;
 ROLLBACK;
