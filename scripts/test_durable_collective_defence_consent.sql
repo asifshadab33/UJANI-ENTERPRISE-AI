@@ -319,6 +319,56 @@ END;
 $owner_change$;
 RESET ROLE;
 
+-- Exercise an A -> B -> A owner-binding change. The original A consent and
+-- B's later consent must both remain stale until A explicitly opts in again.
+UPDATE ujani_control.device_owner_bindings
+SET owner_subject_id='user-01',
+    binding_revision=binding_revision+1,
+    binding_digest=decode(repeat('59',32),'hex')
+WHERE tenant_id='collective-consent-test' AND device_id='device-01';
+
+SET LOCAL ROLE ujani_runtime;
+DO $owner_aba$
+DECLARE
+ v_previous_owner_denied boolean := false;
+ v_returning_owner_result record;
+ v_now timestamptz := clock_timestamp();
+BEGIN
+ IF ujani_control.collective_defence_consent_is_current(
+    'collective-consent-test','user-01','device-01')
+    OR ujani_control.collective_defence_consent_is_current(
+      'collective-consent-test','user-02','device-01') THEN
+  RAISE EXCEPTION 'an earlier consent revived after owner binding returned to its prior principal';
+ END IF;
+
+ BEGIN
+  PERFORM * FROM ujani_control.record_collective_defence_individual_consent(
+   'collective-consent-test','user-02','device-01',true,3,1,
+   'collective-defence.read-only.v1','notice-v2',decode(repeat('33',32),'hex'),
+   'user-key-2',v_now,v_now+interval '1 hour','former-owner-regrant',
+   decode(repeat('60',32),'hex'));
+ EXCEPTION WHEN insufficient_privilege THEN
+  v_previous_owner_denied := true;
+ END;
+ IF NOT v_previous_owner_denied THEN
+  RAISE EXCEPTION 'former owner was allowed to renew consent after losing ownership';
+ END IF;
+
+ SELECT * INTO v_returning_owner_result
+ FROM ujani_control.record_collective_defence_individual_consent(
+  'collective-consent-test','user-01','device-01',true,3,3,
+  'collective-defence.read-only.v1','notice-v3',decode(repeat('34',32),'hex'),
+  'user-key-1',v_now,v_now+interval '1 hour','returning-owner-enable',
+  decode(repeat('61',32),'hex'));
+ IF v_returning_owner_result.generation <> 4
+    OR NOT ujani_control.collective_defence_consent_is_current(
+      'collective-consent-test','user-01','device-01') THEN
+  RAISE EXCEPTION 'returning owner did not need and receive a fresh explicit opt-in';
+ END IF;
+END;
+$owner_aba$;
+RESET ROLE;
+
 -- The current predicate uses the database clock; callers cannot backdate an
 -- expired consent by supplying an earlier timestamp.
 UPDATE ujani_control.collective_defence_tenant_consent
@@ -338,8 +388,8 @@ RESET ROLE;
 DO $audit$
 BEGIN
  IF (SELECT count(*) FROM ujani_control.collective_defence_consent_audit
-     WHERE tenant_id='collective-consent-test') <> 7 THEN
-  RAISE EXCEPTION 'expected seven committed consent audit events';
+     WHERE tenant_id='collective-consent-test') <> 8 THEN
+  RAISE EXCEPTION 'expected eight committed consent audit events';
  END IF;
 
  IF EXISTS (
