@@ -527,7 +527,7 @@ mod tests {
             .activate_key(IntegrityKeyPurpose::ReservationLedger, "ledger-v1")
             .unwrap();
 
-        let admin = SigningKey::from_bytes(&[0x42; 32]);
+        let admin = SigningKey::from_bytes(&rand::random());
         let registry_path = directory.join("device-trust.json");
         let registry = DurableDeviceRegistry::open_with_key_provider(
             &registry_path,
