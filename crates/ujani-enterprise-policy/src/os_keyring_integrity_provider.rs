@@ -657,7 +657,7 @@ mod tests {
     }
 
     #[test]
-    fn operator_sessions_use_the_separate_protected_key_purpose_and_rotate_safely() {
+    fn operator_sessions_use_the_separate_protected_key_purpose() {
         let provider = KeyringIntegrityKeyProvider::new(MemorySecretStore::default());
         provider
             .provision_key(IntegrityKeyPurpose::OperatorSession, "session-v1")
