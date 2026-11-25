@@ -400,7 +400,6 @@ impl<S: ProtectedSecretStore> OperatorSessionMacProvider for KeyringIntegrityKey
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -455,12 +454,9 @@ mod tests {
             Err(IntegrityKeyProviderError::KeyAlreadyExists)
         );
         provider.activate_key(purpose, "device-v1").unwrap();
-        let (old_id, old_tag) = IntegrityKeyProvider::sign_active(
-            &provider,
-            purpose,
-            b"registry-snapshot-v1",
-        )
-        .unwrap();
+        let (old_id, old_tag) =
+            IntegrityKeyProvider::sign_active(&provider, purpose, b"registry-snapshot-v1")
+                .unwrap();
 
         provider.provision_key(purpose, "device-v2").unwrap();
         provider.activate_key(purpose, "device-v2").unwrap();
