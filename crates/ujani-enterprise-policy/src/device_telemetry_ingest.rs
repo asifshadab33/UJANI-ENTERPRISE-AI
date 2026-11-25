@@ -586,17 +586,22 @@ mod tests {
     fn telemetry_rejects_duplicate_security_relevant_json_fields() {
         let duplicate_generation = String::from_utf8(body(1_000))
             .unwrap()
-            .replace("\"generation\":2", "\"generation\":1,\"generation\":2");
+            .replace(
+                "\"generation\":2",
+                "\"generation\":1,\"generation\":2",
+            );
         assert_eq!(
             validate_device_telemetry_body(duplicate_generation.as_bytes(), 1_000),
             Err(DeviceTelemetryIntakeError::InvalidResourceMeasurement),
             "duplicate generation fields must not be interpreted using last-value-wins semantics"
         );
 
-        let duplicate_device = String::from_utf8(body(1_000)).unwrap().replace(
-            "\"device_id\":\"device-1\"",
-            "\"device_id\":\"other-device\",\"device_id\":\"device-1\"",
-        );
+        let duplicate_device = String::from_utf8(body(1_000))
+            .unwrap()
+            .replace(
+                "\"device_id\":\"device-1\"",
+                "\"device_id\":\"other-device\",\"device_id\":\"device-1\"",
+            );
         assert_eq!(
             validate_device_telemetry_body(duplicate_device.as_bytes(), 1_000),
             Err(DeviceTelemetryIntakeError::InvalidResourceMeasurement),
