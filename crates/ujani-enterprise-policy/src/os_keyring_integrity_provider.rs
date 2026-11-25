@@ -347,8 +347,12 @@ impl<S: ProtectedSecretStore> IntegrityKeyProvider for KeyringIntegrityKeyProvid
             return Err(IntegrityKeyProviderError::InvalidKeyId);
         }
         let _guard = self.lock()?;
-        if self.active_key_id(purpose).as_deref() == Ok(key_id) {
-            return Err(IntegrityKeyProviderError::ActiveKeyCannotBeRetired);
+        match self.active_key_id(purpose) {
+            Ok(active_key_id) if active_key_id == key_id => {
+                return Err(IntegrityKeyProviderError::ActiveKeyCannotBeRetired);
+            }
+            Ok(_) | Err(IntegrityKeyProviderError::UnknownKey) => {}
+            Err(error) => return Err(error),
         }
         let name = Self::key_name(purpose, key_id);
         if self.store.get(&name)?.is_none() {
