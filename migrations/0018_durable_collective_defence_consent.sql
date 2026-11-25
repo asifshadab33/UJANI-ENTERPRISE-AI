@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS ujani_control.collective_defence_individual_consent (
  tenant_id text NOT NULL REFERENCES ujani_control.tenants(tenant_id),
  principal_id text NOT NULL CHECK (principal_id ~ '^[A-Za-z0-9._:-]{1,128}$'),
  device_id text NOT NULL,
+ owner_binding_revision bigint NOT NULL CHECK (owner_binding_revision > 0),
  enabled boolean NOT NULL DEFAULT false,
  tenant_generation bigint NOT NULL CHECK (tenant_generation > 0),
  generation bigint NOT NULL CHECK (generation > 0),
@@ -361,6 +362,7 @@ DECLARE
  v_audit RECORD;
  v_tenant_context text;
  v_current_owner text;
+ v_current_owner_binding_revision bigint;
  v_owner_enabled boolean;
 BEGIN
  v_tenant_context := current_setting('ujani.tenant_id', true);
@@ -389,126 +391,14 @@ BEGIN
  END IF;
 
  -- The current authenticated participant must be the device's active owner.
- -- The tenant advisory lock above serializes this check with owner-binding changes.
- IF p_principal_id IS NULL OR p_principal_id !~ '^[A-Za-z0-9._:-]{1,128}
- FROM ujani_control.collective_defence_individual_consent AS individual_consent
- WHERE individual_consent.tenant_id=p_tenant_id
-   AND individual_consent.principal_id=p_principal_id
-   AND individual_consent.device_id=p_device_id
- FOR UPDATE;
- IF NOT FOUND THEN
-  IF p_expected_generation IS NOT NULL THEN
-   RAISE EXCEPTION 'individual consent generation conflict' USING ERRCODE = '40001';
-  END IF;
-  v_current_generation := 0;
- ELSE
-  IF p_expected_generation IS DISTINCT FROM v_current_generation THEN
-   RAISE EXCEPTION 'individual consent generation conflict' USING ERRCODE = '40001';
-  END IF;
- END IF;
- v_next_generation := v_current_generation + 1;
-
+ -- Capture the binding revision to prevent an owner A -> B -> A change from
+ -- reviving an older A consent. The tenant advisory lock serializes rebinding.
  IF p_principal_id IS NULL OR p_principal_id !~ '^[A-Za-z0-9._:-]{1,128}$'
-    OR p_device_id IS NULL OR p_device_id !~ '^[A-Za-z0-9._:-]{1,128}$'
-    OR p_purpose IS DISTINCT FROM 'collective-defence.read-only.v1'
-    OR p_notice_version IS NULL OR length(p_notice_version) NOT BETWEEN 1 AND 64
-    OR p_notice_sha256 IS NULL OR octet_length(p_notice_sha256) <> 32
-    OR p_notice_sha256 = decode(repeat('00',32),'hex')
-    OR p_actor_key_id IS NULL OR p_actor_key_id !~ '^[A-Za-z0-9._:-]{1,128}$'
-    OR p_issued_at IS NULL OR p_expires_at IS NULL
-    OR p_issued_at > clock_timestamp() + interval '30 seconds'
-    OR p_expires_at <= p_issued_at
-    OR p_expires_at > p_issued_at + interval '24 hours'
-    OR p_expires_at <= clock_timestamp()
-    OR p_idempotency_key IS NULL OR length(p_idempotency_key) NOT BETWEEN 1 AND 128
-    OR p_request_digest IS NULL OR octet_length(p_request_digest) <> 32 THEN
-  RAISE EXCEPTION 'invalid individual consent claims' USING ERRCODE = '22023';
- END IF;
-
- INSERT INTO ujani_control.collective_defence_individual_consent
-  (tenant_id,principal_id,device_id,enabled,tenant_generation,generation,purpose,
-   notice_version,notice_sha256,actor_key_id,issued_at,expires_at,updated_at)
- VALUES
-  (p_tenant_id,p_principal_id,p_device_id,p_enabled,p_tenant_generation,v_next_generation,
-   p_purpose,p_notice_version,p_notice_sha256,p_actor_key_id,p_issued_at,p_expires_at,clock_timestamp())
- ON CONFLICT (tenant_id,principal_id,device_id) DO UPDATE SET
-  enabled=EXCLUDED.enabled,tenant_generation=EXCLUDED.tenant_generation,
-  generation=EXCLUDED.generation,purpose=EXCLUDED.purpose,
-  notice_version=EXCLUDED.notice_version,notice_sha256=EXCLUDED.notice_sha256,
-  actor_key_id=EXCLUDED.actor_key_id,issued_at=EXCLUDED.issued_at,
-  expires_at=EXCLUDED.expires_at,updated_at=EXCLUDED.updated_at;
-
- SELECT * INTO v_audit FROM ujani_control.append_collective_defence_consent_audit(
-  p_tenant_id,'individual',p_principal_id,p_device_id,
-  CASE WHEN p_enabled THEN 'enabled' ELSE 'withdrawn' END,
-  v_current_generation,v_next_generation,p_actor_key_id,p_idempotency_key,p_request_digest
- );
- RETURN QUERY SELECT v_audit.sequence_id,v_audit.event_id,v_next_generation;
-END;
-$function$;
-
-
-    OR p_device_id IS NULL OR p_device_id !~ '^[A-Za-z0-9._:-]{1,128}
- FROM ujani_control.collective_defence_individual_consent AS individual_consent
- WHERE individual_consent.tenant_id=p_tenant_id
-   AND individual_consent.principal_id=p_principal_id
-   AND individual_consent.device_id=p_device_id
- FOR UPDATE;
- IF NOT FOUND THEN
-  IF p_expected_generation IS NOT NULL THEN
-   RAISE EXCEPTION 'individual consent generation conflict' USING ERRCODE = '40001';
-  END IF;
-  v_current_generation := 0;
- ELSE
-  IF p_expected_generation IS DISTINCT FROM v_current_generation THEN
-   RAISE EXCEPTION 'individual consent generation conflict' USING ERRCODE = '40001';
-  END IF;
- END IF;
- v_next_generation := v_current_generation + 1;
-
- IF p_principal_id IS NULL OR p_principal_id !~ '^[A-Za-z0-9._:-]{1,128}$'
-    OR p_device_id IS NULL OR p_device_id !~ '^[A-Za-z0-9._:-]{1,128}$'
-    OR p_purpose IS DISTINCT FROM 'collective-defence.read-only.v1'
-    OR p_notice_version IS NULL OR length(p_notice_version) NOT BETWEEN 1 AND 64
-    OR p_notice_sha256 IS NULL OR octet_length(p_notice_sha256) <> 32
-    OR p_notice_sha256 = decode(repeat('00',32),'hex')
-    OR p_actor_key_id IS NULL OR p_actor_key_id !~ '^[A-Za-z0-9._:-]{1,128}$'
-    OR p_issued_at IS NULL OR p_expires_at IS NULL
-    OR p_issued_at > clock_timestamp() + interval '30 seconds'
-    OR p_expires_at <= p_issued_at
-    OR p_expires_at > p_issued_at + interval '24 hours'
-    OR p_expires_at <= clock_timestamp()
-    OR p_idempotency_key IS NULL OR length(p_idempotency_key) NOT BETWEEN 1 AND 128
-    OR p_request_digest IS NULL OR octet_length(p_request_digest) <> 32 THEN
-  RAISE EXCEPTION 'invalid individual consent claims' USING ERRCODE = '22023';
- END IF;
-
- INSERT INTO ujani_control.collective_defence_individual_consent
-  (tenant_id,principal_id,device_id,enabled,tenant_generation,generation,purpose,
-   notice_version,notice_sha256,actor_key_id,issued_at,expires_at,updated_at)
- VALUES
-  (p_tenant_id,p_principal_id,p_device_id,p_enabled,p_tenant_generation,v_next_generation,
-   p_purpose,p_notice_version,p_notice_sha256,p_actor_key_id,p_issued_at,p_expires_at,clock_timestamp())
- ON CONFLICT (tenant_id,principal_id,device_id) DO UPDATE SET
-  enabled=EXCLUDED.enabled,tenant_generation=EXCLUDED.tenant_generation,
-  generation=EXCLUDED.generation,purpose=EXCLUDED.purpose,
-  notice_version=EXCLUDED.notice_version,notice_sha256=EXCLUDED.notice_sha256,
-  actor_key_id=EXCLUDED.actor_key_id,issued_at=EXCLUDED.issued_at,
-  expires_at=EXCLUDED.expires_at,updated_at=EXCLUDED.updated_at;
-
- SELECT * INTO v_audit FROM ujani_control.append_collective_defence_consent_audit(
-  p_tenant_id,'individual',p_principal_id,p_device_id,
-  CASE WHEN p_enabled THEN 'enabled' ELSE 'withdrawn' END,
-  v_current_generation,v_next_generation,p_actor_key_id,p_idempotency_key,p_request_digest
- );
- RETURN QUERY SELECT v_audit.sequence_id,v_audit.event_id,v_next_generation;
-END;
-$function$;
-
- THEN
+    OR p_device_id IS NULL OR p_device_id !~ '^[A-Za-z0-9._:-]{1,128}$' THEN
   RAISE EXCEPTION 'invalid individual consent identity' USING ERRCODE = '22023';
  END IF;
- SELECT owner_subject_id INTO v_current_owner
+ SELECT owner_subject_id,binding_revision
+ INTO v_current_owner,v_current_owner_binding_revision
  FROM ujani_control.device_owner_bindings
  WHERE tenant_id=p_tenant_id AND device_id=p_device_id AND active IS TRUE
  FOR SHARE;
@@ -559,12 +449,13 @@ $function$;
  END IF;
 
  INSERT INTO ujani_control.collective_defence_individual_consent
-  (tenant_id,principal_id,device_id,enabled,tenant_generation,generation,purpose,
+  (tenant_id,principal_id,device_id,owner_binding_revision,enabled,tenant_generation,generation,purpose,
    notice_version,notice_sha256,actor_key_id,issued_at,expires_at,updated_at)
  VALUES
-  (p_tenant_id,p_principal_id,p_device_id,p_enabled,p_tenant_generation,v_next_generation,
+  (p_tenant_id,p_principal_id,p_device_id,v_current_owner_binding_revision,p_enabled,p_tenant_generation,v_next_generation,
    p_purpose,p_notice_version,p_notice_sha256,p_actor_key_id,p_issued_at,p_expires_at,clock_timestamp())
  ON CONFLICT (tenant_id,principal_id,device_id) DO UPDATE SET
+  owner_binding_revision=EXCLUDED.owner_binding_revision,
   enabled=EXCLUDED.enabled,tenant_generation=EXCLUDED.tenant_generation,
   generation=EXCLUDED.generation,purpose=EXCLUDED.purpose,
   notice_version=EXCLUDED.notice_version,notice_sha256=EXCLUDED.notice_sha256,
@@ -606,6 +497,7 @@ AS $function$
     AND individual.device_id=p_device_id
     AND binding.device_id=individual.device_id
     AND binding.owner_subject_id=p_principal_id
+    AND binding.binding_revision=individual.owner_binding_revision
     AND binding.active IS TRUE
     AND owner_subject.subject_id=p_principal_id
     AND owner_subject.enabled IS TRUE
@@ -625,7 +517,7 @@ COMMENT ON TABLE ujani_control.collective_defence_consent_audit IS
 COMMENT ON FUNCTION ujani_control.record_collective_defence_tenant_consent IS
  'Atomic generation-CAS tenant consent write plus audit append. Caller must authenticate and verify the administrator signature before invocation.';
 COMMENT ON FUNCTION ujani_control.record_collective_defence_individual_consent IS
- 'Atomic generation-CAS individual consent write plus audit append. The principal must be the current active device owner and an enabled tenant subject; caller must authenticate and verify the user/device signature before invocation.';
+ 'Atomic generation-CAS individual consent write plus audit append. The principal must be the current active device owner and an enabled tenant subject; the exact owner-binding revision is recorded to prevent stale consent revival. Caller must authenticate and verify the user/device signature before invocation.';
 
 -- Restrict direct table access to the non-login function owner. The runtime
 -- role can invoke only the audited transaction functions and the read-only
