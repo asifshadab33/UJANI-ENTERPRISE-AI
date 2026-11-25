@@ -10,6 +10,17 @@
 -- No event collection, transmission, remote execution or endpoint action is
 -- enabled by this migration. Missing/expired/mismatched consent is denial.
 
+-- A dedicated NOLOGIN executor owns the SECURITY DEFINER routines. It is not
+-- a table owner and has no BYPASSRLS attribute, so FORCE ROW LEVEL SECURITY
+-- remains active even inside the privileged routines.
+DO $role$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname='ujani_consent_writer') THEN
+  CREATE ROLE ujani_consent_writer NOLOGIN;
+ END IF;
+END;
+$role$;
+
 CREATE TABLE IF NOT EXISTS ujani_control.collective_defence_tenant_consent (
  tenant_id text PRIMARY KEY REFERENCES ujani_control.tenants(tenant_id),
  enabled boolean NOT NULL DEFAULT false,
@@ -98,7 +109,7 @@ $policy$;
 CREATE OR REPLACE FUNCTION ujani_control.reject_collective_defence_consent_audit_mutation()
 RETURNS trigger
 LANGUAGE plpgsql
-SECURITY INVOKER
+SECURITY DEFINER
 SET search_path = pg_catalog, ujani_control
 AS $function$
 BEGIN
@@ -128,7 +139,7 @@ CREATE OR REPLACE FUNCTION ujani_control.append_collective_defence_consent_audit
 )
 RETURNS TABLE(sequence_id bigint, event_id uuid)
 LANGUAGE plpgsql
-SECURITY INVOKER
+SECURITY DEFINER
 SET search_path = pg_catalog, ujani_control
 AS $function$
 DECLARE
@@ -223,7 +234,7 @@ CREATE OR REPLACE FUNCTION ujani_control.record_collective_defence_tenant_consen
 )
 RETURNS TABLE(sequence_id bigint, event_id uuid, generation bigint)
 LANGUAGE plpgsql
-SECURITY INVOKER
+SECURITY DEFINER
 SET search_path = pg_catalog, ujani_control
 AS $function$
 DECLARE
@@ -246,8 +257,7 @@ BEGIN
   IF v_existing.request_digest IS DISTINCT FROM p_request_digest THEN
    RAISE EXCEPTION 'consent idempotency key reused with different request' USING ERRCODE = '23505';
   END IF;
-  RETURN QUERY SELECT v_existing.sequence_id,v_existing.event_id,
-   (SELECT generation FROM ujani_control.collective_defence_tenant_consent WHERE tenant_id=p_tenant_id);
+  RETURN QUERY SELECT v_existing.sequence_id,v_existing.event_id,v_existing.next_generation;
   RETURN;
  END IF;
 
@@ -325,7 +335,7 @@ CREATE OR REPLACE FUNCTION ujani_control.record_collective_defence_individual_co
 )
 RETURNS TABLE(sequence_id bigint, event_id uuid, generation bigint)
 LANGUAGE plpgsql
-SECURITY INVOKER
+SECURITY DEFINER
 SET search_path = pg_catalog, ujani_control
 AS $function$
 DECLARE
@@ -349,9 +359,7 @@ BEGIN
   IF v_existing.request_digest IS DISTINCT FROM p_request_digest THEN
    RAISE EXCEPTION 'consent idempotency key reused with different request' USING ERRCODE = '23505';
   END IF;
-  RETURN QUERY SELECT v_existing.sequence_id,v_existing.event_id,
-   (SELECT generation FROM ujani_control.collective_defence_individual_consent
-    WHERE tenant_id=p_tenant_id AND principal_id=p_principal_id AND device_id=p_device_id);
+  RETURN QUERY SELECT v_existing.sequence_id,v_existing.event_id,v_existing.next_generation;
   RETURN;
  END IF;
 
@@ -427,7 +435,7 @@ CREATE OR REPLACE FUNCTION ujani_control.collective_defence_consent_is_current(
 RETURNS boolean
 LANGUAGE sql
 STABLE
-SECURITY INVOKER
+SECURITY DEFINER
 SET search_path = pg_catalog, ujani_control
 AS $function$
  SELECT current_setting('ujani.tenant_id',true) = p_tenant_id
@@ -456,3 +464,54 @@ COMMENT ON FUNCTION ujani_control.record_collective_defence_tenant_consent IS
  'Atomic generation-CAS tenant consent write plus audit append. Caller must authenticate and verify the administrator signature before invocation.';
 COMMENT ON FUNCTION ujani_control.record_collective_defence_individual_consent IS
  'Atomic generation-CAS individual consent write plus audit append. Caller must authenticate and verify the user/device signature before invocation.';
+
+-- Restrict direct table access to the non-login function owner. The runtime
+-- role can invoke only the audited transaction functions and the read-only
+-- current-consent predicate. The executor is not a table owner and cannot
+-- bypass FORCE ROW LEVEL SECURITY.
+GRANT USAGE ON SCHEMA ujani_control TO ujani_consent_writer;
+GRANT SELECT, INSERT, UPDATE ON
+ ujani_control.collective_defence_tenant_consent,
+ ujani_control.collective_defence_individual_consent
+ TO ujani_consent_writer;
+GRANT SELECT, INSERT ON ujani_control.collective_defence_consent_audit
+ TO ujani_consent_writer;
+GRANT CREATE ON SCHEMA ujani_control TO ujani_consent_writer;
+ALTER FUNCTION ujani_control.append_collective_defence_consent_audit(
+ text,text,text,text,text,bigint,bigint,text,text,bytea
+) OWNER TO ujani_consent_writer;
+ALTER FUNCTION ujani_control.record_collective_defence_tenant_consent(
+ text,boolean,bigint,text,text,integer,text,bytea,text,timestamptz,timestamptz,text,bytea
+) OWNER TO ujani_consent_writer;
+ALTER FUNCTION ujani_control.record_collective_defence_individual_consent(
+ text,text,text,boolean,bigint,bigint,text,text,bytea,text,timestamptz,timestamptz,text,bytea
+) OWNER TO ujani_consent_writer;
+ALTER FUNCTION ujani_control.collective_defence_consent_is_current(
+ text,text,text,timestamptz
+) OWNER TO ujani_consent_writer;
+REVOKE CREATE ON SCHEMA ujani_control FROM ujani_consent_writer;
+
+REVOKE ALL ON FUNCTION ujani_control.append_collective_defence_consent_audit(
+ text,text,text,text,text,bigint,bigint,text,text,bytea
+) FROM PUBLIC;
+REVOKE ALL ON FUNCTION ujani_control.record_collective_defence_tenant_consent(
+ text,boolean,bigint,text,text,integer,text,bytea,text,timestamptz,timestamptz,text,bytea
+) FROM PUBLIC;
+REVOKE ALL ON FUNCTION ujani_control.record_collective_defence_individual_consent(
+ text,text,text,boolean,bigint,bigint,text,text,bytea,text,timestamptz,timestamptz,text,bytea
+) FROM PUBLIC;
+REVOKE ALL ON FUNCTION ujani_control.collective_defence_consent_is_current(
+ text,text,text,timestamptz
+) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION ujani_control.append_collective_defence_consent_audit(
+ text,text,text,text,text,bigint,bigint,text,text,bytea
+) TO ujani_consent_writer;
+GRANT EXECUTE ON FUNCTION ujani_control.record_collective_defence_tenant_consent(
+ text,boolean,bigint,text,text,integer,text,bytea,text,timestamptz,timestamptz,text,bytea
+) TO ujani_runtime;
+GRANT EXECUTE ON FUNCTION ujani_control.record_collective_defence_individual_consent(
+ text,text,text,boolean,bigint,bigint,text,text,bytea,text,timestamptz,timestamptz,text,bytea
+) TO ujani_runtime;
+GRANT EXECUTE ON FUNCTION ujani_control.collective_defence_consent_is_current(
+ text,text,text,timestamptz
+) TO ujani_runtime;
