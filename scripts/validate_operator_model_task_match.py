@@ -71,6 +71,9 @@ def main() -> None:
     case = copy.deepcopy(valid_responses[0]); case["tenant_id"] = "tenant-a"; invalid_responses.append(case)
     case = copy.deepcopy(valid_responses[0]); case["result"]["status"] = "compatible"; case["result"]["evidence_confidence"] = "estimated"; invalid_responses.append(case)
     case = copy.deepcopy(valid_responses[0]); case["result"]["evidence_confidence"] = "unknown"; invalid_responses.append(case)
+    case = copy.deepcopy(valid_responses[0]); case["result"]["evidence_confidence"] = "reported"; invalid_responses.append(case)
+    case = copy.deepcopy(valid_responses[0]); case["result"]["reasons"] = ["context_length_too_short"]; invalid_responses.append(case)
+    case = copy.deepcopy(valid_responses[0]); case["status"] = "incompatible"; invalid_responses.append(case)
     case = copy.deepcopy(valid_responses[0]); case["result"]["reasons"] = ["not_a_reason"]; invalid_responses.append(case)
     case = copy.deepcopy(valid_responses[0]); case["schema_version"] = 2; invalid_responses.append(case)
     for case in invalid_responses:
