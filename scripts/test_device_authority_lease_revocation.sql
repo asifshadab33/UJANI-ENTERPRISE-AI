@@ -57,9 +57,7 @@ VALUES
  ('device-authority-revocation-test','subject-device','Owner Subject Disable Device','linux',
   'enrolled','unknown','approved','subject-key-v1',1,0,1,1,clock_timestamp(),1),
  ('device-authority-revocation-test','approver-device','Approver Demotion Device','linux',
-  'enrolled','unknown','approved','approver-key-v1',1,0,1,1,clock_timestamp(),1),
- ('device-authority-revocation-test','approval-device','Approval Revocation Device','linux',
-  'enrolled','unknown','approved','approval-key-v1',1,0,1,1,clock_timestamp(),1)
+  'enrolled','unknown','approved','approver-key-v1',1,0,1,1,clock_timestamp(),1)
 ON CONFLICT (tenant_id,device_id) DO NOTHING;
 
 INSERT INTO ujani_control.device_keys
@@ -72,8 +70,7 @@ VALUES
  ('device-authority-revocation-test','rollback-device','rollback-key-v1',decode(repeat('b5',32),'hex'),1,'active'),
  ('device-authority-revocation-test','legacy-device','legacy-key-v1',decode(repeat('b6',32),'hex'),1,'active'),
  ('device-authority-revocation-test','subject-device','subject-key-v1',decode(repeat('b7',32),'hex'),1,'active'),
- ('device-authority-revocation-test','approver-device','approver-key-v1',decode(repeat('b9',32),'hex'),1,'active'),
- ('device-authority-revocation-test','approval-device','approval-key-v1',decode(repeat('ba',32),'hex'),1,'active')
+ ('device-authority-revocation-test','approver-device','approver-key-v1',decode(repeat('b9',32),'hex'),1,'active')
 ON CONFLICT (tenant_id,device_id,key_id) DO NOTHING;
 
 INSERT INTO ujani_control.device_owner_bindings
@@ -85,8 +82,7 @@ VALUES
  ('device-authority-revocation-test','binding-device','authority-owner','authority-admin',1,true,decode(repeat('c4',32),'hex')),
  ('device-authority-revocation-test','rollback-device','authority-owner','authority-admin',1,true,decode(repeat('c5',32),'hex')),
  ('device-authority-revocation-test','subject-device','authority-owner-2','authority-admin',1,true,decode(repeat('c6',32),'hex')),
- ('device-authority-revocation-test','approver-device','authority-owner','authority-admin',1,true,decode(repeat('c7',32),'hex')),
- ('device-authority-revocation-test','approval-device','authority-owner','authority-admin',1,true,decode(repeat('c8',32),'hex'))
+ ('device-authority-revocation-test','approver-device','authority-owner','authority-admin',1,true,decode(repeat('c7',32),'hex'))
 ON CONFLICT (tenant_id,device_id) DO NOTHING;
 
 INSERT INTO ujani_control.owner_consents
@@ -98,8 +94,7 @@ VALUES
  ('device-authority-revocation-test','binding-device',1,'granted','authority-owner',decode(repeat('d4',32),'hex')),
  ('device-authority-revocation-test','rollback-device',1,'granted','authority-owner',decode(repeat('d5',32),'hex')),
  ('device-authority-revocation-test','subject-device',1,'granted','authority-owner-2',decode(repeat('d6',32),'hex')),
- ('device-authority-revocation-test','approver-device',1,'granted','authority-owner',decode(repeat('d7',32),'hex')),
- ('device-authority-revocation-test','approval-device',1,'granted','authority-owner',decode(repeat('d8',32),'hex'))
+ ('device-authority-revocation-test','approver-device',1,'granted','authority-owner',decode(repeat('d7',32),'hex'))
 ON CONFLICT DO NOTHING;
 
 INSERT INTO ujani_control.leases
@@ -134,7 +129,7 @@ VALUES
  ('device-authority-revocation-test','approver-lease','approver-device','authority-workload','authority-approval-admin2',
   decode(repeat('a1',32),'hex'),1,'reserved',clock_timestamp()+interval '4 minutes',1,500,512,
   decode(repeat('e9',32),'hex'),1,decode(repeat('f9',16),'hex'),decode(repeat('19',32),'hex')),
- ('device-authority-revocation-test','approval-lease','approval-device','authority-workload','authority-approval-revocable',
+ ('device-authority-revocation-test','approval-record-lease','approval-device','authority-workload','authority-approval-revocable',
   decode(repeat('a2',32),'hex'),1,'reserved',clock_timestamp()+interval '4 minutes',1,500,512,
   decode(repeat('ea',32),'hex'),1,decode(repeat('fa',16),'hex'),decode(repeat('1a',32),'hex'));
 
@@ -420,8 +415,8 @@ BEGIN
  FROM ujani_control.devices
  WHERE tenant_id='device-authority-revocation-test' AND device_id='approval-device';
  SELECT state INTO v_lease_state FROM ujani_control.leases
- WHERE tenant_id='device-authority-revocation-test' AND lease_id='approval-lease';
- IF v_owner_state <> 'granted' OR v_revision <> 2 OR v_lease_state <> 'revoked' THEN
+ WHERE tenant_id='device-authority-revocation-test' AND lease_id='approval-record-lease';
+ IF v_owner_state <> 'granted' OR v_revision <> 3 OR v_lease_state <> 'revoked' THEN
   RAISE EXCEPTION 'approval revocation did not revoke lease independently of owner consent: owner %, revision %, lease %',
    v_owner_state,v_revision,v_lease_state;
  END IF;
@@ -430,7 +425,7 @@ BEGIN
   WHERE tenant_id='device-authority-revocation-test'
     AND event_type='device.lease.revoked'
     AND outcome='approval_revoked'
-    AND object_ref='approval-lease'
+    AND object_ref='approval-record-lease'
  ) THEN
   RAISE EXCEPTION 'approval revocation audit evidence is missing';
  END IF;
@@ -444,7 +439,7 @@ WHERE tenant_id='device-authority-revocation-test'
 DO $approval_reapproval$
 BEGIN
  IF (SELECT state FROM ujani_control.leases
-     WHERE tenant_id='device-authority-revocation-test' AND lease_id='approval-lease') <> 'revoked' THEN
+     WHERE tenant_id='device-authority-revocation-test' AND lease_id='approval-record-lease') <> 'revoked' THEN
   RAISE EXCEPTION 're-approving an approval silently reactivated an old lease';
  END IF;
 END;
