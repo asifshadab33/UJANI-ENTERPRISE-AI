@@ -7,9 +7,20 @@ SELECT pg_catalog.set_config('ujani.tenant_id','collective-consent-test',true);
 INSERT INTO ujani_control.tenants (tenant_id,display_name)
 VALUES ('collective-consent-test','Collective Consent Test')
 ON CONFLICT (tenant_id) DO NOTHING;
+INSERT INTO ujani_control.operator_subjects
+ (tenant_id,subject_id,role,enabled,idp_issuer,idp_subject)
+VALUES
+ ('collective-consent-test','admin-01','administrator',true,'ci','admin-01'),
+ ('collective-consent-test','user-01','operator',true,'ci','user-01'),
+ ('collective-consent-test','user-02','operator',true,'ci','user-02')
+ON CONFLICT (tenant_id,subject_id) DO NOTHING;
 INSERT INTO ujani_control.devices
  (tenant_id,device_id,display_name,platform,trust_state,owner_consent_state,admin_approval_state)
-VALUES ('collective-consent-test','device-01','Consent Test Device','linux','pending','unknown','pending')
+VALUES ('collective-consent-test','device-01','Consent Test Device','linux','enrolled','unknown','approved')
+ON CONFLICT (tenant_id,device_id) DO NOTHING;
+INSERT INTO ujani_control.device_owner_bindings
+ (tenant_id,device_id,owner_subject_id,bound_by_subject_id,binding_revision,active,binding_digest)
+VALUES ('collective-consent-test','device-01','user-01','admin-01',1,true,decode(repeat('55',32),'hex'))
 ON CONFLICT (tenant_id,device_id) DO NOTHING;
 
 SET LOCAL ROLE ujani_runtime;
@@ -27,6 +38,7 @@ DECLARE
  v_expired_tenant boolean := false;
  v_expired_individual boolean := false;
  v_wrong_policy_generation boolean := false;
+ v_wrong_owner boolean := false;
  v_direct_select_denied boolean := false;
  v_direct_write_denied boolean := false;
  v_now timestamptz := clock_timestamp();
@@ -56,7 +68,7 @@ BEGIN
 
  -- No records means default-off, including for an otherwise valid device.
  IF ujani_control.collective_defence_consent_is_current(
-   'collective-consent-test','user-01','device-01',v_now) THEN
+   'collective-consent-test','user-01','device-01') THEN
   RAISE EXCEPTION 'missing consent unexpectedly authorized participation';
  END IF;
 
@@ -101,8 +113,21 @@ BEGIN
   RAISE EXCEPTION 'initial individual consent generation incorrect';
  END IF;
  IF NOT ujani_control.collective_defence_consent_is_current(
-   'collective-consent-test','user-01','device-01',v_now) THEN
+   'collective-consent-test','user-01','device-01') THEN
   RAISE EXCEPTION 'both current opt-ins did not authorize the exact principal/device';
+ END IF;
+
+ BEGIN
+  PERFORM * FROM ujani_control.record_collective_defence_individual_consent(
+   'collective-consent-test','user-02','device-01',true,1,NULL,
+   'collective-defence.read-only.v1','notice-v1',decode(repeat('31',32),'hex'),
+   'user-key-2',v_now,v_now+interval '1 hour','wrong-owner-enable',
+   decode(repeat('47',32),'hex'));
+ EXCEPTION WHEN insufficient_privilege THEN
+  v_wrong_owner := true;
+ END;
+ IF NOT v_wrong_owner THEN
+  RAISE EXCEPTION 'non-owner principal was allowed to opt in for this device';
  END IF;
 
  -- A stale expected generation cannot overwrite a newer decision.
@@ -130,7 +155,7 @@ BEGIN
   RAISE EXCEPTION 'individual withdrawal did not advance generation';
  END IF;
  IF ujani_control.collective_defence_consent_is_current(
-   'collective-consent-test','user-01','device-01',v_now) THEN
+   'collective-consent-test','user-01','device-01') THEN
   RAISE EXCEPTION 'individual withdrawal did not revoke participation';
  END IF;
 
@@ -144,7 +169,7 @@ BEGIN
   RAISE EXCEPTION 'tenant disable did not advance generation';
  END IF;
  IF ujani_control.collective_defence_consent_is_current(
-   'collective-consent-test','user-01','device-01',v_now) THEN
+   'collective-consent-test','user-01','device-01') THEN
   RAISE EXCEPTION 'tenant disable did not revoke participation';
  END IF;
 
@@ -158,7 +183,7 @@ BEGIN
   RAISE EXCEPTION 'tenant re-enable did not advance generation';
  END IF;
  IF ujani_control.collective_defence_consent_is_current(
-   'collective-consent-test','user-01','device-01',v_now) THEN
+   'collective-consent-test','user-01','device-01') THEN
   RAISE EXCEPTION 'stale individual consent was revived by tenant re-enable';
  END IF;
 
@@ -171,15 +196,15 @@ BEGIN
   decode(repeat('44',32),'hex'));
  IF individual_result.generation <> 3
     OR NOT ujani_control.collective_defence_consent_is_current(
-      'collective-consent-test','user-01','device-01',v_now) THEN
+      'collective-consent-test','user-01','device-01') THEN
   RAISE EXCEPTION 'fresh individual re-opt-in did not bind to current tenant generation';
  END IF;
 
  -- A different principal or device cannot borrow this consent record.
  IF ujani_control.collective_defence_consent_is_current(
-     'collective-consent-test','other-user','device-01',v_now)
+     'collective-consent-test','other-user','device-01')
     OR ujani_control.collective_defence_consent_is_current(
-     'collective-consent-test','user-01','other-device',v_now) THEN
+     'collective-consent-test','user-01','other-device') THEN
   RAISE EXCEPTION 'consent was not bound to the exact principal/device tuple';
  END IF;
 
@@ -242,11 +267,79 @@ END;
 $test$;
 RESET ROLE;
 
+-- Rebinding the device invalidates the previous owner's consent immediately.
+-- The new owner must make a separate explicit opt-in for the current tenant policy.
+UPDATE ujani_control.device_owner_bindings
+SET owner_subject_id='user-02',
+    binding_revision=binding_revision+1,
+    binding_digest=decode(repeat('56',32),'hex')
+WHERE tenant_id='collective-consent-test' AND device_id='device-01';
+
+SET LOCAL ROLE ujani_runtime;
+DO $owner_change$
+DECLARE
+ v_old_owner_denied boolean := false;
+ v_new_owner_result record;
+ v_now timestamptz := clock_timestamp();
+BEGIN
+ IF ujani_control.collective_defence_consent_is_current(
+    'collective-consent-test','user-01','device-01') THEN
+  RAISE EXCEPTION 'previous owner consent remained current after owner reassignment';
+ END IF;
+ IF ujani_control.collective_defence_consent_is_current(
+    'collective-consent-test','user-02','device-01') THEN
+  RAISE EXCEPTION 'new owner inherited another principal consent';
+ END IF;
+
+ BEGIN
+  PERFORM * FROM ujani_control.record_collective_defence_individual_consent(
+   'collective-consent-test','user-01','device-01',true,3,3,
+   'collective-defence.read-only.v1','notice-v2',decode(repeat('32',32),'hex'),
+   'user-key-1',v_now,v_now+interval '1 hour','previous-owner-regrant',
+   decode(repeat('57',32),'hex'));
+ EXCEPTION WHEN insufficient_privilege THEN
+  v_old_owner_denied := true;
+ END;
+ IF NOT v_old_owner_denied THEN
+  RAISE EXCEPTION 'previous owner was allowed to renew consent after reassignment';
+ END IF;
+
+ SELECT * INTO v_new_owner_result
+ FROM ujani_control.record_collective_defence_individual_consent(
+  'collective-consent-test','user-02','device-01',true,3,NULL,
+  'collective-defence.read-only.v1','notice-v2',decode(repeat('33',32),'hex'),
+  'user-key-2',v_now,v_now+interval '1 hour','new-owner-enable',
+  decode(repeat('58',32),'hex'));
+ IF v_new_owner_result.generation <> 1
+    OR NOT ujani_control.collective_defence_consent_is_current(
+      'collective-consent-test','user-02','device-01') THEN
+  RAISE EXCEPTION 'new owner explicit opt-in did not establish current consent';
+ END IF;
+END;
+$owner_change$;
+RESET ROLE;
+
+-- The current predicate uses the database clock; callers cannot backdate an
+-- expired consent by supplying an earlier timestamp.
+UPDATE ujani_control.collective_defence_tenant_consent
+SET expires_at=clock_timestamp()-interval '1 second'
+WHERE tenant_id='collective-consent-test';
+SET LOCAL ROLE ujani_runtime;
+DO $expiry$
+BEGIN
+ IF ujani_control.collective_defence_consent_is_current(
+   'collective-consent-test','user-02','device-01') THEN
+  RAISE EXCEPTION 'expired tenant consent was treated as current';
+ END IF;
+END;
+$expiry$;
+RESET ROLE;
+
 DO $audit$
 BEGIN
  IF (SELECT count(*) FROM ujani_control.collective_defence_consent_audit
-     WHERE tenant_id='collective-consent-test') <> 6 THEN
-  RAISE EXCEPTION 'expected six committed consent audit events';
+     WHERE tenant_id='collective-consent-test') <> 7 THEN
+  RAISE EXCEPTION 'expected seven committed consent audit events';
  END IF;
 
  IF EXISTS (
