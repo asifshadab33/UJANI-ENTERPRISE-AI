@@ -403,9 +403,10 @@ impl<S: ProtectedSecretStore> OperatorSessionMacProvider for KeyringIntegrityKey
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::device_trust::durable::DurableDeviceRegistry;
+    #[cfg(not(windows))]
     use crate::device_trust::durable::{
-        AnchorCallContext, AnchorCallPolicy, DurableDeviceRegistry, MonotonicSnapshotAnchor,
-        SnapshotAnchorRecord,
+        AnchorCallContext, AnchorCallPolicy, MonotonicSnapshotAnchor, SnapshotAnchorRecord,
     };
     use crate::durable_ledger::DurableLedger;
     use crate::operator_control_plane::{
@@ -448,9 +449,11 @@ mod tests {
         KeyringIntegrityKeyProvider::new(MemorySecretStore::default())
     }
 
+    #[cfg(not(windows))]
     #[derive(Default)]
     struct MemorySnapshotAnchor(Mutex<HashMap<String, SnapshotAnchorRecord>>);
 
+    #[cfg(not(windows))]
     impl MonotonicSnapshotAnchor for MemorySnapshotAnchor {
         fn load(
             &self,
@@ -662,6 +665,7 @@ mod tests {
         std::fs::remove_dir_all(directory).unwrap();
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn protected_provider_reopens_anchored_registry_and_ledger() {
         let mut random = [0u8; 8];
@@ -688,16 +692,10 @@ mod tests {
             )
             .unwrap();
         provider
-            .provision_key(
-                IntegrityKeyPurpose::ReservationLedger,
-                "anchored-ledger-v1",
-            )
+            .provision_key(IntegrityKeyPurpose::ReservationLedger, "anchored-ledger-v1")
             .unwrap();
         provider
-            .activate_key(
-                IntegrityKeyPurpose::ReservationLedger,
-                "anchored-ledger-v1",
-            )
+            .activate_key(IntegrityKeyPurpose::ReservationLedger, "anchored-ledger-v1")
             .unwrap();
 
         let admin = SigningKey::from_bytes(&rand::random());
