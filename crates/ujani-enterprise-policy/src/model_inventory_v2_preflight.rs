@@ -48,8 +48,11 @@ fn validate_nested_observation_timestamps(
                         .as_u64()
                         .filter(|timestamp| *timestamp > 0 && *timestamp <= MAX_SAFE_JSON_INTEGER)
                         .ok_or(InventoryV2PreflightError::InvalidEvidenceTimestamp)?;
-                    if timestamp > now_unix_ms.saturating_add(MODEL_INVENTORY_CLOCK_SKEW_TOLERANCE_MS)
-                        || timestamp > generated_at_unix_ms.saturating_add(MODEL_INVENTORY_CLOCK_SKEW_TOLERANCE_MS)
+                    if timestamp
+                        > now_unix_ms.saturating_add(MODEL_INVENTORY_CLOCK_SKEW_TOLERANCE_MS)
+                        || timestamp
+                            > generated_at_unix_ms
+                                .saturating_add(MODEL_INVENTORY_CLOCK_SKEW_TOLERANCE_MS)
                     {
                         return Err(InventoryV2PreflightError::FutureEvidence);
                     }
@@ -59,7 +62,12 @@ fn validate_nested_observation_timestamps(
                 }
             }
             for child in object.values() {
-                validate_nested_observation_timestamps(child, generated_at_unix_ms, now_unix_ms, max_age_ms)?;
+                validate_nested_observation_timestamps(
+                    child,
+                    generated_at_unix_ms,
+                    now_unix_ms,
+                    max_age_ms,
+                )?;
             }
         }
         Value::Array(items) => {
