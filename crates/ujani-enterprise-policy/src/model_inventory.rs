@@ -957,4 +957,24 @@ mod tests {
             Err(ModelInventoryValidationError::InvalidRequirements)
         );
     }
+    #[test]
+    fn v1_matcher_rejects_v2_schema_and_v2_only_collection_context() {
+        let mut versioned = inventory();
+        versioned.schema_version = 2;
+        assert_eq!(
+            validate_model_runtime_inventory(&versioned, 1_100, 10_000),
+            Err(ModelInventoryValidationError::UnsupportedSchemaVersion)
+        );
+
+        let mut v2_shape = serde_json::to_value(inventory()).unwrap();
+        v2_shape["schema_version"] = serde_json::json!(2);
+        v2_shape["collection_context"] = serde_json::json!({
+            "scope": "organisation_enrolled",
+            "owner_consent": "granted",
+            "organisation_authorisation": "authorised",
+            "policy_version": "policy-v2"
+        });
+        assert!(serde_json::from_value::<ModelRuntimeInventory>(v2_shape).is_err());
+    }
+
 }
