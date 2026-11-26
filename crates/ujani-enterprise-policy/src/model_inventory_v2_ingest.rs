@@ -248,8 +248,13 @@ pub fn authenticate_model_inventory_v2_request(
     if !owner_opted_in {
         return Err(ModelInventoryV2IntakeError::OwnerConsentMissing);
     }
-    validate_enterprise_inventory_v2_preflight(&payload, authenticated.device_id())
-        .map_err(ModelInventoryV2IntakeError::Preflight)?;
+    validate_enterprise_inventory_v2_preflight_at(
+        &payload,
+        authenticated.device_id(),
+        now_unix_ms,
+        crate::model_inventory_v2_preflight::MAX_MODEL_INVENTORY_OBSERVATION_AGE_MS,
+    )
+    .map_err(ModelInventoryV2IntakeError::Preflight)?;
     Ok((authenticated, payload))
 }
 
