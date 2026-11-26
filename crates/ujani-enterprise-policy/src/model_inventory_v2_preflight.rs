@@ -22,6 +22,100 @@ pub enum InventoryV2PreflightError {
     InvalidPolicyVersion,
     InvalidPrivacyDeclaration,
     InvalidInventoryCollections,
+    StaleInventory,
+    StaleEvidence,
+    FutureEvidence,
+    InvalidEvidenceTimestamp,
+    InvalidEvidenceSemantics,
+}
+
+/// Default freshness window for resource-planning observations. Callers may use
+/// a stricter policy, but must never silently widen this value at a trust boundary.
+pub const MAX_MODEL_INVENTORY_OBSERVATION_AGE_MS: u64 = 15 * 60 * 1000;
+const MODEL_INVENTORY_CLOCK_SKEW_TOLERANCE_MS: u64 = 30_000;
+const MAX_SAFE_JSON_INTEGER: u64 = 9_007_199_254_740_991;
+
+fn validate_nested_observation_timestamps(
+    value: &Value,
+    generated_at_unix_ms: u64,
+    now_unix_ms: u64,
+    max_age_ms: u64,
+) -> Result<(), InventoryV2PreflightError> {
+    match value {
+        Value::Object(object) => {
+            if let Some(observed) = object.get("observed_at_unix_ms") {
+                let source = object.get("source").and_then(Value::as_str);
+                let confidence = object.get("confidence").and_then(Value::as_str);
+                let unknown_confidence = confidence == Some("unknown");
+                if observed.is_null() != unknown_confidence
+                    || (source == Some("unknown") && !unknown_confidence)
+                    || (confidence == Some("estimated") && source != Some("estimate"))
+                    || (source == Some("estimate") && confidence != Some("estimated"))
+                {
+                    return Err(InventoryV2PreflightError::InvalidEvidenceSemantics);
+                }
+                if !observed.is_null() {
+                    let timestamp = observed
+                        .as_u64()
+                        .filter(|timestamp| *timestamp > 0 && *timestamp <= MAX_SAFE_JSON_INTEGER)
+                        .ok_or(InventoryV2PreflightError::InvalidEvidenceTimestamp)?;
+                    if timestamp
+                        > now_unix_ms.saturating_add(MODEL_INVENTORY_CLOCK_SKEW_TOLERANCE_MS)
+                        || timestamp
+                            > generated_at_unix_ms
+                                .saturating_add(MODEL_INVENTORY_CLOCK_SKEW_TOLERANCE_MS)
+                    {
+                        return Err(InventoryV2PreflightError::FutureEvidence);
+                    }
+                    if now_unix_ms.saturating_sub(timestamp) > max_age_ms {
+                        return Err(InventoryV2PreflightError::StaleEvidence);
+                    }
+                }
+            }
+            for child in object.values() {
+                validate_nested_observation_timestamps(
+                    child,
+                    generated_at_unix_ms,
+                    now_unix_ms,
+                    max_age_ms,
+                )?;
+            }
+        }
+        Value::Array(items) => {
+            for child in items {
+                validate_nested_observation_timestamps(
+                    child,
+                    generated_at_unix_ms,
+                    now_unix_ms,
+                    max_age_ms,
+                )?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Time-aware Enterprise admission preflight. Schema validation and atomic replay,
+/// consent-generation, key-generation and persistence checks remain service duties.
+pub fn validate_enterprise_inventory_v2_preflight_at(
+    payload: &Value,
+    authenticated_device_id: &str,
+    now_unix_ms: u64,
+    max_age_ms: u64,
+) -> Result<(), InventoryV2PreflightError> {
+    validate_enterprise_inventory_v2_preflight(payload, authenticated_device_id)?;
+    let generated_at = payload
+        .get("generated_at_unix_ms")
+        .and_then(Value::as_u64)
+        .ok_or(InventoryV2PreflightError::InvalidTimestamp)?;
+    if generated_at > now_unix_ms.saturating_add(MODEL_INVENTORY_CLOCK_SKEW_TOLERANCE_MS) {
+        return Err(InventoryV2PreflightError::InvalidTimestamp);
+    }
+    if now_unix_ms.saturating_sub(generated_at) > max_age_ms {
+        return Err(InventoryV2PreflightError::StaleInventory);
+    }
+    validate_nested_observation_timestamps(payload, generated_at, now_unix_ms, max_age_ms)
 }
 
 fn has_exact_keys(value: &Value, expected: &[&str]) -> bool {
@@ -440,5 +534,182 @@ mod inventory_v2_consent_timestamp_regression_tests {
             validate_enterprise_inventory_v2_preflight(&organisation, "device-1"),
             Err(InventoryV2PreflightError::OrganisationNotAuthorised)
         );
+    }
+}
+
+#[cfg(test)]
+mod inventory_v2_observation_freshness_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn payload(now: u64) -> Value {
+        json!({
+            "schema_version": 2,
+            "generated_at_unix_ms": now,
+            "device_ref": "device-1",
+            "collection_context": {
+                "scope": "organisation_enrolled",
+                "owner_consent": "granted",
+                "organisation_authorisation": "authorised",
+                "policy_version": "policy-v2"
+            },
+            "platform": {"evidence": {
+                "source": "os_api", "confidence": "verified",
+                "observed_at_unix_ms": now
+            }},
+            "hardware": {}, "runtimes": [], "models": [],
+            "privacy": {
+                "contains_prompts": false, "contains_user_files": false,
+                "contains_local_paths": false, "contains_credentials": false
+            }
+        })
+    }
+
+    #[test]
+    fn accepts_fresh_nested_observation_and_unknown_null_observation() {
+        let now = 1_800_000_000_000u64;
+        let mut value = payload(now);
+        value["hardware"]["evidence"] = json!({
+            "source": "os_api", "confidence": "unknown", "observed_at_unix_ms": null
+        });
+        assert_eq!(
+            validate_enterprise_inventory_v2_preflight_at(
+                &value,
+                "device-1",
+                now,
+                MAX_MODEL_INVENTORY_OBSERVATION_AGE_MS
+            ),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn rejects_observed_facts_without_timestamps_and_unknown_facts_with_timestamps() {
+        let now = 1_800_000_000_000u64;
+        let mut value = payload(now);
+        value["platform"]["evidence"] = json!({
+            "source": "runtime_api",
+            "confidence": "reported",
+            "observed_at_unix_ms": null
+        });
+        assert_eq!(
+            validate_enterprise_inventory_v2_preflight_at(
+                &value,
+                "device-1",
+                now,
+                MAX_MODEL_INVENTORY_OBSERVATION_AGE_MS
+            ),
+            Err(InventoryV2PreflightError::InvalidEvidenceSemantics)
+        );
+
+        value["platform"]["evidence"] = json!({
+            "source": "unknown",
+            "confidence": "unknown",
+            "observed_at_unix_ms": now
+        });
+        assert_eq!(
+            validate_enterprise_inventory_v2_preflight_at(
+                &value,
+                "device-1",
+                now,
+                MAX_MODEL_INVENTORY_OBSERVATION_AGE_MS
+            ),
+            Err(InventoryV2PreflightError::InvalidEvidenceSemantics)
+        );
+    }
+
+    #[test]
+    fn requires_estimated_confidence_to_match_estimate_source() {
+        let now = 1_800_000_000_000u64;
+        let mut value = payload(now);
+        value["hardware"]["evidence"] = json!({
+            "source": "os_api",
+            "confidence": "estimated",
+            "observed_at_unix_ms": now
+        });
+        assert_eq!(
+            validate_enterprise_inventory_v2_preflight_at(
+                &value,
+                "device-1",
+                now,
+                MAX_MODEL_INVENTORY_OBSERVATION_AGE_MS
+            ),
+            Err(InventoryV2PreflightError::InvalidEvidenceSemantics)
+        );
+    }
+
+    #[test]
+    fn rejects_stale_nested_capability_or_hardware_evidence() {
+        let now = 1_800_000_000_000u64;
+        let mut value = payload(now);
+        value["models"] = json!([{"capabilities":[{"evidence":{
+            "source":"runtime_metadata", "confidence":"reported",
+            "observed_at_unix_ms": now - MAX_MODEL_INVENTORY_OBSERVATION_AGE_MS - 1
+        }}]}]);
+        assert_eq!(
+            validate_enterprise_inventory_v2_preflight_at(
+                &value,
+                "device-1",
+                now,
+                MAX_MODEL_INVENTORY_OBSERVATION_AGE_MS
+            ),
+            Err(InventoryV2PreflightError::StaleEvidence)
+        );
+    }
+
+    #[test]
+    fn rejects_future_nested_evidence_even_when_snapshot_timestamp_is_current() {
+        let now = 1_800_000_000_000u64;
+        let mut value = payload(now);
+        value["runtimes"] = json!([{"evidence":{
+            "source":"runtime_api", "confidence":"verified",
+            "observed_at_unix_ms": now + MODEL_INVENTORY_CLOCK_SKEW_TOLERANCE_MS + 1
+        }}]);
+        assert_eq!(
+            validate_enterprise_inventory_v2_preflight_at(
+                &value,
+                "device-1",
+                now,
+                MAX_MODEL_INVENTORY_OBSERVATION_AGE_MS
+            ),
+            Err(InventoryV2PreflightError::FutureEvidence)
+        );
+    }
+
+    #[test]
+    fn rejects_stale_snapshot_before_any_model_is_considered() {
+        let now = 1_800_000_000_000u64;
+        let value = payload(now - MAX_MODEL_INVENTORY_OBSERVATION_AGE_MS - 1);
+        assert_eq!(
+            validate_enterprise_inventory_v2_preflight_at(
+                &value,
+                "device-1",
+                now,
+                MAX_MODEL_INVENTORY_OBSERVATION_AGE_MS
+            ),
+            Err(InventoryV2PreflightError::StaleInventory)
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_nested_observation_timestamp_types_and_zero() {
+        let now = 1_800_000_000_000u64;
+        for timestamp in [
+            json!(0),
+            json!("yesterday"),
+            json!(9_007_199_254_740_992u64),
+        ] {
+            let mut value = payload(now);
+            value["platform"]["evidence"]["observed_at_unix_ms"] = timestamp;
+            assert_eq!(
+                validate_enterprise_inventory_v2_preflight_at(
+                    &value,
+                    "device-1",
+                    now,
+                    MAX_MODEL_INVENTORY_OBSERVATION_AGE_MS
+                ),
+                Err(InventoryV2PreflightError::InvalidEvidenceTimestamp)
+            );
+        }
     }
 }
