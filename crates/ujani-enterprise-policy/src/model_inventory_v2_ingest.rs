@@ -13,7 +13,7 @@ use crate::device_trust::{
     AuthenticatedDeviceRequest, SignedDeviceRequest, MAX_DEVICE_REQUEST_BODY_BYTES,
 };
 use crate::model_inventory_v2_preflight::{
-    validate_enterprise_inventory_v2_preflight, InventoryV2PreflightError,
+    validate_enterprise_inventory_v2_preflight_at, InventoryV2PreflightError,
 };
 use crate::operator_http_contract::{resolve_route, HttpMethod, OperatorHttpRoute};
 use serde::de::{self, MapAccess, SeqAccess, Visitor};
