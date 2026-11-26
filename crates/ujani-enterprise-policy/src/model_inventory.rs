@@ -1132,5 +1132,4 @@ mod tests {
         });
         assert!(serde_json::from_value::<ModelRuntimeInventory>(v2_shape).is_err());
     }
-
 }
