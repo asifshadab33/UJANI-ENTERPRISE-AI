@@ -72,7 +72,12 @@ fn validate_nested_observation_timestamps(
         }
         Value::Array(items) => {
             for child in items {
-                validate_nested_observation_timestamps(child, generated_at_unix_ms, now_unix_ms, max_age_ms)?;
+                validate_nested_observation_timestamps(
+                    child,
+                    generated_at_unix_ms,
+                    now_unix_ms,
+                    max_age_ms,
+                )?;
             }
         }
         _ => {}
