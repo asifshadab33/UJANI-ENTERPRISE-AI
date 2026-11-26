@@ -885,4 +885,29 @@ mod tests {
         tampered[0].action.push_str(".tampered");
         assert!(!verify_audit_chain(&tampered));
     }
+
+    /// Sequence and predecessor checks detect deleted, reordered, and duplicated audit rows.
+    #[test]
+    fn audit_chain_rejects_omission_reordering_and_duplication() {
+        let store = MemoryConsentAuthority::default();
+        store.put_tenant(tenant(true, 1, 100), None, "t-1").unwrap();
+        store
+            .put_tenant(tenant(false, 2, 101), Some(1), "t-2")
+            .unwrap();
+        store
+            .put_tenant(tenant(true, 3, 102), Some(2), "t-3")
+            .unwrap();
+        let audit = store.audit_log().unwrap();
+        assert_eq!(audit.len(), 3);
+        assert!(verify_audit_chain(&audit));
+
+        let omitted = vec![audit[0].clone(), audit[2].clone()];
+        assert!(!verify_audit_chain(&omitted));
+
+        let reordered = vec![audit[1].clone(), audit[0].clone(), audit[2].clone()];
+        assert!(!verify_audit_chain(&reordered));
+
+        let duplicated = vec![audit[0].clone(), audit[1].clone(), audit[1].clone()];
+        assert!(!verify_audit_chain(&duplicated));
+    }
 }
