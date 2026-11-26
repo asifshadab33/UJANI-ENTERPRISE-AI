@@ -22,7 +22,7 @@ use crate::integrity_key_provider::{
 };
 use crate::operator_control_plane::{OperatorAuthError, OperatorSessionMacProvider};
 use aes_gcm::{
-    aead::{Aead, AeadCore, Payload},
+    aead::{Aead, Payload},
     Aes256Gcm, KeyInit, Nonce,
 };
 use hmac::{Hmac, KeyInit as HmacKeyInit, Mac};
