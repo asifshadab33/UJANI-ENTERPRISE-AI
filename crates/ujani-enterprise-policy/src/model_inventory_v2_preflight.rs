@@ -526,7 +526,6 @@ mod inventory_v2_consent_timestamp_regression_tests {
     }
 }
 
-
 #[cfg(test)]
 mod inventory_v2_observation_freshness_tests {
     use super::*;
