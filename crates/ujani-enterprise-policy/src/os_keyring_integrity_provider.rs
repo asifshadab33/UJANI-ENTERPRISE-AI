@@ -805,7 +805,7 @@ mod tests {
             role: OperatorRole::Administrator,
             issued_at_unix_ms: 10_000,
             expires_at_unix_ms: 20_000,
-            nonce: [7; 16],
+            nonce: rand::random(),
         };
         let token = verifier
             .mint_after_identity_verification(&claims, 10_100)
