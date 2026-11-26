@@ -1060,4 +1060,77 @@ mod tests {
             Err(ModelInventoryValidationError::InvalidRequirements)
         );
     }
+    #[test]
+    fn v1_matcher_rejects_v2_schema_and_v2_only_collection_context() {
+        let mut versioned = inventory();
+        versioned.schema_version = 2;
+        assert_eq!(
+            validate_model_runtime_inventory(&versioned, 1_100, 10_000),
+            Err(ModelInventoryValidationError::UnsupportedSchemaVersion)
+        );
+
+        // Build a complete v1-shaped object without adding Serialize to the
+        // production DTO. The v2-only field must be rejected by the strict
+        // deserializer even when all v1-required fields are otherwise valid.
+        let v2_shape = serde_json::json!({
+            "schema_version": 1,
+            "generated_at_unix_ms": 1_000,
+            "device_ref": "device-01",
+            "platform": {
+                "os": "linux",
+                "os_version": null,
+                "architecture": "x86_64"
+            },
+            "hardware": {
+                "cpu_logical_cores": 8,
+                "memory_total_mb": 16_384,
+                "memory_available_mb": 8_192,
+                "storage_free_mb": null,
+                "accelerators": []
+            },
+            "runtimes": [{
+                "runtime_id": "ollama-local",
+                "provider": "ollama",
+                "version": "0.5.0",
+                "availability": "available",
+                "network_scope": "loopback_only",
+                "evidence": {
+                    "source": "runtime_api",
+                    "confidence": "verified",
+                    "observed_at_unix_ms": 1_000
+                }
+            }],
+            "models": [{
+                "model_ref": "qwen2.5:7b",
+                "runtime_id": "ollama-local",
+                "display_name": "Qwen 2.5 7B",
+                "family": "qwen2.5",
+                "version": null,
+                "availability": "installed",
+                "size_bytes": 4_500_000_000_u64,
+                "context_length_tokens": 32_768,
+                "estimated_min_memory_mb": 6_000,
+                "capabilities": ["chat", "coding"],
+                "evidence": {
+                    "source": "runtime_api",
+                    "confidence": "verified",
+                    "observed_at_unix_ms": 1_000
+                }
+            }],
+            "privacy": {
+                "contains_prompts": false,
+                "contains_user_files": false,
+                "contains_local_paths": false,
+                "contains_credentials": false
+            },
+            "collection_context": {
+                "scope": "organisation_enrolled",
+                "owner_consent": "granted",
+                "organisation_authorisation": "authorised",
+                "policy_version": "policy-v2"
+            }
+        });
+        assert!(serde_json::from_value::<ModelRuntimeInventory>(v2_shape).is_err());
+    }
+
 }
