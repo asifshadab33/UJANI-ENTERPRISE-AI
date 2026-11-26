@@ -7,6 +7,8 @@ on:
   pull_request:
     branches:
       - main
+      # PR #344 is intentionally stacked on the durable-consent prerequisite.
+      - security/durable-collective-defence-consent-2026-11-25
     paths:
       - "migrations/**"
       - "scripts/test_device_authority_lease_revocation.sql"
