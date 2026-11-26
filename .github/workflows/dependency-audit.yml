@@ -4,7 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    # Keep RustSec coverage enabled for stacked security-sensitive PRs.
+    branches: [main, security/durable-collective-defence-consent-2026-11-25]
   schedule:
     - cron: "17 3 * * *"
   workflow_dispatch:
