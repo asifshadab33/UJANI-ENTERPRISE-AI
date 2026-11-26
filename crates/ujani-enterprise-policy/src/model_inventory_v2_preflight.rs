@@ -26,6 +26,7 @@ pub enum InventoryV2PreflightError {
     StaleEvidence,
     FutureEvidence,
     InvalidEvidenceTimestamp,
+    InvalidEvidenceSemantics,
 }
 
 /// Default freshness window for resource-planning observations. Callers may use
@@ -43,6 +44,16 @@ fn validate_nested_observation_timestamps(
     match value {
         Value::Object(object) => {
             if let Some(observed) = object.get("observed_at_unix_ms") {
+                let source = object.get("source").and_then(Value::as_str);
+                let confidence = object.get("confidence").and_then(Value::as_str);
+                let unknown_confidence = confidence == Some("unknown");
+                if observed.is_null() != unknown_confidence
+                    || (source == Some("unknown") && !unknown_confidence)
+                    || (confidence == Some("estimated") && source != Some("estimate"))
+                    || (source == Some("estimate") && confidence != Some("estimated"))
+                {
+                    return Err(InventoryV2PreflightError::InvalidEvidenceSemantics);
+                }
                 if !observed.is_null() {
                     let timestamp = observed
                         .as_u64()
@@ -569,6 +580,61 @@ mod inventory_v2_observation_freshness_tests {
                 MAX_MODEL_INVENTORY_OBSERVATION_AGE_MS
             ),
             Ok(())
+        );
+    }
+
+    #[test]
+    fn rejects_observed_facts_without_timestamps_and_unknown_facts_with_timestamps() {
+        let now = 1_800_000_000_000u64;
+        let mut value = payload(now);
+        value["platform"]["evidence"] = json!({
+            "source": "runtime_api",
+            "confidence": "reported",
+            "observed_at_unix_ms": null
+        });
+        assert_eq!(
+            validate_enterprise_inventory_v2_preflight_at(
+                &value,
+                "device-1",
+                now,
+                MAX_MODEL_INVENTORY_OBSERVATION_AGE_MS
+            ),
+            Err(InventoryV2PreflightError::InvalidEvidenceSemantics)
+        );
+
+        value["platform"]["evidence"] = json!({
+            "source": "unknown",
+            "confidence": "unknown",
+            "observed_at_unix_ms": now
+        });
+        assert_eq!(
+            validate_enterprise_inventory_v2_preflight_at(
+                &value,
+                "device-1",
+                now,
+                MAX_MODEL_INVENTORY_OBSERVATION_AGE_MS
+            ),
+            Err(InventoryV2PreflightError::InvalidEvidenceSemantics)
+        );
+    }
+
+    #[test]
+    fn requires_estimated_confidence_to_match_estimate_source() {
+        let now = 1_800_000_000_000u64;
+        let mut value = payload(now);
+        value["hardware"]["evidence"] = json!({
+            "source": "os_api",
+            "confidence": "estimated",
+            "observed_at_unix_ms": now
+        });
+        assert_eq!(
+            validate_enterprise_inventory_v2_preflight_at(
+                &value,
+                "device-1",
+                now,
+                MAX_MODEL_INVENTORY_OBSERVATION_AGE_MS
+            ),
+            Err(InventoryV2PreflightError::InvalidEvidenceSemantics)
         );
     }
 
