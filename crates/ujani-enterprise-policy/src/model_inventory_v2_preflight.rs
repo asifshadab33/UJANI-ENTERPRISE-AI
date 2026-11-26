@@ -557,9 +557,15 @@ mod inventory_v2_observation_freshness_tests {
         value["hardware"]["evidence"] = json!({
             "source": "os_api", "confidence": "unknown", "observed_at_unix_ms": null
         });
-        assert_eq!(validate_enterprise_inventory_v2_preflight_at(
-            &value, "device-1", now, MAX_MODEL_INVENTORY_OBSERVATION_AGE_MS
-        ), Ok(()));
+        assert_eq!(
+            validate_enterprise_inventory_v2_preflight_at(
+                &value,
+                "device-1",
+                now,
+                MAX_MODEL_INVENTORY_OBSERVATION_AGE_MS
+            ),
+            Ok(())
+        );
     }
 
     #[test]
@@ -570,9 +576,15 @@ mod inventory_v2_observation_freshness_tests {
             "source":"runtime_metadata", "confidence":"reported",
             "observed_at_unix_ms": now - MAX_MODEL_INVENTORY_OBSERVATION_AGE_MS - 1
         }}]}]);
-        assert_eq!(validate_enterprise_inventory_v2_preflight_at(
-            &value, "device-1", now, MAX_MODEL_INVENTORY_OBSERVATION_AGE_MS
-        ), Err(InventoryV2PreflightError::StaleEvidence));
+        assert_eq!(
+            validate_enterprise_inventory_v2_preflight_at(
+                &value,
+                "device-1",
+                now,
+                MAX_MODEL_INVENTORY_OBSERVATION_AGE_MS
+            ),
+            Err(InventoryV2PreflightError::StaleEvidence)
+        );
     }
 
     #[test]
@@ -583,29 +595,51 @@ mod inventory_v2_observation_freshness_tests {
             "source":"runtime_api", "confidence":"verified",
             "observed_at_unix_ms": now + MODEL_INVENTORY_CLOCK_SKEW_TOLERANCE_MS + 1
         }}]);
-        assert_eq!(validate_enterprise_inventory_v2_preflight_at(
-            &value, "device-1", now, MAX_MODEL_INVENTORY_OBSERVATION_AGE_MS
-        ), Err(InventoryV2PreflightError::FutureEvidence));
+        assert_eq!(
+            validate_enterprise_inventory_v2_preflight_at(
+                &value,
+                "device-1",
+                now,
+                MAX_MODEL_INVENTORY_OBSERVATION_AGE_MS
+            ),
+            Err(InventoryV2PreflightError::FutureEvidence)
+        );
     }
 
     #[test]
     fn rejects_stale_snapshot_before_any_model_is_considered() {
         let now = 1_800_000_000_000u64;
         let value = payload(now - MAX_MODEL_INVENTORY_OBSERVATION_AGE_MS - 1);
-        assert_eq!(validate_enterprise_inventory_v2_preflight_at(
-            &value, "device-1", now, MAX_MODEL_INVENTORY_OBSERVATION_AGE_MS
-        ), Err(InventoryV2PreflightError::StaleInventory));
+        assert_eq!(
+            validate_enterprise_inventory_v2_preflight_at(
+                &value,
+                "device-1",
+                now,
+                MAX_MODEL_INVENTORY_OBSERVATION_AGE_MS
+            ),
+            Err(InventoryV2PreflightError::StaleInventory)
+        );
     }
 
     #[test]
     fn rejects_invalid_nested_observation_timestamp_types_and_zero() {
         let now = 1_800_000_000_000u64;
-        for timestamp in [json!(0), json!("yesterday"), json!(9_007_199_254_740_992u64)] {
+        for timestamp in [
+            json!(0),
+            json!("yesterday"),
+            json!(9_007_199_254_740_992u64),
+        ] {
             let mut value = payload(now);
             value["platform"]["evidence"]["observed_at_unix_ms"] = timestamp;
-            assert_eq!(validate_enterprise_inventory_v2_preflight_at(
-                &value, "device-1", now, MAX_MODEL_INVENTORY_OBSERVATION_AGE_MS
-            ), Err(InventoryV2PreflightError::InvalidEvidenceTimestamp));
+            assert_eq!(
+                validate_enterprise_inventory_v2_preflight_at(
+                    &value,
+                    "device-1",
+                    now,
+                    MAX_MODEL_INVENTORY_OBSERVATION_AGE_MS
+                ),
+                Err(InventoryV2PreflightError::InvalidEvidenceTimestamp)
+            );
         }
     }
 }
