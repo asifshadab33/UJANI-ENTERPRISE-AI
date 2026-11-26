@@ -4,7 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    # Include the consent prerequisite branch so stacked lease PRs receive the full CI gate.
+    branches: [main, security/durable-collective-defence-consent-2026-11-25]
   # Repeat the complete validation suite every 30 minutes (UTC).
   schedule:
     - cron: "11,41 * * * *"
