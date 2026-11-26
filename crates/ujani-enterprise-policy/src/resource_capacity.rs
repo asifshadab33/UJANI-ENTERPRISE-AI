@@ -302,7 +302,9 @@ mod tests {
         requested.gpu_compute_units = 1;
         assert_eq!(
             evaluate_extended_resource_placement(&value, requested, NOW, 60_000),
-            Err(ExtendedResourceRejection::StaleMeasurement(ResourceKind::Gpu))
+            Err(ExtendedResourceRejection::StaleMeasurement(
+                ResourceKind::Gpu
+            ))
         );
     }
 
