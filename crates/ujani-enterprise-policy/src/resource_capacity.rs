@@ -109,7 +109,8 @@ fn measured_value<T>(
     if measurement.basis != MeasurementBasis::Measured {
         return Err(ExtendedResourceRejection::EstimatedMeasurement(kind));
     }
-    if measurement.sampled_at_unix_ms > now_unix_ms.saturating_add(MAX_TELEMETRY_FUTURE_SKEW_MS)
+    if measurement.sampled_at_unix_ms == 0
+        || measurement.sampled_at_unix_ms > now_unix_ms.saturating_add(MAX_TELEMETRY_FUTURE_SKEW_MS)
         || now_unix_ms.saturating_sub(measurement.sampled_at_unix_ms) > max_age_ms
     {
         return Err(ExtendedResourceRejection::StaleMeasurement(kind));
@@ -290,6 +291,21 @@ mod tests {
             network_bandwidth_kbps: 0,
             network_access: false,
         }
+    }
+
+    #[test]
+    fn zero_epoch_optional_resource_measurements_are_rejected_as_stale() {
+        let mut value = snapshot();
+        value.gpu.as_mut().unwrap().sampled_at_unix_ms = 0;
+        let mut requested = request();
+        requested.gpu_memory_mb = 1;
+        requested.gpu_compute_units = 1;
+        assert_eq!(
+            evaluate_extended_resource_placement(&value, requested, NOW, 60_000),
+            Err(ExtendedResourceRejection::StaleMeasurement(
+                ResourceKind::Gpu
+            ))
+        );
     }
 
     #[test]
