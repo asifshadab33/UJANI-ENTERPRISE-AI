@@ -4,7 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    # Security analysis must also run when a security PR targets its prerequisite branch.
+    branches: [main, security/durable-collective-defence-consent-2026-11-25]
   schedule:
     - cron: "23,53 * * * *"
   workflow_dispatch:
