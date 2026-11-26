@@ -289,11 +289,17 @@ impl<S: ProtectedSecretStore> IntegrityKeyProvider for KeyringIntegrityKeyProvid
         let material = self.read_material(purpose, &key_id)?;
         let cipher = Aes256Gcm::new_from_slice(&material[AEAD_KEY_RANGE])
             .map_err(|_| IntegrityKeyProviderError::EncryptionFailed)?;
-        let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+        // Use the fallible OS RNG API: a nonce-generation failure must return
+        // an error, never panic or continue with an uninitialized/reused nonce.
+        let mut nonce_bytes = [0u8; ENVELOPE_NONCE_BYTES];
+        OsRng
+            .try_fill_bytes(&mut nonce_bytes)
+            .map_err(|_| IntegrityKeyProviderError::Unavailable)?;
+        let nonce = Nonce::from_slice(&nonce_bytes);
         let authenticated_aad = Self::aead_aad(purpose, &key_id, aad);
         let ciphertext = cipher
             .encrypt(
-                &nonce,
+                nonce,
                 Payload {
                     msg: plaintext,
                     aad: &authenticated_aad,
@@ -302,7 +308,7 @@ impl<S: ProtectedSecretStore> IntegrityKeyProvider for KeyringIntegrityKeyProvid
             .map_err(|_| IntegrityKeyProviderError::EncryptionFailed)?;
         let mut envelope = Vec::with_capacity(1 + nonce.len() + ciphertext.len());
         envelope.push(ENVELOPE_VERSION);
-        envelope.extend_from_slice(nonce.as_slice());
+        envelope.extend_from_slice(&nonce_bytes);
         envelope.extend_from_slice(&ciphertext);
         Ok((key_id, envelope))
     }
