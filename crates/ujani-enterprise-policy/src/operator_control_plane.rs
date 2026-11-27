@@ -629,6 +629,8 @@ pub struct OperatorModelInventoryView {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OperatorModelTaskMatch {
     pub device_id: String,
+    pub inventory_generated_at_unix_ms: u64,
+    pub matched_at_unix_ms: u64,
     pub result: ModelCapabilityMatch,
 }
 
@@ -640,6 +642,8 @@ pub struct OperatorModelTaskMatch {
 pub struct OperatorModelTaskMatchResponseV1 {
     pub schema_version: u16,
     pub device_id: String,
+    pub inventory_generated_at_unix_ms: u64,
+    pub matched_at_unix_ms: u64,
     pub result: ModelCapabilityMatch,
 }
 
@@ -654,6 +658,8 @@ impl OperatorModelTaskMatch {
         OperatorModelTaskMatchResponseV1 {
             schema_version: 1,
             device_id: self.device_id.clone(),
+            inventory_generated_at_unix_ms: self.inventory_generated_at_unix_ms,
+            matched_at_unix_ms: self.matched_at_unix_ms,
             result: self.result.clone(),
         }
     }
@@ -665,12 +671,20 @@ impl OperatorModelTaskMatch {
         const MAX_BYTES: usize = 8 * 1024;
         const MAX_DEVICE_ID_BYTES: usize = 128;
         const MAX_MODEL_REF_BYTES: usize = 160;
-        const MAX_REASON_COUNT: usize = 32;
+        const MAX_REASON_COUNT: usize = 16;
+        const MAX_SAFE_JSON_INTEGER: u64 = 9_007_199_254_740_991;
         // Check the public DTO fields before serialization so an arbitrary caller
         // cannot allocate an oversized string/vector merely to be rejected later.
         if self.device_id.len() > MAX_DEVICE_ID_BYTES
             || self.result.model_ref.len() > MAX_MODEL_REF_BYTES
             || self.result.reasons.len() > MAX_REASON_COUNT
+            || self.inventory_generated_at_unix_ms == 0
+            || self.matched_at_unix_ms == 0
+            || self.inventory_generated_at_unix_ms > MAX_SAFE_JSON_INTEGER
+            || self.matched_at_unix_ms > MAX_SAFE_JSON_INTEGER
+            || self.result.reasons.iter().enumerate().any(|(index, reason)| {
+                self.result.reasons[..index].contains(reason)
+            })
         {
             return Err(OperatorModelTaskMatchResponseError::ResponseTooLarge);
         }
@@ -1605,6 +1619,7 @@ where
                 _ => None,
             };
         }
+        let inventory_generated_at_unix_ms = inventory.generated_at_unix_ms;
         let result = match_model_to_task(
             &inventory,
             model_ref,
@@ -1616,6 +1631,8 @@ where
 
         Ok(OperatorModelTaskMatch {
             device_id: device_id.to_owned(),
+            inventory_generated_at_unix_ms,
+            matched_at_unix_ms: now_unix_ms,
             result,
         })
     }
@@ -4083,6 +4100,8 @@ mod operator_model_task_match_response_v1_tests {
     fn sample(status: ModelFitStatus) -> OperatorModelTaskMatch {
         OperatorModelTaskMatch {
             device_id: "device-1".into(),
+            inventory_generated_at_unix_ms: 1_000,
+            matched_at_unix_ms: 1_100,
             result: ModelCapabilityMatch {
                 model_ref: "model-local-1".into(),
                 status,
@@ -4098,6 +4117,8 @@ mod operator_model_task_match_response_v1_tests {
         let parsed: serde_json::Value = serde_json::from_str(&response).unwrap();
         assert_eq!(parsed["schema_version"], 1);
         assert_eq!(parsed["device_id"], "device-1");
+        assert_eq!(parsed["inventory_generated_at_unix_ms"], 1_000);
+        assert_eq!(parsed["matched_at_unix_ms"], 1_100);
         assert_eq!(parsed["result"]["model_ref"], "model-local-1");
         assert_eq!(parsed["result"]["status"], "unknown");
         assert_eq!(parsed["result"]["evidence_confidence"], "unknown");
@@ -4150,10 +4171,43 @@ mod operator_model_task_match_response_v1_tests {
     #[test]
     fn response_reason_count_is_bounded_before_serialization() {
         let mut value = sample(ModelFitStatus::Unknown);
-        value.result.reasons = vec![ModelFitReason::CapabilityEvidenceUnknown; 32];
+        value.result.reasons = vec![ModelFitReason::CapabilityEvidenceUnknown; 1];
         assert!(value.to_json_v1().is_ok());
 
-        value.result.reasons = vec![ModelFitReason::CapabilityEvidenceUnknown; 33];
+        value.result.reasons = (0..16)
+            .map(|index| {
+                if index % 2 == 0 {
+                    ModelFitReason::CapabilityEvidenceUnknown
+                } else {
+                    ModelFitReason::RuntimeAvailabilityUnknown
+                }
+            })
+            .collect();
+        // Duplicate reasons are rejected because the wire schema requires uniqueItems.
+        assert_eq!(
+            value.to_json_v1(),
+            Err(OperatorModelTaskMatchResponseError::ResponseTooLarge)
+        );
+
+        value.result.reasons = vec![
+            ModelFitReason::CapabilityEvidenceUnknown,
+            ModelFitReason::RuntimeAvailabilityUnknown,
+            ModelFitReason::RuntimeEvidenceNotFresh,
+            ModelFitReason::ModelEvidenceNotFresh,
+            ModelFitReason::EvidenceConfidenceNotVerified,
+            ModelFitReason::RuntimeNetworkScopeUnknown,
+            ModelFitReason::CapabilityNotDeclared,
+            ModelFitReason::CapabilityEvidenceUnknown,
+            ModelFitReason::ContextLengthUnknown,
+            ModelFitReason::ContextLengthTooShort,
+            ModelFitReason::HardwareMemoryUnknown,
+            ModelFitReason::MemoryEstimateUnknown,
+            ModelFitReason::MemoryEstimateExceedsAvailable,
+            ModelFitReason::MemoryEstimateWithinAvailable,
+            ModelFitReason::HardwareMemoryBelowRequirement,
+            ModelFitReason::ModelNotInstalled,
+            ModelFitReason::RuntimeUnavailable,
+        ];
         assert_eq!(
             value.to_json_v1(),
             Err(OperatorModelTaskMatchResponseError::ResponseTooLarge)
