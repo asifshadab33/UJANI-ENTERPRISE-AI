@@ -12,8 +12,8 @@ use crate::connector_contract::{
 };
 use crate::model_inventory::{
     match_model_to_task, AcceleratorInfo, AcceleratorKind, EvidenceConfidence, EvidenceSource,
-    ModelAvailability, ModelCapability, ModelCapabilityMatch, ModelEvidence, ModelHardware,
-    ModelInfo, ModelInventoryValidationError, ModelPlatform, ModelRuntimeInventory,
+    ModelAvailability, ModelCapability, ModelCapabilityMatch, ModelEvidence, ModelFitStatus,
+    ModelHardware, ModelInfo, ModelInventoryValidationError, ModelPlatform, ModelRuntimeInventory,
     ModelTaskRequirements, PrivacyDeclaration, RuntimeAvailability, RuntimeInfo,
     RuntimeNetworkScope,
 };
@@ -629,6 +629,8 @@ pub struct OperatorModelInventoryView {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OperatorModelTaskMatch {
     pub device_id: String,
+    pub inventory_generated_at_unix_ms: u64,
+    pub matched_at_unix_ms: u64,
     pub result: ModelCapabilityMatch,
 }
 
@@ -640,12 +642,15 @@ pub struct OperatorModelTaskMatch {
 pub struct OperatorModelTaskMatchResponseV1 {
     pub schema_version: u16,
     pub device_id: String,
+    pub inventory_generated_at_unix_ms: u64,
+    pub matched_at_unix_ms: u64,
     pub result: ModelCapabilityMatch,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OperatorModelTaskMatchResponseError {
     SerializationFailed,
+    InvalidResponse,
     ResponseTooLarge,
 }
 
@@ -654,6 +659,8 @@ impl OperatorModelTaskMatch {
         OperatorModelTaskMatchResponseV1 {
             schema_version: 1,
             device_id: self.device_id.clone(),
+            inventory_generated_at_unix_ms: self.inventory_generated_at_unix_ms,
+            matched_at_unix_ms: self.matched_at_unix_ms,
             result: self.result.clone(),
         }
     }
@@ -665,14 +672,45 @@ impl OperatorModelTaskMatch {
         const MAX_BYTES: usize = 8 * 1024;
         const MAX_DEVICE_ID_BYTES: usize = 128;
         const MAX_MODEL_REF_BYTES: usize = 160;
-        const MAX_REASON_COUNT: usize = 32;
+        const MAX_REASON_COUNT: usize = 16;
+        const MAX_SAFE_JSON_INTEGER: u64 = 9_007_199_254_740_991;
         // Check the public DTO fields before serialization so an arbitrary caller
         // cannot allocate an oversized string/vector merely to be rejected later.
+        let model_ref = &self.result.model_ref;
+        let compatible = self.result.status == ModelFitStatus::Compatible;
+        let incompatible = self.result.status == ModelFitStatus::Incompatible;
+        let invalid_status_reasons = (compatible && !self.result.reasons.is_empty())
+            || (incompatible && self.result.reasons.is_empty());
+        let unverified_compatible =
+            compatible && self.result.evidence_confidence != EvidenceConfidence::Verified;
         if self.device_id.len() > MAX_DEVICE_ID_BYTES
-            || self.result.model_ref.len() > MAX_MODEL_REF_BYTES
+            || model_ref.len() > MAX_MODEL_REF_BYTES
             || self.result.reasons.len() > MAX_REASON_COUNT
         {
             return Err(OperatorModelTaskMatchResponseError::ResponseTooLarge);
+        }
+        if !valid_identifier(&self.device_id, MAX_DEVICE_ID_BYTES)
+            || !valid_bounded_text(model_ref, MAX_MODEL_REF_BYTES)
+            || model_ref.starts_with('/')
+            || model_ref.ends_with('/')
+            || model_ref.contains("..")
+            || model_ref.contains('\\')
+            || model_ref.contains("://")
+            || contains_local_path(model_ref)
+            || self.inventory_generated_at_unix_ms == 0
+            || self.matched_at_unix_ms == 0
+            || self.inventory_generated_at_unix_ms > MAX_SAFE_JSON_INTEGER
+            || self.matched_at_unix_ms > MAX_SAFE_JSON_INTEGER
+            || self
+                .result
+                .reasons
+                .iter()
+                .enumerate()
+                .any(|(index, reason)| self.result.reasons[..index].contains(reason))
+            || invalid_status_reasons
+            || unverified_compatible
+        {
+            return Err(OperatorModelTaskMatchResponseError::InvalidResponse);
         }
         let json = serde_json::to_string(&self.to_response_v1())
             .map_err(|_| OperatorModelTaskMatchResponseError::SerializationFailed)?;
@@ -1605,6 +1643,7 @@ where
                 _ => None,
             };
         }
+        let inventory_generated_at_unix_ms = inventory.generated_at_unix_ms;
         let result = match_model_to_task(
             &inventory,
             model_ref,
@@ -1616,6 +1655,8 @@ where
 
         Ok(OperatorModelTaskMatch {
             device_id: device_id.to_owned(),
+            inventory_generated_at_unix_ms,
+            matched_at_unix_ms: now_unix_ms,
             result,
         })
     }
@@ -2277,7 +2318,7 @@ mod tests {
     ) -> OperatorModelInventoryView {
         let evidence = OperatorInventoryEvidence {
             source: "runtime_metadata".into(),
-            confidence: "reported".into(),
+            confidence: "verified".into(),
             observed_at_unix_ms: Some(generated_at_unix_ms),
         };
         OperatorModelInventoryView {
@@ -3299,6 +3340,13 @@ mod tests {
         overview.model_inventory.push(unknown_verified);
         assert!(validate_overview(&overview, 100_000).is_err());
 
+        // Reported metadata remains valid to display, but it cannot be used as verified evidence.
+        overview.model_inventory.clear();
+        let mut reported = sample_model_inventory("device-1", 100_000);
+        reported.models[0].evidence.confidence = "reported".into();
+        overview.model_inventory.push(reported);
+        assert!(validate_overview(&overview, 100_000).is_ok());
+
         overview.model_inventory.clear();
         let mut evidence_after_snapshot = sample_model_inventory("device-1", 100_000);
         evidence_after_snapshot.models[0]
@@ -3409,6 +3457,8 @@ mod tests {
             .match_model_for_task(&token, "device-1", "llama3.2:latest", &requirements, 10_100)
             .unwrap();
         assert_eq!(result.device_id, "device-1");
+        assert_eq!(result.inventory_generated_at_unix_ms, 10_100);
+        assert_eq!(result.matched_at_unix_ms, 10_100);
         assert_eq!(
             result.result.status,
             crate::model_inventory::ModelFitStatus::Compatible
@@ -3943,6 +3993,8 @@ mod tests {
                 10_100,
             )
             .unwrap();
+        assert_eq!(tenant_b_match.inventory_generated_at_unix_ms, 10_100);
+        assert_eq!(tenant_b_match.matched_at_unix_ms, 10_100);
         assert_eq!(
             tenant_b_match.result.status,
             crate::model_inventory::ModelFitStatus::Compatible
@@ -4074,13 +4126,26 @@ mod operator_model_task_match_response_v1_tests {
     use crate::model_inventory::{ModelFitReason, ModelFitStatus};
 
     fn sample(status: ModelFitStatus) -> OperatorModelTaskMatch {
+        let (reasons, evidence_confidence) = match status {
+            ModelFitStatus::Compatible => (vec![], EvidenceConfidence::Verified),
+            ModelFitStatus::Incompatible => (
+                vec![ModelFitReason::HardwareMemoryBelowRequirement],
+                EvidenceConfidence::Reported,
+            ),
+            ModelFitStatus::Unknown => (
+                vec![ModelFitReason::CapabilityEvidenceUnknown],
+                EvidenceConfidence::Unknown,
+            ),
+        };
         OperatorModelTaskMatch {
             device_id: "device-1".into(),
+            inventory_generated_at_unix_ms: 1_000,
+            matched_at_unix_ms: 1_100,
             result: ModelCapabilityMatch {
                 model_ref: "model-local-1".into(),
                 status,
-                reasons: vec![ModelFitReason::CapabilityEvidenceUnknown],
-                evidence_confidence: EvidenceConfidence::Unknown,
+                reasons,
+                evidence_confidence,
             },
         }
     }
@@ -4091,6 +4156,8 @@ mod operator_model_task_match_response_v1_tests {
         let parsed: serde_json::Value = serde_json::from_str(&response).unwrap();
         assert_eq!(parsed["schema_version"], 1);
         assert_eq!(parsed["device_id"], "device-1");
+        assert_eq!(parsed["inventory_generated_at_unix_ms"], 1_000);
+        assert_eq!(parsed["matched_at_unix_ms"], 1_100);
         assert_eq!(parsed["result"]["model_ref"], "model-local-1");
         assert_eq!(parsed["result"]["status"], "unknown");
         assert_eq!(parsed["result"]["evidence_confidence"], "unknown");
@@ -4123,6 +4190,13 @@ mod operator_model_task_match_response_v1_tests {
         );
 
         let mut value = sample(ModelFitStatus::Unknown);
+        value.device_id = "../tenant-b-device".into();
+        assert_eq!(
+            value.to_json_v1(),
+            Err(OperatorModelTaskMatchResponseError::InvalidResponse)
+        );
+
+        let mut value = sample(ModelFitStatus::Unknown);
         value.device_id = "d".repeat(129);
         assert_eq!(
             value.to_json_v1(),
@@ -4141,15 +4215,76 @@ mod operator_model_task_match_response_v1_tests {
     }
 
     #[test]
-    fn response_reason_count_is_bounded_before_serialization() {
+    fn response_reason_list_matches_the_unique_bounded_wire_contract() {
         let mut value = sample(ModelFitStatus::Unknown);
-        value.result.reasons = vec![ModelFitReason::CapabilityEvidenceUnknown; 32];
+        value.result.reasons = vec![
+            ModelFitReason::ModelNotInstalled,
+            ModelFitReason::RuntimeUnavailable,
+            ModelFitReason::RuntimeAvailabilityUnknown,
+            ModelFitReason::RuntimeEvidenceNotFresh,
+            ModelFitReason::ModelEvidenceNotFresh,
+            ModelFitReason::EvidenceConfidenceNotVerified,
+            ModelFitReason::RuntimeNetworkScopeUnknown,
+            ModelFitReason::CapabilityNotDeclared,
+            ModelFitReason::CapabilityEvidenceUnknown,
+            ModelFitReason::ContextLengthUnknown,
+            ModelFitReason::ContextLengthTooShort,
+            ModelFitReason::HardwareMemoryUnknown,
+            ModelFitReason::MemoryEstimateUnknown,
+            ModelFitReason::MemoryEstimateExceedsAvailable,
+            ModelFitReason::MemoryEstimateWithinAvailable,
+            ModelFitReason::HardwareMemoryBelowRequirement,
+        ];
         assert!(value.to_json_v1().is_ok());
 
-        value.result.reasons = vec![ModelFitReason::CapabilityEvidenceUnknown; 33];
+        value.result.reasons = vec![
+            ModelFitReason::CapabilityEvidenceUnknown,
+            ModelFitReason::CapabilityEvidenceUnknown,
+        ];
         assert_eq!(
             value.to_json_v1(),
-            Err(OperatorModelTaskMatchResponseError::ResponseTooLarge)
+            Err(OperatorModelTaskMatchResponseError::InvalidResponse)
+        );
+    }
+
+    #[test]
+    fn response_rejects_model_paths_and_status_evidence_inconsistency() {
+        let mut value = sample(ModelFitStatus::Unknown);
+        value.result.model_ref = "../local/model".into();
+        assert_eq!(
+            value.to_json_v1(),
+            Err(OperatorModelTaskMatchResponseError::InvalidResponse)
+        );
+
+        let mut value = sample(ModelFitStatus::Compatible);
+        value.result.evidence_confidence = EvidenceConfidence::Reported;
+        assert_eq!(
+            value.to_json_v1(),
+            Err(OperatorModelTaskMatchResponseError::InvalidResponse)
+        );
+
+        let mut value = sample(ModelFitStatus::Incompatible);
+        value.result.reasons.clear();
+        assert_eq!(
+            value.to_json_v1(),
+            Err(OperatorModelTaskMatchResponseError::InvalidResponse)
+        );
+    }
+
+    #[test]
+    fn response_timestamps_must_be_safe_nonzero_json_integers() {
+        let mut value = sample(ModelFitStatus::Unknown);
+        value.inventory_generated_at_unix_ms = 0;
+        assert_eq!(
+            value.to_json_v1(),
+            Err(OperatorModelTaskMatchResponseError::InvalidResponse)
+        );
+
+        let mut value = sample(ModelFitStatus::Unknown);
+        value.matched_at_unix_ms = 9_007_199_254_740_992;
+        assert_eq!(
+            value.to_json_v1(),
+            Err(OperatorModelTaskMatchResponseError::InvalidResponse)
         );
     }
 }

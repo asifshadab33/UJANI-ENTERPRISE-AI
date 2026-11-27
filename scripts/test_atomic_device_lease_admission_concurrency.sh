@@ -93,10 +93,12 @@ trap cleanup EXIT
 SET ROLE ujani_runtime;
 BEGIN;
 SET LOCAL ujani.tenant_id='admission-concurrency';
+-- Keep CPU well below the 4,000 milli-core headroom. Memory alone is the
+-- limiting resource: the two 5,000 MiB requests cannot fit in 8,192 MiB.
 SELECT ujani_control.admit_device_lease(
  'admission-concurrency','device','workload','approval','lease-a',
  decode(repeat('81',16),'hex'),decode(repeat('82',32),'hex'),decode(repeat('75',32),'hex'),
- 1,1,2500,1024,decode(repeat('83',32),'hex'),
+ 1,1,500,5000,decode(repeat('83',32),'hex'),
  clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000091');
 -- Keep the transaction and device lock until the controller observes the
 -- second connection waiting. The release is an explicit file handshake.
@@ -126,7 +128,7 @@ SET LOCAL ujani.tenant_id='admission-concurrency';
 SELECT ujani_control.admit_device_lease(
  'admission-concurrency','device','workload','approval','lease-b',
  decode(repeat('84',16),'hex'),decode(repeat('85',32),'hex'),decode(repeat('75',32),'hex'),
- 1,1,2500,1024,decode(repeat('86',32),'hex'),
+ 1,1,500,5000,decode(repeat('86',32),'hex'),
  clock_timestamp()+interval '4 minutes','00000000-0000-4000-8000-000000000092');
 COMMIT;
 RESET ROLE;
@@ -165,6 +167,9 @@ if [[ "$second_status" -ne 0 ]]; then
 fi
 if ! grep -qx 't' "$first_out"; then echo "first admission did not succeed" >&2; cat "$first_out" >&2; exit 1; fi
 if ! grep -qx 'f' "$second_out"; then echo "second admission should be rejected after serialized capacity recheck" >&2; cat "$second_out" >&2; exit 1; fi
-state="$("${PSQL[@]}" -c "SELECT count(*) || ':' || COALESCE(sum(requested_cpu_millis),0) FROM ujani_control.leases WHERE tenant_id='admission-concurrency' AND device_id='device' AND state='reserved' AND expires_at>clock_timestamp()")"
-if [[ "$state" != "1:2500" ]]; then echo "capacity was oversubscribed or lease count wrong: $state" >&2; exit 1; fi
-echo "Concurrent admission capacity serialization passed."
+state="$("${PSQL[@]}" -c "SELECT (SELECT count(*) FROM ujani_control.leases WHERE tenant_id='admission-concurrency' AND device_id='device' AND state='reserved' AND expires_at>clock_timestamp()) || ':' || (SELECT COALESCE(sum(requested_cpu_millis),0) FROM ujani_control.leases WHERE tenant_id='admission-concurrency' AND device_id='device' AND state='reserved' AND expires_at>clock_timestamp()) || ':' || (SELECT COALESCE(sum(requested_memory_mb),0) FROM ujani_control.leases WHERE tenant_id='admission-concurrency' AND device_id='device' AND state='reserved' AND expires_at>clock_timestamp()) || ':' || (SELECT count(*) FROM ujani_control.request_replays WHERE tenant_id='admission-concurrency' AND device_id='device' AND request_id=decode(repeat('81',16),'hex')) || ':' || (SELECT count(*) FROM ujani_control.request_replays WHERE tenant_id='admission-concurrency' AND device_id='device' AND request_id=decode(repeat('84',16),'hex')) || ':' || (SELECT count(*) FROM ujani_control.leases WHERE tenant_id='admission-concurrency' AND device_id='device' AND lease_id='lease-a' AND state='reserved' AND requested_cpu_millis=500 AND requested_memory_mb=5000 AND expires_at>clock_timestamp()) || ':' || (SELECT count(*) FROM ujani_control.leases WHERE tenant_id='admission-concurrency' AND device_id='device' AND lease_id='lease-b')")"
+if [[ "$state" != "1:500:5000:1:0:1:0" ]]; then
+ echo "memory admission or exact replay/lease invariants failed: $state" >&2
+ exit 1
+fi
+echo "Concurrent memory admission serialization passed."

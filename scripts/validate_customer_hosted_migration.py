@@ -308,7 +308,9 @@ def main() -> None:
         "wait_event_type='Lock'",
         "second admission was not observed waiting on the device row lock",
         "second admission should be rejected",
-        "1:2500",
+        "sum(requested_memory_mb)",
+        "request_replays WHERE",
+        "1:500:5000:1:0:1:0",
     ):
         if required not in atomic_concurrency:
             raise SystemExit(f"atomic admission concurrency regression missing: {required}")

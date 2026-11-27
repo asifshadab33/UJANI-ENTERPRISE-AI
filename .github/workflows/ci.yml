@@ -48,6 +48,8 @@ jobs:
         run: python scripts/validate_personal_enterprise_task_contract.py
       - name: Validate operator model/runtime inventory v2 projection schema
         run: python scripts/validate_operator_model_runtime_inventory_v2_projection.py
+      - name: Validate read-only operator model-task-match v1 contract
+        run: python scripts/validate_operator_model_task_match.py
       - name: Validate read-only operator console
         run: python scripts/validate_operator_console.py
       - name: Validate existing security-provider inventory v1 schema
@@ -333,3 +335,13 @@ jobs:
           PGUSER: postgres
           PGDATABASE: ujani_test
         run: bash scripts/test_owner_consent_admission_concurrency.sh
+      - name: Apply durable Collective Defence dual-consent migration
+        env:
+          PGPASSWORD: postgres
+        run: |
+          "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < migrations/0018_durable_collective_defence_consent.sql
+      - name: Verify durable Collective Defence dual opt-in, revocation, idempotency and audit chain
+        env:
+          PGPASSWORD: postgres
+        run: |
+          "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < scripts/test_durable_collective_defence_consent.sql

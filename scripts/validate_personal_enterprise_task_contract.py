@@ -465,6 +465,58 @@ def _validate_instance_fixtures(schema: dict[str, Any]) -> None:
         errors = _semantic_errors(instance)
         assert errors, f"cross-field invalid fixture unexpectedly accepted: {name}"
 
+    # Legacy Public peer-envelope v2 and Enterprise WorkloadManifest v1 are
+    # deliberately not accepted as shared task-contract v1 messages. A caller
+    # cannot make either format interoperable by adding only a message type or
+    # schema version: identity, consent, capability, privacy, expiry, replay and
+    # signature semantics require an explicit reviewed adapter.
+    legacy_public_envelope = {
+        "protocol_version": 2,
+        "task_id": "task-42",
+        "recipient_device_id": "b" * 64,
+        "issued_at": 1_000,
+        "expires_at": 1_120,
+        "nonce": "0123456789abcdef0123456789abcdef",
+        "operation": "document.summarize",
+        "input_sha256": "a" * 64,
+        "requested_scopes": ["document.read", "result.write"],
+        "user_consent": True,
+    }
+    legacy_public_relabelled = {
+        "message_type": "task_envelope",
+        "schema_version": 1,
+        **legacy_public_envelope,
+    }
+    legacy_public_signed_wrapper = {
+        "envelope": legacy_public_envelope,
+        "signature": [7] * 64,
+    }
+    legacy_enterprise_manifest = {
+        "schema_version": 1,
+        "workload_id": "job-001",
+        "class": "inference",
+        "model": "qwen2.5:7b",
+        "requested_cpu_millis": 2_000,
+        "requested_memory_mb": 4_096,
+        "max_runtime_ms": 60_000,
+        "data_classification": "internal",
+        "network_access": False,
+    }
+    legacy_enterprise_relabelled = {
+        "message_type": "task_envelope",
+        **legacy_enterprise_manifest,
+    }
+    legacy_fixtures = (
+        ("Public peer TaskEnvelope v2", legacy_public_envelope),
+        ("Public peer SignedTaskEnvelope v2 wrapper", legacy_public_signed_wrapper),
+        ("Public peer v2 with only shared message/version labels added", legacy_public_relabelled),
+        ("Enterprise WorkloadManifest v1", legacy_enterprise_manifest),
+        ("Enterprise manifest with only a shared message label added", legacy_enterprise_relabelled),
+    )
+    for name, instance in legacy_fixtures:
+        errors = list(validator.iter_errors(instance))
+        assert errors, f"legacy format unexpectedly accepted as shared task-contract v1: {name}"
+
     print(
         "JSON Schema Draft 2020-12 meta-schema, "
         f"{len(valid_fixtures)} valid / {len(invalid)} invalid structural fixtures, "
@@ -574,6 +626,7 @@ def main() -> None:
     check_integer_safe_bounds(definitions)
     _validate_instance_fixtures(schema)
     print("Personal-to-Enterprise task-contract v1 structural checks passed.")
+    print("Legacy Public peer-envelope v2 and Enterprise WorkloadManifest v1 are rejected; no adapter or translation is implied.")
 
 
 if __name__ == "__main__":

@@ -7,7 +7,9 @@
 //! fail closed for every unknown method/path. The host adapter must authenticate
 //! `DeviceOwnerConsent` with the enrolled device signature and dispatch the verified
 //! command to `DurableDeviceRegistry::apply_owner_consent`. No remote-execution route exists.
-use super::operator_control_plane::{OperatorRole, OperatorServiceError};
+use super::operator_control_plane::{
+    OperatorModelTaskMatchRequest, OperatorRole, OperatorServiceError,
+};
 
 pub const MAX_OPERATOR_ACTION_BODY_BYTES: usize = 16 * 1024;
 pub const MAX_DEVICE_ENROLLMENT_BODY_BYTES: usize = 64 * 1024;
@@ -17,6 +19,34 @@ pub const MAX_MODEL_INVENTORY_BODY_BYTES: usize = MAX_DEVICE_INGEST_BODY_BYTES;
 pub const MAX_OWNER_CONSENT_BODY_BYTES: usize = 16 * 1024;
 /// A task-match request contains only bounded task requirements and identifiers.
 pub const MAX_MODEL_TASK_MATCH_BODY_BYTES: usize = 8 * 1024;
+
+/// Errors returned before an HTTP adapter authenticates and dispatches a task-match request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelTaskMatchBodyError {
+    EmptyBody,
+    BodyTooLarge,
+    InvalidJson,
+    InvalidRequest,
+}
+
+/// Decode a bounded task-match request before tenant-bound service dispatch.
+/// The HTTP host should authenticate the route and enforce its body limit before
+/// calling this parser; duplicate keys are rejected recursively and unknown fields
+/// are rejected by the typed request DTO. The host must enforce role and audit outcome.
+pub fn decode_model_task_match_request(
+    raw_body: &[u8],
+) -> Result<OperatorModelTaskMatchRequest, ModelTaskMatchBodyError> {
+    if raw_body.is_empty() {
+        return Err(ModelTaskMatchBodyError::EmptyBody);
+    }
+    if raw_body.len() > MAX_MODEL_TASK_MATCH_BODY_BYTES {
+        return Err(ModelTaskMatchBodyError::BodyTooLarge);
+    }
+
+    let strict_value = crate::strict_json::parse_strict_json(raw_body)
+        .map_err(|_| ModelTaskMatchBodyError::InvalidJson)?;
+    serde_json::from_value(strict_value).map_err(|_| ModelTaskMatchBodyError::InvalidRequest)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HttpMethod {
@@ -648,5 +678,101 @@ mod dynamic_route_identifier_boundary_regressions {
                 "canonical bounded identifier should route: {path:?}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod model_task_match_body_decoder_tests {
+    use super::*;
+
+    const VALID: &str = r#"{
+        "device_id": "device-01",
+        "model_ref": "llama3.2:latest",
+        "requirements": {
+            "required_capabilities": ["chat"],
+            "minimum_context_length_tokens": 4096,
+            "minimum_memory_mb": 2048
+        }
+    }"#;
+
+    #[test]
+    fn bounded_valid_request_decodes_to_typed_requirements() {
+        let request = decode_model_task_match_request(VALID.as_bytes()).unwrap();
+        assert_eq!(request.device_id, "device-01");
+        assert_eq!(request.model_ref, "llama3.2:latest");
+        assert_eq!(
+            request.requirements.minimum_context_length_tokens,
+            Some(4096)
+        );
+        assert_eq!(request.requirements.minimum_memory_mb, Some(2048));
+    }
+
+    #[test]
+    fn duplicate_keys_are_rejected_at_every_nesting_level() {
+        let duplicate_top_level = br#"{
+            "device_id": "device-01",
+            "device_id": "device-02",
+            "model_ref": "llama3.2:latest",
+            "requirements": {"required_capabilities": ["chat"]}
+        }"#;
+        assert_eq!(
+            decode_model_task_match_request(duplicate_top_level),
+            Err(ModelTaskMatchBodyError::InvalidJson)
+        );
+
+        let duplicate_nested = br#"{
+            "device_id": "device-01",
+            "model_ref": "llama3.2:latest",
+            "requirements": {
+                "required_capabilities": ["chat"],
+                "minimum_memory_mb": 1024,
+                "minimum_memory_mb": 2048
+            }
+        }"#;
+        assert_eq!(
+            decode_model_task_match_request(duplicate_nested),
+            Err(ModelTaskMatchBodyError::InvalidJson)
+        );
+    }
+
+    #[test]
+    fn unknown_fields_and_wrong_shapes_are_rejected_by_typed_contract() {
+        let unknown_top_level = VALID.replace(
+            "\"model_ref\": \"llama3.2:latest\",",
+            "\"model_ref\": \"llama3.2:latest\", \"tenant_id\": \"tenant-from-browser\",",
+        );
+        assert_eq!(
+            decode_model_task_match_request(unknown_top_level.as_bytes()),
+            Err(ModelTaskMatchBodyError::InvalidRequest)
+        );
+
+        let unknown_nested = VALID.replace(
+            "\"minimum_memory_mb\": 2048",
+            "\"minimum_memory_mb\": 2048, \"role\": \"administrator\"",
+        );
+        assert_eq!(
+            decode_model_task_match_request(unknown_nested.as_bytes()),
+            Err(ModelTaskMatchBodyError::InvalidRequest)
+        );
+    }
+
+    #[test]
+    fn empty_oversized_malformed_and_trailing_bodies_fail_before_dispatch() {
+        assert_eq!(
+            decode_model_task_match_request(b""),
+            Err(ModelTaskMatchBodyError::EmptyBody)
+        );
+        assert_eq!(
+            decode_model_task_match_request(&vec![b' '; MAX_MODEL_TASK_MATCH_BODY_BYTES + 1]),
+            Err(ModelTaskMatchBodyError::BodyTooLarge)
+        );
+        assert_eq!(
+            decode_model_task_match_request(b"{not-json}"),
+            Err(ModelTaskMatchBodyError::InvalidJson)
+        );
+        assert_eq!(
+            decode_model_task_match_request(format!("{VALID} {{}}").as_bytes()),
+            Err(ModelTaskMatchBodyError::InvalidJson)
+        );
     }
 }

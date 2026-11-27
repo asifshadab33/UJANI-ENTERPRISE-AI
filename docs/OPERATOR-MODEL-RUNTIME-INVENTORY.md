@@ -53,3 +53,10 @@ UI-supplied or unauthenticated client data.
 ## Operator hardware and evidence presentation
 
 The read-only console presents reported CPU, RAM, free storage and GPU/NPU accelerator summaries alongside runtime/model rows. It shows model, runtime and accelerator evidence freshness separately. A device snapshot with hardware/runtime metadata but no model rows remains visible as a hardware-only entry; an empty accelerator list is labelled "not reported", not interpreted as proof that the device has no accelerator. RAM comparison remains an estimate and is not a verified workload-fit or admission decision.
+
+
+## Read-only task-match request/response contract
+
+The Rust operator service now has a tenant-session-derived, read-only model-task-match operation and a bounded response DTO. The v1 request and response wire shapes are defined by `schemas/operator-model-task-match-request-v1.schema.json` and `schemas/operator-model-task-match-response-v1.schema.json`; CI validates both schemas and adversarial examples. The request deliberately excludes tenant and role fields, which must come from the authenticated server-side session. The response distinguishes `compatible`, `incompatible` and `unknown`; estimated or unknown evidence cannot be represented as compatible.
+
+This is a versioned contract and policy-service capability, **not an HTTP route or live console integration**. The route remains blocked on the authenticated self-hosted HTTP control plane, bounded request decoding, durable tenant-isolated inventory/telemetry repository and audit sink described in issue #90. No client-supplied inventory, silent model selection, model installation, lease, admission or dispatch is enabled by this contract.
