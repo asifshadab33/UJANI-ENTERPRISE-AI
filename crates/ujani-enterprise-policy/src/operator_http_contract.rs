@@ -783,3 +783,96 @@ mod dynamic_route_identifier_boundary_regressions {
         }
     }
 }
+
+#[cfg(test)]
+mod model_task_match_body_decoder_tests {
+    use super::*;
+
+    const VALID: &str = r#"{
+        "device_id": "device-01",
+        "model_ref": "llama3.2:latest",
+        "requirements": {
+            "required_capabilities": ["chat"],
+            "minimum_context_length_tokens": 4096,
+            "minimum_memory_mb": 2048
+        }
+    }"#;
+
+    #[test]
+    fn bounded_valid_request_decodes_to_typed_requirements() {
+        let request = decode_model_task_match_request(VALID.as_bytes()).unwrap();
+        assert_eq!(request.device_id, "device-01");
+        assert_eq!(request.model_ref, "llama3.2:latest");
+        assert_eq!(request.requirements.minimum_context_length_tokens, Some(4096));
+        assert_eq!(request.requirements.minimum_memory_mb, Some(2048));
+    }
+
+    #[test]
+    fn duplicate_keys_are_rejected_at_every_nesting_level() {
+        let duplicate_top_level = br#"{
+            "device_id": "device-01",
+            "device_id": "device-02",
+            "model_ref": "llama3.2:latest",
+            "requirements": {"required_capabilities": ["chat"]}
+        }"#;
+        assert_eq!(
+            decode_model_task_match_request(duplicate_top_level),
+            Err(ModelTaskMatchBodyError::InvalidJson)
+        );
+
+        let duplicate_nested = br#"{
+            "device_id": "device-01",
+            "model_ref": "llama3.2:latest",
+            "requirements": {
+                "required_capabilities": ["chat"],
+                "minimum_memory_mb": 1024,
+                "minimum_memory_mb": 2048
+            }
+        }"#;
+        assert_eq!(
+            decode_model_task_match_request(duplicate_nested),
+            Err(ModelTaskMatchBodyError::InvalidJson)
+        );
+    }
+
+    #[test]
+    fn unknown_fields_and_wrong_shapes_are_rejected_by_typed_contract() {
+        let unknown_top_level = VALID.replace(
+            "\"model_ref\": \"llama3.2:latest\",",
+            "\"model_ref\": \"llama3.2:latest\", \"tenant_id\": \"tenant-from-browser\",",
+        );
+        assert_eq!(
+            decode_model_task_match_request(unknown_top_level.as_bytes()),
+            Err(ModelTaskMatchBodyError::InvalidRequest)
+        );
+
+        let unknown_nested = VALID.replace(
+            "\"minimum_memory_mb\": 2048",
+            "\"minimum_memory_mb\": 2048, \"role\": \"administrator\"",
+        );
+        assert_eq!(
+            decode_model_task_match_request(unknown_nested.as_bytes()),
+            Err(ModelTaskMatchBodyError::InvalidRequest)
+        );
+    }
+
+    #[test]
+    fn empty_oversized_malformed_and_trailing_bodies_fail_before_dispatch() {
+        assert_eq!(
+            decode_model_task_match_request(b""),
+            Err(ModelTaskMatchBodyError::EmptyBody)
+        );
+        assert_eq!(
+            decode_model_task_match_request(&vec![b' '; MAX_MODEL_TASK_MATCH_BODY_BYTES + 1]),
+            Err(ModelTaskMatchBodyError::BodyTooLarge)
+        );
+        assert_eq!(
+            decode_model_task_match_request(b"{not-json}"),
+            Err(ModelTaskMatchBodyError::InvalidJson)
+        );
+        assert_eq!(
+            decode_model_task_match_request(format!("{VALID} {{}}").as_bytes()),
+            Err(ModelTaskMatchBodyError::InvalidJson)
+        );
+    }
+}
