@@ -345,3 +345,14 @@ jobs:
           PGPASSWORD: postgres
         run: |
           "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < scripts/test_durable_collective_defence_consent.sql
+      - name: Apply device-authority lease revocation migration
+        env:
+          PGPASSWORD: postgres
+        run: |
+          "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < migrations/0019_revoke_leases_on_device_authority_change.sql
+      - name: Verify device-authority lease revocation, rollback and capacity watermark
+        env:
+          PGPASSWORD: postgres
+        run: |
+          "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < scripts/test_device_authority_lease_revocation.sql
+
