@@ -510,7 +510,17 @@ mod tests {
         OperatorRole, OperatorSessionClaims, OperatorSessionProviderVerifier,
     };
     use ed25519_dalek::SigningKey;
-    use std::{collections::HashMap, sync::Arc};
+    use std::{
+        collections::HashMap,
+        path::PathBuf,
+        process::Command,
+        sync::{
+            atomic::{AtomicBool, AtomicU64, Ordering},
+            Arc,
+        },
+        thread,
+        time::{Duration, Instant},
+    };
 
     #[derive(Default)]
     struct MemorySecretStore(Mutex<HashMap<String, Vec<u8>>>);
@@ -542,8 +552,28 @@ mod tests {
         }
     }
 
+    fn test_lock_path() -> PathBuf {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        let directory = std::env::temp_dir().join(format!(
+            "ujani-keyring-test-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(
+                &directory,
+                std::fs::Permissions::from_mode(0o700),
+            )
+            .unwrap();
+        }
+        directory.join("lifecycle.lock")
+    }
+
     fn provider() -> KeyringIntegrityKeyProvider<MemorySecretStore> {
-        KeyringIntegrityKeyProvider::new(MemorySecretStore::default())
+        KeyringIntegrityKeyProvider::new(MemorySecretStore::default(), test_lock_path()).unwrap()
     }
 
     #[cfg(not(windows))]
@@ -719,9 +749,13 @@ mod tests {
         ));
         std::fs::create_dir_all(&directory).unwrap();
 
-        let provider = Arc::new(KeyringIntegrityKeyProvider::new(
-            MemorySecretStore::default(),
-        ));
+        let provider = Arc::new(
+            KeyringIntegrityKeyProvider::new(
+                MemorySecretStore::default(),
+                directory.join("keyring-lifecycle.lock"),
+            )
+            .unwrap(),
+        );
         provider
             .provision_key(IntegrityKeyPurpose::DeviceTrustRegistry, "registry-v1")
             .unwrap();
@@ -888,7 +922,11 @@ mod tests {
 
     #[test]
     fn operator_sessions_use_the_separate_protected_key_purpose() {
-        let provider = KeyringIntegrityKeyProvider::new(MemorySecretStore::default());
+        let provider = KeyringIntegrityKeyProvider::new(
+            MemorySecretStore::default(),
+            test_lock_path(),
+        )
+        .unwrap();
         provider
             .provision_key(IntegrityKeyPurpose::OperatorSession, "session-v1")
             .unwrap();
@@ -908,6 +946,86 @@ mod tests {
             .mint_after_identity_verification(&claims, 10_100)
             .unwrap();
         assert_eq!(verifier.authenticate(&token, 10_100).unwrap(), claims);
+    }
+
+    #[test]
+    fn keyring_lock_child_process() {
+        let Ok(lock_path) = std::env::var("UJANI_KEYRING_TEST_LOCK_PATH") else {
+            return;
+        };
+        let ready_path = std::env::var("UJANI_KEYRING_TEST_READY_PATH").unwrap();
+        let release_path = std::env::var("UJANI_KEYRING_TEST_RELEASE_PATH").unwrap();
+        let provider = KeyringIntegrityKeyProvider::new(
+            MemorySecretStore::default(),
+            PathBuf::from(lock_path),
+        )
+        .unwrap();
+        let _guard = provider.lock().unwrap();
+        std::fs::write(&ready_path, b"locked").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !Path::new(&release_path).exists() {
+            assert!(Instant::now() < deadline, "parent did not release the inter-process lock");
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn keyring_lifecycle_lock_serializes_independent_processes() {
+        let lock_path = test_lock_path();
+        let directory = lock_path.parent().unwrap();
+        let ready_path = directory.join("child-ready");
+        let release_path = directory.join("child-release");
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .arg("keyring_lock_child_process")
+            .arg("--nocapture")
+            .env("UJANI_KEYRING_TEST_LOCK_PATH", &lock_path)
+            .env("UJANI_KEYRING_TEST_READY_PATH", &ready_path)
+            .env("UJANI_KEYRING_TEST_RELEASE_PATH", &release_path)
+            .spawn()
+            .unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !ready_path.exists() {
+            if let Some(status) = child.try_wait().unwrap() {
+                panic!("keyring lock child exited before acquiring the lock: {status}");
+            }
+            assert!(Instant::now() < deadline, "keyring lock child did not become ready");
+            thread::sleep(Duration::from_millis(10));
+        }
+
+        let provider = Arc::new(
+            KeyringIntegrityKeyProvider::new(MemorySecretStore::default(), lock_path).unwrap(),
+        );
+        let acquired = Arc::new(AtomicBool::new(false));
+        let thread_provider = Arc::clone(&provider);
+        let thread_acquired = Arc::clone(&acquired);
+        let waiter = thread::spawn(move || {
+            let _guard = thread_provider.lock().unwrap();
+            thread_acquired.store(true, Ordering::SeqCst);
+        });
+        thread::sleep(Duration::from_millis(150));
+        let blocked_while_child_held_lock = !acquired.load(Ordering::SeqCst);
+
+        std::fs::write(&release_path, b"release").unwrap();
+        waiter.join().unwrap();
+        let child_status = child.wait().unwrap();
+        assert!(child_status.success(), "keyring lock child failed: {child_status}");
+        assert!(
+            blocked_while_child_held_lock,
+            "a second process entered the key lifecycle while the first held the lock"
+        );
+        assert!(acquired.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn lock_path_must_be_absolute_and_in_a_non_writable_parent() {
+        assert!(matches!(
+            KeyringIntegrityKeyProvider::new(
+                MemorySecretStore::default(),
+                PathBuf::from("relative/keyring.lock"),
+            ),
+            Err(IntegrityKeyProviderError::Unavailable)
+        ));
     }
 
     #[test]
