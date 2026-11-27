@@ -108,6 +108,53 @@ BEGIN
 END $$;
 ROLLBACK;
 
+-- A rolled-back transaction must not leave tenant context on the session.
+BEGIN;
+SET LOCAL ujani.tenant_id = 'tenant-a';
+DO $DECLARE visible_tenants integer; visible_devices integer;
+BEGIN
+ SELECT count(*) INTO visible_tenants FROM ujani_control.tenants;
+ SELECT count(*) INTO visible_devices FROM ujani_control.devices;
+ IF visible_tenants <> 1 OR visible_devices <> 1 THEN
+  RAISE EXCEPTION 'tenant A context missing inside rollback test transaction';
+ END IF;
+END $;
+ROLLBACK;
+
+DO $DECLARE visible_tenants integer; visible_devices integer;
+BEGIN
+ SELECT count(*) INTO visible_tenants FROM ujani_control.tenants;
+ SELECT count(*) INTO visible_devices FROM ujani_control.devices;
+ IF visible_tenants <> 0 OR visible_devices <> 0 THEN
+  RAISE EXCEPTION 'tenant context survived transaction rollback: tenants %, devices %', visible_tenants, visible_devices;
+ END IF;
+END $;
+
+-- Reuse the same backend for tenant B after tenant A; no tenant-A rows may leak.
+BEGIN;
+SET LOCAL ujani.tenant_id = 'tenant-b';
+DO $DECLARE visible_tenants integer; visible_devices integer;
+BEGIN
+ SELECT count(*) INTO visible_tenants FROM ujani_control.tenants;
+ SELECT count(*) INTO visible_devices FROM ujani_control.devices;
+ IF visible_tenants <> 1 OR visible_devices <> 1 THEN
+  RAISE EXCEPTION 'tenant context did not switch cleanly to tenant B';
+ END IF;
+ IF EXISTS (SELECT 1 FROM ujani_control.devices WHERE tenant_id <> 'tenant-b') THEN
+  RAISE EXCEPTION 'tenant B transaction observed tenant-A device data';
+ END IF;
+END $;
+COMMIT;
+
+DO $DECLARE visible_tenants integer; visible_devices integer;
+BEGIN
+ SELECT count(*) INTO visible_tenants FROM ujani_control.tenants;
+ SELECT count(*) INTO visible_devices FROM ujani_control.devices;
+ IF visible_tenants <> 0 OR visible_devices <> 0 THEN
+  RAISE EXCEPTION 'tenant context leaked after alternating tenant transaction';
+ END IF;
+END $;
+
 -- SET LOCAL must not leak tenant A after a committed transaction on a pooled connection.
 BEGIN;
 SET LOCAL ujani.tenant_id = 'tenant-a';
