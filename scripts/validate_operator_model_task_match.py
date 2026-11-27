@@ -50,6 +50,13 @@ def main() -> None:
     case = copy.deepcopy(valid_request); case["requirements"]["minimum_memory_mb"] = 0; invalid_requests.append(case)
     case = copy.deepcopy(valid_request); case["requirements"]["minimum_memory_mb"] = 9007199254740992; invalid_requests.append(case)
     case = copy.deepcopy(valid_request); case["device_id"] = "../other-tenant"; invalid_requests.append(case)
+    for invalid_model_ref in (
+        "../model", "/absolute/model", "model/", "https://example.invalid/model",
+        "model\\\\path", "   ", "bad\\nmodel", "m" * 161,
+    ):
+        case = copy.deepcopy(valid_request)
+        case["model_ref"] = invalid_model_ref
+        invalid_requests.append(case)
     for case in invalid_requests:
         assert list(request.iter_errors(case)), "invalid request unexpectedly passed"
 
