@@ -49,9 +49,9 @@ impl StrictJsonValue {
             Self::Bool(value) => serde_json::Value::Bool(value),
             Self::Number(value) => serde_json::Value::Number(value),
             Self::String(value) => serde_json::Value::String(value),
-            Self::Array(values) => serde_json::Value::Array(
-                values.into_iter().map(Self::into_value).collect(),
-            ),
+            Self::Array(values) => {
+                serde_json::Value::Array(values.into_iter().map(Self::into_value).collect())
+            },
             Self::Object(values) => serde_json::Value::Object(values),
         }
     }
@@ -147,8 +147,7 @@ pub fn decode_model_task_match_request(
     deserializer
         .end()
         .map_err(|_| ModelTaskMatchBodyError::InvalidJson)?;
-    serde_json::from_value(strict.into_value())
-        .map_err(|_| ModelTaskMatchBodyError::InvalidRequest)
+    serde_json::from_value(strict.into_value()).map_err(|_| ModelTaskMatchBodyError::InvalidRequest)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -803,7 +802,10 @@ mod model_task_match_body_decoder_tests {
         let request = decode_model_task_match_request(VALID.as_bytes()).unwrap();
         assert_eq!(request.device_id, "device-01");
         assert_eq!(request.model_ref, "llama3.2:latest");
-        assert_eq!(request.requirements.minimum_context_length_tokens, Some(4096));
+        assert_eq!(
+            request.requirements.minimum_context_length_tokens,
+            Some(4096)
+        );
         assert_eq!(request.requirements.minimum_memory_mb, Some(2048));
     }
 
