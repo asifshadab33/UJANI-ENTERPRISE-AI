@@ -39,6 +39,21 @@ The inventory must keep separate counts for:
 
 A registered device is not automatically trusted, online or schedulable. Sleeping/offline/stale devices must not be counted as schedulable. Remaining RAM and CPU must already account for OS reserve and active leases exactly once. Fleet-wide RAM must never be represented as one pooled memory allocation for a single model.
 
+## Database tenant-context trust boundary
+
+PostgreSQL row-level security that compares a row's tenant ID with a custom setting such as `current_setting('ujani.tenant_id', true)` is a tenant-selection mechanism, **not an authentication credential**. A database client that can execute arbitrary SQL in a session may be able to set that custom setting itself. Do not treat RLS based only on a caller-settable custom GUC as proof of tenant identity.
+
+The production hosting adapter must therefore enforce all of the following before any tenant-scoped query or consent/lease mutation:
+
+- End users, browsers, desktop clients and enrolled devices receive no PostgreSQL credentials and no direct database network path. Only the trusted service owns the runtime database credential.
+- Derive tenant identity from a verified server-side OIDC/session or device-authentication result; never from request headers, JSON fields, URL parameters or a browser-selected tenant.
+- Set tenant context transaction-locally inside the service-owned transaction, then execute the tenant-scoped query and clear/reset pooled connection state before reuse. Never allow a caller to supply raw SQL or connection/session setup.
+- Keep migration/owner/superuser credentials separate from the runtime service role. The runtime role must have only the minimum required privileges and must not be a table owner, superuser or RLS-bypass role.
+- Add adversarial PostgreSQL tests that connect using the runtime role, attempt to set another tenant's custom GUC, invoke every granted SECURITY DEFINER routine, and read/write cross-tenant rows. The test must prove that an untrusted principal cannot obtain the runtime credential or database connection in the first place; SQL-level RLS tests alone cannot prove that deployment boundary.
+- Test connection-pool reuse across alternating tenants, transaction rollback, cancellation and connection errors to prove tenant context cannot leak between requests.
+
+Until the authenticated service and these adversarial tests exist, consent writes, lease authority changes and remote execution remain disabled. This document records the required boundary; it does not claim that a production adapter or direct-database isolation has been implemented.
+
 ## Audit and operational controls
 
 Implement `OperatorAuditSink` using an append-only, durable, tamper-evident audit store. Each event should include authenticated tenant, subject, role, time and outcome. Do not include prompt content, tokens, secret values or raw telemetry. The current service fails closed if the audit sink cannot acknowledge the event.
