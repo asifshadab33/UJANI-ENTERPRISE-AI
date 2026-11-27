@@ -55,6 +55,7 @@
               "runtime_unavailable",
               "runtime_availability_unknown",
               "runtime_evidence_not_fresh",
+              "evidence_confidence_not_verified",
               "model_evidence_not_fresh",
               "runtime_network_scope_unknown",
               "capability_not_declared",
