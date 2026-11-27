@@ -1198,7 +1198,10 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(response.schema_version, OPERATOR_MODEL_TASK_MATCH_RESPONSE_SCHEMA_VERSION);
+        assert_eq!(
+            response.schema_version,
+            OPERATOR_MODEL_TASK_MATCH_RESPONSE_SCHEMA_VERSION
+        );
         assert_eq!(response.device_id, "device-01");
         assert_eq!(response.inventory_generated_at_unix_ms, 1_000);
         assert_eq!(response.matched_at_unix_ms, 1_100);
@@ -1211,7 +1214,12 @@ mod tests {
         let mut value = inventory();
         assert_eq!(
             match_model_to_task_for_authenticated_device(
-                &value, "device-02", "qwen2.5:7b", &requirements(), 1_100, 10_000
+                &value,
+                "device-02",
+                "qwen2.5:7b",
+                &requirements(),
+                1_100,
+                10_000
             ),
             Err(ModelInventoryValidationError::DeviceBindingMismatch)
         );
@@ -1219,7 +1227,12 @@ mod tests {
         value.device_ref = None;
         assert_eq!(
             match_model_to_task_for_authenticated_device(
-                &value, "device-01", "qwen2.5:7b", &requirements(), 1_100, 10_000
+                &value,
+                "device-01",
+                "qwen2.5:7b",
+                &requirements(),
+                1_100,
+                10_000
             ),
             Err(ModelInventoryValidationError::DeviceBindingMismatch)
         );
@@ -1244,7 +1257,10 @@ mod tests {
         .unwrap();
 
         assert_eq!(response.result.status, ModelFitStatus::Unknown);
-        assert!(response.result.reasons.contains(&ModelFitReason::EvidenceConfidenceNotVerified));
+        assert!(response
+            .result
+            .reasons
+            .contains(&ModelFitReason::EvidenceConfidenceNotVerified));
     }
 
     #[test]
@@ -1252,7 +1268,12 @@ mod tests {
         let value = inventory();
         assert_eq!(
             match_model_to_task_for_authenticated_device(
-                &value, "../device-01", "qwen2.5:7b", &requirements(), 1_100, 10_000
+                &value,
+                "../device-01",
+                "qwen2.5:7b",
+                &requirements(),
+                1_100,
+                10_000
             ),
             Err(ModelInventoryValidationError::DeviceBindingMismatch)
         );
