@@ -1,6 +1,6 @@
 # UJANI Consolidated Master Backlog — Enterprise AI
 
-**Live reconciliation:** 27 November 2026. Default branch `main` at `76092417f3df1046c2e544df13384c3fe31d20c4`. This is an implementation/evidence snapshot, not a production-readiness claim.
+**Live reconciliation:** 27 November 2026. Default branch `main` at `01c13c492fe16f42e60c08bafde4d064156157ba`. This is an implementation/evidence snapshot, not a production-readiness claim.
 
 ## Product boundary
 
@@ -36,7 +36,7 @@
 
 ### Repository baselines
 
-- Enterprise `main`: `76092417f3df1046c2e544df13384c3fe31d20c4`.
+- Enterprise `main`: `01c13c492fe16f42e60c08bafde4d064156157ba`.
 - Public AI `main`: `b21f37b6967f466ae9c3fad29fba16091c7990e5`.
 - The Public and Enterprise workstreams retain independent product/runtime boundaries. The shared task-contract and model-inventory schemas were previously verified byte-identical; do not change shared wire contracts without coordinated cross-repository review.
 
@@ -44,7 +44,7 @@
 
 - PR [#362](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/pull/362) merged at `dd3b8f9806130b9f910f94e671a64010f6c59228`. It binds authenticated device identity and the exact signed telemetry sample in a private-field envelope. It is a type-safety boundary only; it does not implement the HTTP host, SQLx repository, transaction wrapper or OIDC.
 - PR [#361](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/pull/361) merged at `fecc8d65ee30d5c90b53f026e4e3da3d89dbaa05`. It adds a schema-aligned, tenant-authorized read-only model-task-match response with inventory/match timestamps, bounded unique reasons, safe integer checks and verified-only positive compatibility. Reported/estimated evidence cannot produce a positive compatibility claim.
-- PR [#342](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/pull/342) is closed as superseded by merged #369. PR [#343](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/pull/343) remains draft; its process-local mutex does not solve cross-process key lifecycle races and it must not be merged until protected inter-process locking and recovery tests exist. PR [#344](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/pull/344) remains the stale stacked draft; refreshed PR #370 carries its lease-revocation work onto current main.
+- PR [#342](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/pull/342) is closed as superseded by merged #369. PR [#343](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/pull/343) has been refreshed onto current main and now adds an explicit protected lock-file path plus OS-level inter-process `File::lock`, Unix permission checks and a child-process serialization regression. Its exact-head cross-platform tests, CodeQL and RustSec are still pending; it is not merged. The host must supply one private shared lock path and Windows ACLs. PR [#344](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/pull/344) is closed as superseded by merged #370.
 - Merged Enterprise PRs #357–#360 are included in `main` at the baseline above.
 
 - PR [#364](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/pull/364) merged at `3c6cf99679277eee21935ae7e080f4b848bf8e55`. It adds PostgreSQL regressions for tenant-context reset after rollback/commit and tenant A-to-B switching on a reused backend connection. This validates transaction-local context lifecycle; a caller-settable custom GUC is still not authentication.
@@ -52,7 +52,7 @@
 - PR [#366](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/pull/366) merged at `b26b701b79879e284da00a123c92cdc2eb0f180b`; PR [#368](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/pull/368) merged at `855deb4c0234341d03056e89f363ae6bfe3cbaa1` and refactored the request decoder to reuse the crate-wide recursive strict JSON parser. The 8 KiB decoder rejects duplicate keys, unknown fields, malformed/trailing bodies and oversize payloads. This is transport-neutral request validation, not an HTTP listener or authentication boundary.
 
 - PR [#369](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/pull/369) merged at `76092417f3df1046c2e544df13384c3fe31d20c4`. Migration `0018` persists organisation + individual/device Collective Defence consent, generation/CAS, revocation, idempotency and append-only audit. Database persistence assumes the authenticated host verifies signed consent and binds identity before calling the SQL functions.
-- PR [#370](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/pull/370) is open for migration `0019` to revoke active leases/reservations immediately when device trust, owner binding, dual consent, approval or key generation changes. It has exact-head PostgreSQL 16 and cross-platform checks in progress; database revocation does not stop a remote process by itself.
+- PR [#370](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/pull/370) merged at `01c13c492fe16f42e60c08bafde4d064156157ba`. Migration `0019` revokes active leases/reservations immediately when device trust, owner binding, dual consent, approval or key generation changes; PostgreSQL 16, cross-platform, CodeQL and RustSec checks passed. Database revocation does not stop a remote process by itself.
 ### P0 authenticated-service boundary
 
 The next implementation owner is the authenticated service/database boundary tracked by [#90](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/issues/90) and [#353](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/issues/353).
@@ -60,7 +60,7 @@ The next implementation owner is the authenticated service/database boundary tra
 Existing foundations:
 - Transport-independent operator session/service core and tenant-scoped read projection.
 - Device-signed telemetry intake preflight, monotonic generation/sequence checks and exact-body binding.
-- PostgreSQL migrations `0001`–`0018`, including transactional telemetry, lease lifecycle, lock-order correction and durable dual-party consent. Migration `0019` is under review in PR #370.
+- PostgreSQL migrations `0001`–`0019`, including transactional telemetry, lease lifecycle, lock-order correction, durable dual-party consent and device-authority lease revocation.
 - Existing PostgreSQL CI tests cover RLS with correctly set tenant context, unset-context denial, cross-tenant row filtering, append-only audit, and transaction-local context reset on a reused session.
 
 Still missing:
