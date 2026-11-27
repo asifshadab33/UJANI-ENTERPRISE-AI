@@ -4193,7 +4193,7 @@ mod operator_model_task_match_response_v1_tests {
         value.device_id = "../tenant-b-device".into();
         assert_eq!(
             value.to_json_v1(),
-            Err(OperatorModelTaskMatchResponseError::ResponseTooLarge)
+            Err(OperatorModelTaskMatchResponseError::InvalidResponse)
         );
 
         let mut value = sample(ModelFitStatus::Unknown);
