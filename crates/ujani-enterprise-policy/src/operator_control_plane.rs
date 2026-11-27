@@ -2277,7 +2277,7 @@ mod tests {
     ) -> OperatorModelInventoryView {
         let evidence = OperatorInventoryEvidence {
             source: "runtime_metadata".into(),
-            confidence: "reported".into(),
+            confidence: "verified".into(),
             observed_at_unix_ms: Some(generated_at_unix_ms),
         };
         OperatorModelInventoryView {
@@ -3298,6 +3298,13 @@ mod tests {
         unknown_verified.models[0].evidence.confidence = "verified".into();
         overview.model_inventory.push(unknown_verified);
         assert!(validate_overview(&overview, 100_000).is_err());
+
+        // Reported metadata remains valid to display, but it cannot be used as verified evidence.
+        overview.model_inventory.clear();
+        let mut reported = sample_model_inventory("device-1", 100_000);
+        reported.models[0].evidence.confidence = "reported".into();
+        overview.model_inventory.push(reported);
+        assert!(validate_overview(&overview, 100_000).is_ok());
 
         overview.model_inventory.clear();
         let mut evidence_after_snapshot = sample_model_inventory("device-1", 100_000);
