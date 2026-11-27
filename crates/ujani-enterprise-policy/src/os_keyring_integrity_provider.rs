@@ -526,9 +526,9 @@ mod tests {
     use ed25519_dalek::SigningKey;
     use std::{
         collections::HashMap,
+        io::{BufRead, BufReader, Write},
         path::PathBuf,
         process::{Command, Stdio},
-        io::{BufRead, BufReader, Write},
         sync::{
             atomic::{AtomicBool, AtomicU64, Ordering},
             Arc,
@@ -971,9 +971,8 @@ mod tests {
         };
         let parent_pid = parent_pid.parse::<u32>().unwrap();
         let test_id = test_id.parse::<u64>().unwrap();
-        let directory = std::env::temp_dir().join(format!(
-            "ujani-keyring-process-lock-{parent_pid}-{test_id}"
-        ));
+        let directory =
+            std::env::temp_dir().join(format!("ujani-keyring-process-lock-{parent_pid}-{test_id}"));
         let provider = KeyringIntegrityKeyProvider::new(
             MemorySecretStore::default(),
             directory.join("lifecycle.lock"),
@@ -1027,7 +1026,10 @@ mod tests {
                 break;
             }
         }
-        assert!(ready, "keyring lock child did not acquire its lifecycle lock");
+        assert!(
+            ready,
+            "keyring lock child did not acquire its lifecycle lock"
+        );
 
         let provider = Arc::new(
             KeyringIntegrityKeyProvider::new(MemorySecretStore::default(), lock_path).unwrap(),
