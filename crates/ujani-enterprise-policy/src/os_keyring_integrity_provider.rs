@@ -109,7 +109,9 @@ fn validate_lifecycle_lock_path(path: &Path) -> Result<(), IntegrityKeyProviderE
     {
         return Err(IntegrityKeyProviderError::Unavailable);
     }
-    let parent = path.parent().ok_or(IntegrityKeyProviderError::Unavailable)?;
+    let parent = path
+        .parent()
+        .ok_or(IntegrityKeyProviderError::Unavailable)?;
     let parent_metadata =
         fs::symlink_metadata(parent).map_err(|_| IntegrityKeyProviderError::Unavailable)?;
     if !parent_metadata.is_dir() || parent_metadata.file_type().is_symlink() {
@@ -203,10 +205,7 @@ impl KeyringIntegrityKeyProvider<OsKeyringSecretStore> {
 impl<S: ProtectedSecretStore> KeyringIntegrityKeyProvider<S> {
     /// Create a provider bound to a shared, protected inter-process lifecycle lock.
     /// The parent directory must already exist and be private to the service identity.
-    pub fn new(
-        store: S,
-        lock_path: impl Into<PathBuf>,
-    ) -> Result<Self, IntegrityKeyProviderError> {
+    pub fn new(store: S, lock_path: impl Into<PathBuf>) -> Result<Self, IntegrityKeyProviderError> {
         let lock_path = lock_path.into();
         validate_lifecycle_lock_path(&lock_path)?;
         Ok(Self { store, lock_path })
@@ -578,11 +577,7 @@ mod tests {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(
-                &directory,
-                std::fs::Permissions::from_mode(0o700),
-            )
-            .unwrap();
+            std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700)).unwrap();
         }
         directory.join("lifecycle.lock")
     }
@@ -941,11 +936,9 @@ mod tests {
 
     #[test]
     fn operator_sessions_use_the_separate_protected_key_purpose() {
-        let provider = KeyringIntegrityKeyProvider::new(
-            MemorySecretStore::default(),
-            test_lock_path(),
-        )
-        .unwrap();
+        let provider =
+            KeyringIntegrityKeyProvider::new(MemorySecretStore::default(), test_lock_path())
+                .unwrap();
         provider
             .provision_key(IntegrityKeyPurpose::OperatorSession, "session-v1")
             .unwrap();
@@ -983,7 +976,10 @@ mod tests {
         std::fs::write(&ready_path, b"locked").unwrap();
         let deadline = Instant::now() + Duration::from_secs(10);
         while !Path::new(&release_path).exists() {
-            assert!(Instant::now() < deadline, "parent did not release the inter-process lock");
+            assert!(
+                Instant::now() < deadline,
+                "parent did not release the inter-process lock"
+            );
             thread::sleep(Duration::from_millis(10));
         }
     }
@@ -1008,7 +1004,10 @@ mod tests {
             if let Some(status) = child.try_wait().unwrap() {
                 panic!("keyring lock child exited before acquiring the lock: {status}");
             }
-            assert!(Instant::now() < deadline, "keyring lock child did not become ready");
+            assert!(
+                Instant::now() < deadline,
+                "keyring lock child did not become ready"
+            );
             thread::sleep(Duration::from_millis(10));
         }
 
@@ -1028,7 +1027,10 @@ mod tests {
         std::fs::write(&release_path, b"release").unwrap();
         waiter.join().unwrap();
         let child_status = child.wait().unwrap();
-        assert!(child_status.success(), "keyring lock child failed: {child_status}");
+        assert!(
+            child_status.success(),
+            "keyring lock child failed: {child_status}"
+        );
         assert!(
             blocked_while_child_held_lock,
             "a second process entered the key lifecycle while the first held the lock"
@@ -1059,7 +1061,10 @@ mod tests {
             MemorySecretStore::default(),
             directory.join("lifecycle.lock"),
         );
-        assert!(matches!(result, Err(IntegrityKeyProviderError::Unavailable)));
+        assert!(matches!(
+            result,
+            Err(IntegrityKeyProviderError::Unavailable)
+        ));
     }
 
     #[test]
