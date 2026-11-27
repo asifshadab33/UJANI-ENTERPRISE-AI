@@ -1,6 +1,6 @@
 # UJANI Consolidated Master Backlog — Enterprise AI
 
-**Live reconciliation:** 27 November 2026. Default branch `main` at `01c13c492fe16f42e60c08bafde4d064156157ba`. This is an implementation/evidence snapshot, not a production-readiness claim.
+**Live reconciliation:** 27 November 2026. Default branch `main` at `7c00d11860e04b29e93552234ee2562304418727`. This is an implementation/evidence snapshot, not a production-readiness claim.
 
 ## Product boundary
 
@@ -36,9 +36,19 @@
 
 ### Repository baselines
 
-- Enterprise `main`: `01c13c492fe16f42e60c08bafde4d064156157ba`.
-- Public AI `main`: `b21f37b6967f466ae9c3fad29fba16091c7990e5`.
-- The Public and Enterprise workstreams retain independent product/runtime boundaries. The shared task-contract and model-inventory schemas were previously verified byte-identical; do not change shared wire contracts without coordinated cross-repository review.
+- Enterprise `main`: `7c00d11860e04b29e93552234ee2562304418727`.
+- Public AI `main`: `cd0ed2736a90df491f6762acaff92ee17b509086`.
+- The Public and Enterprise workstreams retain independent product/runtime boundaries. Their RFC copies have different product-specific compatibility/status snapshots, but the normative `Proposed language-neutral v1 message set` section (8,443 bytes) and `Normative security and compatibility rules` section (6,186 bytes) are byte-identical. The RFC text is not the wire authority; the following current-main schema and test artifacts are the pinned compatibility evidence:
+
+| Shared artifact | Git blob SHA on both current main branches |
+|---|---|
+| Personal-to-Enterprise task-contract v1 schema | `566a0d72babd58636a3ef40e55b5c44168776522` |
+| Model/runtime inventory v2 schema | `6f1d5a6dd3b70a4b5e78203a20a67b71ed35a489` |
+| Consent-binding v1 test vector | `593348db1bfc1d7d03844aa6e2de826f0852c39b` |
+| Model/runtime inventory v2 shared test vector | `7d3bc7b6990d0572547e2312a97032f5486539a8` |
+| Personal-to-Enterprise task-contract validator | `d24164e6a69912f7504043440116b2f18a2a0f0c` |
+
+The native Rust adapters remain independently maintained in each product. Do not introduce a third runtime dependency or change shared wire contracts without coordinated cross-repository review.
 
 ### Enterprise PR evidence
 
@@ -74,8 +84,13 @@ Still missing:
 
 ### Public AI / shared-protocol status
 
-Public `main` is `b21f37b6967f466ae9c3fad29fba16091c7990e5`. PR [#461](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/pull/461) (late task progress listener cleanup) merged at `380585bb496975d39204a61c318897f7cbe499ab`; PR [#462](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/pull/462) (updater-feed first-publication handling) merged at `46c281bb8d5082a860ccb1bc3432fde7ac577fed`. PR [#469](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/pull/469) merged at `b21f37b6967f466ae9c3fad29fba16091c7990e5` with native-confirmation denial-before-side-effect tests. PR [#470](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/pull/470) remains open for fresh post-picker capability revalidation before selected-folder traversal. No shared schema change is proposed by this Enterprise pass.
+Public `main` is `cd0ed2736a90df491f6762acaff92ee17b509086`. PR [#461](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/pull/461) (late task progress listener cleanup) merged at `380585bb496975d39204a61c318897f7cbe499ab`; PR [#462](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/pull/462) (updater-feed first-publication handling) merged at `46c281bb8d5082a860ccb1bc3432fde7ac577fed`. PR [#469](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/pull/469) merged at `b21f37b6967f466ae9c3fad29fba16091c7990e5` with native-confirmation denial-before-side-effect tests; PR [#470](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/pull/470) merged at `e6ca323fec61a947c382886a5c0d0607ebb689f0`, adding fresh post-picker capability revalidation before selected-folder traversal.
 
+PR [#473](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/pull/473) merged at `a0d2dd5e15983eb967e4f91928fc066e20ba2467` (head `b8c94bc5557d4d40063a99bc7e0f8be42f1b7d5c`). It moves synchronous host-memory probes onto Tokio's blocking pool, checks cancellation after the probe, and maps worker panics to errors. Exact-head CI `46022728312`, Android compatibility `46022728230`, CodeQL `46022728245`, installer-size audit `46022728240` and security watch `46022728286` passed; unsigned preview installers were skipped by design.
+
+PR [#472](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/pull/472) is closed unmerged as superseded by PR [#474](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/pull/474). PR #474 merged at `cd0ed2736a90df491f6762acaff92ee17b509086` (exact head `c19dec2402f86e29ddece95432bc412abac9d208`). It adds a first-layer native IPC origin/window gate, explicit command-policy classification and CI parity checking between Tauri's registered command names and the policy registry. Exact-head CI `46023154586`, Android compatibility `46023154540`, CodeQL `46023154665`, installer-size audit `46023154551` and security watch `46023154589` passed; unsigned preview installers were skipped by design. The policy labels do not replace handler-level consent, capability, path-scope or external-transfer enforcement, and the native-origin gate does not complete the entire IPC authorization matrix.
+
+Post-merge Public main CI `46034270356` and CodeQL `46034270571` were still queued/running at this snapshot on `cd0ed2736a90df491f6762acaff92ee17b509086`; do not treat the new main head as post-merge verified until those exact-head runs finish. No shared schema change is proposed by this integration pass.
 ## Evidence labels and completion rules
 
 - **Implemented:** code exists; no test claim implied.
