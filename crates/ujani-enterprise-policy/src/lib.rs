@@ -36,6 +36,8 @@ pub mod integrity_key_provider;
 pub mod model_inventory_v2_ingest;
 /// Enterprise-only v2 inventory consent/privacy preflight; not a full schema validator or persistence grant.
 pub mod model_inventory_v2_preflight;
+/// OS-native protected key custody adapter for Enterprise durable state.
+pub mod os_keyring_integrity_provider;
 pub use fleet_capacity::{
     summarize_fleet_capacity, DeviceCapacity, FleetCapacityError, FleetCapacitySummary,
 };
