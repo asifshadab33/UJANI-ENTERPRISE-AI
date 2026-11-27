@@ -85,6 +85,8 @@ def main() -> None:
     case = copy.deepcopy(valid_responses[0]); case["result"]["reasons"] = ["context_length_too_short"]; invalid_responses.append(case)
     case = copy.deepcopy(valid_responses[0]); case["result"]["status"] = "incompatible"; invalid_responses.append(case)
     case = copy.deepcopy(valid_responses[0]); case["result"]["reasons"] = ["not_a_reason"]; invalid_responses.append(case)
+    case = copy.deepcopy(valid_responses[0]); case["result"]["model_ref"] = "../private/model"; invalid_responses.append(case)
+    case = copy.deepcopy(valid_responses[0]); case["result"]["reasons"] = ["capability_evidence_unknown", "capability_evidence_unknown"]; invalid_responses.append(case)
     case = copy.deepcopy(valid_responses[0]); case["schema_version"] = 2; invalid_responses.append(case)
     case = copy.deepcopy(valid_responses[0]); del case["matched_at_unix_ms"]; invalid_responses.append(case)
     case = copy.deepcopy(valid_responses[0]); del case["inventory_generated_at_unix_ms"]; invalid_responses.append(case)
