@@ -991,9 +991,8 @@ mod tests {
         static NEXT: AtomicU64 = AtomicU64::new(1);
         let test_id = NEXT.fetch_add(1, Ordering::Relaxed);
         let parent_pid = std::process::id();
-        let directory = std::env::temp_dir().join(format!(
-            "ujani-keyring-process-lock-{parent_pid}-{test_id}"
-        ));
+        let directory =
+            std::env::temp_dir().join(format!("ujani-keyring-process-lock-{parent_pid}-{test_id}"));
         std::fs::create_dir(&directory).unwrap();
         #[cfg(unix)]
         {
