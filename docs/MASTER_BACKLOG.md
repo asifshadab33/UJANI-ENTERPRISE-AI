@@ -1,6 +1,6 @@
 # UJANI Consolidated Master Backlog — Enterprise AI
 
-**Live reconciliation:** 27 November 2026. Default branch `main` at `7c00d11860e04b29e93552234ee2562304418727`. This is an implementation/evidence snapshot, not a production-readiness claim.
+**Live reconciliation:** 27 November 2026. Default branch `main` at `da1f994843d650d61aaa6059852da7fc2dfcb453`. This is an implementation/evidence snapshot, not a production-readiness claim.
 
 ## Product boundary
 
@@ -36,7 +36,7 @@
 
 ### Repository baselines
 
-- Enterprise `main`: `7c00d11860e04b29e93552234ee2562304418727`.
+- Enterprise `main`: `da1f994843d650d61aaa6059852da7fc2dfcb453`.
 - Public AI `main`: `cd0ed2736a90df491f6762acaff92ee17b509086`.
 - The Public and Enterprise workstreams retain independent product/runtime boundaries. Their RFC copies have different product-specific compatibility/status snapshots, but the normative `Proposed language-neutral v1 message set` section (8,443 bytes) and `Normative security and compatibility rules` section (6,186 bytes) are byte-identical. The RFC text is not the wire authority; the following current-main schema and test artifacts are the pinned compatibility evidence:
 
