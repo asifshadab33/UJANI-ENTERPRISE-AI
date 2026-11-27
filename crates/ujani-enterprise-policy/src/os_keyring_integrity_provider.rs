@@ -527,7 +527,8 @@ mod tests {
     use std::{
         collections::HashMap,
         path::PathBuf,
-        process::Command,
+        process::{Command, Stdio},
+        io::{BufRead, BufReader, Write},
         sync::{
             atomic::{AtomicBool, AtomicU64, Ordering},
             Arc,
@@ -962,54 +963,71 @@ mod tests {
 
     #[test]
     fn keyring_lock_child_process() {
-        let Ok(lock_path) = std::env::var("UJANI_KEYRING_TEST_LOCK_PATH") else {
+        let (Ok(parent_pid), Ok(test_id)) = (
+            std::env::var("UJANI_KEYRING_TEST_PARENT_PID"),
+            std::env::var("UJANI_KEYRING_TEST_ID"),
+        ) else {
             return;
         };
-        let ready_path = std::env::var("UJANI_KEYRING_TEST_READY_PATH").unwrap();
-        let release_path = std::env::var("UJANI_KEYRING_TEST_RELEASE_PATH").unwrap();
+        let parent_pid = parent_pid.parse::<u32>().unwrap();
+        let test_id = test_id.parse::<u64>().unwrap();
+        let directory = std::env::temp_dir().join(format!(
+            "ujani-keyring-process-lock-{parent_pid}-{test_id}"
+        ));
         let provider = KeyringIntegrityKeyProvider::new(
             MemorySecretStore::default(),
-            PathBuf::from(lock_path),
+            directory.join("lifecycle.lock"),
         )
         .unwrap();
         let _guard = provider.lock().unwrap();
-        std::fs::write(&ready_path, b"locked").unwrap();
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while !Path::new(&release_path).exists() {
-            assert!(
-                Instant::now() < deadline,
-                "parent did not release the inter-process lock"
-            );
-            thread::sleep(Duration::from_millis(10));
-        }
+        println!("UJANI_KEYRING_LOCK_READY");
+        std::io::stdout().flush().unwrap();
+        let mut release = String::new();
+        std::io::stdin().read_line(&mut release).unwrap();
+        assert_eq!(release.trim(), "release");
     }
 
     #[test]
     fn keyring_lifecycle_lock_serializes_independent_processes() {
-        let lock_path = test_lock_path();
-        let directory = lock_path.parent().unwrap();
-        let ready_path = directory.join("child-ready");
-        let release_path = directory.join("child-release");
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        let test_id = NEXT.fetch_add(1, Ordering::Relaxed);
+        let parent_pid = std::process::id();
+        let directory = std::env::temp_dir().join(format!(
+            "ujani-keyring-process-lock-{parent_pid}-{test_id}"
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let lock_path = directory.join("lifecycle.lock");
         let mut child = Command::new(std::env::current_exe().unwrap())
             .arg("keyring_lock_child_process")
             .arg("--nocapture")
-            .env("UJANI_KEYRING_TEST_LOCK_PATH", &lock_path)
-            .env("UJANI_KEYRING_TEST_READY_PATH", &ready_path)
-            .env("UJANI_KEYRING_TEST_RELEASE_PATH", &release_path)
+            .env("UJANI_KEYRING_TEST_PARENT_PID", parent_pid.to_string())
+            .env("UJANI_KEYRING_TEST_ID", test_id.to_string())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
             .spawn()
             .unwrap();
 
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while !ready_path.exists() {
-            if let Some(status) = child.try_wait().unwrap() {
-                panic!("keyring lock child exited before acquiring the lock: {status}");
+        let stdout = child.stdout.take().unwrap();
+        let mut reader = BufReader::new(stdout);
+        let mut ready = false;
+        loop {
+            let mut line = String::new();
+            let bytes = reader.read_line(&mut line).unwrap();
+            if bytes == 0 {
+                break;
             }
-            assert!(
-                Instant::now() < deadline,
-                "keyring lock child did not become ready"
-            );
-            thread::sleep(Duration::from_millis(10));
+            if line.trim() == "UJANI_KEYRING_LOCK_READY" {
+                ready = true;
+                break;
+            }
         }
+        assert!(ready, "keyring lock child did not acquire its lifecycle lock");
 
         let provider = Arc::new(
             KeyringIntegrityKeyProvider::new(MemorySecretStore::default(), lock_path).unwrap(),
@@ -1024,7 +1042,10 @@ mod tests {
         thread::sleep(Duration::from_millis(150));
         let blocked_while_child_held_lock = !acquired.load(Ordering::SeqCst);
 
-        std::fs::write(&release_path, b"release").unwrap();
+        let mut child_stdin = child.stdin.take().unwrap();
+        child_stdin.write_all(b"release\n").unwrap();
+        child_stdin.flush().unwrap();
+        drop(child_stdin);
         waiter.join().unwrap();
         let child_status = child.wait().unwrap();
         assert!(
@@ -1036,6 +1057,7 @@ mod tests {
             "a second process entered the key lifecycle while the first held the lock"
         );
         assert!(acquired.load(Ordering::SeqCst));
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[cfg(unix)]
