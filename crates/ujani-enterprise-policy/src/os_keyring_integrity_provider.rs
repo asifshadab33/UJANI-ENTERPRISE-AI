@@ -185,6 +185,17 @@ impl<S> std::fmt::Debug for KeyringIntegrityKeyProvider<S> {
     }
 }
 
+impl KeyringIntegrityKeyProvider<OsKeyringSecretStore> {
+    /// Construct the production platform-keyring adapter with the service's
+    /// protected lifecycle-lock file path. The parent directory must already
+    /// exist and be private to the service identity.
+    pub fn new_os_keyring(
+        lock_path: impl Into<PathBuf>,
+    ) -> Result<Self, IntegrityKeyProviderError> {
+        Self::new(OsKeyringSecretStore, lock_path)
+    }
+}
+
 impl<S: ProtectedSecretStore> KeyringIntegrityKeyProvider<S> {
     /// Create a provider bound to a shared, protected inter-process lifecycle lock.
     /// The parent directory must already exist and be private to the service identity.
