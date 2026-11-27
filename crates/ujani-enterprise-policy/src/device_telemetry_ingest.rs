@@ -2,12 +2,13 @@
 //!
 //! This module validates the version-2 privacy-minimised telemetry body, including
 //! the reservation watermark bound to the exact signed bytes, verifies the
-//! enrolled device key without consuming replay state, and rechecks owner consent. The caller must pass
-//! the returned tenant/device identity and sample fields to the tenant-scoped
-//! database transaction; this module does not persist samples or consume replay
-//! state. The database transaction must atomically claim the authenticated
-//! request ID and enforce monotonic generation/sequence, trust and dual-consent
-//! checks with the sample write, so a failed database commit does not burn a nonce.
+//! enrolled device key without consuming replay state, and rechecks owner consent. The caller
+//! receives one authenticated envelope binding the verified tenant/device principal to
+//! the validated sample. This module does not persist samples or consume replay state.
+//! A host adapter must pass that envelope into one tenant-scoped database transaction,
+//! which atomically claims the authenticated request ID and enforces monotonic
+//! generation/sequence, trust and dual-consent checks with the sample write, so a failed
+//! database commit does not burn a nonce.
 
 use crate::device_trust::durable::{DurableDeviceRegistry, DurableDeviceTrustError};
 use crate::device_trust::{
@@ -88,6 +89,39 @@ pub struct DeviceTelemetrySample {
     pub power_state: DevicePowerState,
     pub participation_state: DeviceParticipationState,
     pub payload_digest: [u8; 32],
+}
+
+/// An authenticated device principal and its exact, signature-validated telemetry sample.
+///
+/// Fields are private so a host cannot accidentally pair a sample with a different
+/// tenant/device principal. The database adapter should derive identity and replay fields
+/// from `request()` and measurements from `sample()` within the same transaction. This
+/// envelope is not persistence or an authorization decision by itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthenticatedDeviceTelemetry {
+    request: AuthenticatedDeviceRequest,
+    sample: DeviceTelemetrySample,
+}
+impl AuthenticatedDeviceTelemetry {
+    /// Tenant identity established by the enrolled device key, never by the request body.
+    pub fn tenant_id(&self) -> &str {
+        self.request.tenant_id()
+    }
+
+    /// Device identity established by the enrolled device key.
+    pub fn device_id(&self) -> &str {
+        self.request.device_id()
+    }
+
+    /// Verified request claims, including key generation and replay request ID.
+    pub fn request(&self) -> &AuthenticatedDeviceRequest {
+        &self.request
+    }
+
+    /// Bounded telemetry values parsed from the exact signed request body.
+    pub fn sample(&self) -> &DeviceTelemetrySample {
+        &self.sample
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -212,7 +246,7 @@ pub fn authenticate_device_telemetry_request(
     signed_request: &SignedDeviceRequest,
     raw_body: &[u8],
     now_unix_ms: u64,
-) -> Result<(AuthenticatedDeviceRequest, DeviceTelemetrySample), DeviceTelemetryIntakeError> {
+) -> Result<AuthenticatedDeviceTelemetry, DeviceTelemetryIntakeError> {
     let route = resolve_route(method, path).ok_or(DeviceTelemetryIntakeError::InvalidRoute)?;
     if route.route != OperatorHttpRoute::DeviceTelemetry {
         return Err(DeviceTelemetryIntakeError::InvalidRoute);
@@ -255,7 +289,10 @@ pub fn authenticate_device_telemetry_request(
     if !owner_opted_in {
         return Err(DeviceTelemetryIntakeError::OwnerConsentMissing);
     }
-    Ok((authenticated, sample))
+    Ok(AuthenticatedDeviceTelemetry {
+        request: authenticated,
+        sample,
+    })
 }
 
 /// Convert trust-store errors to a generic intake failure without leaking
@@ -463,6 +500,37 @@ mod tests {
             second.is_ok(),
             "verification must not consume the database-owned replay claim"
         );
+        drop(registry);
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn authenticated_intake_returns_a_single_bound_tenant_device_sample_envelope() {
+        let (registry, device, directory, unique_id) = signed_registry(true);
+        let raw = body(250);
+        let signed = signed_telemetry_request(&device, &raw, "device-1", unique_id);
+
+        let accepted = authenticate_device_telemetry_request(
+            &registry,
+            HttpMethod::Post,
+            "/api/v1/devices/device-1/telemetry",
+            &signed,
+            &raw,
+            250,
+        )
+        .unwrap();
+        let expected_digest: [u8; 32] = Sha256::digest(&raw).into();
+
+        assert_eq!(accepted.tenant_id(), "tenant-a");
+        assert_eq!(accepted.device_id(), "device-1");
+        assert_eq!(accepted.request().tenant_id(), accepted.tenant_id());
+        assert_eq!(accepted.request().device_id(), accepted.device_id());
+        assert_eq!(accepted.request().key_generation(), 1);
+        assert_eq!(accepted.sample().device_id, accepted.device_id());
+        assert_eq!(accepted.sample().generation, 2);
+        assert_eq!(accepted.sample().sequence, 7);
+        assert_eq!(accepted.sample().payload_digest, expected_digest);
+
         drop(registry);
         let _ = std::fs::remove_dir_all(directory);
     }
