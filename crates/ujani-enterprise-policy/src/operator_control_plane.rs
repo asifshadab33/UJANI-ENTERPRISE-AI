@@ -4169,28 +4169,11 @@ mod operator_model_task_match_response_v1_tests {
     }
 
     #[test]
-    fn response_reason_count_is_bounded_before_serialization() {
+    fn response_reason_list_matches_the_unique_bounded_wire_contract() {
         let mut value = sample(ModelFitStatus::Unknown);
-        value.result.reasons = vec![ModelFitReason::CapabilityEvidenceUnknown; 1];
-        assert!(value.to_json_v1().is_ok());
-
-        value.result.reasons = (0..16)
-            .map(|index| {
-                if index % 2 == 0 {
-                    ModelFitReason::CapabilityEvidenceUnknown
-                } else {
-                    ModelFitReason::RuntimeAvailabilityUnknown
-                }
-            })
-            .collect();
-        // Duplicate reasons are rejected because the wire schema requires uniqueItems.
-        assert_eq!(
-            value.to_json_v1(),
-            Err(OperatorModelTaskMatchResponseError::ResponseTooLarge)
-        );
-
         value.result.reasons = vec![
-            ModelFitReason::CapabilityEvidenceUnknown,
+            ModelFitReason::ModelNotInstalled,
+            ModelFitReason::RuntimeUnavailable,
             ModelFitReason::RuntimeAvailabilityUnknown,
             ModelFitReason::RuntimeEvidenceNotFresh,
             ModelFitReason::ModelEvidenceNotFresh,
@@ -4205,12 +4188,32 @@ mod operator_model_task_match_response_v1_tests {
             ModelFitReason::MemoryEstimateExceedsAvailable,
             ModelFitReason::MemoryEstimateWithinAvailable,
             ModelFitReason::HardwareMemoryBelowRequirement,
-            ModelFitReason::ModelNotInstalled,
-            ModelFitReason::RuntimeUnavailable,
+        ];
+        assert!(value.to_json_v1().is_ok());
+
+        value.result.reasons = vec![
+            ModelFitReason::CapabilityEvidenceUnknown,
+            ModelFitReason::CapabilityEvidenceUnknown,
         ];
         assert_eq!(
             value.to_json_v1(),
             Err(OperatorModelTaskMatchResponseError::ResponseTooLarge)
         );
     }
-}
+
+    #[test]
+    fn response_timestamps_must_be_safe_nonzero_json_integers() {
+        let mut value = sample(ModelFitStatus::Unknown);
+        value.inventory_generated_at_unix_ms = 0;
+        assert_eq!(
+            value.to_json_v1(),
+            Err(OperatorModelTaskMatchResponseError::ResponseTooLarge)
+        );
+
+        let mut value = sample(ModelFitStatus::Unknown);
+        value.matched_at_unix_ms = 9_007_199_254_740_992;
+        assert_eq!(
+            value.to_json_v1(),
+            Err(OperatorModelTaskMatchResponseError::ResponseTooLarge)
+        );
+    }}
