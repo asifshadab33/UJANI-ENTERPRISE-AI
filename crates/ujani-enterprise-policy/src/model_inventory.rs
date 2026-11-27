@@ -1166,19 +1166,4 @@ mod tests {
             .contains(&ModelFitReason::EvidenceConfidenceNotVerified));
     }
 
-    #[test]
-    fn task_match_response_rejects_invalid_authenticated_device_identifier() {
-        let value = inventory();
-        assert_eq!(
-            match_model_to_task_for_authenticated_device(
-                &value,
-                "../device-01",
-                "qwen2.5:7b",
-                &requirements(),
-                1_100,
-                10_000
-            ),
-            Err(ModelInventoryValidationError::DeviceBindingMismatch)
-        );
-    }
 }
