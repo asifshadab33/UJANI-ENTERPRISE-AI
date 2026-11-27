@@ -85,6 +85,9 @@ impl std::error::Error for IntegrityKeyProviderError {}
 /// retire the previous key only after the host has verified that no retained
 /// state references it. Provision/activate/retire must be authorised by the
 /// host's administrator policy; this trait is not an operator authorization API.
+/// Persistent implementations must serialize provision/activate/retire across
+/// independent processes, not only threads. A process-local mutex is insufficient
+/// because separate service instances may share the same OS credential store.
 pub trait IntegrityKeyProvider: Send + Sync {
     /// Provision a new key inside protected custody. No secret bytes are returned.
     fn provision_key(
