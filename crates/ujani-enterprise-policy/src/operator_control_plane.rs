@@ -12,8 +12,8 @@ use crate::connector_contract::{
 };
 use crate::model_inventory::{
     match_model_to_task, AcceleratorInfo, AcceleratorKind, EvidenceConfidence, EvidenceSource,
-    ModelAvailability, ModelCapability, ModelCapabilityMatch, ModelEvidence, ModelHardware,
-    ModelFitStatus, ModelInfo, ModelInventoryValidationError, ModelPlatform, ModelRuntimeInventory,
+    ModelAvailability, ModelCapability, ModelCapabilityMatch, ModelEvidence, ModelFitStatus,
+    ModelHardware, ModelInfo, ModelInventoryValidationError, ModelPlatform, ModelRuntimeInventory,
     ModelTaskRequirements, PrivacyDeclaration, RuntimeAvailability, RuntimeInfo,
     RuntimeNetworkScope,
 };
@@ -680,8 +680,8 @@ impl OperatorModelTaskMatch {
         let incompatible = self.result.status == ModelFitStatus::Incompatible;
         let invalid_status_reasons = (compatible && !self.result.reasons.is_empty())
             || (incompatible && self.result.reasons.is_empty());
-        let unverified_compatible = compatible
-            && self.result.evidence_confidence != EvidenceConfidence::Verified;
+        let unverified_compatible =
+            compatible && self.result.evidence_confidence != EvidenceConfidence::Verified;
         if !valid_identifier(&self.device_id, MAX_DEVICE_ID_BYTES)
             || !valid_bounded_text(model_ref, MAX_MODEL_REF_BYTES)
             || model_ref.starts_with('/')
@@ -695,9 +695,12 @@ impl OperatorModelTaskMatch {
             || self.matched_at_unix_ms == 0
             || self.inventory_generated_at_unix_ms > MAX_SAFE_JSON_INTEGER
             || self.matched_at_unix_ms > MAX_SAFE_JSON_INTEGER
-            || self.result.reasons.iter().enumerate().any(|(index, reason)| {
-                self.result.reasons[..index].contains(reason)
-            })
+            || self
+                .result
+                .reasons
+                .iter()
+                .enumerate()
+                .any(|(index, reason)| self.result.reasons[..index].contains(reason))
             || invalid_status_reasons
             || unverified_compatible
         {
