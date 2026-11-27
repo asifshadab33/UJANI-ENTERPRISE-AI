@@ -29,10 +29,10 @@ pub enum ModelTaskMatchBodyError {
     InvalidRequest,
 }
 
-/// Decode a bounded task-match request before service authorization.
-/// Duplicate keys are rejected at every nesting level; unknown fields are rejected
-/// by the typed request DTO. The HTTP host must still authenticate the session,
-/// enforce the route role and audit the service result before returning a response.
+/// Decode a bounded task-match request before tenant-bound service dispatch.
+/// The HTTP host should authenticate the route and enforce its body limit before
+/// calling this parser; duplicate keys are rejected recursively and unknown fields
+/// are rejected by the typed request DTO. The host must enforce role and audit outcome.
 pub fn decode_model_task_match_request(
     raw_body: &[u8],
 ) -> Result<OperatorModelTaskMatchRequest, ModelTaskMatchBodyError> {
