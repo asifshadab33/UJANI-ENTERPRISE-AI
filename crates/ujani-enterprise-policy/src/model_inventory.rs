@@ -1165,5 +1165,4 @@ mod tests {
             .reasons
             .contains(&ModelFitReason::EvidenceConfidenceNotVerified));
     }
-
 }
