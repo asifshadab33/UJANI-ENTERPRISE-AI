@@ -1,6 +1,6 @@
 # UJANI Consolidated Master Backlog — Enterprise AI
 
-**Live reconciliation:** 27 November 2026. Default branch `main` at `4bec791e661e4cff21c2569d6c5346592dd574d5`. This is an implementation/evidence snapshot, not a production-readiness claim.
+**Live reconciliation:** 27 November 2026. Default branch `main` at `dd3b8f9806130b9f910f94e671a64010f6c59228`. This is an implementation/evidence snapshot, not a production-readiness claim.
 
 ## Product boundary
 
@@ -36,16 +36,20 @@
 
 ### Repository baselines
 
-- Enterprise `main`: `4bec791e661e4cff21c2569d6c5346592dd574d5`.
+- Enterprise `main`: `dd3b8f9806130b9f910f94e671a64010f6c59228`.
 - Public AI `main`: `9163675e55494346740a4e37e226b9bfbc24cd36`.
 - The Public and Enterprise workstreams retain independent product/runtime boundaries. The shared task-contract and model-inventory schemas were previously verified byte-identical; do not change shared wire contracts without coordinated cross-repository review.
 
 ### Enterprise PR evidence
 
-- PR [#362](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/pull/362), head `c5b4f9049befb88709979260e72303baa4641d42`, is an open draft. It binds authenticated device identity and the exact signed telemetry sample in a private-field envelope. Hosted CI, PostgreSQL tenant-isolation, CodeQL, RustSec and security-change checks passed on that exact head. It is a type-safety boundary only; it does not implement the HTTP host, SQLx repository, transaction wrapper or OIDC.
-- PR [#361](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/pull/361), head `660d7e793e2ee94da75f3e7e3f4ea0ba273ae8cd`, remains draft. Enterprise CI failed on Ubuntu, macOS and Windows in two positive model-match fixtures because they use `reported` evidence where a verified positive control is required. Do not merge until fixtures and negative-evidence cases are corrected and exact-head CI passes.
+- PR [#362](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/pull/362) merged at `dd3b8f9806130b9f910f94e671a64010f6c59228`. It binds authenticated device identity and the exact signed telemetry sample in a private-field envelope. It is a type-safety boundary only; it does not implement the HTTP host, SQLx repository, transaction wrapper or OIDC.
+- PR [#361](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/pull/361), current head `45f18cbae81626f06035a0a95ba26a23813d3e04`, remains draft. The original positive fixtures were corrected to use verified evidence; reported evidence now has an explicit negative-confidence regression. The read-only response is bound to device identity and inventory/match timestamps, and its Rust serializer now enforces the response-schema invariants. Exact-head hosted checks are still required before merge.
 - PRs [#342](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/pull/342), [#343](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/pull/343) and [#344](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/pull/344) remain draft/stale. #344 is stacked on #342. Their older green runs do not transfer to refreshed heads. #343's process-local mutex does not solve cross-process key lifecycle races.
 - Merged Enterprise PRs #357–#360 are included in `main` at the baseline above.
+
+- PR [#364](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/pull/364) merged at `3c6cf99679277eee21935ae7e080f4b848bf8e55`. It adds PostgreSQL regressions for tenant-context reset after rollback/commit and tenant A-to-B switching on a reused backend connection. This validates transaction-local context lifecycle; a caller-settable custom GUC is still not authentication.
+- PR [#363](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/pull/363) merged at `78c54b7dd1822e42d68666a0670507d72639bbe2` and reconciles the master backlog.
+- PR [#366](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/pull/366) is open for a bounded, duplicate-key-rejecting decoder for the operator model-task-match request. It is a transport-neutral decoder only, not an HTTP listener or authentication boundary.
 
 ### P0 authenticated-service boundary
 
