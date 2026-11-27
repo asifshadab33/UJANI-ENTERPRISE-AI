@@ -675,8 +675,21 @@ impl OperatorModelTaskMatch {
         const MAX_SAFE_JSON_INTEGER: u64 = 9_007_199_254_740_991;
         // Check the public DTO fields before serialization so an arbitrary caller
         // cannot allocate an oversized string/vector merely to be rejected later.
+        let model_ref = &self.result.model_ref;
+        let compatible = self.result.status == ModelFitStatus::Compatible;
+        let incompatible = self.result.status == ModelFitStatus::Incompatible;
+        let invalid_status_reasons = (compatible && !self.result.reasons.is_empty())
+            || (incompatible && self.result.reasons.is_empty());
+        let unverified_compatible = compatible
+            && self.result.evidence_confidence != EvidenceConfidence::Verified;
         if self.device_id.len() > MAX_DEVICE_ID_BYTES
-            || self.result.model_ref.len() > MAX_MODEL_REF_BYTES
+            || !valid_bounded_text(model_ref, MAX_MODEL_REF_BYTES)
+            || model_ref.starts_with('/')
+            || model_ref.ends_with('/')
+            || model_ref.contains("..")
+            || model_ref.contains('\\')
+            || model_ref.contains("://")
+            || contains_local_path(model_ref)
             || self.result.reasons.len() > MAX_REASON_COUNT
             || self.inventory_generated_at_unix_ms == 0
             || self.matched_at_unix_ms == 0
@@ -685,6 +698,8 @@ impl OperatorModelTaskMatch {
             || self.result.reasons.iter().enumerate().any(|(index, reason)| {
                 self.result.reasons[..index].contains(reason)
             })
+            || invalid_status_reasons
+            || unverified_compatible
         {
             return Err(OperatorModelTaskMatchResponseError::ResponseTooLarge);
         }
@@ -4102,6 +4117,17 @@ mod operator_model_task_match_response_v1_tests {
     use crate::model_inventory::{ModelFitReason, ModelFitStatus};
 
     fn sample(status: ModelFitStatus) -> OperatorModelTaskMatch {
+        let (reasons, evidence_confidence) = match status {
+            ModelFitStatus::Compatible => (vec![], EvidenceConfidence::Verified),
+            ModelFitStatus::Incompatible => (
+                vec![ModelFitReason::HardwareMemoryBelowRequirement],
+                EvidenceConfidence::Reported,
+            ),
+            ModelFitStatus::Unknown => (
+                vec![ModelFitReason::CapabilityEvidenceUnknown],
+                EvidenceConfidence::Unknown,
+            ),
+        };
         OperatorModelTaskMatch {
             device_id: "device-1".into(),
             inventory_generated_at_unix_ms: 1_000,
@@ -4109,8 +4135,8 @@ mod operator_model_task_match_response_v1_tests {
             result: ModelCapabilityMatch {
                 model_ref: "model-local-1".into(),
                 status,
-                reasons: vec![ModelFitReason::CapabilityEvidenceUnknown],
-                evidence_confidence: EvidenceConfidence::Unknown,
+                reasons,
+                evidence_confidence,
             },
         }
     }
@@ -4199,6 +4225,30 @@ mod operator_model_task_match_response_v1_tests {
             ModelFitReason::CapabilityEvidenceUnknown,
             ModelFitReason::CapabilityEvidenceUnknown,
         ];
+        assert_eq!(
+            value.to_json_v1(),
+            Err(OperatorModelTaskMatchResponseError::ResponseTooLarge)
+        );
+    }
+
+    #[test]
+    fn response_rejects_model_paths_and_status_evidence_inconsistency() {
+        let mut value = sample(ModelFitStatus::Unknown);
+        value.result.model_ref = "../local/model".into();
+        assert_eq!(
+            value.to_json_v1(),
+            Err(OperatorModelTaskMatchResponseError::ResponseTooLarge)
+        );
+
+        let mut value = sample(ModelFitStatus::Compatible);
+        value.result.evidence_confidence = EvidenceConfidence::Reported;
+        assert_eq!(
+            value.to_json_v1(),
+            Err(OperatorModelTaskMatchResponseError::ResponseTooLarge)
+        );
+
+        let mut value = sample(ModelFitStatus::Incompatible);
+        value.result.reasons.clear();
         assert_eq!(
             value.to_json_v1(),
             Err(OperatorModelTaskMatchResponseError::ResponseTooLarge)
