@@ -449,6 +449,7 @@ pub enum ModelFitReason {
     RuntimeAvailabilityUnknown,
     RuntimeEvidenceNotFresh,
     ModelEvidenceNotFresh,
+    EvidenceConfidenceNotVerified,
     RuntimeNetworkScopeUnknown,
     CapabilityNotDeclared,
     CapabilityEvidenceUnknown,
@@ -529,6 +530,14 @@ pub fn match_model_to_task(
     }
     if !evidence_is_usable(&model.evidence, now_unix_ms, max_age_ms) {
         reasons.push(ModelFitReason::ModelEvidenceNotFresh);
+        unknown = true;
+    }
+    // Reported evidence may support a known mismatch, but cannot by itself
+    // justify a positive compatibility claim in the operator response.
+    if runtime.evidence.confidence != EvidenceConfidence::Verified
+        || model.evidence.confidence != EvidenceConfidence::Verified
+    {
+        reasons.push(ModelFitReason::EvidenceConfidenceNotVerified);
         unknown = true;
     }
     if runtime.network_scope == RuntimeNetworkScope::Unknown {
@@ -1131,5 +1140,27 @@ mod tests {
             }
         });
         assert!(serde_json::from_value::<ModelRuntimeInventory>(v2_shape).is_err());
+    }
+    #[test]
+    fn reported_evidence_never_produces_a_positive_compatibility_claim() {
+        let mut value = inventory();
+        value.models[0].evidence.confidence = EvidenceConfidence::Reported;
+        let result = match_model_to_task(
+            &value,
+            "qwen2.5:7b",
+            &ModelTaskRequirements {
+                required_capabilities: vec![ModelCapability::Chat],
+                minimum_context_length_tokens: None,
+                minimum_memory_mb: None,
+            },
+            1_100,
+            10_000,
+        )
+        .unwrap();
+
+        assert_eq!(result.status, ModelFitStatus::Unknown);
+        assert!(result
+            .reasons
+            .contains(&ModelFitReason::EvidenceConfidenceNotVerified));
     }
 }

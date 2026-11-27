@@ -4,9 +4,17 @@
   "title": "UJANI Operator Model Task Match Response v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "device_id", "result"],
+  "required": [
+    "schema_version",
+    "device_id",
+    "inventory_generated_at_unix_ms",
+    "matched_at_unix_ms",
+    "result"
+  ],
   "properties": {
-    "schema_version": { "const": 1 },
+    "schema_version": {
+      "const": 1
+    },
     "device_id": {
       "type": "string",
       "minLength": 1,
@@ -16,13 +24,30 @@
     "result": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["model_ref", "status", "reasons", "evidence_confidence"],
+      "required": [
+        "model_ref",
+        "status",
+        "reasons",
+        "evidence_confidence"
+      ],
       "properties": {
-        "model_ref": { "type": "string", "minLength": 1, "maxLength": 160 },
-        "status": { "type": "string", "enum": ["compatible", "incompatible", "unknown"] },
+        "model_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "pattern": "^(?=.*\\S)(?!/)(?!.*\\.\\.)(?!.*\\\\)(?!.*://)(?!.*[/]$)[^\\u0000-\\u001F]{1,160}$"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "compatible",
+            "incompatible",
+            "unknown"
+          ]
+        },
         "reasons": {
           "type": "array",
-          "maxItems": 32,
+          "maxItems": 16,
           "items": {
             "type": "string",
             "enum": [
@@ -30,6 +55,7 @@
               "runtime_unavailable",
               "runtime_availability_unknown",
               "runtime_evidence_not_fresh",
+              "evidence_confidence_not_verified",
               "model_evidence_not_fresh",
               "runtime_network_scope_unknown",
               "capability_not_declared",
@@ -42,11 +68,17 @@
               "memory_estimate_within_available",
               "hardware_memory_below_requirement"
             ]
-          }
+          },
+          "uniqueItems": true
         },
         "evidence_confidence": {
           "type": "string",
-          "enum": ["verified", "reported", "estimated", "unknown"]
+          "enum": [
+            "verified",
+            "reported",
+            "estimated",
+            "unknown"
+          ]
         }
       },
       "allOf": [
@@ -54,36 +86,76 @@
           "if": {
             "properties": {
               "evidence_confidence": {
-                "enum": ["reported", "estimated", "unknown"]
+                "enum": [
+                  "reported",
+                  "estimated",
+                  "unknown"
+                ]
               }
             },
-            "required": ["evidence_confidence"]
+            "required": [
+              "evidence_confidence"
+            ]
           },
           "then": {
             "properties": {
-              "status": { "not": { "const": "compatible" } }
+              "status": {
+                "not": {
+                  "const": "compatible"
+                }
+              }
             }
           }
         },
         {
           "if": {
-            "properties": { "status": { "const": "compatible" } },
-            "required": ["status"]
+            "properties": {
+              "status": {
+                "const": "compatible"
+              }
+            },
+            "required": [
+              "status"
+            ]
           },
           "then": {
-            "properties": { "reasons": { "maxItems": 0 } }
+            "properties": {
+              "reasons": {
+                "maxItems": 0
+              }
+            }
           }
         },
         {
           "if": {
-            "properties": { "status": { "const": "incompatible" } },
-            "required": ["status"]
+            "properties": {
+              "status": {
+                "const": "incompatible"
+              }
+            },
+            "required": [
+              "status"
+            ]
           },
           "then": {
-            "properties": { "reasons": { "minItems": 1 } }
+            "properties": {
+              "reasons": {
+                "minItems": 1
+              }
+            }
           }
         }
       ]
+    },
+    "inventory_generated_at_unix_ms": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "matched_at_unix_ms": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
     }
   }
 }
