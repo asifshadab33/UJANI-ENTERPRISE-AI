@@ -62,12 +62,15 @@ def main() -> None:
 
     valid_responses = [
         {"schema_version": 1, "device_id": "lab-device-01",
+         "inventory_generated_at_unix_ms": 1764200000000, "matched_at_unix_ms": 1764200000100,
          "result": {"model_ref": "llama3.2:latest", "status": "compatible",
                     "reasons": [], "evidence_confidence": "verified"}},
         {"schema_version": 1, "device_id": "lab-device-01",
+         "inventory_generated_at_unix_ms": 1764200000000, "matched_at_unix_ms": 1764200000100,
          "result": {"model_ref": "llama3.2:latest", "status": "incompatible",
                     "reasons": ["context_length_too_short"], "evidence_confidence": "reported"}},
         {"schema_version": 1, "device_id": "lab-device-01",
+         "inventory_generated_at_unix_ms": 1764200000000, "matched_at_unix_ms": 1764200000100,
          "result": {"model_ref": "llama3.2:latest", "status": "unknown",
                     "reasons": ["capability_evidence_unknown"], "evidence_confidence": "unknown"}},
     ]
@@ -83,6 +86,9 @@ def main() -> None:
     case = copy.deepcopy(valid_responses[0]); case["result"]["status"] = "incompatible"; invalid_responses.append(case)
     case = copy.deepcopy(valid_responses[0]); case["result"]["reasons"] = ["not_a_reason"]; invalid_responses.append(case)
     case = copy.deepcopy(valid_responses[0]); case["schema_version"] = 2; invalid_responses.append(case)
+    case = copy.deepcopy(valid_responses[0]); del case["matched_at_unix_ms"]; invalid_responses.append(case)
+    case = copy.deepcopy(valid_responses[0]); del case["inventory_generated_at_unix_ms"]; invalid_responses.append(case)
+    case = copy.deepcopy(valid_responses[0]); case["matched_at_unix_ms"] = 9007199254740992; invalid_responses.append(case)
     for case in invalid_responses:
         assert list(response.iter_errors(case)), "invalid response unexpectedly passed"
 
