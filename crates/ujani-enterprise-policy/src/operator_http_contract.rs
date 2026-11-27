@@ -10,9 +10,6 @@
 use super::operator_control_plane::{
     OperatorModelTaskMatchRequest, OperatorRole, OperatorServiceError,
 };
-use serde::de::{self, MapAccess, SeqAccess, Visitor};
-use serde::{Deserialize, Deserializer};
-use std::fmt;
 
 pub const MAX_OPERATOR_ACTION_BODY_BYTES: usize = 16 * 1024;
 pub const MAX_DEVICE_ENROLLMENT_BODY_BYTES: usize = 64 * 1024;
@@ -32,101 +29,6 @@ pub enum ModelTaskMatchBodyError {
     InvalidRequest,
 }
 
-#[derive(Debug)]
-enum StrictJsonValue {
-    Null,
-    Bool(bool),
-    Number(serde_json::Number),
-    String(String),
-    Array(Vec<StrictJsonValue>),
-    Object(serde_json::Map<String, serde_json::Value>),
-}
-
-impl StrictJsonValue {
-    fn into_value(self) -> serde_json::Value {
-        match self {
-            Self::Null => serde_json::Value::Null,
-            Self::Bool(value) => serde_json::Value::Bool(value),
-            Self::Number(value) => serde_json::Value::Number(value),
-            Self::String(value) => serde_json::Value::String(value),
-            Self::Array(values) => {
-                serde_json::Value::Array(values.into_iter().map(Self::into_value).collect())
-            }
-            Self::Object(values) => serde_json::Value::Object(values),
-        }
-    }
-}
-
-struct StrictJsonVisitor;
-
-impl<'de> Visitor<'de> for StrictJsonVisitor {
-    type Value = StrictJsonValue;
-
-    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("a JSON value with no duplicate object keys")
-    }
-
-    fn visit_unit<E>(self) -> Result<Self::Value, E> {
-        Ok(StrictJsonValue::Null)
-    }
-
-    fn visit_none<E>(self) -> Result<Self::Value, E> {
-        Ok(StrictJsonValue::Null)
-    }
-
-    fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E> {
-        Ok(StrictJsonValue::Bool(value))
-    }
-
-    fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E> {
-        Ok(StrictJsonValue::Number(value.into()))
-    }
-
-    fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E> {
-        Ok(StrictJsonValue::Number(value.into()))
-    }
-
-    fn visit_f64<E: de::Error>(self, value: f64) -> Result<Self::Value, E> {
-        serde_json::Number::from_f64(value)
-            .map(StrictJsonValue::Number)
-            .ok_or_else(|| E::custom("non-finite JSON number"))
-    }
-
-    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E> {
-        Ok(StrictJsonValue::String(value.to_owned()))
-    }
-
-    fn visit_string<E>(self, value: String) -> Result<Self::Value, E> {
-        Ok(StrictJsonValue::String(value))
-    }
-
-    fn visit_seq<A: SeqAccess<'de>>(self, mut sequence: A) -> Result<Self::Value, A::Error> {
-        let mut values = Vec::new();
-        while let Some(value) = sequence.next_element::<StrictJsonValue>()? {
-            values.push(value);
-        }
-        Ok(StrictJsonValue::Array(values))
-    }
-
-    fn visit_map<A: MapAccess<'de>>(self, mut object: A) -> Result<Self::Value, A::Error> {
-        let mut values = serde_json::Map::new();
-        while let Some(key) = object.next_key::<String>()? {
-            if values.contains_key(&key) {
-                return Err(de::Error::custom("duplicate JSON object key"));
-            }
-            let value = object.next_value::<StrictJsonValue>()?.into_value();
-            values.insert(key, value);
-        }
-        Ok(StrictJsonValue::Object(values))
-    }
-}
-
-impl<'de> Deserialize<'de> for StrictJsonValue {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        deserializer.deserialize_any(StrictJsonVisitor)
-    }
-}
-
 /// Decode a bounded task-match request before service authorization.
 /// Duplicate keys are rejected at every nesting level; unknown fields are rejected
 /// by the typed request DTO. The HTTP host must still authenticate the session,
@@ -141,13 +43,9 @@ pub fn decode_model_task_match_request(
         return Err(ModelTaskMatchBodyError::BodyTooLarge);
     }
 
-    let mut deserializer = serde_json::Deserializer::from_slice(raw_body);
-    let strict = StrictJsonValue::deserialize(&mut deserializer)
+    let strict_value = crate::strict_json::parse_strict_json(raw_body)
         .map_err(|_| ModelTaskMatchBodyError::InvalidJson)?;
-    deserializer
-        .end()
-        .map_err(|_| ModelTaskMatchBodyError::InvalidJson)?;
-    serde_json::from_value(strict.into_value()).map_err(|_| ModelTaskMatchBodyError::InvalidRequest)
+    serde_json::from_value(strict_value).map_err(|_| ModelTaskMatchBodyError::InvalidRequest)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
