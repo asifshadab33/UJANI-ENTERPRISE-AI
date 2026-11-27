@@ -807,9 +807,13 @@ mod tests {
         ));
         std::fs::create_dir_all(&directory).unwrap();
 
-        let provider = Arc::new(KeyringIntegrityKeyProvider::new(
-            MemorySecretStore::default(),
-        ));
+        let provider = Arc::new(
+            KeyringIntegrityKeyProvider::new(
+                MemorySecretStore::default(),
+                directory.join("keyring-lifecycle.lock"),
+            )
+            .unwrap(),
+        );
         provider
             .provision_key(
                 IntegrityKeyPurpose::DeviceTrustRegistry,
