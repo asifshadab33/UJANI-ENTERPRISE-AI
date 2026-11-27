@@ -1145,9 +1145,8 @@ mod tests {
     fn reported_evidence_never_produces_a_positive_compatibility_claim() {
         let mut value = inventory();
         value.models[0].evidence.confidence = EvidenceConfidence::Reported;
-        let response = match_model_to_task_for_authenticated_device(
+        let result = match_model_to_task(
             &value,
-            "device-01",
             "qwen2.5:7b",
             &ModelTaskRequirements {
                 required_capabilities: vec![ModelCapability::Chat],
@@ -1159,9 +1158,8 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(response.result.status, ModelFitStatus::Unknown);
-        assert!(response
-            .result
+        assert_eq!(result.status, ModelFitStatus::Unknown);
+        assert!(result
             .reasons
             .contains(&ModelFitReason::EvidenceConfidenceNotVerified));
     }
