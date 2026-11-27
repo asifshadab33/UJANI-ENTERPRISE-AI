@@ -38,7 +38,17 @@
 
 - Enterprise `main`: `7c00d11860e04b29e93552234ee2562304418727`.
 - Public AI `main`: `cd0ed2736a90df491f6762acaff92ee17b509086`.
-- The Public and Enterprise workstreams retain independent product/runtime boundaries. The shared task-contract and model-inventory schemas were previously verified byte-identical; do not change shared wire contracts without coordinated cross-repository review.
+- The Public and Enterprise workstreams retain independent product/runtime boundaries. Their RFC copies have different product-specific compatibility/status snapshots, but the normative `Proposed language-neutral v1 message set` section (8,443 bytes) and `Normative security and compatibility rules` section (6,186 bytes) are byte-identical. The RFC text is not the wire authority; the following current-main schema and test artifacts are the pinned compatibility evidence:
+
+| Shared artifact | Git blob SHA on both current main branches |
+|---|---|
+| Personal-to-Enterprise task-contract v1 schema | `566a0d72babd58636a3ef40e55b5c44168776522` |
+| Model/runtime inventory v2 schema | `6f1d5a6dd3b70a4b5e78203a20a67b71ed35a489` |
+| Consent-binding v1 test vector | `593348db1bfc1d7d03844aa6e2de826f0852c39b` |
+| Model/runtime inventory v2 shared test vector | `7d3bc7b6990d0572547e2312a97032f5486539a8` |
+| Personal-to-Enterprise task-contract validator | `d24164e6a69912f7504043440116b2f18a2a0f0c` |
+
+The native Rust adapters remain independently maintained in each product. Do not introduce a third runtime dependency or change shared wire contracts without coordinated cross-repository review.
 
 ### Enterprise PR evidence
 
