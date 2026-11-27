@@ -3433,6 +3433,8 @@ mod tests {
             .match_model_for_task(&token, "device-1", "llama3.2:latest", &requirements, 10_100)
             .unwrap();
         assert_eq!(result.device_id, "device-1");
+        assert_eq!(result.inventory_generated_at_unix_ms, 10_100);
+        assert_eq!(result.matched_at_unix_ms, 10_100);
         assert_eq!(
             result.result.status,
             crate::model_inventory::ModelFitStatus::Compatible
@@ -3967,6 +3969,8 @@ mod tests {
                 10_100,
             )
             .unwrap();
+        assert_eq!(tenant_b_match.inventory_generated_at_unix_ms, 10_100);
+        assert_eq!(tenant_b_match.matched_at_unix_ms, 10_100);
         assert_eq!(
             tenant_b_match.result.status,
             crate::model_inventory::ModelFitStatus::Compatible
