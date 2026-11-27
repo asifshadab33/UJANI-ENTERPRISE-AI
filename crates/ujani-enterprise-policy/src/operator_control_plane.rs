@@ -650,6 +650,7 @@ pub struct OperatorModelTaskMatchResponseV1 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OperatorModelTaskMatchResponseError {
     SerializationFailed,
+    InvalidResponse,
     ResponseTooLarge,
 }
 
@@ -682,6 +683,12 @@ impl OperatorModelTaskMatch {
             || (incompatible && self.result.reasons.is_empty());
         let unverified_compatible =
             compatible && self.result.evidence_confidence != EvidenceConfidence::Verified;
+        if self.device_id.len() > MAX_DEVICE_ID_BYTES
+            || model_ref.len() > MAX_MODEL_REF_BYTES
+            || self.result.reasons.len() > MAX_REASON_COUNT
+        {
+            return Err(OperatorModelTaskMatchResponseError::ResponseTooLarge);
+        }
         if !valid_identifier(&self.device_id, MAX_DEVICE_ID_BYTES)
             || !valid_bounded_text(model_ref, MAX_MODEL_REF_BYTES)
             || model_ref.starts_with('/')
@@ -690,7 +697,6 @@ impl OperatorModelTaskMatch {
             || model_ref.contains('\\')
             || model_ref.contains("://")
             || contains_local_path(model_ref)
-            || self.result.reasons.len() > MAX_REASON_COUNT
             || self.inventory_generated_at_unix_ms == 0
             || self.matched_at_unix_ms == 0
             || self.inventory_generated_at_unix_ms > MAX_SAFE_JSON_INTEGER
@@ -704,7 +710,7 @@ impl OperatorModelTaskMatch {
             || invalid_status_reasons
             || unverified_compatible
         {
-            return Err(OperatorModelTaskMatchResponseError::ResponseTooLarge);
+            return Err(OperatorModelTaskMatchResponseError::InvalidResponse);
         }
         let json = serde_json::to_string(&self.to_response_v1())
             .map_err(|_| OperatorModelTaskMatchResponseError::SerializationFailed)?;
@@ -4237,7 +4243,7 @@ mod operator_model_task_match_response_v1_tests {
         ];
         assert_eq!(
             value.to_json_v1(),
-            Err(OperatorModelTaskMatchResponseError::ResponseTooLarge)
+            Err(OperatorModelTaskMatchResponseError::InvalidResponse)
         );
     }
 
@@ -4247,21 +4253,21 @@ mod operator_model_task_match_response_v1_tests {
         value.result.model_ref = "../local/model".into();
         assert_eq!(
             value.to_json_v1(),
-            Err(OperatorModelTaskMatchResponseError::ResponseTooLarge)
+            Err(OperatorModelTaskMatchResponseError::InvalidResponse)
         );
 
         let mut value = sample(ModelFitStatus::Compatible);
         value.result.evidence_confidence = EvidenceConfidence::Reported;
         assert_eq!(
             value.to_json_v1(),
-            Err(OperatorModelTaskMatchResponseError::ResponseTooLarge)
+            Err(OperatorModelTaskMatchResponseError::InvalidResponse)
         );
 
         let mut value = sample(ModelFitStatus::Incompatible);
         value.result.reasons.clear();
         assert_eq!(
             value.to_json_v1(),
-            Err(OperatorModelTaskMatchResponseError::ResponseTooLarge)
+            Err(OperatorModelTaskMatchResponseError::InvalidResponse)
         );
     }
 
@@ -4271,14 +4277,14 @@ mod operator_model_task_match_response_v1_tests {
         value.inventory_generated_at_unix_ms = 0;
         assert_eq!(
             value.to_json_v1(),
-            Err(OperatorModelTaskMatchResponseError::ResponseTooLarge)
+            Err(OperatorModelTaskMatchResponseError::InvalidResponse)
         );
 
         let mut value = sample(ModelFitStatus::Unknown);
         value.matched_at_unix_ms = 9_007_199_254_740_992;
         assert_eq!(
             value.to_json_v1(),
-            Err(OperatorModelTaskMatchResponseError::ResponseTooLarge)
+            Err(OperatorModelTaskMatchResponseError::InvalidResponse)
         );
     }
 }
