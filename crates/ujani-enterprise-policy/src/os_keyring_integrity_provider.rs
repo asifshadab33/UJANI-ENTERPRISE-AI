@@ -31,7 +31,7 @@ use hmac::{Hmac, KeyInit as HmacKeyInit, Mac};
 use rand::{rngs::OsRng, RngCore};
 use sha2::Sha256;
 use std::fs::{self, File, OpenOptions};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 use zeroize::{Zeroize, Zeroizing};
 
@@ -102,7 +102,11 @@ struct KeyringOperationGuard {
 }
 
 fn validate_lifecycle_lock_path(path: &Path) -> Result<(), IntegrityKeyProviderError> {
-    if !path.is_absolute() {
+    if !path.is_absolute()
+        || path
+            .components()
+            .any(|component| matches!(component, Component::CurDir | Component::ParentDir))
+    {
         return Err(IntegrityKeyProviderError::Unavailable);
     }
     let parent = path.parent().ok_or(IntegrityKeyProviderError::Unavailable)?;
@@ -1030,6 +1034,32 @@ mod tests {
             "a second process entered the key lifecycle while the first held the lock"
         );
         assert!(acquired.load(Ordering::SeqCst));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn lifecycle_lock_file_is_created_with_owner_only_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let provider = provider();
+        let _guard = provider.lock().unwrap();
+        let metadata = std::fs::metadata(&provider.lock_path).unwrap();
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn lifecycle_lock_rejects_a_group_or_world_writable_parent() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = test_lock_path().parent().unwrap().join("unsafe-parent");
+        std::fs::create_dir(&directory).unwrap();
+        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o777)).unwrap();
+        let result = KeyringIntegrityKeyProvider::new(
+            MemorySecretStore::default(),
+            directory.join("lifecycle.lock"),
+        );
+        assert!(matches!(result, Err(IntegrityKeyProviderError::Unavailable)));
     }
 
     #[test]
