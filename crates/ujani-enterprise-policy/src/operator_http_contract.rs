@@ -51,7 +51,7 @@ impl StrictJsonValue {
             Self::String(value) => serde_json::Value::String(value),
             Self::Array(values) => {
                 serde_json::Value::Array(values.into_iter().map(Self::into_value).collect())
-            },
+            }
             Self::Object(values) => serde_json::Value::Object(values),
         }
     }
