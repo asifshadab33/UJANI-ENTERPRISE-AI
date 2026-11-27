@@ -199,7 +199,6 @@ pub enum ModelInventoryValidationError {
     DuplicateCapability,
     PrivacyViolation,
     ModelNotFound,
-    DeviceBindingMismatch,
     InvalidRequirements,
 }
 
@@ -622,49 +621,6 @@ pub fn match_model_to_task(
         status,
         reasons,
         evidence_confidence: model.evidence.confidence,
-    })
-}
-
-/// Version of the bounded, read-only operator task-match response contract.
-pub const OPERATOR_MODEL_TASK_MATCH_RESPONSE_SCHEMA_VERSION: u16 = 1;
-
-/// Minimal task-match projection. It intentionally excludes the submitted
-/// inventory, prompts, files, local paths, credentials and runtime connection data.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct OperatorModelTaskMatchResponseV1 {
-    pub schema_version: u16,
-    pub device_id: String,
-    pub inventory_generated_at_unix_ms: u64,
-    pub matched_at_unix_ms: u64,
-    pub result: ModelCapabilityMatch,
-}
-
-/// Bind the advisory matcher to the device authenticated by the hosting service.
-/// This check is not device authentication: callers must pass an identity already
-/// verified by the service and must enforce tenant scope before calling this API.
-/// Missing or mismatched inventory device bindings fail closed.
-pub fn match_model_to_task_for_authenticated_device(
-    inventory: &ModelRuntimeInventory,
-    authenticated_device_id: &str,
-    model_ref: &str,
-    requirements: &ModelTaskRequirements,
-    now_unix_ms: u64,
-    max_age_ms: u64,
-) -> Result<OperatorModelTaskMatchResponseV1, ModelInventoryValidationError> {
-    if !valid_identifier(authenticated_device_id, 128)
-        || inventory.device_ref.as_deref() != Some(authenticated_device_id)
-    {
-        return Err(ModelInventoryValidationError::DeviceBindingMismatch);
-    }
-
-    let result = match_model_to_task(inventory, model_ref, requirements, now_unix_ms, max_age_ms)?;
-    Ok(OperatorModelTaskMatchResponseV1 {
-        schema_version: OPERATOR_MODEL_TASK_MATCH_RESPONSE_SCHEMA_VERSION,
-        device_id: authenticated_device_id.to_owned(),
-        inventory_generated_at_unix_ms: inventory.generated_at_unix_ms,
-        matched_at_unix_ms: now_unix_ms,
-        result,
     })
 }
 
@@ -1185,59 +1141,6 @@ mod tests {
         });
         assert!(serde_json::from_value::<ModelRuntimeInventory>(v2_shape).is_err());
     }
-    #[test]
-    fn task_match_response_is_bound_to_the_authenticated_device() {
-        let value = inventory();
-        let response = match_model_to_task_for_authenticated_device(
-            &value,
-            "device-01",
-            "qwen2.5:7b",
-            &requirements(),
-            1_100,
-            10_000,
-        )
-        .unwrap();
-
-        assert_eq!(
-            response.schema_version,
-            OPERATOR_MODEL_TASK_MATCH_RESPONSE_SCHEMA_VERSION
-        );
-        assert_eq!(response.device_id, "device-01");
-        assert_eq!(response.inventory_generated_at_unix_ms, 1_000);
-        assert_eq!(response.matched_at_unix_ms, 1_100);
-        // Estimated memory fit remains advisory and must not become Compatible.
-        assert_eq!(response.result.status, ModelFitStatus::Unknown);
-    }
-
-    #[test]
-    fn task_match_response_rejects_missing_or_cross_device_inventory_binding() {
-        let mut value = inventory();
-        assert_eq!(
-            match_model_to_task_for_authenticated_device(
-                &value,
-                "device-02",
-                "qwen2.5:7b",
-                &requirements(),
-                1_100,
-                10_000
-            ),
-            Err(ModelInventoryValidationError::DeviceBindingMismatch)
-        );
-
-        value.device_ref = None;
-        assert_eq!(
-            match_model_to_task_for_authenticated_device(
-                &value,
-                "device-01",
-                "qwen2.5:7b",
-                &requirements(),
-                1_100,
-                10_000
-            ),
-            Err(ModelInventoryValidationError::DeviceBindingMismatch)
-        );
-    }
-
     #[test]
     fn reported_evidence_never_produces_a_positive_compatibility_claim() {
         let mut value = inventory();
