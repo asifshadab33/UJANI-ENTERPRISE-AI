@@ -22,7 +22,7 @@
 ## P1 — useful work continues without remote execution
 
 1. Wire authenticated model-inventory v2 intake and PostgreSQL admission to a full-schema-validating host adapter and tenant-scoped repository.
-2. Implement the bounded v2 operator read projection/API/GUI. Preserve evidence source/confidence/freshness/unknown states; never expose prompts or infer execution authority.
+2. Implement the bounded v2 operator read projection/API/GUI. The current `apps/operator-console` is a static HTML/CSS/JavaScript read-only preview, not a Vite app and not connected to a production service. Migrate it to Vite/TypeScript with a committed lockfile and CI build only after the authenticated HTTP host and typed live API exist. Preserve evidence source/confidence/freshness/unknown states; never expose prompts or infer execution authority.
 3. Keep model/task matching advisory; improve catalogue parity, fresh resource evidence and measured CPU/RAM/GPU/NPU/energy views.
 4. Continue read-only Security Centre provider freshness and consented event ingestion; no automated remediation.
 5. Continue operator accessibility, deployment, setup and troubleshooting.
