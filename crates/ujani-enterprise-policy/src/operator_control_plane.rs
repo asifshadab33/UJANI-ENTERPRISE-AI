@@ -3461,9 +3461,15 @@ mod tests {
         assert_eq!(result.matched_at_unix_ms, 10_100);
         assert_eq!(
             result.result.status,
-            crate::model_inventory::ModelFitStatus::Compatible
+            crate::model_inventory::ModelFitStatus::Unknown
         );
-        assert!(result.result.reasons.is_empty());
+        assert!(
+            result.result.reasons.contains(
+                &crate::model_inventory::ModelFitReason::EvidenceConfidenceNotVerified
+            ),
+            "unverified positive compatibility must remain unknown: {:?}",
+            result.result.reasons
+        );
         assert_eq!(
             audit.events.lock().unwrap()[0].outcome,
             OperatorAuditOutcome::ReadSucceeded
@@ -3979,8 +3985,9 @@ mod tests {
             vec!["tenant-a".to_string()]
         );
 
-        // Positive control: the same inventory is valid and compatible when
-        // accessed through a session issued to tenant B.
+        // Positive control: the same inventory is available only through a
+        // session issued to tenant B. Its task match remains conservative when
+        // evidence does not meet the verified-positive requirement.
         let tenant_b_token = auth()
             .mint_after_identity_verification(&claims("tenant-b"), 10_000)
             .unwrap();
@@ -3997,7 +4004,14 @@ mod tests {
         assert_eq!(tenant_b_match.matched_at_unix_ms, 10_100);
         assert_eq!(
             tenant_b_match.result.status,
-            crate::model_inventory::ModelFitStatus::Compatible
+            crate::model_inventory::ModelFitStatus::Unknown
+        );
+        assert!(
+            tenant_b_match.result.reasons.contains(
+                &crate::model_inventory::ModelFitReason::EvidenceConfidenceNotVerified
+            ),
+            "tenant-B positive control must not overstate unverified evidence: {:?}",
+            tenant_b_match.result.reasons
         );
         assert_eq!(
             *repo.loaded_tenants.lock().unwrap(),
