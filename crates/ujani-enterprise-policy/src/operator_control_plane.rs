@@ -682,7 +682,7 @@ impl OperatorModelTaskMatch {
             || (incompatible && self.result.reasons.is_empty());
         let unverified_compatible = compatible
             && self.result.evidence_confidence != EvidenceConfidence::Verified;
-        if self.device_id.len() > MAX_DEVICE_ID_BYTES
+        if !valid_identifier(&self.device_id, MAX_DEVICE_ID_BYTES)
             || !valid_bounded_text(model_ref, MAX_MODEL_REF_BYTES)
             || model_ref.starts_with('/')
             || model_ref.ends_with('/')
@@ -4175,6 +4175,13 @@ mod operator_model_task_match_response_v1_tests {
     fn response_identifier_limits_are_checked_before_serialization() {
         let mut value = sample(ModelFitStatus::Unknown);
         value.result.model_ref = "m".repeat(161);
+        assert_eq!(
+            value.to_json_v1(),
+            Err(OperatorModelTaskMatchResponseError::ResponseTooLarge)
+        );
+
+        let mut value = sample(ModelFitStatus::Unknown);
+        value.device_id = "../tenant-b-device".into();
         assert_eq!(
             value.to_json_v1(),
             Err(OperatorModelTaskMatchResponseError::ResponseTooLarge)
