@@ -335,3 +335,13 @@ jobs:
           PGUSER: postgres
           PGDATABASE: ujani_test
         run: bash scripts/test_owner_consent_admission_concurrency.sh
+      - name: Apply durable Collective Defence dual-consent migration
+        env:
+          PGPASSWORD: postgres
+        run: |
+          "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < migrations/0018_durable_collective_defence_consent.sql
+      - name: Verify durable Collective Defence dual opt-in, revocation, idempotency and audit chain
+        env:
+          PGPASSWORD: postgres
+        run: |
+          "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < scripts/test_durable_collective_defence_consent.sql
