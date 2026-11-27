@@ -1278,5 +1278,4 @@ mod tests {
             Err(ModelInventoryValidationError::DeviceBindingMismatch)
         );
     }
-
 }
