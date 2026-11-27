@@ -12,10 +12,12 @@
 //! Calls are synchronous and may block on the platform credential service; async
 //! hosts must execute them on a dedicated blocking pool, never on an async worker.
 //! All instances in this process share a mutex because some native stores do not
-//! guarantee ordering across concurrent calls. Provision/activate/retire must
-//! still be performed by one trusted administrative process at a time; the
-//! platform credential API does not expose a portable cross-process
-//! create-if-absent transaction.
+//! guarantee ordering across concurrent calls. Every provider also requires a
+//! lock file in the service's private state directory; an OS file lock serializes
+//! lifecycle operations across independent processes and is released on crash.
+//! The host must use the same protected lock path for every instance belonging to
+//! one service identity. Windows inherits the directory ACL; Unix directories
+//! must not be group/world writable and the lock file is created mode 0600.
 
 use crate::integrity_key_provider::{
     valid_integrity_key_id, IntegrityKeyProvider, IntegrityKeyProviderError, IntegrityKeyPurpose,
@@ -28,7 +30,9 @@ use aes_gcm::{
 use hmac::{Hmac, KeyInit as HmacKeyInit, Mac};
 use rand::{rngs::OsRng, RngCore};
 use sha2::Sha256;
-use std::sync::Mutex;
+use std::fs::{self, File, OpenOptions};
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard};
 use zeroize::{Zeroize, Zeroizing};
 
 const SERVICE_NAME: &str = "org.ujani.enterprise.integrity";
@@ -89,6 +93,87 @@ impl ProtectedSecretStore for OsKeyringSecretStore {
 /// protected secret store. MAC and AEAD use separate 256-bit subkeys.
 pub struct KeyringIntegrityKeyProvider<S = OsKeyringSecretStore> {
     store: S,
+    lock_path: PathBuf,
+}
+
+struct KeyringOperationGuard {
+    _file: File,
+    _process_guard: MutexGuard<'static, ()>,
+}
+
+fn validate_lifecycle_lock_path(path: &Path) -> Result<(), IntegrityKeyProviderError> {
+    if !path.is_absolute() {
+        return Err(IntegrityKeyProviderError::Unavailable);
+    }
+    let parent = path.parent().ok_or(IntegrityKeyProviderError::Unavailable)?;
+    let parent_metadata =
+        fs::symlink_metadata(parent).map_err(|_| IntegrityKeyProviderError::Unavailable)?;
+    if !parent_metadata.is_dir() || parent_metadata.file_type().is_symlink() {
+        return Err(IntegrityKeyProviderError::Unavailable);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if parent_metadata.permissions().mode() & 0o022 != 0 {
+            return Err(IntegrityKeyProviderError::Unavailable);
+        }
+    }
+    if let Ok(metadata) = fs::symlink_metadata(path) {
+        if !metadata.is_file() || metadata.file_type().is_symlink() {
+            return Err(IntegrityKeyProviderError::Unavailable);
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if metadata.permissions().mode() & 0o077 != 0 {
+                return Err(IntegrityKeyProviderError::Unavailable);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn open_lifecycle_lock_file(path: &Path) -> Result<File, IntegrityKeyProviderError> {
+    validate_lifecycle_lock_path(path)?;
+    let mut create_options = OpenOptions::new();
+    create_options.read(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        create_options.mode(0o600);
+    }
+    let file = match create_options.create_new(true).open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            let metadata =
+                fs::symlink_metadata(path).map_err(|_| IntegrityKeyProviderError::Unavailable)?;
+            if !metadata.is_file() || metadata.file_type().is_symlink() {
+                return Err(IntegrityKeyProviderError::Unavailable);
+            }
+            OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(path)
+                .map_err(|_| IntegrityKeyProviderError::Unavailable)?
+        }
+        Err(_) => return Err(IntegrityKeyProviderError::Unavailable),
+    };
+    let metadata = file
+        .metadata()
+        .map_err(|_| IntegrityKeyProviderError::Unavailable)?;
+    if !metadata.is_file() {
+        return Err(IntegrityKeyProviderError::Unavailable);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if metadata.permissions().mode() & 0o077 != 0 {
+            return Err(IntegrityKeyProviderError::Unavailable);
+        }
+    }
+    file.lock()
+        .map_err(|_| IntegrityKeyProviderError::Unavailable)?;
+    Ok(file)
 }
 
 impl<S> std::fmt::Debug for KeyringIntegrityKeyProvider<S> {
@@ -100,15 +185,16 @@ impl<S> std::fmt::Debug for KeyringIntegrityKeyProvider<S> {
     }
 }
 
-impl Default for KeyringIntegrityKeyProvider<OsKeyringSecretStore> {
-    fn default() -> Self {
-        Self::new(OsKeyringSecretStore)
-    }
-}
-
 impl<S: ProtectedSecretStore> KeyringIntegrityKeyProvider<S> {
-    pub fn new(store: S) -> Self {
-        Self { store }
+    /// Create a provider bound to a shared, protected inter-process lifecycle lock.
+    /// The parent directory must already exist and be private to the service identity.
+    pub fn new(
+        store: S,
+        lock_path: impl Into<PathBuf>,
+    ) -> Result<Self, IntegrityKeyProviderError> {
+        let lock_path = lock_path.into();
+        validate_lifecycle_lock_path(&lock_path)?;
+        Ok(Self { store, lock_path })
     }
 
     fn key_name(purpose: IntegrityKeyPurpose, key_id: &str) -> String {
@@ -123,10 +209,15 @@ impl<S: ProtectedSecretStore> KeyringIntegrityKeyProvider<S> {
         format!("v1:retired:{}:{key_id}", purpose.as_str())
     }
 
-    fn lock(&self) -> Result<std::sync::MutexGuard<'static, ()>, IntegrityKeyProviderError> {
-        KEYRING_OPERATION_LOCK
+    fn lock(&self) -> Result<KeyringOperationGuard, IntegrityKeyProviderError> {
+        let process_guard = KEYRING_OPERATION_LOCK
             .lock()
-            .map_err(|_| IntegrityKeyProviderError::LockPoisoned)
+            .map_err(|_| IntegrityKeyProviderError::LockPoisoned)?;
+        let file = open_lifecycle_lock_file(&self.lock_path)?;
+        Ok(KeyringOperationGuard {
+            _file: file,
+            _process_guard: process_guard,
+        })
     }
 
     fn is_retired(
