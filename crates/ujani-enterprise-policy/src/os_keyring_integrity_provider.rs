@@ -534,7 +534,7 @@ mod tests {
             Arc,
         },
         thread,
-        time::{Duration, Instant},
+        time::Duration,
     };
 
     #[derive(Default)]
