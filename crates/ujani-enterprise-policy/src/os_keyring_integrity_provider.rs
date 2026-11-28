@@ -567,6 +567,29 @@ mod tests {
         }
     }
 
+    /// Fault-injecting store for proving tombstone-first retirement remains fail-closed.
+    struct DeleteFailingSecretStore {
+        inner: MemorySecretStore,
+        fail_next_delete: AtomicBool,
+    }
+
+    impl ProtectedSecretStore for DeleteFailingSecretStore {
+        fn get(&self, name: &str) -> Result<Option<Vec<u8>>, IntegrityKeyProviderError> {
+            self.inner.get(name)
+        }
+
+        fn put(&self, name: &str, value: &[u8]) -> Result<(), IntegrityKeyProviderError> {
+            self.inner.put(name, value)
+        }
+
+        fn delete(&self, name: &str) -> Result<(), IntegrityKeyProviderError> {
+            if self.fail_next_delete.swap(false, Ordering::SeqCst) {
+                return Err(IntegrityKeyProviderError::Unavailable);
+            }
+            self.inner.delete(name)
+        }
+    }
+
     fn test_lock_path() -> PathBuf {
         static NEXT: AtomicU64 = AtomicU64::new(1);
         let directory = std::env::temp_dir().join(format!(
@@ -634,6 +657,52 @@ mod tests {
             context.check_active().map_err(|error| error.to_string())?;
             Ok(true)
         }
+    }
+
+    #[test]
+    fn retirement_delete_failure_keeps_key_revoked_and_retryable() {
+        let store = DeleteFailingSecretStore {
+            inner: MemorySecretStore::default(),
+            fail_next_delete: AtomicBool::new(true),
+        };
+        let provider = KeyringIntegrityKeyProvider::new(store, test_lock_path()).unwrap();
+        let purpose = IntegrityKeyPurpose::DeviceTrustRegistry;
+
+        provider.provision_key(purpose, "device-v1").unwrap();
+        provider.activate_key(purpose, "device-v1").unwrap();
+        let (old_key_id, old_envelope) = provider
+            .seal_active(purpose, b"registry-a", b"pre-retirement-state")
+            .unwrap();
+        assert_eq!(old_key_id, "device-v1");
+
+        provider.provision_key(purpose, "device-v2").unwrap();
+        provider.activate_key(purpose, "device-v2").unwrap();
+
+        // The tombstone write succeeds, but the credential deletion is faulted.
+        // The operation reports failure, yet the old key must already be unusable.
+        assert_eq!(
+            provider.retire_key(purpose, "device-v1"),
+            Err(IntegrityKeyProviderError::Unavailable)
+        );
+        assert_eq!(
+            provider.open_sealed(purpose, "device-v1", b"registry-a", &old_envelope),
+            Err(IntegrityKeyProviderError::UnknownKey)
+        );
+        assert_eq!(
+            provider.provision_key(purpose, "device-v1"),
+            Err(IntegrityKeyProviderError::KeyAlreadyExists)
+        );
+
+        // A later retry completes physical deletion without re-enabling the key.
+        provider.retire_key(purpose, "device-v1").unwrap();
+        assert_eq!(
+            provider.open_sealed(purpose, "device-v1", b"registry-a", &old_envelope),
+            Err(IntegrityKeyProviderError::UnknownKey)
+        );
+        assert_eq!(
+            provider.sign_active(purpose, b"post-retirement-state").unwrap().0,
+            "device-v2"
+        );
     }
 
     #[test]
