@@ -1299,12 +1299,7 @@ mod tests {
         );
         provider.retire_key(purpose, "ledger-v1").unwrap();
         assert_eq!(
-            provider.open_sealed(
-                purpose,
-                &old_key_id,
-                b"tenant-a:ledger",
-                &old_sealed,
-            ),
+            provider.open_sealed(purpose, &old_key_id, b"tenant-a:ledger", &old_sealed,),
             Err(IntegrityKeyProviderError::UnknownKey)
         );
 
