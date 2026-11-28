@@ -700,7 +700,7 @@ mod tests {
             Err(IntegrityKeyProviderError::UnknownKey)
         );
         assert_eq!(
-            provider.sign_active(purpose, b"post-retirement-state").unwrap().0,
+            IntegrityKeyProvider::sign_active(&provider, purpose, b"post-retirement-state").unwrap().0,
             "device-v2"
         );
     }
