@@ -1030,34 +1030,38 @@ mod tests {
             "keyring lock child did not acquire its lifecycle lock"
         );
 
-        let provider = Arc::new(
-            KeyringIntegrityKeyProvider::new(MemorySecretStore::default(), lock_path).unwrap(),
-        );
-        let acquired = Arc::new(AtomicBool::new(false));
-        let thread_provider = Arc::clone(&provider);
-        let thread_acquired = Arc::clone(&acquired);
-        let waiter = thread::spawn(move || {
-            let _guard = thread_provider.lock().unwrap();
-            thread_acquired.store(true, Ordering::SeqCst);
-        });
-        thread::sleep(Duration::from_millis(150));
-        let blocked_while_child_held_lock = !acquired.load(Ordering::SeqCst);
+        // Probe the OS lock directly instead of relying on a sleep/scheduler race.
+        // The child has printed its readiness marker only after acquiring the same
+        // lifecycle lock, so try_lock must fail while the child is holding it.
+        let probe = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&lock_path)
+            .unwrap();
+        let blocked_while_child_held_lock = probe.try_lock().is_err();
 
         let mut child_stdin = child.stdin.take().unwrap();
         child_stdin.write_all(b"release\n").unwrap();
         child_stdin.flush().unwrap();
         drop(child_stdin);
-        waiter.join().unwrap();
         let child_status = child.wait().unwrap();
         assert!(
             child_status.success(),
             "keyring lock child failed: {child_status}"
         );
+
+        // The exact same file handle must be able to acquire the lock after the
+        // child exits. This proves both exclusion and release-on-process-exit.
+        let acquired_after_child_exit = probe.try_lock().is_ok();
         assert!(
             blocked_while_child_held_lock,
-            "a second process entered the key lifecycle while the first held the lock"
+            "a second process acquired the lifecycle lock while the first held it"
         );
-        assert!(acquired.load(Ordering::SeqCst));
+        assert!(
+            acquired_after_child_exit,
+            "the lifecycle lock was not released after the child process exited"
+        );
+        drop(probe);
         std::fs::remove_dir_all(directory).unwrap();
     }
 
