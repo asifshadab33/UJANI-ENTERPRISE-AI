@@ -1145,10 +1145,8 @@ mod tests {
     fn lifecycle_lock_rejects_a_symlinked_parent_directory() {
         let lock_path = test_lock_path();
         let directory = lock_path.parent().unwrap().to_path_buf();
-        let link = directory.with_file_name(format!(
-            "ujani-keyring-parent-link-{}",
-            std::process::id()
-        ));
+        let link =
+            directory.with_file_name(format!("ujani-keyring-parent-link-{}", std::process::id()));
         std::os::unix::fs::symlink(&directory, &link).unwrap();
         let linked_lock = link.join("linked.lock");
 
