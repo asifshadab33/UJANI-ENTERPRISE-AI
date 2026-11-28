@@ -530,11 +530,10 @@ mod tests {
         path::PathBuf,
         process::{Command, Stdio},
         sync::{
-            atomic::{AtomicBool, AtomicU64, Ordering},
-            Arc,
+            atomic::{AtomicU64, Ordering},
+            mpsc, Arc,
         },
         thread,
-        time::Duration,
     };
 
     #[derive(Default)]
@@ -564,6 +563,87 @@ mod tests {
                 .map_err(|_| IntegrityKeyProviderError::LockPoisoned)?
                 .remove(name);
             Ok(())
+        }
+    }
+
+    /// Process-shared test store used only to exercise provider lifecycle ordering.
+    /// Key names are hex-encoded so they can never become path components.
+    struct FileSecretStore {
+        directory: PathBuf,
+        pause_active_write: bool,
+    }
+
+    impl FileSecretStore {
+        fn new(directory: PathBuf, pause_active_write: bool) -> Self {
+            std::fs::create_dir_all(&directory).unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))
+                    .unwrap();
+            }
+            Self {
+                directory,
+                pause_active_write,
+            }
+        }
+
+        fn entry_path(&self, name: &str) -> PathBuf {
+            let encoded = name
+                .as_bytes()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>();
+            self.directory.join(encoded)
+        }
+    }
+
+    impl ProtectedSecretStore for FileSecretStore {
+        fn get(&self, name: &str) -> Result<Option<Vec<u8>>, IntegrityKeyProviderError> {
+            match std::fs::read(self.entry_path(name)) {
+                Ok(value) => Ok(Some(value)),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+                Err(_) => Err(IntegrityKeyProviderError::Unavailable),
+            }
+        }
+
+        fn put(&self, name: &str, value: &[u8]) -> Result<(), IntegrityKeyProviderError> {
+            if self.pause_active_write && name == "v1:active:reservation-ledger" {
+                println!("UJANI_KEYRING_ROTATION_LOCK_HELD");
+                std::io::stdout()
+                    .flush()
+                    .map_err(|_| IntegrityKeyProviderError::Unavailable)?;
+                let mut release = String::new();
+                std::io::stdin()
+                    .read_line(&mut release)
+                    .map_err(|_| IntegrityKeyProviderError::Unavailable)?;
+                if release.trim() != "release" {
+                    return Err(IntegrityKeyProviderError::Unavailable);
+                }
+            }
+
+            let mut options = OpenOptions::new();
+            options.create(true).truncate(true).write(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            let mut file = options
+                .open(self.entry_path(name))
+                .map_err(|_| IntegrityKeyProviderError::Unavailable)?;
+            file.write_all(value)
+                .map_err(|_| IntegrityKeyProviderError::Unavailable)?;
+            file.sync_all()
+                .map_err(|_| IntegrityKeyProviderError::Unavailable)
+        }
+
+        fn delete(&self, name: &str) -> Result<(), IntegrityKeyProviderError> {
+            match std::fs::remove_file(self.entry_path(name)) {
+                Ok(()) => Ok(()),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(_) => Err(IntegrityKeyProviderError::Unavailable),
+            }
         }
     }
 
@@ -1030,35 +1110,205 @@ mod tests {
             "keyring lock child did not acquire its lifecycle lock"
         );
 
-        let provider = Arc::new(
-            KeyringIntegrityKeyProvider::new(MemorySecretStore::default(), lock_path).unwrap(),
-        );
-        let acquired = Arc::new(AtomicBool::new(false));
-        let thread_provider = Arc::clone(&provider);
-        let thread_acquired = Arc::clone(&acquired);
-        let waiter = thread::spawn(move || {
-            let _guard = thread_provider.lock().unwrap();
-            thread_acquired.store(true, Ordering::SeqCst);
-        });
-        thread::sleep(Duration::from_millis(150));
-        let blocked_while_child_held_lock = !acquired.load(Ordering::SeqCst);
+        // Probe the OS lock directly instead of relying on a sleep/scheduler race.
+        // The child has printed its readiness marker only after acquiring the same
+        // lifecycle lock, so try_lock must fail while the child is holding it.
+        let probe = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&lock_path)
+            .unwrap();
+        let blocked_while_child_held_lock = probe.try_lock().is_err();
 
         let mut child_stdin = child.stdin.take().unwrap();
         child_stdin.write_all(b"release\n").unwrap();
         child_stdin.flush().unwrap();
         drop(child_stdin);
-        waiter.join().unwrap();
         let child_status = child.wait().unwrap();
         assert!(
             child_status.success(),
             "keyring lock child failed: {child_status}"
         );
+
+        // The exact same file handle must be able to acquire the lock after the
+        // child exits. This proves both exclusion and release-on-process-exit.
+        let acquired_after_child_exit = probe.try_lock().is_ok();
         assert!(
             blocked_while_child_held_lock,
-            "a second process entered the key lifecycle while the first held the lock"
+            "a second process acquired the lifecycle lock while the first held it"
         );
-        assert!(acquired.load(Ordering::SeqCst));
+        assert!(
+            acquired_after_child_exit,
+            "the lifecycle lock was not released after the child process exited"
+        );
+        drop(probe);
         std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn keyring_rotation_serializes_cross_process_signing_and_sealing() {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        let test_id = NEXT.fetch_add(1, Ordering::Relaxed);
+        let directory = std::env::temp_dir().join(format!(
+            "ujani-keyring-rotation-{}-{test_id}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+
+        let store_directory = directory.join("shared-store");
+        let lock_path = directory.join("lifecycle.lock");
+        let purpose = IntegrityKeyPurpose::ReservationLedger;
+        let provider = Arc::new(
+            KeyringIntegrityKeyProvider::new(
+                FileSecretStore::new(store_directory.clone(), false),
+                lock_path.clone(),
+            )
+            .unwrap(),
+        );
+        provider.provision_key(purpose, "ledger-v1").unwrap();
+        provider.activate_key(purpose, "ledger-v1").unwrap();
+        let (old_key_id, old_sealed) = provider
+            .seal_active(purpose, b"tenant-a:ledger", b"snapshot-before-rotation")
+            .unwrap();
+        assert_eq!(old_key_id, "ledger-v1");
+
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .arg("keyring_rotation_child_process")
+            .arg("--nocapture")
+            .env(
+                "UJANI_KEYRING_SHARED_STORE_DIR",
+                store_directory.to_string_lossy().as_ref(),
+            )
+            .env(
+                "UJANI_KEYRING_SHARED_LOCK_PATH",
+                lock_path.to_string_lossy().as_ref(),
+            )
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .unwrap();
+
+        let stdout = child.stdout.take().unwrap();
+        let mut reader = BufReader::new(stdout);
+        let mut rotation_holds_lock = false;
+        loop {
+            let mut line = String::new();
+            let bytes = reader.read_line(&mut line).unwrap();
+            if bytes == 0 {
+                break;
+            }
+            if line.trim() == "UJANI_KEYRING_ROTATION_LOCK_HELD" {
+                rotation_holds_lock = true;
+                break;
+            }
+        }
+        assert!(
+            rotation_holds_lock,
+            "child process did not pause inside the active-key update"
+        );
+
+        // The child is paused inside activate_key while it owns the OS lifecycle
+        // lock. A second process must not be able to acquire that same lock.
+        let probe = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&lock_path)
+            .unwrap();
+        assert!(
+            probe.try_lock().is_err(),
+            "another process acquired the lifecycle lock during key activation"
+        );
+        drop(probe);
+
+        // Start a real provider operation while rotation is paused. Once the child
+        // commits the active-key pointer and exits, both operations must observe
+        // the new key and produce evidence that the shared store can verify/open.
+        let signing_provider = Arc::clone(&provider);
+        let (started_tx, started_rx) = mpsc::sync_channel(0);
+        let signer = thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            let (key_id, tag) = IntegrityKeyProvider::sign_active(
+                &*signing_provider,
+                purpose,
+                b"snapshot-after-rotation",
+            )?;
+            let (sealed_key_id, sealed) = signing_provider.seal_active(
+                purpose,
+                b"tenant-a:ledger",
+                b"snapshot-after-rotation",
+            )?;
+            Ok::<_, IntegrityKeyProviderError>((key_id, tag, sealed_key_id, sealed))
+        });
+        started_rx.recv().unwrap();
+
+        let mut child_stdin = child.stdin.take().unwrap();
+        child_stdin.write_all(b"release\n").unwrap();
+        child_stdin.flush().unwrap();
+        drop(child_stdin);
+        let child_status = child.wait().unwrap();
+        assert!(
+            child_status.success(),
+            "keyring rotation child failed: {child_status}"
+        );
+
+        let (new_key_id, new_tag, sealed_key_id, new_sealed) = signer.join().unwrap().unwrap();
+        assert_eq!(new_key_id, "ledger-v2");
+        assert_eq!(sealed_key_id, "ledger-v2");
+        IntegrityKeyProvider::verify(
+            &*provider,
+            purpose,
+            &new_key_id,
+            b"snapshot-after-rotation",
+            &new_tag,
+        )
+        .unwrap();
+        assert_eq!(
+            provider
+                .open_sealed(purpose, &sealed_key_id, b"tenant-a:ledger", &new_sealed,)
+                .unwrap(),
+            b"snapshot-after-rotation"
+        );
+
+        // Rotation retains the previous key for backup/recovery until explicit
+        // retirement; retirement then makes the old envelope unusable.
+        assert_eq!(
+            provider
+                .open_sealed(purpose, &old_key_id, b"tenant-a:ledger", &old_sealed,)
+                .unwrap(),
+            b"snapshot-before-rotation"
+        );
+        provider.retire_key(purpose, "ledger-v1").unwrap();
+        assert_eq!(
+            provider.open_sealed(purpose, &old_key_id, b"tenant-a:ledger", &old_sealed,),
+            Err(IntegrityKeyProviderError::UnknownKey)
+        );
+
+        drop(provider);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn keyring_rotation_child_process() {
+        let (Ok(store_directory), Ok(lock_path)) = (
+            std::env::var("UJANI_KEYRING_SHARED_STORE_DIR"),
+            std::env::var("UJANI_KEYRING_SHARED_LOCK_PATH"),
+        ) else {
+            return;
+        };
+        let provider = KeyringIntegrityKeyProvider::new(
+            FileSecretStore::new(PathBuf::from(store_directory), true),
+            PathBuf::from(lock_path),
+        )
+        .unwrap();
+        let purpose = IntegrityKeyPurpose::ReservationLedger;
+        provider.provision_key(purpose, "ledger-v2").unwrap();
+        provider.activate_key(purpose, "ledger-v2").unwrap();
     }
 
     #[cfg(unix)]
