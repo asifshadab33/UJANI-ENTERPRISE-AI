@@ -13,7 +13,7 @@ The current `ujani.tenant_id` PostgreSQL custom setting is also caller-settable 
 
 ## Proposed decision
 
-Add a transport-independent `ConsentAuditAnchor` port to the future customer-hosted control-plane host. The port must be backed by a separately administered trust domain, such as a customer-controlled KMS/HSM-backed monotonic record or an independently operated append-only audit service with conditional writes. A second table, schema, database, volume, backup, or role inside the same PostgreSQL trust/restore domain is **not** an external anchor.
+Add a transport-independent `ConsentAuditAnchor` port to the future customer-hosted control-plane host. The port must be backed by a separately administered trust domain, such as a customer-controlled append-only anchor service with atomic conditional writes and KMS/HSM-backed signing, or an independently operated transparency/audit service with equivalent monotonic semantics. A KMS/HSM provides protected key custody; it is not by itself assumed to provide a monotonic counter or compare-and-swap API. A second table, schema, database, volume, backup, or role inside the same PostgreSQL trust/restore domain is **not** an external anchor.
 
 Each checkpoint has a canonical, versioned representation containing:
 
@@ -30,7 +30,13 @@ The anchor operation must provide an atomic compare-and-append contract:
 3. The same tenant/sequence with a different digest, a lower sequence, a stale predecessor, or an unexpected fork is rejected and raises a security event.
 4. The application cannot overwrite or delete an accepted checkpoint. Anchor key rotation must preserve verification of historical checkpoints.
 
-For security-sensitive consent and lease authority transitions, persist the PostgreSQL state and audit event in one transaction, then commit the corresponding external checkpoint before reporting success or making the new authority usable. If the external append fails, the operation must remain unusable and recovery must reconcile the pending transaction without silently advancing consent/lease authority. The implementation must define an outbox/reconciliation protocol that is idempotent across crashes between the database commit and anchor acknowledgement; do not simply return success and retry in the background.
+For security-sensitive consent and lease authority transitions, use an explicit two-phase authority state:
+
+1. In one PostgreSQL transaction, append the consent/lease audit event and persist the new generation as **pending-anchor**. A pending generation is not authoritative: every consent predicate and lease-admission path must reject it.
+2. Append the exact tenant/sequence/head checkpoint to the external anchor using compare-and-append.
+3. In a second PostgreSQL transaction, mark only that exact pending generation as anchored and persist the anchor receipt/version. The state becomes eligible for use only after the service verifies that the current external anchor still matches the stored generation and digest.
+
+If the external append fails, the operation remains pending and unusable. If the process crashes after the external append but before the second database transaction, recovery verifies the external receipt and idempotently completes the anchored transition. If the database transaction or reconciliation is ambiguous, deny authority and require reconciliation; do not silently advance consent/lease authority or simply return success and retry in the background. The implementation must define an idempotent outbox/reconciliation protocol for every crash boundary.
 
 Verify the externally anchored sequence and digest at service startup, after restore, and before any consent/lease decision that could authorize collection, transmission, admission or dispatch. If the database is behind the anchor, has a different digest at the anchored sequence, presents a fork, or the anchor is unavailable/stale, fail closed. Never infer that an older but internally valid PostgreSQL hash chain is current. Remote execution remains disabled.
 
