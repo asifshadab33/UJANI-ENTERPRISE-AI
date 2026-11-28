@@ -33,6 +33,19 @@ BEGIN
  IF NOT pg_catalog.pg_has_role('ujani_service', 'ujani_runtime', 'MEMBER') THEN
   RAISE EXCEPTION 'trusted service cannot assume runtime role';
  END IF;
+ IF EXISTS (
+  SELECT 1 FROM pg_catalog.pg_auth_members
+  WHERE roleid = 'ujani_runtime'::regrole
+    AND member <> 'ujani_service'::regrole
+ ) THEN
+  RAISE EXCEPTION 'a principal other than ujani_service can assume ujani_runtime';
+ END IF;
+ IF EXISTS (
+  SELECT 1 FROM pg_catalog.pg_auth_members
+  WHERE roleid = 'ujani_service'::regrole
+ ) THEN
+  RAISE EXCEPTION 'ujani_service is assumable by another role';
+ END IF;
  IF pg_catalog.pg_has_role('ujani_untrusted_test', 'ujani_runtime', 'MEMBER') THEN
   RAISE EXCEPTION 'untrusted test principal can assume runtime role';
  END IF;
