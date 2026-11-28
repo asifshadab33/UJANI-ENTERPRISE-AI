@@ -86,6 +86,24 @@ BEGIN
    USING ERRCODE = '42501';
  END IF;
 
+ -- A database/role default must not silently restore a tenant or role
+ -- after SET LOCAL cleanup when a pooled connection is reused.
+ IF EXISTS (
+  SELECT 1
+  FROM pg_catalog.pg_db_role_setting AS setting
+  CROSS JOIN LATERAL unnest(setting.setconfig) AS config(value)
+  WHERE setting.setdatabase = (
+    SELECT oid FROM pg_catalog.pg_database WHERE datname = current_database()
+  )
+    AND (setting.setrole = 0::oid
+      OR setting.setrole = v_runtime_role_oid
+      OR setting.setrole = v_service_role_oid)
+    AND (config.value LIKE 'ujani.tenant_id=%' OR config.value LIKE 'role=%')
+ ) THEN
+  RAISE EXCEPTION 'runtime/service roles and database must not define default tenant or role context'
+   USING ERRCODE = '42501';
+ END IF;
+
  EXECUTE 'ALTER ROLE ujani_runtime NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS';
  EXECUTE 'ALTER ROLE ujani_service LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS';
 
