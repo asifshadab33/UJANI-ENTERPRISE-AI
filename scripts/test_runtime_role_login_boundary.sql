@@ -46,6 +46,20 @@ BEGIN
  ) THEN
   RAISE EXCEPTION 'ujani_service is assumable by another role';
  END IF;
+ IF EXISTS (
+  SELECT 1
+  FROM pg_catalog.pg_db_role_setting AS setting
+  CROSS JOIN LATERAL unnest(setting.setconfig) AS config(value)
+  WHERE setting.setdatabase = (
+    SELECT oid FROM pg_catalog.pg_database WHERE datname = current_database()
+  )
+    AND (setting.setrole = 0::oid
+      OR setting.setrole = 'ujani_runtime'::regrole
+      OR setting.setrole = 'ujani_service'::regrole)
+    AND (config.value LIKE 'ujani.tenant_id=%' OR config.value LIKE 'role=%')
+ ) THEN
+  RAISE EXCEPTION 'database/runtime/service has a default tenant or role context';
+ END IF;
  IF pg_catalog.pg_has_role('ujani_untrusted_test', 'ujani_runtime', 'MEMBER') THEN
   RAISE EXCEPTION 'untrusted test principal can assume runtime role';
  END IF;
