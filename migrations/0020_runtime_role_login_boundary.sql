@@ -72,6 +72,14 @@ BEGIN
 
  IF EXISTS (
   SELECT 1 FROM pg_catalog.pg_auth_members
+  WHERE roleid = v_service_role_oid
+ ) THEN
+  RAISE EXCEPTION 'ujani_service must not be assumable by other roles'
+   USING ERRCODE = '42501';
+ END IF;
+
+ IF EXISTS (
+  SELECT 1 FROM pg_catalog.pg_auth_members
   WHERE member = v_runtime_role_oid
  ) THEN
   RAISE EXCEPTION 'ujani_runtime must not inherit or assume additional roles'
