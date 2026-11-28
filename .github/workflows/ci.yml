@@ -355,4 +355,14 @@ jobs:
           PGPASSWORD: postgres
         run: |
           "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < scripts/test_device_authority_lease_revocation.sql
+      - name: Apply service-only runtime role boundary migration
+        env:
+          PGPASSWORD: postgres
+        run: |
+          "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < migrations/0020_runtime_role_login_boundary.sql
+      - name: Verify service-only runtime role and untrusted GUC denial
+        env:
+          PGPASSWORD: postgres
+        run: |
+          "$PSQL_BIN" --username postgres --dbname ujani_test --set ON_ERROR_STOP=1 --file - < scripts/test_runtime_role_login_boundary.sql
 
