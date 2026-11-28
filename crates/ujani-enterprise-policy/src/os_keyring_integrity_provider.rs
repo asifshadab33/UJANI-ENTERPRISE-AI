@@ -1264,14 +1264,14 @@ mod tests {
             signer.join().unwrap().unwrap();
         assert_eq!(new_key_id, "ledger-v2");
         assert_eq!(sealed_key_id, "ledger-v2");
-        provider
-            .verify(
-                purpose,
-                &new_key_id,
-                b"snapshot-after-rotation",
-                &new_tag,
-            )
-            .unwrap();
+        IntegrityKeyProvider::verify(
+            &*provider,
+            purpose,
+            &new_key_id,
+            b"snapshot-after-rotation",
+            &new_tag,
+        )
+        .unwrap();
         assert_eq!(
             provider
                 .open_sealed(
