@@ -50,6 +50,18 @@ BEGIN
    USING ERRCODE = '42501';
  END IF;
 
+ IF EXISTS (
+  SELECT 1 FROM pg_catalog.pg_namespace
+  WHERE nspname = 'ujani_control' AND nspowner = v_runtime_role_oid
+ ) OR EXISTS (
+  SELECT 1 FROM pg_catalog.pg_class c
+  JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+  WHERE n.nspname = 'ujani_control' AND c.relowner = v_runtime_role_oid
+ ) THEN
+  RAISE EXCEPTION 'ujani_runtime must not own the control schema or its objects'
+   USING ERRCODE = '42501';
+ END IF;
+
  -- Only the trusted service login may assume the runtime role. Fail closed
  -- rather than silently preserving an unknown or stale role membership.
  IF EXISTS (
