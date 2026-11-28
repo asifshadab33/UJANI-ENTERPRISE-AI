@@ -530,11 +530,9 @@ mod tests {
         path::PathBuf,
         process::{Command, Stdio},
         sync::{
-            atomic::{AtomicBool, AtomicU64, Ordering},
+            atomic::{AtomicU64, Ordering},
             Arc,
         },
-        thread,
-        time::Duration,
     };
 
     #[derive(Default)]
