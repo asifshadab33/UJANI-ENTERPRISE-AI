@@ -1132,10 +1132,7 @@ mod tests {
         std::os::unix::fs::symlink(&target, &lock_path).unwrap();
 
         assert!(matches!(
-            KeyringIntegrityKeyProvider::new(
-                MemorySecretStore::default(),
-                lock_path,
-            ),
+            KeyringIntegrityKeyProvider::new(MemorySecretStore::default(), &lock_path),
             Err(IntegrityKeyProviderError::Unavailable)
         ));
         std::fs::remove_file(&lock_path).unwrap();
@@ -1148,22 +1145,15 @@ mod tests {
     fn lifecycle_lock_rejects_a_symlinked_parent_directory() {
         let lock_path = test_lock_path();
         let directory = lock_path.parent().unwrap().to_path_buf();
-        let link = directory.with_file_name(format!(
-            "ujani-keyring-parent-link-{}",
-            std::process::id()
-        ));
+        let link = directory.with_file_name(format!("ujani-keyring-parent-link-{}", std::process::id()));
         std::os::unix::fs::symlink(&directory, &link).unwrap();
         let linked_lock = link.join("linked.lock");
 
         assert!(matches!(
-            KeyringIntegrityKeyProvider::new(
-                MemorySecretStore::default(),
-                linked_lock,
-            ),
+            KeyringIntegrityKeyProvider::new(MemorySecretStore::default(), linked_lock),
             Err(IntegrityKeyProviderError::Unavailable)
         ));
         std::fs::remove_file(&link).unwrap();
         std::fs::remove_dir(directory).unwrap();
     }
-
 }
