@@ -1,10 +1,17 @@
 -- Executed after 0001_customer_hosted_control_plane.sql against a disposable PostgreSQL DB.
-DO $$
+DO $role_setup$
 BEGIN
  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ujani_runtime') THEN
-  CREATE ROLE ujani_runtime LOGIN PASSWORD 'ci-only-test-password' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+  CREATE ROLE ujani_runtime NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
  END IF;
-END $$;
+ IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ujani_service') THEN
+  CREATE ROLE ujani_service LOGIN PASSWORD 'ci-only-service-password' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+ END IF;
+END;
+$role_setup$;
+ALTER ROLE ujani_runtime NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+ALTER ROLE ujani_service LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+GRANT ujani_runtime TO ujani_service;
 GRANT USAGE ON SCHEMA ujani_control TO ujani_runtime;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA ujani_control TO ujani_runtime;
 -- Tenant creation and mutation belong to the separately controlled provisioning plane.
