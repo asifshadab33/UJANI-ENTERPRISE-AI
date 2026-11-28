@@ -1260,8 +1260,7 @@ mod tests {
             "keyring rotation child failed: {child_status}"
         );
 
-        let (new_key_id, new_tag, sealed_key_id, new_sealed) =
-            signer.join().unwrap().unwrap();
+        let (new_key_id, new_tag, sealed_key_id, new_sealed) = signer.join().unwrap().unwrap();
         assert_eq!(new_key_id, "ledger-v2");
         assert_eq!(sealed_key_id, "ledger-v2");
         IntegrityKeyProvider::verify(
@@ -1274,12 +1273,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             provider
-                .open_sealed(
-                    purpose,
-                    &sealed_key_id,
-                    b"tenant-a:ledger",
-                    &new_sealed,
-                )
+                .open_sealed(purpose, &sealed_key_id, b"tenant-a:ledger", &new_sealed,)
                 .unwrap(),
             b"snapshot-after-rotation"
         );
@@ -1288,12 +1282,7 @@ mod tests {
         // retirement; retirement then makes the old envelope unusable.
         assert_eq!(
             provider
-                .open_sealed(
-                    purpose,
-                    &old_key_id,
-                    b"tenant-a:ledger",
-                    &old_sealed,
-                )
+                .open_sealed(purpose, &old_key_id, b"tenant-a:ledger", &old_sealed,)
                 .unwrap(),
             b"snapshot-before-rotation"
         );
