@@ -1122,4 +1122,39 @@ mod tests {
             Err(IntegrityKeyProviderError::EncryptionFailed)
         );
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn lifecycle_lock_rejects_a_symlink_at_the_lock_path() {
+        let lock_path = test_lock_path();
+        let target = lock_path.with_file_name("attacker-controlled-target");
+        std::fs::write(&target, b"not a lock").unwrap();
+        std::os::unix::fs::symlink(&target, &lock_path).unwrap();
+
+        assert!(matches!(
+            KeyringIntegrityKeyProvider::new(MemorySecretStore::default(), &lock_path),
+            Err(IntegrityKeyProviderError::Unavailable)
+        ));
+        std::fs::remove_file(&lock_path).unwrap();
+        std::fs::remove_file(&target).unwrap();
+        std::fs::remove_dir(lock_path.parent().unwrap()).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn lifecycle_lock_rejects_a_symlinked_parent_directory() {
+        let lock_path = test_lock_path();
+        let directory = lock_path.parent().unwrap().to_path_buf();
+        let link =
+            directory.with_file_name(format!("ujani-keyring-parent-link-{}", std::process::id()));
+        std::os::unix::fs::symlink(&directory, &link).unwrap();
+        let linked_lock = link.join("linked.lock");
+
+        assert!(matches!(
+            KeyringIntegrityKeyProvider::new(MemorySecretStore::default(), linked_lock),
+            Err(IntegrityKeyProviderError::Unavailable)
+        ));
+        std::fs::remove_file(&link).unwrap();
+        std::fs::remove_dir(directory).unwrap();
+    }
 }
